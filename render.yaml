@@ -12,7 +12,7 @@ services:
     rootDir: backend
     buildCommand: npm install
     startCommand: node index.js
-    plan: free
+    plan: starter
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
