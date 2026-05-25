@@ -25,11 +25,12 @@ function timeAgo(iso) {
 }
 
 export default function Opportunities() {
-  const [opps,    setOpps]    = useState([]);
-  const [filter,  setFilter]  = useState('all');
-  const [remote,  setRemote]  = useState(false);
-  const [search,  setSearch]  = useState('');
-  const [loading, setLoading] = useState(true);
+  const [opps,      setOpps]      = useState([]);
+  const [filter,    setFilter]    = useState('all');
+  const [remote,    setRemote]    = useState(false);
+  const [linkedin,  setLinkedin]  = useState(false);
+  const [search,    setSearch]    = useState('');
+  const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
     const params = {};
@@ -38,10 +39,14 @@ export default function Opportunities() {
     if (search)           params.search = search;
     setLoading(true);
     client.get('/opportunities', { params })
-      .then(({ data }) => setOpps(data.opportunities || []))
+      .then(({ data }) => {
+        let list = data.opportunities || [];
+        if (linkedin) list = list.filter(o => o.source === 'LinkedIn');
+        setOpps(list);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [filter, remote, search]);
+  }, [filter, remote, linkedin, search]);
 
   return (
     <Layout>
@@ -77,6 +82,13 @@ export default function Opportunities() {
           onClick={() => setRemote((r) => !r)}
         >
           🌍 Remote only
+        </button>
+        <button
+          className={`filter-btn${linkedin ? ' active' : ''}`}
+          style={linkedin ? { background:'#0A66C2', color:'#fff', borderColor:'#0A66C2' } : {}}
+          onClick={() => setLinkedin((l) => !l)}
+        >
+          🔷 LinkedIn
         </button>
       </div>
 
@@ -121,7 +133,13 @@ export default function Opportunities() {
                   ))}
                 </div>
                 <div className="opp-footer">
-                  <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>via {opp.source}</span>
+                  {opp.source === 'LinkedIn' ? (
+                    <span style={{ fontSize: '.75rem', fontWeight: 600, color: '#0A66C2', background: '#E8F0FB', padding: '3px 8px', borderRadius: 4 }}>
+                      🔷 LinkedIn
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>via {opp.source}</span>
+                  )}
                   <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer">
                     <button className="btn btn-primary btn-sm">View →</button>
                   </a>

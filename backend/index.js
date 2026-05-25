@@ -280,6 +280,7 @@ function fullProfile(user) {
     bio: user.bio, skills: user.skills, organization: user.organization,
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
     preferences: user.preferences,
+    links: user.links || {},
     connectedPlatforms: Object.keys(user.socialAccounts || {}),
   };
 }
@@ -357,29 +358,35 @@ app.post('/auth/login', (req, res) => {
 app.get('/profile', authenticate, (req, res) => {
   const user = users.find((u) => u.id === req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  res.json({ profile: fullProfile(user) });
+  res.json(fullProfile(user));
 });
 
 app.patch('/profile', authenticate, (req, res) => {
   const user = users.find((u) => u.id === req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization } = req.body;
+  const { name, title, bio, skills, organization, links } = req.body;
   if (name) user.name = name;
-  if (title) user.title = title;
+  if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
   if (skills) user.skills = skills;
   if (organization !== undefined) user.organization = organization;
-  res.json({ profile: fullProfile(user) });
+  if (links !== undefined) user.links = links;
+  res.json(fullProfile(user));
 });
 
 app.post('/profile/onboarding', authenticate, (req, res) => {
   const user = users.find((u) => u.id === req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { preferences } = req.body;
-  if (!preferences) return res.status(400).json({ message: 'preferences required.' });
-  user.preferences = preferences;
+  // Accept either { role, goals, interests, experience } or { preferences: {...} }
+  const prefs = req.body.preferences || {
+    role: req.body.role,
+    goals: req.body.goals,
+    interests: req.body.interests,
+    experience: req.body.experience,
+  };
+  user.preferences = prefs;
   user.onboardingComplete = true;
-  const suggested = pickOnboardingGroups(preferences);
+  const suggested = pickOnboardingGroups(prefs);
   suggested.forEach((gid) => {
     if (!user.joinedGroups.includes(gid)) {
       user.joinedGroups.push(gid);
@@ -634,6 +641,18 @@ const OPPORTUNITIES = [
   { id: 'op31', type: 'learning',  title: 'Startup School',               org: 'Y Combinator',         location: 'Online',                 pay: 'Free',              tags: ['Startups','Founders','GTM'],    source: 'YC',           sourceUrl: 'https://startupschool.org', posted: ago(7*D), remote: true },
   { id: 'op32', type: 'learning',  title: 'Full-Stack Open 2025',         org: 'University of Helsinki',location: 'Online',                pay: 'Free + certificate',tags: ['React','Node','TypeScript'],     source: 'fullstackopen.com', sourceUrl: 'https://fullstackopen.com', posted: ago(14*D), remote: true },
   { id: 'op33', type: 'learning',  title: 'Design for Developers',        org: 'Scrimba',              location: 'Online',                 pay: '$29/month',         tags: ['CSS','Design','Figma'],         source: 'Scrimba',      sourceUrl: 'https://scrimba.com', posted: ago(5*D), remote: true },
+
+  // LinkedIn Jobs
+  { id: 'op34', type: 'job', title: 'Senior Software Engineer',          org: 'Stripe',               location: 'San Francisco, CA',      pay: '$180k–$240k',       tags: ['Python','Go','Distributed Systems'], source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D), remote: false },
+  { id: 'op35', type: 'job', title: 'Product Manager, AI',               org: 'OpenAI',               location: 'San Francisco, CA',      pay: '$200k–$280k',       tags: ['AI','Product','LLMs'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D), remote: false },
+  { id: 'op36', type: 'job', title: 'UX Designer — Design Systems',      org: 'Figma',                location: 'Remote',                 pay: '$140k–$180k',       tags: ['Design','Figma','UX'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D), remote: true },
+  { id: 'op37', type: 'job', title: 'Growth Engineer',                   org: 'Linear',               location: 'Remote',                 pay: '$160k–$200k',       tags: ['TypeScript','React','Growth'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D), remote: true },
+  { id: 'op38', type: 'job', title: 'ML Engineer — Recommendations',     org: 'Spotify',              location: 'New York, NY',           pay: '$170k–$210k',       tags: ['Python','ML','PyTorch'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D), remote: false },
+  { id: 'op39', type: 'job', title: 'Developer Advocate',                org: 'Vercel',               location: 'Remote',                 pay: '$130k–$160k',       tags: ['Next.js','React','DevRel'],     source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(4*D), remote: true },
+  { id: 'op40', type: 'job', title: 'Head of Product',                   org: 'Notion',               location: 'San Francisco, CA',      pay: '$220k–$300k',       tags: ['Product','Strategy','B2B'],     source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D), remote: false },
+  { id: 'op41', type: 'job', title: 'Backend Engineer — Infra',          org: 'Cloudflare',           location: 'Remote',                 pay: '$150k–$190k',       tags: ['Go','Rust','Infrastructure'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D), remote: true },
+  { id: 'op42', type: 'job', title: 'Data Scientist',                    org: 'Airbnb',               location: 'San Francisco, CA',      pay: '$160k–$200k',       tags: ['Python','SQL','Statistics'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D), remote: false },
+  { id: 'op43', type: 'job', title: 'Engineering Manager',               org: 'Shopify',              location: 'Remote',                 pay: '$180k–$230k',       tags: ['Leadership','Ruby','React'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D), remote: true },
 ];
 
 const OP_TYPE_META = {
