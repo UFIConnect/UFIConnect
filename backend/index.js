@@ -337,7 +337,7 @@ function authenticate(req, res, next) {
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 app.post('/auth/register', (req, res) => {
   const { name, email, password, title } = req.body;
-  if (!name || !email || !password || !title) return res.status(400).json({ message: 'Missing fields.' });
+  if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields.' });
   if (users.find((u) => u.email === email)) return res.status(409).json({ message: 'Email already registered.' });
   const newUser = { id: `u${Date.now()}`, name, email, passwordHash: bcrypt.hashSync(password, 10), title, bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null };
   users.push(newUser);
