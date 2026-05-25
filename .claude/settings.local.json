@@ -102,7 +102,16 @@
       "Bash(curl -s --max-time 10 https://api.proconnect.pro/health)",
       "Bash(dig @1.1.1.1 proconnect.pro CNAME +short)",
       "Bash(dig @1.1.1.1 www.proconnect.pro CNAME +short)",
-      "Bash(dig @1.1.1.1 api.proconnect.pro CNAME +short)"
+      "Bash(dig @1.1.1.1 api.proconnect.pro CNAME +short)",
+      "Bash(dig @1.1.1.1 www.proconnect.pro +short)",
+      "Bash(dig @1.1.1.1 api.proconnect.pro +short)",
+      "Bash(dig proconnect.pro NS +short)",
+      "Bash(dig proconnect.pro SOA +short)",
+      "Bash(curl -s \"https://api.whoapi.com/?apikey=demo&r=whois&domain=proconnect.pro\")",
+      "Bash(whois proconnect.pro)",
+      "Bash(curl -s -X POST https://proconnect-api.onrender.com/auth/register -H 'Content-Type: application/json' -d '{\"name\":\"Test User\",\"email\":\"test@test.com\",\"password\":\"test123\",\"title\":\"Dev\"}')",
+      "Bash(curl -s https://proconnect-api.onrender.com/health)",
+      "Bash(curl -s --max-time 60 https://proconnect-api.onrender.com/health)"
     ],
     "additionalDirectories": [
       "/private/tmp"
