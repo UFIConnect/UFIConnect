@@ -351,6 +351,77 @@ function fullProfile(user) {
   };
 }
 
+// ── DB ↔ memory helpers ───────────────────────────────────────────────────────
+function isDBId(id) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(id));
+}
+
+function dbRowToMemUser(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    passwordHash: row.password_hash,
+    title: row.title || '',
+    bio: row.bio || '',
+    skills: row.skills || [],
+    organization: row.organization || '',
+    joinedGroups: row.joined_groups || [],
+    onboardingComplete: row.onboarding_complete || false,
+    preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
+    links: row.links || {},
+    socialAccounts: {},
+  };
+}
+
+function syncToMemory(memUser) {
+  const idx = users.findIndex(u => u.id === memUser.id);
+  if (idx >= 0) users[idx] = memUser; else users.push(memUser);
+  return memUser;
+}
+
+async function fetchAndSyncUser(id) {
+  if (!db.isConnected()) return null;
+  try {
+    const [uRes, saRes] = await Promise.all([
+      db.query('SELECT * FROM users WHERE id = $1', [id]),
+      db.query('SELECT platform, platform_user_id, connected_at FROM social_accounts WHERE user_id = $1', [id]),
+    ]);
+    if (!uRes.rows[0]) return null;
+    const mem = dbRowToMemUser(uRes.rows[0]);
+    saRes.rows.forEach(sa => {
+      mem.socialAccounts[sa.platform] = { connected: true, username: sa.platform_user_id, connectedAt: sa.connected_at };
+    });
+    return syncToMemory(mem);
+  } catch (err) { console.error('fetchAndSyncUser:', err.message); return null; }
+}
+
+async function fetchAndSyncUserByEmail(email) {
+  if (!db.isConnected()) return null;
+  try {
+    const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+    if (!rows[0]) return null;
+    const mem = dbRowToMemUser(rows[0]);
+    return syncToMemory(mem);
+  } catch (err) { console.error('fetchAndSyncUserByEmail:', err.message); return null; }
+}
+
+// Get user from memory (syncing from DB if needed)
+async function getUser(id) {
+  const mem = users.find(u => u.id === id);
+  if (mem) return mem;
+  return fetchAndSyncUser(id);
+}
+
+async function migrateDB() {
+  if (!db.isConnected()) return;
+  try {
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
+    console.log('✅ DB migration applied');
+  } catch (err) { console.warn('DB migration:', err.message); }
+}
+
 function recommendGroups(userId, triggerGroupId, count = 3) {
   const user = users.find((u) => u.id === userId);
   if (!user) return [];
@@ -402,33 +473,64 @@ function authenticate(req, res, next) {
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-app.post('/auth/register', (req, res) => {
+app.post('/auth/register', async (req, res) => {
   const { name, email, password, title } = req.body;
   if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields.' });
-  if (users.find((u) => u.email === email)) return res.status(409).json({ message: 'Email already registered.' });
-  const newUser = { id: `u${Date.now()}`, name, email, passwordHash: bcrypt.hashSync(password, 10), title, bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null };
+  const emailLc = email.toLowerCase();
+
+  if (db.isConnected()) {
+    try {
+      const exists = await db.query('SELECT id FROM users WHERE email=$1', [emailLc]);
+      if (exists.rows.length) return res.status(409).json({ message: 'Email already registered.' });
+      const hash = bcrypt.hashSync(password, 10);
+      const { rows } = await db.query(
+        `INSERT INTO users (name, email, password_hash, title) VALUES ($1,$2,$3,$4) RETURNING *`,
+        [name, emailLc, hash, title || null]
+      );
+      const mem = syncToMemory(dbRowToMemUser(rows[0]));
+      const token = jwt.sign({ id: mem.id, email: mem.email }, JWT_SECRET, { expiresIn: '7d' });
+      return res.status(201).json({ token, profile: fullProfile(mem) });
+    } catch (err) { console.error('register DB error:', err.message); }
+  }
+
+  // In-memory fallback
+  if (users.find((u) => u.email === emailLc)) return res.status(409).json({ message: 'Email already registered.' });
+  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {} };
   users.push(newUser);
   const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
   res.status(201).json({ token, profile: fullProfile(newUser) });
 });
 
-app.post('/auth/login', (req, res) => {
+app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
-  const user = users.find((u) => u.email === email);
+  const emailLc = (email || '').toLowerCase();
+
+  // Check DB first (persisted users)
+  if (db.isConnected()) {
+    const dbUser = await fetchAndSyncUserByEmail(emailLc);
+    if (dbUser && bcrypt.compareSync(password, dbUser.passwordHash)) {
+      const token = jwt.sign({ id: dbUser.id, email: dbUser.email }, JWT_SECRET, { expiresIn: '7d' });
+      return res.json({ token, profile: fullProfile(dbUser) });
+    }
+  }
+
+  // Fall back to in-memory (covers demo user)
+  const user = users.find((u) => u.email === emailLc || u.email === email);
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, profile: fullProfile(user) });
 });
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
-app.get('/profile', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.get('/profile', authenticate, async (req, res) => {
+  // Always try to refresh from DB so data survives restarts
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   res.json(fullProfile(user));
 });
 
-app.patch('/profile', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.patch('/profile', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const { name, title, bio, skills, organization, links } = req.body;
   if (name) user.name = name;
@@ -437,18 +539,21 @@ app.patch('/profile', authenticate, (req, res) => {
   if (skills) user.skills = skills;
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query(
+      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6 WHERE id=$7`,
+      [user.name, user.title, user.bio, user.skills, user.organization, JSON.stringify(user.links || {}), user.id]
+    ).catch(e => console.error('PATCH profile DB:', e.message));
+  }
   res.json(fullProfile(user));
 });
 
-app.post('/profile/onboarding', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.post('/profile/onboarding', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  // Accept either { role, goals, interests, experience } or { preferences: {...} }
   const prefs = req.body.preferences || {
-    role: req.body.role,
-    goals: req.body.goals,
-    interests: req.body.interests,
-    experience: req.body.experience,
+    role: req.body.role, goals: req.body.goals,
+    interests: req.body.interests, experience: req.body.experience,
   };
   user.preferences = prefs;
   user.onboardingComplete = true;
@@ -460,6 +565,12 @@ app.post('/profile/onboarding', authenticate, (req, res) => {
       if (g) g.members += 1;
     }
   });
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query(
+      `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5 WHERE id=$6`,
+      [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.id]
+    ).catch(e => console.error('onboarding DB:', e.message));
+  }
   res.json({ profile: fullProfile(user), autoJoined: suggested });
 });
 
@@ -500,26 +611,40 @@ app.get('/groups/:id/members', authenticate, (req, res) => {
   res.json({ members: membersWithStatus, total: group.members });
 });
 
-app.post('/groups/:id/join', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.post('/groups/:id/join', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   const group = groups.find((g) => g.id === req.params.id);
   if (!user || !group) return res.status(404).json({ message: 'Not found.' });
-  if (!user.joinedGroups.includes(group.id)) { user.joinedGroups.push(group.id); group.members += 1; }
+  if (!user.joinedGroups.includes(group.id)) {
+    user.joinedGroups.push(group.id);
+    group.members += 1;
+    if (db.isConnected() && isDBId(user.id)) {
+      db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
+        .catch(e => console.error('group join DB:', e.message));
+    }
+  }
   res.json({ joinedGroups: user.joinedGroups, recommended: recommendGroups(user.id, group.id, 3) });
 });
 
-app.delete('/groups/:id/join', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.delete('/groups/:id/join', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   const group = groups.find((g) => g.id === req.params.id);
   if (!user || !group) return res.status(404).json({ message: 'Not found.' });
   const idx = user.joinedGroups.indexOf(group.id);
-  if (idx > -1) { user.joinedGroups.splice(idx, 1); group.members = Math.max(0, group.members - 1); }
+  if (idx > -1) {
+    user.joinedGroups.splice(idx, 1);
+    group.members = Math.max(0, group.members - 1);
+    if (db.isConnected() && isDBId(user.id)) {
+      db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
+        .catch(e => console.error('group leave DB:', e.message));
+    }
+  }
   res.json({ joinedGroups: user.joinedGroups });
 });
 
 // ─── Feed ─────────────────────────────────────────────────────────────────────
-app.get('/feed', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.get('/feed', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
 
   const joined = new Set(user.joinedGroups);
@@ -589,8 +714,8 @@ app.get('/users/connections', authenticate, (req, res) => {
 // ─── Social accounts ─────────────────────────────────────────────────────────
 
 // List platform configs + user's connection status
-app.get('/social/platforms', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.get('/social/platforms', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const result = Object.entries(PLATFORMS).map(([key, cfg]) => {
     const connected = user.socialAccounts?.[key];
@@ -614,32 +739,39 @@ app.get('/social/platforms', authenticate, (req, res) => {
 });
 
 // Connect a platform (mock OAuth exchange — swap for real token exchange in production)
-app.post('/social/connect', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.post('/social/connect', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const { platform, mockUsername } = req.body;
   if (!PLATFORMS[platform]) return res.status(400).json({ message: 'Unknown platform.' });
   if (!user.socialAccounts) user.socialAccounts = {};
-  user.socialAccounts[platform] = {
-    connected: true,
-    username: mockUsername || `user_${Math.random().toString(36).slice(2, 8)}`,
-    accessToken: `mock_token_${Date.now()}`,
-    connectedAt: new Date().toISOString(),
-  };
-  res.json({ platform, connected: true, username: user.socialAccounts[platform].username });
+  const username = mockUsername || `user_${Math.random().toString(36).slice(2, 8)}`;
+  user.socialAccounts[platform] = { connected: true, username, accessToken: `mock_token_${Date.now()}`, connectedAt: new Date().toISOString() };
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query(
+      `INSERT INTO social_accounts (user_id,platform,platform_user_id,access_token) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (user_id,platform) DO UPDATE SET platform_user_id=$3,access_token=$4,connected_at=NOW()`,
+      [user.id, platform, username, user.socialAccounts[platform].accessToken]
+    ).catch(e => console.error('social connect DB:', e.message));
+  }
+  res.json({ platform, connected: true, username });
 });
 
 // Disconnect a platform
-app.delete('/social/connect/:platform', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.delete('/social/connect/:platform', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   if (user.socialAccounts) delete user.socialAccounts[req.params.platform];
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query('DELETE FROM social_accounts WHERE user_id=$1 AND platform=$2', [user.id, req.params.platform])
+      .catch(e => console.error('social disconnect DB:', e.message));
+  }
   res.json({ platform: req.params.platform, connected: false });
 });
 
 // Aggregated social feed from all connected platforms
-app.get('/social/feed', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.get('/social/feed', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const connected = Object.keys(user.socialAccounts || {});
   const posts = connected.flatMap((platform) => SOCIAL_POSTS[platform] || []);
@@ -648,8 +780,8 @@ app.get('/social/feed', authenticate, (req, res) => {
 });
 
 // Indeed job listings (filtered by user profile)
-app.get('/social/jobs', authenticate, (req, res) => {
-  const user = users.find((u) => u.id === req.user.id);
+app.get('/social/jobs', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const skills = new Set((user.skills || []).map((s) => s.toLowerCase()));
   const scored = INDEED_JOBS.map((job) => {
@@ -731,9 +863,9 @@ const OP_TYPE_META = {
   learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
 };
 
-app.get('/opportunities', authenticate, (req, res) => {
+app.get('/opportunities', authenticate, async (req, res) => {
   const { type, remote, search } = req.query;
-  const user = users.find((u) => u.id === req.user.id);
+  const user = await getUser(req.user.id);
   const skills = new Set((user?.skills || []).map((s) => s.toLowerCase()));
   const interests = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
 
@@ -854,7 +986,8 @@ app.post('/messages/:userId', authenticate, (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-db.initDB().then(() => {
+db.initDB().then(async () => {
+  await migrateDB();
   app.listen(PORT, () =>
     console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );
