@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node index.js)",
+      "Bash(curl -s http://localhost:3000/groups)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:3000/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"maria@example.com\",\"password\":\"password123\"}')",
+      "Bash(npx expo *)"
+    ]
+  }
+}
