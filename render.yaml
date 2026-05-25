@@ -35,7 +35,6 @@ services:
     rootDir: web
     buildCommand: npm install && npm run build
     staticPublishPath: dist
-    plan: free
     routes:
       # SPA: all paths fall back to index.html
       - type: rewrite
