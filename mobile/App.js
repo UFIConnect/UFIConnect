@@ -1,92 +1,165 @@
-import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, View, Button, FlatList, SafeAreaView } from 'react-native';
+import React from 'react';
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { StatusBar } from 'expo-status-bar';
-import axios from 'axios';
 
-const API_BASE = 'http://localhost:3000';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import LoginScreen from './screens/LoginScreen';
+import RegisterScreen from './screens/RegisterScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
+import OpportunitiesScreen from './screens/OpportunitiesScreen';
+import GroupsScreen from './screens/GroupsScreen';
+import GroupDetailScreen from './screens/GroupDetailScreen';
+import FeedScreen from './screens/FeedScreen';
+import MessagesScreen from './screens/MessagesScreen';
+import ConversationScreen from './screens/ConversationScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import ConnectedAccountsScreen from './screens/ConnectedAccountsScreen';
+import { COLORS } from './theme';
 
-export default function App() {
-  const [groups, setGroups] = useState([]);
-  const [loading, setLoading] = useState(true);
+const RootStack  = createNativeStackNavigator();
+const Tab        = createBottomTabNavigator();
+const ExploreStack  = createNativeStackNavigator();
+const DiscoverStack = createNativeStackNavigator();
+const MessagesStack = createNativeStackNavigator();
+const ProfileStack  = createNativeStackNavigator();
 
-  useEffect(() => {
-    fetchGroups();
-  }, []);
+const NAV_OPTS = {
+  headerStyle: { backgroundColor: '#fff' },
+  headerTitleStyle: { fontWeight: '900', fontSize: 18, color: COLORS.text },
+  headerShadowVisible: false,
+  headerTintColor: COLORS.primary,
+};
 
-  const fetchGroups = async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/groups`);
-      setGroups(response.data.groups);
-    } catch (error) {
-      console.error('Failed to load groups', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+// Opportunities + nothing to push into yet (self-contained)
+function ExploreNavigator() {
+  return (
+    <ExploreStack.Navigator screenOptions={NAV_OPTS}>
+      <ExploreStack.Screen name="Opportunities" component={OpportunitiesScreen} options={{ title: 'Explore' }} />
+    </ExploreStack.Navigator>
+  );
+}
+
+// Groups → Group detail
+function DiscoverNavigator() {
+  return (
+    <DiscoverStack.Navigator screenOptions={NAV_OPTS}>
+      <DiscoverStack.Screen name="Groups" component={GroupsScreen} options={{ title: 'ProConnect' }} />
+      <DiscoverStack.Screen
+        name="GroupDetail"
+        component={GroupDetailScreen}
+        options={({ route }) => ({ title: route.params?.group?.name || 'Group' })}
+      />
+    </DiscoverStack.Navigator>
+  );
+}
+
+// Conversation list → individual chat
+function MessagesNavigator() {
+  return (
+    <MessagesStack.Navigator screenOptions={NAV_OPTS}>
+      <MessagesStack.Screen name="MessagesList" component={MessagesScreen} options={{ headerShown: false }} />
+      <MessagesStack.Screen name="Conversation" component={ConversationScreen} options={{ title: '' }} />
+    </MessagesStack.Navigator>
+  );
+}
+
+// Profile → Connected accounts
+function ProfileNavigator() {
+  return (
+    <ProfileStack.Navigator screenOptions={NAV_OPTS}>
+      <ProfileStack.Screen name="ProfileMain" component={ProfileScreen} options={{ title: 'Profile' }} />
+      <ProfileStack.Screen name="ConnectedAccounts" component={ConnectedAccountsScreen} options={{ title: 'Connected Accounts' }} />
+    </ProfileStack.Navigator>
+  );
+}
+
+function TabIcon({ icon, focused }) {
+  return <Text style={{ fontSize: 21, opacity: focused ? 1 : 0.4 }}>{icon}</Text>;
+}
+
+function AppTabs() {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        tabBarStyle: { backgroundColor: '#fff', borderTopColor: COLORS.border, height: 60, paddingBottom: 8 },
+        tabBarActiveTintColor: COLORS.primary,
+        tabBarInactiveTintColor: COLORS.muted,
+        tabBarLabelStyle: { fontSize: 10, fontWeight: '700' },
+        headerShown: false,
+      }}
+    >
+      <Tab.Screen
+        name="Explore"
+        component={ExploreNavigator}
+        options={{ title: 'Explore', tabBarIcon: ({ focused }) => <TabIcon icon="🌐" focused={focused} /> }}
+      />
+      <Tab.Screen
+        name="Discover"
+        component={DiscoverNavigator}
+        options={{ title: 'Groups', tabBarIcon: ({ focused }) => <TabIcon icon="🔍" focused={focused} /> }}
+      />
+      <Tab.Screen
+        name="Feed"
+        component={FeedScreen}
+        options={{ title: 'Feed', tabBarIcon: ({ focused }) => <TabIcon icon="📰" focused={focused} /> }}
+      />
+      <Tab.Screen
+        name="Messages"
+        component={MessagesNavigator}
+        options={{ title: 'Messages', tabBarIcon: ({ focused }) => <TabIcon icon="💬" focused={focused} /> }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileNavigator}
+        options={{ title: 'Profile', tabBarIcon: ({ focused }) => <TabIcon icon="👤" focused={focused} /> }}
+      />
+    </Tab.Navigator>
+  );
+}
+
+function RootNavigator() {
+  const { token, loading, onboardingComplete } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={styles.splash}>
+        <Text style={styles.splashLogo}>ProConnect</Text>
+        <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} />
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>ProConnect</Text>
-      <Text style={styles.subtitle}>Connect with professional groups and people.</Text>
-      <Button title="Refresh groups" onPress={fetchGroups} />
-      {loading ? (
-        <Text style={styles.loading}>Loading groups...</Text>
+    <RootStack.Navigator screenOptions={{ headerShown: false }}>
+      {!token ? (
+        <>
+          <RootStack.Screen name="Login" component={LoginScreen} />
+          <RootStack.Screen name="Register" component={RegisterScreen} />
+        </>
+      ) : !onboardingComplete ? (
+        <RootStack.Screen name="Onboarding" component={OnboardingScreen} options={{ gestureEnabled: false }} />
       ) : (
-        <FlatList
-          data={groups}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <Text style={styles.groupName}>{item.name}</Text>
-              <Text style={styles.groupDescription}>{item.description}</Text>
-            </View>
-          )}
-          ListEmptyComponent={<Text style={styles.empty}>No groups available yet.</Text>}
-        />
+        <RootStack.Screen name="Main" component={AppTabs} />
       )}
-      <StatusBar style="auto" />
-    </SafeAreaView>
+    </RootStack.Navigator>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <NavigationContainer>
+        <StatusBar style="dark" />
+        <RootNavigator />
+      </NavigationContainer>
+    </AuthProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    paddingHorizontal: 18,
-    paddingTop: 32,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    marginBottom: 20,
-    color: '#444',
-  },
-  loading: {
-    marginTop: 20,
-    color: '#666',
-  },
-  card: {
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#f5f6fb',
-  },
-  groupName: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  groupDescription: {
-    marginTop: 6,
-    color: '#555',
-  },
-  empty: {
-    marginTop: 20,
-    color: '#999',
-    textAlign: 'center',
-  },
+  splash: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  splashLogo: { fontSize: 38, fontWeight: '900', color: COLORS.primary, letterSpacing: -1 },
 });

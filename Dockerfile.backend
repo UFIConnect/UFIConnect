@@ -1,0 +1,12 @@
+# ── Build stage ───────────────────────────────────────────────
+FROM node:20-alpine AS base
+WORKDIR /app
+
+COPY backend/package*.json ./
+RUN npm ci --omit=dev
+
+COPY backend/ ./
+
+# ── Runtime ───────────────────────────────────────────────────
+EXPOSE 3000
+CMD ["node", "index.js"]
