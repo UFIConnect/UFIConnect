@@ -21,16 +21,16 @@ export function AuthProvider({ children }) {
     const { data } = await client.post('/auth/login', { email, password });
     localStorage.setItem('pc_token', data.token);
     setToken(data.token);
-    setProfile(data.user);
-    return data.user;
+    setProfile(data.profile || data.user || null);
+    return data.profile || data.user;
   }
 
   async function register(name, email, password, title) {
     const { data } = await client.post('/auth/register', { name, email, password, title });
     localStorage.setItem('pc_token', data.token);
     setToken(data.token);
-    setProfile(data.user);
-    return data.user;
+    setProfile(data.profile || data.user || null);
+    return data.profile || data.user;
   }
 
   function logout() {

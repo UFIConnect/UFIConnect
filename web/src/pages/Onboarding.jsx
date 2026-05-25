@@ -34,11 +34,37 @@ const GOALS = [
 ];
 
 const INTERESTS = [
-  'AI & Machine Learning', 'Web3 / Crypto', 'SaaS', 'Developer Tools',
-  'Climate Tech', 'Health Tech', 'FinTech', 'EdTech', 'Design Systems',
-  'Open Source', 'Remote Work', 'No-Code / Low-Code',
-  'Cybersecurity', 'Mobile Dev', 'Game Dev', 'Hardware / IoT',
-  'AR / VR', 'Social Impact', 'E-commerce', 'Creator Economy',
+  // AI & Tech
+  'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
+  'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',
+  'Cloud & DevOps', 'Frontend Dev', 'Backend Dev', 'Mobile Dev',
+  'Web3 / Crypto', 'Blockchain', 'Hardware / IoT', 'Robotics',
+  'AR / VR', 'Quantum Computing', 'Game Dev', 'No-Code / Low-Code',
+  // Business & Startups
+  'SaaS', 'B2B / Enterprise', 'Marketplaces', 'D2C / Consumer Apps',
+  'Bootstrapping', 'Venture Capital', 'Angel Investing', 'Fundraising',
+  'Growth Marketing', 'Product-Led Growth', 'Sales & Revenue', 'Partnerships',
+  // Design & Creative
+  'UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design',
+  '3D & CGI', 'Photography', 'Film & Video', 'Music Production',
+  // Finance
+  'FinTech', 'DeFi / Crypto Finance', 'Personal Finance', 'Real Estate',
+  'Trading & Quant', 'InsurTech',
+  // Industries
+  'Health Tech', 'BioTech', 'Climate Tech', 'EdTech',
+  'LegalTech', 'GovTech', 'AgriTech', 'SpaceTech',
+  'PropTech', 'RetailTech', 'FoodTech', 'SportsTech',
+  // People & Culture
+  'Remote Work', 'Future of Work', 'Recruiting & Hiring', 'Leadership',
+  'Diversity & Inclusion', 'Mental Health & Wellness',
+  // Content & Media
+  'Creator Economy', 'Podcasting', 'Newsletter & Writing',
+  'YouTube & Video', 'Social Media', 'SEO & Content',
+  // E-commerce
+  'E-commerce', 'Dropshipping', 'Amazon FBA', 'Subscription Businesses',
+  // Career
+  'Career Growth', 'Productivity', 'Public Speaking', 'Side Projects',
+  'Freelancing', 'Social Impact',
 ];
 
 const EXPERIENCE = [
