@@ -2,9 +2,9 @@ import axios from 'axios';
 
 // In dev: Vite proxy rewrites /api/* → http://localhost:3000/*
 // In production: VITE_API_URL points directly to the backend (no /api prefix needed)
+// Hardcoded fallback ensures production always hits the right API even if env var is missing
 const baseURL = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL
-  : '/api';
+  || 'https://uficonnect-api.onrender.com';
 
 const client = axios.create({ baseURL });
 
