@@ -121,7 +121,17 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code} ← Web\\\\n\" --max-time 20 https://uficonnect-web.onrender.com)",
       "Bash(curl -s -X POST https://uficonnect-api.onrender.com/auth/register -H 'Content-Type: application/json' -d '{\"name\":\"Test User\",\"email\":\"test@uficonnect.pro\",\"password\":\"test1234\",\"title\":\"Engineer\"}')",
       "Bash(curl -s -X POST https://uficonnect-api.onrender.com/auth/register -H 'Content-Type: application/json' -d '{\"name\":\"Jane\",\"email\":\"jane2@test.com\",\"password\":\"test1234\"}')",
-      "Bash(curl -s -X POST https://uficonnect-api.onrender.com/auth/register -H 'Content-Type: application/json' -d '{\"name\":\"Jane\",\"email\":\"jane3@test.com\",\"password\":\"test1234\",\"title\":\"\"}')"
+      "Bash(curl -s -X POST https://uficonnect-api.onrender.com/auth/register -H 'Content-Type: application/json' -d '{\"name\":\"Jane\",\"email\":\"jane3@test.com\",\"password\":\"test1234\",\"title\":\"\"}')",
+      "Bash(curl -s https://uficonnect-api.onrender.com/health)",
+      "Bash(dig +short uficonnect.pro CNAME)",
+      "Bash(dig +short uficonnect.pro A)",
+      "Bash(dig +short www.uficonnect.pro CNAME)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" https://uficonnect.pro)",
+      "Bash(dig +short @8.8.8.8 uficonnect.pro)",
+      "Bash(dig +short @1.1.1.1 uficonnect.pro)",
+      "Bash(dig +short uficonnect.pro NS)",
+      "Bash(dig +short @8.8.8.8 www.uficonnect.pro)",
+      "Bash(git -C /Users/yosuf/Desktop/app log --oneline -5)"
     ],
     "additionalDirectories": [
       "/private/tmp"

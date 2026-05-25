@@ -9,24 +9,36 @@ const ROLES = [
   { value: 'Product Manager',        label: '📋 Product Manager',          desc: 'Strategy & execution' },
   { value: 'Marketer / Growth',      label: '📈 Marketer / Growth',        desc: 'SEO, Content, Ads' },
   { value: 'Founder / Entrepreneur', label: '🚀 Founder / Entrepreneur',   desc: 'Building something new' },
-  { value: 'Investor',               label: '💰 Investor',                  desc: 'VC, Angel, LP' },
+  { value: 'Investor / VC',          label: '💰 Investor / VC',            desc: 'VC, Angel, LP' },
   { value: 'Data / Analytics',       label: '📊 Data / Analytics',         desc: 'Data Sci, BI, MLOps' },
   { value: 'Student / Learner',      label: '🎓 Student / Learner',        desc: 'Growing & exploring' },
+  { value: 'Sales / Business Dev',   label: '🤝 Sales / Business Dev',     desc: 'Revenue, partnerships' },
+  { value: 'Operations / Finance',   label: '⚙️ Operations / Finance',     desc: 'Ops, accounting, strategy' },
+  { value: 'Content Creator',        label: '🎬 Content Creator',          desc: 'Video, writing, podcasts' },
+  { value: 'Community Manager',      label: '🌐 Community Manager',        desc: 'Grow & engage communities' },
+  { value: 'Researcher / Academic',  label: '🔬 Researcher / Academic',    desc: 'R&D, academia, science' },
+  { value: 'HR / People Ops',        label: '👥 HR / People Ops',          desc: 'Recruiting, culture, L&D' },
 ];
 
 const GOALS = [
-  { value: 'networking',    label: '🤝 Grow my network',       desc: 'Meet peers & collaborators' },
-  { value: 'jobs',         label: '💼 Find a new role',        desc: 'Jobs, gigs & contracts' },
-  { value: 'learning',     label: '📚 Learn new skills',       desc: 'Courses, tutorials, guides' },
-  { value: 'build',        label: '🛠 Build in public',        desc: 'Share work & get feedback' },
-  { value: 'hiring',       label: '🔍 Hire talent',            desc: 'Find great people to hire' },
-  { value: 'funding',      label: '🏦 Raise funding',          desc: 'Grants, investors, VCs' },
+  { value: 'networking',    label: '🤝 Grow my network',          desc: 'Meet peers & collaborators' },
+  { value: 'jobs',          label: '💼 Find a new role',           desc: 'Jobs, gigs & contracts' },
+  { value: 'learning',      label: '📚 Learn new skills',          desc: 'Courses, tutorials, guides' },
+  { value: 'build',         label: '🛠 Build in public',           desc: 'Share work & get feedback' },
+  { value: 'hiring',        label: '🔍 Hire talent',               desc: 'Find great people to hire' },
+  { value: 'funding',       label: '🏦 Raise funding',             desc: 'Grants, investors, VCs' },
+  { value: 'mentorship',    label: '🧑‍🏫 Find a mentor',             desc: 'Learn from experienced pros' },
+  { value: 'events',        label: '📅 Attend events & meetups',   desc: 'Conferences, IRL & online' },
+  { value: 'expertise',     label: '💡 Share my expertise',        desc: 'Teach, write, speak' },
+  { value: 'sideproject',   label: '🔨 Build a side project',      desc: 'Hack on something new' },
 ];
 
 const INTERESTS = [
   'AI & Machine Learning', 'Web3 / Crypto', 'SaaS', 'Developer Tools',
   'Climate Tech', 'Health Tech', 'FinTech', 'EdTech', 'Design Systems',
   'Open Source', 'Remote Work', 'No-Code / Low-Code',
+  'Cybersecurity', 'Mobile Dev', 'Game Dev', 'Hardware / IoT',
+  'AR / VR', 'Social Impact', 'E-commerce', 'Creator Economy',
 ];
 
 const EXPERIENCE = [
@@ -94,8 +106,8 @@ export default function Onboarding() {
 
         {/* Step 0 — Role */}
         {step === 0 && (<>
-          <h1 className="onboarding-title">What best describes you?</h1>
-          <p className="onboarding-sub">We'll personalise your feed and recommendations.</p>
+          <h1 className="onboarding-title">What's your role?</h1>
+          <p className="onboarding-sub">We'll tailor your feed, groups, and opportunities around it.</p>
           <div className="option-grid">
             {ROLES.map(({ value, label, desc }) => (
               <button key={value}
@@ -111,8 +123,8 @@ export default function Onboarding() {
 
         {/* Step 1 — Goals */}
         {step === 1 && (<>
-          <h1 className="onboarding-title">What are your goals?</h1>
-          <p className="onboarding-sub">Pick everything that applies — we'll surface the right opportunities.</p>
+          <h1 className="onboarding-title">What are you here for?</h1>
+          <p className="onboarding-sub">Pick everything that applies — no wrong answers.</p>
           <div className="option-grid">
             {GOALS.map(({ value, label, desc }) => (
               <button key={value}
@@ -128,8 +140,8 @@ export default function Onboarding() {
 
         {/* Step 2 — Interests */}
         {step === 2 && (<>
-          <h1 className="onboarding-title">What topics interest you?</h1>
-          <p className="onboarding-sub">Select all that apply — we use these to recommend groups and posts.</p>
+          <h1 className="onboarding-title">What topics light you up?</h1>
+          <p className="onboarding-sub">We surface groups and opportunities in these areas.</p>
           <div className="tags" style={{ marginBottom: 24 }}>
             {INTERESTS.map((topic) => (
               <button key={topic}

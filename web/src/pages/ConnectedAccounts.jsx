@@ -19,8 +19,10 @@ export default function ConnectedAccounts() {
   }, []);
 
   async function handleConnect(platform) {
-    // In a real integration this would open OAuth popup.
-    // For demo we just POST to the backend's mock connect endpoint.
+    // Open the platform's real login page in a new tab
+    const p = platforms.find(([key]) => key === platform)?.[1];
+    if (p?.loginUrl) window.open(p.loginUrl, '_blank', 'noopener,noreferrer');
+    // Also record the connection locally (mock token)
     try {
       await client.post('/social/connect', {
         platform,

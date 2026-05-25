@@ -35,7 +35,7 @@ export default function RegisterScreen({ navigation }) {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.logo}>ProConnect</Text>
+          <Text style={styles.logo}>UFIConnect</Text>
           <Text style={styles.tagline}>Join your professional community</Text>
         </View>
 
