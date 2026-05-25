@@ -23,6 +23,7 @@ export default ({ config }) => ({
       NSPhotoLibraryUsageDescription: 'ProConnect uses your photo library to share images in messages.',
       NSCameraUsageDescription: 'ProConnect uses your camera to capture photos to share.',
       NSMicrophoneUsageDescription: 'ProConnect uses your microphone for voice messages.',
+      ITSAppUsesNonExemptEncryption: false,
     },
   },
   android: {
@@ -43,9 +44,9 @@ export default ({ config }) => ({
   extra: {
     // Set API_URL env var when running EAS builds for production.
     // e.g.: eas secret:create --scope project --name API_URL --value https://api.proconnect.app
-    apiUrl: process.env.API_URL || 'http://localhost:3000',
+    apiUrl: process.env.API_URL || 'https://proconnect-api-production-d9bb.up.railway.app',
     eas: {
-      projectId: '', // Run `eas init` to populate this field automatically
+      projectId: 'ee9644f6-0881-49a8-93f5-aa373a67bc92',
     },
   },
   plugins: [],

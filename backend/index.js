@@ -771,6 +771,6 @@ app.post('/messages/:userId', authenticate, (req, res) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 db.initDB().then(() => {
   app.listen(PORT, () =>
-    console.log(`ProConnect backend listening on http://localhost:${PORT}`)
+    console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );
 });

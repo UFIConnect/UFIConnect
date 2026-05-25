@@ -32,8 +32,8 @@ export default function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
-          <div className="auth-logo-icon">PC</div>
-          <span className="auth-logo-name">ProConnect</span>
+          <div className="auth-logo-icon">UF</div>
+          <span className="auth-logo-name">UFIConnect</span>
         </div>
         <p className="auth-tagline">Professional networking, no ads.</p>
 

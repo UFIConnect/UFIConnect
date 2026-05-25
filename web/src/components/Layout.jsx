@@ -27,8 +27,8 @@ export default function Layout({ children, unreadCount = 0 }) {
       <aside className="sidebar">
         {/* Logo */}
         <div className="sidebar-logo">
-          <div className="sidebar-logo-icon">PC</div>
-          <span className="sidebar-logo-text">ProConnect</span>
+          <div className="sidebar-logo-icon">UF</div>
+          <span className="sidebar-logo-text">UFIConnect</span>
         </div>
 
         {/* Nav links */}

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', title: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', title: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -16,11 +16,14 @@ export default function Register() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.name || !form.email || !form.password) {
-      setError('Name, email, and password are required.'); return;
+    if (!form.name || !form.email || !form.password || !form.confirmPassword) {
+      setError('All fields are required.'); return;
     }
     if (form.password.length < 6) {
       setError('Password must be at least 6 characters.'); return;
+    }
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match.'); return;
     }
     setLoading(true);
     try {
@@ -37,8 +40,8 @@ export default function Register() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
-          <div className="auth-logo-icon">PC</div>
-          <span className="auth-logo-name">ProConnect</span>
+          <div className="auth-logo-icon">UF</div>
+          <span className="auth-logo-name">UFIConnect</span>
         </div>
         <p className="auth-tagline">Professional networking, no ads.</p>
 
@@ -67,6 +70,11 @@ export default function Register() {
             <label className="form-label">Password</label>
             <input className="form-input" type="password" name="password"
               placeholder="At least 6 characters" value={form.password} onChange={handleChange} autoComplete="new-password" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Confirm password</label>
+            <input className="form-input" type="password" name="confirmPassword"
+              placeholder="Re-enter your password" value={form.confirmPassword} onChange={handleChange} autoComplete="new-password" />
           </div>
           <button className="btn btn-primary btn-full btn-lg" type="submit" disabled={loading}>
             {loading ? <span className="spinner" /> : 'Create account'}
