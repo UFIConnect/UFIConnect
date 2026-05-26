@@ -218,8 +218,10 @@ function fetchJSON(url) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent': 'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
-        'Accept': 'application/json',
+        'User-Agent':      'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'Accept':          'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control':   'no-cache',
       },
     };
     https.get(url, opts, (res) => {
@@ -369,12 +371,14 @@ function getCached(key)       { const c = postCache.get(key); return (c && Date.
 function setCached(key, val)  { postCache.set(key, { v: val, t: Date.now() }); }
 
 // ─── Reddit: search by keyword across all of Reddit ──────────────────────────
-async function fetchRedditByKeyword(keyword, limit = 5) {
+async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(keyword)}&sort=hot&limit=${limit}&raw_json=1&type=link`;
+    // Reddit public search caps at 100 results per request
+    // old.reddit.com is more permissive than www for unauthenticated JSON requests
+    const url = `https://old.reddit.com/search.json?q=${encodeURIComponent(keyword)}&sort=hot&limit=100&raw_json=1&type=link`;
     const data = await fetchJSON(url);
     const posts = (data?.data?.children || [])
       .filter(({ data: p }) => !p.stickied && !p.over_18 && p.title)
@@ -409,12 +413,13 @@ async function fetchRedditByKeyword(keyword, limit = 5) {
 }
 
 // ─── Hacker News: search by keyword via Algolia ───────────────────────────────
-async function fetchHNByKeyword(keyword, limit = 8) {
+async function fetchHNByKeyword(keyword) {
   const key = `hn_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=${limit}&numericFilters=points>3`;
+    // Algolia HN API caps at 1000 hits per page
+    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=1000&numericFilters=points>3`;
     const data = await fetchJSON(url);
     const posts = (data?.hits || [])
       .filter(h => h.title && (h.url || h.objectID))
@@ -443,12 +448,13 @@ async function fetchHNByKeyword(keyword, limit = 8) {
 }
 
 // ─── DEV.to: search by tag ───────────────────────────────────────────────────
-async function fetchDevToByTag(tag, limit = 5) {
+async function fetchDevToByTag(tag) {
   const key = `devto_tag_${tag}`;
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=${limit}&top=7`;
+    // DEV.to API caps at 1000 articles per page
+    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=1000&top=7`;
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(a => a.title && a.url)
@@ -481,39 +487,50 @@ async function fetchDevToByTag(tag, limit = 5) {
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
 function generateSocialSearchCards(interests = [], connectedPlatforms = new Set()) {
+  // All supported platforms + their public search URLs
   const SOCIAL_SEARCH = {
-    linkedin: {
-      label: 'LinkedIn', icon: '💼', color: '#0A66C2',
-      url: (q) => `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(q)}`,
-    },
-    twitter: {
-      label: 'X (Twitter)', icon: '𝕏', color: '#000000',
-      url: (q) => `https://twitter.com/search?q=${encodeURIComponent(q)}&f=live`,
-    },
-    facebook: {
-      label: 'Facebook', icon: '🔵', color: '#1877F2',
-      url: (q) => `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}`,
-    },
+    linkedin:  { label: 'LinkedIn',      icon: '💼', color: '#0A66C2',
+      url: (q) => `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(q)}` },
+    twitter:   { label: 'X (Twitter)',   icon: '𝕏', color: '#000000',
+      url: (q) => `https://twitter.com/search?q=${encodeURIComponent(q)}&f=live` },
+    facebook:  { label: 'Facebook',      icon: '🔵', color: '#1877F2',
+      url: (q) => `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}` },
+    instagram: { label: 'Instagram',     icon: '📸', color: '#E1306C',
+      url: (q) => `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(q)}` },
+    github:    { label: 'GitHub',        icon: '🐙', color: '#24292F',
+      url: (q) => `https://github.com/search?q=${encodeURIComponent(q)}&type=discussions` },
+    youtube:   { label: 'YouTube',       icon: '▶️', color: '#FF0000',
+      url: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
+    medium:    { label: 'Medium',        icon: '📝', color: '#1A8917',
+      url: (q) => `https://medium.com/search?q=${encodeURIComponent(q)}` },
+    reddit:    { label: 'Reddit',        icon: '🟠', color: '#FF4500',
+      url: (q) => `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=hot` },
+    discord:   { label: 'Discord',       icon: '💬', color: '#5865F2',
+      url: (_q) => `https://discord.com/channels/@me` },
+    indeed:    { label: 'Indeed Jobs',   icon: '🔍', color: '#2164F3',
+      url: (q) => `https://www.indeed.com/jobs?q=${encodeURIComponent(q)}` },
+    dribbble:  { label: 'Dribbble',      icon: '🏀', color: '#EA4C89',
+      url: (q) => `https://dribbble.com/search/${encodeURIComponent(q)}` },
+    behance:   { label: 'Behance',       icon: '🎨', color: '#053EFF',
+      url: (q) => `https://www.behance.net/search/projects?search=${encodeURIComponent(q)}` },
   };
 
   const cards = [];
-  const platforms = [...connectedPlatforms].filter(p => SOCIAL_SEARCH[p]);
-  if (platforms.length === 0) return [];
+  // Show all platforms — connected ones get a boost, unconnected still appear
+  const allPlatforms = Object.keys(SOCIAL_SEARCH);
 
-  // Up to 3 interests × connected platforms = max 9 cards; limit to 5
-  const topInterests = interests.slice(0, 3);
-  for (const platform of platforms) {
+  for (const platform of allPlatforms) {
     const meta = SOCIAL_SEARCH[platform];
-    for (const interest of topInterests) {
-      const kw = INTEREST_TO_KEYWORDS[interest] || interest;
+    const isConnected = connectedPlatforms.has(platform);
+    for (const interest of interests) {
       cards.push({
         id:           `social_${platform}_${interest.replace(/\s+/g,'_')}`,
         type:         'social_search',
         source:       platform,
         sourceLabel:  meta.label,
         sourceUrl:    meta.url(interest),
-        title:        `Browse "${interest}" posts on ${meta.label}`,
-        content:      `Tap to search ${meta.label} for the latest posts about ${interest}.`,
+        title:        `"${interest}" on ${meta.label}`,
+        content:      `See the latest public posts about ${interest} on ${meta.label} — curated for your interests.`,
         topic:        interest,
         isExternal:   true,
         isSocialCard: true,
@@ -521,12 +538,13 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
         group:        { name: meta.label, category: 'Social' },
         likes: [], likesCount: 0, commentsCount: 0,
         createdAt:    new Date().toISOString(),
-        relevance:    4, // always shown near top when connected
+        relevance:    isConnected ? 5 : 3,
         forYou:       true,
+        connectedBoost: isConnected,
       });
     }
   }
-  return cards.slice(0, 5);
+  return cards;
 }
 
 // ─── Master feed fetcher: all topics × all sources ───────────────────────────
@@ -539,21 +557,24 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   if (keywords.length === 0 && roleKeyword) keywords.push(roleKeyword);
   if (keywords.length === 0) keywords.push('technology startup programming');
 
-  // Pick up to 5 unique topics to avoid too many requests
-  const topics = [...new Set(keywords)].slice(0, 5);
+  // Use all unique topics — no cap, maximize coverage
+  const topics = [...new Set(keywords)];
 
-  // For each topic: fetch Reddit; DEV.to uses tag mapping
-  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw, 5));
-  const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))].slice(0, 3);
-  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag, 6));
+  // For each topic: fetch Reddit, HN, and DEV.to — each function owns its platform limits
+  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw));
+  const hnPromises     = topics.map(kw => fetchHNByKeyword(kw));
+  const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
+  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag));
 
-  const [redditResults, devtoResults] = await Promise.all([
+  const [redditResults, hnResults, devtoResults] = await Promise.all([
     Promise.all(redditPromises).catch(() => []),
+    Promise.all(hnPromises).catch(() => []),
     Promise.all(devtoPromises).catch(() => []),
   ]);
 
   return {
     reddit: redditResults.flat(),
+    hn:     hnResults.flat(),
     devto:  devtoResults.flat(),
   };
 }
@@ -822,6 +843,19 @@ function sanitizeUser(u) {
 }
 
 function fullProfile(user) {
+  // Build platform → [group] mapping for joined external groups
+  const connectedGroupsByPlatform = {};
+  (user.joinedGroups || []).forEach(gid => {
+    const g = groups.find(gr => gr.id === gid);
+    if (g?.platform && g.isExternal) {
+      if (!connectedGroupsByPlatform[g.platform]) connectedGroupsByPlatform[g.platform] = [];
+      connectedGroupsByPlatform[g.platform].push({
+        id: g.id, name: g.name, category: g.category,
+        externalUrl: g.externalUrl, members: g.members,
+      });
+    }
+  });
+
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
     bio: user.bio, skills: user.skills, organization: user.organization,
@@ -830,6 +864,7 @@ function fullProfile(user) {
     links: user.links || {},
     roleSettings: user.roleSettings || {},
     connectedPlatforms: Object.keys(user.socialAccounts || {}),
+    connectedGroupsByPlatform,
   };
 }
 
@@ -1269,16 +1304,36 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch posts from Reddit + DEV.to for user's topics
-  const { reddit: redditRaw, devto: devtoRaw } = await fetchAllTopicPosts(
+  // Fetch posts from Reddit, HN, and DEV.to for user's topics
+  const { reddit: redditRaw, hn: hnRaw, devto: devtoRaw } = await fetchAllTopicPosts(
     prefs.interests || [], prefs.role || ''
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], devto: [] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], devto: [] }; });
+
+  // Fetch live posts from all joined Reddit groups
+  const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
+  const joinedGroupPostsRaw = (await Promise.all(
+    joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
+  )).flat();
 
   // Generate social search cards for connected platforms
   const socialCards = generateSocialSearchCards(prefs.interests || [], connectedPlatforms);
 
   const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
+  const hnPosts     = (hnRaw || []).map(p => mapExternalPost(p, 'hackernews'));
   const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
+
+  // Joined-group posts: mark fromJoinedGroup + high relevance
+  const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
+    const matchedGroup = joinedRedditGroups.find(g => g.subreddit?.toLowerCase() === p.group?.name?.replace('r/','').toLowerCase());
+    return {
+      ...mapExternalPost(p, 'reddit'),
+      fromJoinedGroup: true,
+      relevance: 4,
+      group: matchedGroup
+        ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
+        : p.group,
+    };
+  });
 
   // Boost social cards based on connected platforms
   const socialMapped = socialCards.map(p => ({
@@ -1289,9 +1344,9 @@ app.get('/feed', authenticate, async (req, res) => {
     connectedBoost: connectedPlatforms.has(p.source),
   }));
 
-  // Deduplicate by id, merge all sources
+  // Deduplicate by id, merge all sources (joined-group posts first to preserve their metadata)
   const seen = new Set();
-  const all  = [...internal, ...redditPosts, ...devtoPosts, ...socialMapped].filter(p => {
+  const all  = [...internal, ...joinedGroupPosts, ...redditPosts, ...hnPosts, ...devtoPosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1306,10 +1361,12 @@ app.get('/feed', authenticate, async (req, res) => {
   res.json({
     posts: all,
     sources: {
-      reddit:   redditPosts.length,
-      devto:    devtoPosts.length,
-      social:   socialMapped.length,
-      internal: internal.length,
+      reddit:       redditPosts.length,
+      hackernews:   hnPosts.length,
+      devto:        devtoPosts.length,
+      social:       socialMapped.length,
+      joinedGroups: joinedGroupPosts.length,
+      internal:     internal.length,
     },
   });
 });

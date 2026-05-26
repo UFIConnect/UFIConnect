@@ -29,14 +29,21 @@ const CATEGORY_COLORS = {
 };
 
 const SOURCE_META = {
-  reddit:      { label: 'Reddit',       color: '#FF4500', icon: '🟠' },
-  hackernews:  { label: 'Hacker News',  color: '#FF6600', icon: '🔶' },
-  devto:       { label: 'DEV.to',       color: '#3B49DF', icon: '👩‍💻' },
-  linkedin:    { label: 'LinkedIn',     color: '#0A66C2', icon: '💼' },
-  twitter:     { label: 'X (Twitter)',  color: '#000000', icon: '𝕏' },
-  facebook:    { label: 'Facebook',     color: '#1877F2', icon: '🔵' },
-  indeed:      { label: 'Indeed',       color: '#2164F3', icon: '🔍' },
-  uficonnect:  { label: 'UFIConnect',   color: 'var(--primary)', icon: '🌐' },
+  reddit:      { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
+  hackernews:  { label: 'Hacker News',   color: '#FF6600', icon: '🔶' },
+  devto:       { label: 'DEV.to',        color: '#3B49DF', icon: '👩‍💻' },
+  linkedin:    { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
+  twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
+  facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
+  instagram:   { label: 'Instagram',     color: '#E1306C', icon: '📸' },
+  github:      { label: 'GitHub',        color: '#24292F', icon: '🐙' },
+  youtube:     { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
+  medium:      { label: 'Medium',        color: '#1A8917', icon: '📝' },
+  discord:     { label: 'Discord',       color: '#5865F2', icon: '💬' },
+  indeed:      { label: 'Indeed Jobs',   color: '#2164F3', icon: '🔍' },
+  dribbble:    { label: 'Dribbble',      color: '#EA4C89', icon: '🏀' },
+  behance:     { label: 'Behance',       color: '#053EFF', icon: '🎨' },
+  uficonnect:  { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
 
 function categoryStyle(cat) {
@@ -237,6 +244,7 @@ export default function Feed() {
   const hasPrefs      = !!(profile?.preferences?.interests?.length || role);
 
   const redditCount   = posts.filter(p => p.source === 'reddit').length;
+  const hnCount       = posts.filter(p => p.source === 'hackernews').length;
   const devtoCount    = posts.filter(p => p.source === 'devto').length;
   const socialCount   = posts.filter(p => p.isSocialCard).length;
 
@@ -245,6 +253,7 @@ export default function Feed() {
     : filter === 'all'   ? posts
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
     : filter === 'reddit'? posts.filter(p => p.source === 'reddit')
+    : filter === 'hn'    ? posts.filter(p => p.source === 'hackernews')
     : filter === 'devto' ? posts.filter(p => p.source === 'devto')
     : filter === 'social'? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
@@ -254,7 +263,9 @@ export default function Feed() {
 
   const sourcesSummary = [
     redditCount > 0 && `${redditCount} Reddit`,
+    hnCount     > 0 && `${hnCount} HN`,
     devtoCount  > 0 && `${devtoCount} DEV.to`,
+    socialCount > 0 && `${socialCount} social`,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -266,7 +277,7 @@ export default function Feed() {
         <p className="page-subtitle">
           {hasPrefs
             ? `Personalised for ${role ? `${role}s` : 'you'} · ${sourcesSummary || 'live posts from Reddit, Hacker News & DEV.to'}.`
-            : 'Live public posts from Reddit, Hacker News, DEV.to and the community.'}
+            : 'Live posts from Reddit, Hacker News, DEV.to + social search across LinkedIn, GitHub, YouTube & more.'}
         </p>
       </div>
 
@@ -276,6 +287,9 @@ export default function Feed() {
         <button className={`filter-btn${filter === 'all'    ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
         {redditCount > 0 && (
           <button className={`filter-btn${filter === 'reddit' ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({redditCount})</button>
+        )}
+        {hnCount > 0 && (
+          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
         )}
         {devtoCount > 0 && (
           <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV.to ({devtoCount})</button>
