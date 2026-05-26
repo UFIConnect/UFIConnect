@@ -245,27 +245,33 @@ export default function Feed() {
 
   const redditCount   = posts.filter(p => p.source === 'reddit').length;
   const hnCount       = posts.filter(p => p.source === 'hackernews').length;
+  const githubCount   = posts.filter(p => p.source === 'github').length;
   const devtoCount    = posts.filter(p => p.source === 'devto').length;
+  const mediumCount   = posts.filter(p => p.source === 'medium').length;
   const socialCount   = posts.filter(p => p.isSocialCard).length;
 
   const filtered =
     filter === 'foryou'  ? posts.filter(p => p.forYou || p.fromJoinedGroup)
     : filter === 'all'   ? posts
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
-    : filter === 'reddit'? posts.filter(p => p.source === 'reddit')
-    : filter === 'hn'    ? posts.filter(p => p.source === 'hackernews')
-    : filter === 'devto' ? posts.filter(p => p.source === 'devto')
-    : filter === 'social'? posts.filter(p => p.isSocialCard)
+    : filter === 'reddit' ? posts.filter(p => p.source === 'reddit')
+    : filter === 'hn'     ? posts.filter(p => p.source === 'hackernews')
+    : filter === 'github' ? posts.filter(p => p.source === 'github')
+    : filter === 'devto'  ? posts.filter(p => p.source === 'devto')
+    : filter === 'medium' ? posts.filter(p => p.source === 'medium')
+    : filter === 'social' ? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
 
   // If forYou returns nothing, fall back to showing all — never a blank feed
   const displayed = (filter === 'foryou' && filtered.length === 0) ? posts : filtered;
 
   const sourcesSummary = [
-    redditCount > 0 && `${redditCount} Reddit`,
-    hnCount     > 0 && `${hnCount} HN`,
-    devtoCount  > 0 && `${devtoCount} DEV.to`,
-    socialCount > 0 && `${socialCount} social`,
+    redditCount  > 0 && `${redditCount} Reddit`,
+    hnCount      > 0 && `${hnCount} HN`,
+    githubCount  > 0 && `${githubCount} GitHub`,
+    devtoCount   > 0 && `${devtoCount} DEV.to`,
+    mediumCount  > 0 && `${mediumCount} Medium`,
+    socialCount  > 0 && `${socialCount} social`,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -291,8 +297,14 @@ export default function Feed() {
         {hnCount > 0 && (
           <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
         )}
+        {githubCount > 0 && (
+          <button className={`filter-btn${filter === 'github' ? ' active' : ''}`} onClick={() => setFilter('github')}>🐙 GitHub ({githubCount})</button>
+        )}
         {devtoCount > 0 && (
           <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV.to ({devtoCount})</button>
+        )}
+        {mediumCount > 0 && (
+          <button className={`filter-btn${filter === 'medium' ? ' active' : ''}`} onClick={() => setFilter('medium')}>📝 Medium ({mediumCount})</button>
         )}
         {socialCount > 0 && (
           <button className={`filter-btn${filter === 'social' ? ' active' : ''}`} onClick={() => setFilter('social')}>🔗 Social ({socialCount})</button>

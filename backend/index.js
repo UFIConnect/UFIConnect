@@ -348,6 +348,25 @@ const INTEREST_TO_DEVTO_TAG = {
   'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
 };
 
+// Medium tag mapping — Medium uses hyphenated lowercase tags
+const INTEREST_TO_MEDIUM_TAG = {
+  'AI & Machine Learning': 'machine-learning', 'Generative AI': 'artificial-intelligence',
+  'LLMs & Chatbots': 'llm', 'Data Science': 'data-science',
+  'Computer Vision': 'computer-vision', 'Developer Tools': 'programming',
+  'Open Source': 'open-source', 'Cybersecurity': 'cybersecurity',
+  'Cloud & DevOps': 'devops', 'Frontend Dev': 'javascript',
+  'Backend Dev': 'backend', 'Mobile Dev': 'mobile-development',
+  'Web3 / Crypto': 'blockchain', 'Game Dev': 'game-development',
+  'SaaS': 'startup', 'Venture Capital': 'startup',
+  'UI/UX Design': 'ux-design', 'Design Systems': 'design',
+  'FinTech': 'fintech', 'Health Tech': 'health',
+  'Climate Tech': 'sustainability', 'EdTech': 'education',
+  'Career Growth': 'career', 'Productivity': 'productivity',
+  'Side Projects': 'side-project', 'Freelancing': 'freelancing',
+  'Leadership': 'leadership', 'Remote Work': 'remote-work',
+  'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
+};
+
 const ROLE_TO_KEYWORDS = {
   'Engineer / Developer':   'software engineering programming',
   'Designer / Creative':    'UX design creative',
@@ -483,6 +502,123 @@ async function fetchDevToByTag(tag) {
   }
 }
 
+// ─── GitHub: search repositories by keyword ──────────────────────────────────
+async function fetchGitHubByKeyword(keyword) {
+  const key = `github_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    // GitHub public search API — no key needed, 10 req/min unauthenticated
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(keyword)}&sort=stars&order=desc&per_page=30`;
+    const data = await fetchJSON(url);
+    const posts = (data?.items || [])
+      .filter(r => r.description)
+      .map(r => ({
+        id:          `github_${r.id}`,
+        authorId:    `github_${r.owner?.login}`,
+        groupId:     'ext_github',
+        content:     r.description,
+        title:       r.full_name,
+        source:      'github',
+        sourceLabel: `⭐ ${r.stargazers_count?.toLocaleString()} · ${r.language || 'GitHub'}`,
+        sourceUrl:   r.html_url,
+        topic:       keyword,
+        author:      { id: `github_${r.owner?.login}`, name: r.owner?.login, title: r.language || 'GitHub', organization: 'GitHub' },
+        likes: [], likesCount: r.stargazers_count || 0, commentsCount: r.open_issues_count || 0,
+        createdAt:   r.pushed_at || r.updated_at,
+        isExternal:  true,
+        group:       { id: 'ext_github', name: 'GitHub', category: 'Engineering', externalUrl: 'https://github.com' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`GitHub search "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── Medium: fetch articles by tag via RSS feed ───────────────────────────────
+function decodeHTMLEntities(str) {
+  return str
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ');
+}
+
+function parseMediumRSS(xml) {
+  const items = [];
+  for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
+    const s     = match[1];
+    const get   = (re) => (re.exec(s) || [])[1]?.trim() || '';
+    const title   = decodeHTMLEntities(get(/<title><!\[CDATA\[(.*?)\]\]><\/title>/));
+    const link    = get(/<link>(https?:\/\/[^\s<]+)<\/link>/);
+    const creator = decodeHTMLEntities(get(/<dc:creator><!\[CDATA\[(.*?)\]\]><\/dc:creator>/));
+    const pubDate = get(/<pubDate>(.*?)<\/pubDate>/);
+    const guid    = get(/<guid[^>]*>(.*?)<\/guid>/);
+    const snippet = decodeHTMLEntities(
+      get(/<p class="medium-feed-snippet">(.*?)<\/p>/).replace(/<[^>]+>/g, '')
+    );
+    if (title && link) items.push({ title, link, creator, pubDate, guid, snippet });
+  }
+  return items;
+}
+
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      headers: {
+        'User-Agent':      'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'Accept':          'application/rss+xml, application/xml, text/xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    };
+    https.get(url, opts, (res) => {
+      if ([301,302,307,308].includes(res.statusCode)) {
+        return fetchText(res.headers.location).then(resolve).catch(reject);
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+      }
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve(data));
+    }).on('error', reject).setTimeout(8000, function() { this.destroy(new Error('timeout')); });
+  });
+}
+
+async function fetchMediumByTag(tag) {
+  const key = `medium_tag_${tag}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml   = await fetchText(`https://medium.com/feed/tag/${encodeURIComponent(tag)}`);
+    const items = parseMediumRSS(xml);
+    const posts = items.map(a => ({
+      id:          `medium_${a.guid.split('/p/')[1] || Buffer.from(a.link).toString('base64').slice(0,16)}`,
+      authorId:    `medium_${a.creator}`,
+      groupId:     'ext_medium',
+      content:     a.snippet || a.title,
+      title:       a.title,
+      source:      'medium',
+      sourceLabel: 'Medium',
+      sourceUrl:   a.link,
+      topic:       tag,
+      author:      { id: `medium_${a.creator}`, name: a.creator, title: 'Medium', organization: 'Medium' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   a.pubDate ? new Date(a.pubDate).toISOString() : new Date().toISOString(),
+      isExternal:  true,
+      group:       { id: 'ext_medium', name: 'Medium', category: 'Engineering', externalUrl: 'https://medium.com' },
+    }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Medium tag "${tag}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
 // ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
@@ -497,14 +633,8 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
       url: (q) => `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}` },
     instagram: { label: 'Instagram',     icon: '📸', color: '#E1306C',
       url: (q) => `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(q)}` },
-    github:    { label: 'GitHub',        icon: '🐙', color: '#24292F',
-      url: (q) => `https://github.com/search?q=${encodeURIComponent(q)}&type=discussions` },
     youtube:   { label: 'YouTube',       icon: '▶️', color: '#FF0000',
       url: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
-    medium:    { label: 'Medium',        icon: '📝', color: '#1A8917',
-      url: (q) => `https://medium.com/search?q=${encodeURIComponent(q)}` },
-    reddit:    { label: 'Reddit',        icon: '🟠', color: '#FF4500',
-      url: (q) => `https://www.reddit.com/search/?q=${encodeURIComponent(q)}&sort=hot` },
     discord:   { label: 'Discord',       icon: '💬', color: '#5865F2',
       url: (_q) => `https://discord.com/channels/@me` },
     indeed:    { label: 'Indeed Jobs',   icon: '🔍', color: '#2164F3',
@@ -560,22 +690,29 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   // Use all unique topics — no cap, maximize coverage
   const topics = [...new Set(keywords)];
 
-  // For each topic: fetch Reddit, HN, and DEV.to — each function owns its platform limits
+  // For each topic: fetch Reddit, HN, DEV.to, GitHub, Medium — each owns its limits
   const redditPromises = topics.map(kw => fetchRedditByKeyword(kw));
   const hnPromises     = topics.map(kw => fetchHNByKeyword(kw));
+  const githubPromises = topics.map(kw => fetchGitHubByKeyword(kw));
   const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
+  const mediumTags     = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
   const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag));
+  const mediumPromises = mediumTags.map(tag => fetchMediumByTag(tag));
 
-  const [redditResults, hnResults, devtoResults] = await Promise.all([
+  const [redditResults, hnResults, githubResults, devtoResults, mediumResults] = await Promise.all([
     Promise.all(redditPromises).catch(() => []),
     Promise.all(hnPromises).catch(() => []),
+    Promise.all(githubPromises).catch(() => []),
     Promise.all(devtoPromises).catch(() => []),
+    Promise.all(mediumPromises).catch(() => []),
   ]);
 
   return {
     reddit: redditResults.flat(),
     hn:     hnResults.flat(),
+    github: githubResults.flat(),
     devto:  devtoResults.flat(),
+    medium: mediumResults.flat(),
   };
 }
 
@@ -1304,10 +1441,10 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch posts from Reddit, HN, and DEV.to for user's topics
-  const { reddit: redditRaw, hn: hnRaw, devto: devtoRaw } = await fetchAllTopicPosts(
+  // Fetch posts from all live sources for user's topics
+  const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw, medium: mediumRaw } = await fetchAllTopicPosts(
     prefs.interests || [], prefs.role || ''
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], devto: [] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], github: [], devto: [], medium: [] }; });
 
   // Fetch live posts from all joined Reddit groups
   const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
@@ -1319,8 +1456,10 @@ app.get('/feed', authenticate, async (req, res) => {
   const socialCards = generateSocialSearchCards(prefs.interests || [], connectedPlatforms);
 
   const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
-  const hnPosts     = (hnRaw || []).map(p => mapExternalPost(p, 'hackernews'));
+  const hnPosts     = (hnRaw    || []).map(p => mapExternalPost(p, 'hackernews'));
+  const githubPosts = (githubRaw|| []).map(p => mapExternalPost(p, 'github'));
   const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
+  const mediumPosts = (mediumRaw|| []).map(p => mapExternalPost(p, 'medium'));
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
@@ -1346,7 +1485,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Deduplicate by id, merge all sources (joined-group posts first to preserve their metadata)
   const seen = new Set();
-  const all  = [...internal, ...joinedGroupPosts, ...redditPosts, ...hnPosts, ...devtoPosts, ...socialMapped].filter(p => {
+  const all  = [...internal, ...joinedGroupPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1363,7 +1502,9 @@ app.get('/feed', authenticate, async (req, res) => {
     sources: {
       reddit:       redditPosts.length,
       hackernews:   hnPosts.length,
+      github:       githubPosts.length,
       devto:        devtoPosts.length,
+      medium:       mediumPosts.length,
       social:       socialMapped.length,
       joinedGroups: joinedGroupPosts.length,
       internal:     internal.length,
