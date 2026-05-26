@@ -5,8 +5,8 @@ const NAV = [
   { to: '/',             icon: '📰', label: 'Feed'         },
   { to: '/groups',       icon: '🔍', label: 'Discover'     },
   { to: '/opportunities',icon: '💼', label: 'Opportunities' },
-  { to: '/messages',     icon: '✉️', label: 'Messages'     },
   { to: '/profile',      icon: '👤', label: 'Profile'      },
+  { to: '/settings',     icon: '⚙️', label: 'Settings'     },
 ];
 
 function initials(name = '') {
@@ -57,7 +57,7 @@ export default function Layout({ children, unreadCount = 0 }) {
             </div>
             <div className="sidebar-user-info">
               <div className="sidebar-user-name">{profile.name}</div>
-              <div className="sidebar-user-title">{profile.title || 'Member'}</div>
+              <div className="sidebar-user-title">{profile.preferences?.role || profile.title || 'Member'}</div>
             </div>
             <button className="sidebar-logout" onClick={handleLogout} title="Log out">⎋</button>
           </div>

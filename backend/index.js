@@ -32,14 +32,69 @@ const D = 86400000;
 
 // ─── Role → category mapping ─────────────────────────────────────────────────
 const ROLE_CATEGORIES = {
-  'Engineer / Developer':     ['Engineering', 'AI & ML'],
-  'Designer / Creative':      ['Design', 'Marketing'],
-  'Product Manager':          ['AI & ML', 'Startups', 'Engineering'],
-  'Marketer / Growth':        ['Marketing', 'Startups'],
-  'Founder / Entrepreneur':   ['Startups', 'Finance', 'Marketing'],
-  'Investor':                 ['Finance', 'Startups'],
-  'Data / Analytics':         ['AI & ML', 'Engineering'],
-  'Student / Learner':        ['Education', 'Engineering'],
+  'Engineer / Developer':       ['Engineering', 'AI & ML'],
+  'Designer / Creative':        ['Design', 'Marketing'],
+  'Product Manager':            ['AI & ML', 'Startups', 'Engineering'],
+  'Marketer / Growth':          ['Marketing', 'Startups'],
+  'Founder / Entrepreneur':     ['Startups', 'Finance', 'Marketing'],
+  'Investor':                   ['Finance', 'Startups'],
+  'Data / Analytics':           ['AI & ML', 'Engineering'],
+  'Student / Learner':          ['Education', 'Engineering'],
+  'Sales / Business Dev':       ['Startups', 'Marketing', 'Finance'],
+  'Operations / Finance':       ['Finance', 'Startups'],
+  'Content Creator':            ['Marketing', 'Design', 'Education'],
+  'Community Manager':          ['Marketing', 'Education'],
+  'Researcher / Academic':      ['AI & ML', 'Education', 'Engineering'],
+  'HR / People Ops':            ['Education', 'Startups'],
+};
+
+// ─── Interest → category mapping ─────────────────────────────────────────────
+// Maps fine-grained onboarding interests to group categories
+const INTEREST_TO_CATEGORY = {
+  // AI & ML
+  'Machine Learning': 'AI & ML', 'Deep Learning': 'AI & ML', 'LLMs / GPT': 'AI & ML',
+  'Computer Vision': 'AI & ML', 'NLP / Text AI': 'AI & ML', 'AI Ethics': 'AI & ML',
+  'Data Science': 'AI & ML', 'MLOps': 'AI & ML', 'AI Research': 'AI & ML',
+  'Robotics': 'Engineering', 'Autonomous Vehicles': 'Engineering',
+  // Engineering
+  'Web Development': 'Engineering', 'Mobile Development': 'Engineering',
+  'DevOps / Cloud': 'Engineering', 'Cybersecurity': 'Engineering',
+  'Blockchain / Web3': 'Engineering', 'Open Source': 'Engineering',
+  'System Design': 'Engineering', 'API Design': 'Engineering',
+  'Frontend Dev': 'Engineering', 'Backend Dev': 'Engineering',
+  'Game Development': 'Engineering',
+  // Business / Startups
+  'Startups': 'Startups', 'SaaS': 'Startups', 'Bootstrapping': 'Startups',
+  'VC / Fundraising': 'Finance', 'Product-Market Fit': 'Startups',
+  'Growth Hacking': 'Marketing', 'B2B Sales': 'Startups',
+  'No-Code / Low-Code': 'Engineering',
+  // Design
+  'UX / UI Design': 'Design', 'Product Design': 'Design', 'Branding': 'Design',
+  'Motion Design': 'Design', 'Design Systems': 'Design', 'Typography': 'Design',
+  'Visual Design': 'Design', 'Illustration': 'Design', 'Figma / Sketch': 'Design',
+  // Finance
+  'Personal Finance': 'Finance', 'Investing': 'Finance', 'Crypto / DeFi': 'Finance',
+  'Fintech': 'Finance', 'Real Estate': 'Finance', 'Stock Market': 'Finance',
+  'Budgeting': 'Finance', 'Tax Strategy': 'Finance',
+  // Marketing
+  'Content Marketing': 'Marketing', 'SEO / SEM': 'Marketing', 'Social Media': 'Marketing',
+  'Email Marketing': 'Marketing', 'Paid Ads': 'Marketing', 'Influencer Marketing': 'Marketing',
+  'Brand Strategy': 'Marketing', 'Copywriting': 'Marketing', 'Analytics': 'AI & ML',
+  // Remote Work
+  'Remote Work': 'Remote Work', 'Freelancing': 'Remote Work', 'Digital Nomad': 'Remote Work',
+  'Async Work': 'Remote Work', 'Work-Life Balance': 'Remote Work',
+  // Education
+  'Online Learning': 'Education', 'Career Switching': 'Education', 'Mentorship': 'Education',
+  'Bootcamps': 'Education', 'Academic Research': 'Education', 'Certifications': 'Education',
+  // People / Culture
+  'Diversity & Inclusion': 'Education', 'Leadership': 'Startups', 'Team Building': 'Startups',
+  'Mental Health': 'Education', 'Productivity': 'Education',
+  // Content / Media
+  'Podcasting': 'Marketing', 'YouTube / Video': 'Marketing', 'Newsletter': 'Marketing',
+  'Technical Writing': 'Engineering', 'Blogging': 'Marketing',
+  // E-commerce
+  'E-commerce': 'Startups', 'Dropshipping': 'Startups', 'Amazon FBA': 'Startups',
+  'Shopify': 'Startups', 'D2C Brands': 'Startups',
 };
 
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
@@ -267,6 +322,19 @@ const groups = [
   { id: 'g24', category: 'Remote Work', name: 'Digital Nomads',              description: 'Working from anywhere — visas, gear, co-working, and community.',         members: 6120, relatedGroups: ['g23','g9','g26'] },
   { id: 'g25', category: 'Education',   name: 'EdTech Innovators',           description: 'Learning experiences, instructional design, and ed-tech product.',        members: 1050, relatedGroups: ['g26','g1','g8','g18'] },
   { id: 'g26', category: 'Education',   name: 'Career Changers',             description: 'From any background into tech — stories, resources, and support.',        members: 3780, relatedGroups: ['g25','g5','g13','g24'] },
+  // ── Social platform communities ──────────────────────────────────────────────
+  { id: 'gs1', category: 'Social',     name: 'LinkedIn Professionals',       description: 'Connect with LinkedIn members across industries. Share profiles, posts, and network.',  members: 8420, relatedGroups: ['g11','g9','g17'], platform: 'linkedin',  platformUrl: 'https://www.linkedin.com/login' },
+  { id: 'gs2', category: 'Social',     name: 'GitHub Open Source',           description: 'Developers sharing repos, OSS projects, and code reviews from GitHub.',               members: 5910, relatedGroups: ['g8','g5','g6'],  platform: 'github',    platformUrl: 'https://github.com/login' },
+  { id: 'gs3', category: 'Social',     name: 'X / Twitter Tech',             description: 'Hot takes, threads, and discussions from the tech Twitter/X community.',              members: 12300,relatedGroups: ['g1','g3','g17'], platform: 'twitter',   platformUrl: 'https://twitter.com/i/flow/login' },
+  { id: 'gs4', category: 'Social',     name: 'Instagram Creatives',          description: 'Designers, photographers, and creative professionals sharing their work.',            members: 6780, relatedGroups: ['g13','g15','g16'],platform: 'instagram', platformUrl: 'https://www.instagram.com/accounts/login/' },
+  { id: 'gs5', category: 'Social',     name: 'Discord Communities',          description: 'Engineers, gamers, and community builders from Discord servers.',                     members: 9140, relatedGroups: ['g5','g7','g8'],  platform: 'discord',   platformUrl: 'https://discord.com/login' },
+  { id: 'gs6', category: 'Social',     name: 'YouTube Creators & Viewers',   description: 'Content creators and professionals sharing insights via video.',                     members: 7230, relatedGroups: ['g18','g25','g19'],platform: 'youtube',   platformUrl: 'https://accounts.google.com/ServiceLogin?service=youtube' },
+  { id: 'gs7', category: 'Social',     name: 'Reddit Professional Network',  description: 'Discussions and AMAs from professional subreddits and communities.',               members: 15600,relatedGroups: ['g5','g11','g24'], platform: 'reddit',    platformUrl: 'https://www.reddit.com/login' },
+  { id: 'gs8', category: 'Social',     name: 'Medium Writers & Readers',     description: 'Writers, thinkers, and readers sharing long-form content on Medium.',               members: 4320, relatedGroups: ['g18','g25','g19'],platform: 'medium',    platformUrl: 'https://medium.com/m/signin' },
+  { id: 'gs9', category: 'Social',     name: 'Dribbble Design Community',    description: 'Top designers sharing shots, portfolios, and feedback on Dribbble.',                members: 3810, relatedGroups: ['g13','g14','g15'],platform: 'dribbble',  platformUrl: 'https://dribbble.com/session/new' },
+  { id: 'gs10',category: 'Social',     name: 'Behance Portfolio Network',    description: 'Creative professionals showcasing projects and portfolios on Behance.',              members: 2940, relatedGroups: ['g13','g15','g16'],platform: 'behance',   platformUrl: 'https://www.behance.net/signin' },
+  { id: 'gs11',category: 'Social',     name: 'Indeed Job Seekers',           description: 'Job seekers and recruiters sharing opportunities and career advice.',               members: 11200,relatedGroups: ['g26','g23','g11'],platform: 'indeed',    platformUrl: 'https://secure.indeed.com/account/login' },
+  { id: 'gs12',category: 'Social',     name: 'Facebook Professional Groups', description: 'Industry groups, mastermind circles, and networking from Facebook.',               members: 18700,relatedGroups: ['g17','g9','g11'], platform: 'facebook',  platformUrl: 'https://www.facebook.com/login' },
 ];
 
 // ─── Posts ────────────────────────────────────────────────────────────────────
@@ -347,6 +415,7 @@ function fullProfile(user) {
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
     preferences: user.preferences,
     links: user.links || {},
+    roleSettings: user.roleSettings || {},
     connectedPlatforms: Object.keys(user.socialAccounts || {}),
   };
 }
@@ -370,6 +439,7 @@ function dbRowToMemUser(row) {
     onboardingComplete: row.onboarding_complete || false,
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
+    roleSettings: row.role_settings || {},
     socialAccounts: {},
   };
 }
@@ -418,6 +488,7 @@ async function migrateDB() {
   try {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     console.log('✅ DB migration applied');
   } catch (err) { console.warn('DB migration:', err.message); }
 }
@@ -532,17 +603,19 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization, links } = req.body;
+  const { name, title, bio, skills, organization, links, roleSettings } = req.body;
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
   if (skills) user.skills = skills;
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
+  if (roleSettings !== undefined) user.roleSettings = roleSettings;
   if (db.isConnected() && isDBId(user.id)) {
     db.query(
-      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6 WHERE id=$7`,
-      [user.name, user.title, user.bio, user.skills, user.organization, JSON.stringify(user.links || {}), user.id]
+      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7 WHERE id=$8`,
+      [user.name, user.title, user.bio, user.skills, user.organization,
+       JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.id]
     ).catch(e => console.error('PATCH profile DB:', e.message));
   }
   res.json(fullProfile(user));
@@ -642,28 +715,50 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
   res.json({ joinedGroups: user.joinedGroups });
 });
 
-// ─── Feed ─────────────────────────────────────────────────────────────────────
+// ─── Feed (global — all posts, personalized by interests & role) ─────────────
 app.get('/feed', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  if (!user) return res.status(404).json({ message: 'Not found.' });
+  const joined = new Set(user?.joinedGroups || []);
+  const prefs  = user?.preferences || {};
 
-  const joined = new Set(user.joinedGroups);
-  const feedPosts = posts
-    .filter((p) => joined.has(p.groupId))
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .map((p) => {
-      const author = sampleUsers.find((u) => u.id === p.authorId) || users.find((u) => u.id === p.authorId);
-      const group = groups.find((g) => g.id === p.groupId);
-      return {
-        ...p,
-        author: author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
-        group: group ? { id: group.id, name: group.name, category: group.category } : null,
-        likedByMe: p.likes.includes(req.user.id),
-        likesCount: p.likes.length,
-      };
-    });
+  // Build the set of categories relevant to this user
+  const relevantCategories = new Set([
+    // From their selected interests
+    ...(prefs.interests || []).map(i => INTEREST_TO_CATEGORY[i]).filter(Boolean),
+    // From their role
+    ...(ROLE_CATEGORIES[prefs.role] || []),
+  ]);
 
-  res.json({ posts: feedPosts });
+  const scored = posts.map((p) => {
+    const author = sampleUsers.find((u) => u.id === p.authorId) || users.find((u) => u.id === p.authorId);
+    const group  = groups.find((g) => g.id === p.groupId);
+    const cat    = group?.category;
+
+    // Relevance score: 3 = joined group, 2 = matches interest/role category, 1 = everything else
+    let relevance = 1;
+    if (joined.has(p.groupId))          relevance = 3;
+    else if (cat && relevantCategories.has(cat)) relevance = 2;
+
+    return {
+      ...p,
+      author:        author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
+      group:         group  ? { id: group.id, name: group.name, category: cat } : null,
+      likedByMe:     p.likes.includes(req.user.id),
+      likesCount:    p.likes.length,
+      fromJoinedGroup: joined.has(p.groupId),
+      forYou:        relevance >= 2,   // used by client "For You" filter
+      relevance,
+    };
+  });
+
+  // Sort: higher relevance first, then recency
+  scored.sort((a, b) =>
+    b.relevance !== a.relevance
+      ? b.relevance - a.relevance
+      : new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  res.json({ posts: scored });
 });
 
 app.post('/feed/:postId/like', authenticate, (req, res) => {

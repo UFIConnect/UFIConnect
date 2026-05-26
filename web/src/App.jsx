@@ -12,6 +12,7 @@ import Messages         from './pages/Messages';
 import Conversation     from './pages/Conversation';
 import Profile          from './pages/Profile';
 import ConnectedAccounts from './pages/ConnectedAccounts';
+import Settings          from './pages/Settings';
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -62,6 +63,9 @@ export default function App() {
       }/>
       <Route path="/profile/connected-accounts" element={
         <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/settings" element={
+        <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
       }/>
 
       {/* Fallback */}
