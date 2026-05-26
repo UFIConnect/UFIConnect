@@ -31,7 +31,6 @@ export default function Groups() {
   const [joined,     setJoined]     = useState(new Set());
   const [categories, setCategories] = useState([]);
   const [filter,     setFilter]     = useState('all');
-  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'community' | 'external'
   const [loading,    setLoading]    = useState(true);
 
   useEffect(() => {
@@ -62,34 +61,15 @@ export default function Groups() {
     } catch (err) { console.error(err); }
   }
 
-  let displayed = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
-  if (typeFilter === 'community') displayed = displayed.filter((g) => !g.isExternal);
-  if (typeFilter === 'external')  displayed = displayed.filter((g) => g.isExternal);
+  const displayed = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
 
   return (
     <Layout>
       <div className="page-header">
         <h1 className="page-title">Discover Groups</h1>
         <p className="page-subtitle">
-          UFIConnect communities + real public groups from Reddit, Discord, LinkedIn, and more.
+          Real public communities from Reddit, Discord, LinkedIn, Hacker News, and more — follow any to personalise your feed.
         </p>
-      </div>
-
-      {/* Type tabs */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        {[
-          { key: 'all',       label: '🌐 All' },
-          { key: 'community', label: '🏠 UFIConnect' },
-          { key: 'external',  label: '🔗 Public Platforms' },
-        ].map(({ key, label }) => (
-          <button
-            key={key}
-            className={`filter-btn${typeFilter === key ? ' active' : ''}`}
-            onClick={() => setTypeFilter(key)}
-          >
-            {label}
-          </button>
-        ))}
       </div>
 
       {/* Category filter */}
@@ -115,10 +95,7 @@ export default function Groups() {
       ) : (
         <>
           <p style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 12 }}>
-            {displayed.length} group{displayed.length !== 1 ? 's' : ''}
-            {displayed.filter(g => g.isExternal).length > 0
-              ? ` · ${displayed.filter(g => g.isExternal).length} from public platforms`
-              : ''}
+            {displayed.length} public communit{displayed.length !== 1 ? 'ies' : 'y'}
           </p>
           <div className="groups-grid">
             {displayed.map((group) => {

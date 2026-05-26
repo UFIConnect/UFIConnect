@@ -99,59 +99,97 @@ const INTEREST_TO_CATEGORY = {
 };
 
 // ─── Interest → subreddit mapping ────────────────────────────────────────────
+// Keys match EXACTLY the INTERESTS[] array in Onboarding.jsx
 const INTEREST_TO_SUBREDDIT = {
-  'Machine Learning':   ['MachineLearning','deeplearning'],
-  'Deep Learning':      ['deeplearning','MachineLearning'],
-  'LLMs / GPT':         ['LocalLLaMA','singularity'],
-  'NLP / Text AI':      ['LanguageModelRoundup','MachineLearning'],
-  'Computer Vision':    ['computervision','MachineLearning'],
-  'AI Ethics':          ['AIethics','artificial'],
-  'AI Research':        ['MachineLearning','artificial'],
-  'Data Science':       ['datascience','datasets'],
-  'MLOps':              ['mlops','devops'],
-  'Web Development':    ['webdev','programming'],
-  'Mobile Development': ['androiddev','iOSProgramming'],
-  'DevOps / Cloud':     ['devops','aws'],
-  'Cybersecurity':      ['netsec','cybersecurity'],
-  'Blockchain / Web3':  ['ethereum','defi'],
-  'Open Source':        ['opensource','programming'],
-  'System Design':      ['ExperiencedDevs','programming'],
-  'Frontend Dev':       ['webdev','javascript'],
-  'Backend Dev':        ['node','golang'],
-  'Game Development':   ['gamedev','gamedesign'],
-  'Startups':           ['startups','entrepreneur'],
-  'SaaS':               ['SaaS','startups'],
-  'Bootstrapping':      ['entrepreneur','smallbusiness'],
-  'VC / Fundraising':   ['venturecapital','startups'],
-  'Growth Hacking':     ['GrowthHacking','startups'],
-  'B2B Sales':          ['sales','startups'],
-  'UX / UI Design':     ['UXDesign','userexperience'],
-  'Product Design':     ['ProductDesign','UXDesign'],
-  'Branding':           ['graphic_design','branding'],
-  'Design Systems':     ['UXDesign','webdev'],
-  'Visual Design':      ['graphic_design','design'],
-  'Illustration':       ['learnart','illustration'],
-  'Personal Finance':   ['personalfinance','FinancialPlanning'],
-  'Investing':          ['investing','stocks'],
-  'Crypto / DeFi':      ['CryptoCurrency','defi'],
-  'Fintech':            ['fintech','CryptoCurrency'],
-  'Stock Market':       ['stocks','investing'],
-  'Content Marketing':  ['marketing','content_marketing'],
-  'SEO / SEM':          ['SEO','bigseo'],
-  'Social Media':       ['socialmedia','marketing'],
-  'Email Marketing':    ['Emailmarketing','marketing'],
-  'Copywriting':        ['copywriting','marketing'],
-  'Remote Work':        ['remotework','digitalnomad'],
-  'Freelancing':        ['freelance','digitalnomad'],
-  'Digital Nomad':      ['digitalnomad','remotework'],
-  'Online Learning':    ['learnprogramming','edtech'],
-  'Career Switching':   ['cscareerquestions','learnprogramming'],
-  'Mentorship':         ['cscareerquestions','ExperiencedDevs'],
-  'Podcasting':         ['podcasting','content_marketing'],
-  'Technical Writing':  ['technicalwriting','writing'],
-  'Blogging':           ['blogging','writing'],
-  'E-commerce':         ['ecommerce','shopify'],
-  'Shopify':            ['shopify','ecommerce'],
+  // AI & Tech
+  'AI & Machine Learning':    ['MachineLearning','artificial'],
+  'Generative AI':            ['LocalLLaMA','singularity'],
+  'LLMs & Chatbots':          ['LocalLLaMA','LanguageModelRoundup'],
+  'Computer Vision':          ['computervision','MachineLearning'],
+  'Data Science':             ['datascience','datasets'],
+  'Developer Tools':          ['programming','devops'],
+  'Open Source':              ['opensource','programming'],
+  'Cybersecurity':            ['netsec','cybersecurity'],
+  'Cloud & DevOps':           ['devops','aws'],
+  'Frontend Dev':             ['webdev','javascript'],
+  'Backend Dev':              ['node','golang'],
+  'Mobile Dev':               ['androiddev','iOSProgramming'],
+  'Web3 / Crypto':            ['ethereum','defi'],
+  'Blockchain':               ['ethereum','CryptoCurrency'],
+  'Hardware / IoT':           ['hardware','raspberry_pi'],
+  'Robotics':                 ['robotics','MachineLearning'],
+  'AR / VR':                  ['augmentedreality','virtualreality'],
+  'Quantum Computing':        ['QuantumComputing','MachineLearning'],
+  'Game Dev':                 ['gamedev','gamedesign'],
+  'No-Code / Low-Code':       ['nocode','webdev'],
+  // Business & Startups
+  'SaaS':                     ['SaaS','startups'],
+  'B2B / Enterprise':         ['sales','startups'],
+  'Marketplaces':             ['startups','ecommerce'],
+  'D2C / Consumer Apps':      ['Entrepreneur','ecommerce'],
+  'Bootstrapping':            ['Entrepreneur','smallbusiness'],
+  'Venture Capital':          ['venturecapital','startups'],
+  'Angel Investing':          ['venturecapital','investing'],
+  'Fundraising':              ['startups','venturecapital'],
+  'Growth Marketing':         ['GrowthHacking','marketing'],
+  'Product-Led Growth':       ['ProductManagement','SaaS'],
+  'Sales & Revenue':          ['sales','startups'],
+  'Partnerships':             ['startups','Entrepreneur'],
+  // Design & Creative
+  'UI/UX Design':             ['UXDesign','userexperience'],
+  'Design Systems':           ['UXDesign','webdev'],
+  'Brand Identity':           ['graphic_design','branding'],
+  'Motion Design':            ['motiongraphics','graphic_design'],
+  '3D & CGI':                 ['blender','3Dmodeling'],
+  'Photography':              ['photography','analog'],
+  'Film & Video':             ['videography','filmmaking'],
+  'Music Production':         ['edmproduction','WeAreTheMusicMakers'],
+  // Finance
+  'FinTech':                  ['fintech','CryptoCurrency'],
+  'DeFi / Crypto Finance':    ['defi','CryptoCurrency'],
+  'Personal Finance':         ['personalfinance','FinancialPlanning'],
+  'Real Estate':              ['realestate','RealEstate'],
+  'Trading & Quant':          ['algotrading','stocks'],
+  'InsurTech':                ['fintech','investing'],
+  // Industries
+  'Health Tech':              ['healthtech','digitalhealth'],
+  'BioTech':                  ['biology','Biochemistry'],
+  'Climate Tech':             ['ClimateActionPlan','sustainability'],
+  'EdTech':                   ['edtech','education'],
+  'LegalTech':                ['legaladvice','law'],
+  'GovTech':                  ['publicpolicy','Futurology'],
+  'AgriTech':                 ['agriculture','farming'],
+  'SpaceTech':                ['space','spacex'],
+  'PropTech':                 ['realestate','RealEstate'],
+  'RetailTech':               ['ecommerce','shopify'],
+  'FoodTech':                 ['food','Cooking'],
+  'SportsTech':               ['sports','eSports'],
+  // People & Culture
+  'Remote Work':              ['remotework','digitalnomad'],
+  'Future of Work':           ['remotework','cscareerquestions'],
+  'Recruiting & Hiring':      ['recruiting','humanresources'],
+  'Leadership':               ['leadership','ExperiencedDevs'],
+  'Diversity & Inclusion':    ['diversity','cscareerquestions'],
+  'Mental Health & Wellness': ['mentalhealth','selfimprovement'],
+  // Content & Media
+  'Creator Economy':          ['content_marketing','YoutubeCreators'],
+  'Podcasting':               ['podcasting','content_marketing'],
+  'Newsletter & Writing':     ['writing','blogging'],
+  'YouTube & Video':          ['YoutubeCreators','videography'],
+  'Social Media':             ['socialmedia','marketing'],
+  'SEO & Content':            ['SEO','content_marketing'],
+  // E-commerce
+  'E-commerce':               ['ecommerce','shopify'],
+  'Dropshipping':             ['dropship','ecommerce'],
+  'Amazon FBA':               ['FulfillmentByAmazon','ecommerce'],
+  'Subscription Businesses':  ['SaaS','Entrepreneur'],
+  // Career
+  'Career Growth':            ['cscareerquestions','ExperiencedDevs'],
+  'Productivity':             ['productivity','getdisciplined'],
+  'Public Speaking':          ['publicspeaking','selfimprovement'],
+  'Side Projects':            ['SideProject','Entrepreneur'],
+  'Freelancing':              ['freelance','digitalnomad'],
+  'Social Impact':            ['nonprofit','socialentrepreneurship'],
 };
 
 // Role → subreddits
@@ -204,7 +242,7 @@ async function fetchSubredditPosts(sub) {
   if (cached && Date.now() - cached.fetchedAt < REDDIT_TTL) return cached.posts;
 
   try {
-    const data = await fetchJSON(`https://www.reddit.com/r/${sub}/hot.json?limit=8&raw_json=1`);
+    const data = await fetchJSON(`https://www.reddit.com/r/${sub}/hot.json?limit=5&raw_json=1`);
     const posts = (data?.data?.children || [])
       .filter(({ data: p }) => !p.stickied && !p.over_18)
       .map(({ data: p }) => {
@@ -240,13 +278,14 @@ async function fetchSubredditPosts(sub) {
 }
 
 async function getPersonalizedRedditPosts(interests = [], role = '') {
-  // Collect subreddits from interests + role, deduplicate, take up to 6
+  // Interests first (most specific), then role defaults
   const subSet = new Set();
-  (ROLE_TO_SUBREDDITS[role] || []).forEach((s) => subSet.add(s));
   interests.forEach((i) => (INTEREST_TO_SUBREDDIT[i] || []).forEach((s) => subSet.add(s)));
-  if (subSet.size === 0) ['programming','startups','MachineLearning'].forEach((s) => subSet.add(s));
+  (ROLE_TO_SUBREDDITS[role] || []).forEach((s) => subSet.add(s));
+  if (subSet.size === 0) ['programming','startups','MachineLearning','webdev'].forEach((s) => subSet.add(s));
 
-  const subs = [...subSet].slice(0, 6);
+  // Up to 15 subreddits for a truly globalised feed
+  const subs = [...subSet].slice(0, 15);
   const results = await Promise.all(subs.map(fetchSubredditPosts));
   return results.flat();
 }
@@ -421,90 +460,72 @@ const INDEED_JOBS = [
 let users = [];
 
 // ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
-// ─── ALL_GROUPS_SEED — seeded into PostgreSQL at startup ─────────────────────
+// ─── ALL_GROUPS_SEED — REAL external communities only, seeded into PostgreSQL ─
+// No fake internal groups. Every entry is a real public community.
 const ALL_GROUPS_SEED = [
-  // ── UFIConnect internal groups ───────────────────────────────────────────────
-  { id: 'g1',  category: 'AI & ML',     name: 'AI Product Managers',         description: 'Connect with PMs building AI, automation, and workflow tools.',              members: 1840, relatedGroups: ['g2','g3','g5','g11'] },
-  { id: 'g2',  category: 'AI & ML',     name: 'Machine Learning Engineers',  description: 'Deep-dive discussions on models, infra, and production ML systems.',         members: 3210, relatedGroups: ['g1','g3','g4','g5','g8'] },
-  { id: 'g3',  category: 'AI & ML',     name: 'Generative AI Builders',      description: 'LLMs, diffusion models, and the apps being built on top of them.',           members: 5620, relatedGroups: ['g1','g2','g4','g5','g7'] },
-  { id: 'g4',  category: 'AI & ML',     name: 'Data Scientists Hub',         description: 'Analytics, experimentation, and data storytelling at scale.',                members: 2780, relatedGroups: ['g2','g3','g5','g6'] },
-  { id: 'g5',  category: 'Engineering', name: 'Full-Stack Builders',         description: 'From React to Rust — builders shipping end-to-end products.',               members: 4120, relatedGroups: ['g2','g6','g7','g8','g9'] },
-  { id: 'g6',  category: 'Engineering', name: 'DevOps & Cloud Engineers',    description: 'Kubernetes, CI/CD, observability, and platform engineering.',                members: 2340, relatedGroups: ['g5','g7','g8','g4'] },
-  { id: 'g7',  category: 'Engineering', name: 'Web3 Developers',             description: 'Smart contracts, DeFi protocols, and decentralised infrastructure.',         members: 1560, relatedGroups: ['g5','g6','g22','g21'] },
-  { id: 'g8',  category: 'Engineering', name: 'Open Source Contributors',    description: 'Maintainers and contributors sharing knowledge and collaborating.',          members: 3890, relatedGroups: ['g5','g6','g2','g25'] },
-  { id: 'g9',  category: 'Startups',    name: 'Remote Startup Founders',     description: 'Founders building distributed companies and async-first cultures.',          members: 2100, relatedGroups: ['g10','g11','g23','g17','g20'] },
-  { id: 'g10', category: 'Startups',    name: 'Bootstrapped Founders',       description: 'Profitable without VC — sharing playbooks for sustainable growth.',         members: 1670, relatedGroups: ['g9','g11','g17','g18'] },
-  { id: 'g11', category: 'Startups',    name: 'SaaS Founders',               description: 'ARR, churn, pricing, and everything SaaS metrics.',                         members: 3040, relatedGroups: ['g9','g10','g1','g17','g21'] },
-  { id: 'g12', category: 'Startups',    name: 'YC Alumni Network',           description: 'Past and present YC founders sharing deals, intros, and advice.',           members: 980,  relatedGroups: ['g9','g11','g20','g21'] },
-  { id: 'g13', category: 'Design',      name: 'UX/UI Designers Network',     description: 'Research, systems, prototypes, and the craft of great product design.',     members: 2890, relatedGroups: ['g14','g15','g16','g1','g5'] },
-  { id: 'g14', category: 'Design',      name: 'Product Design Leaders',      description: 'Design leadership: hiring, culture, process, and career growth.',           members: 1230, relatedGroups: ['g13','g15','g1','g11'] },
-  { id: 'g15', category: 'Design',      name: 'Brand Strategists',           description: 'Identity, positioning, and the stories that make brands stick.',            members: 870,  relatedGroups: ['g13','g14','g16','g17','g18'] },
-  { id: 'g16', category: 'Design',      name: 'Motion & Interaction',        description: 'Microinteractions, animation principles, and delightful UX.',               members: 640,  relatedGroups: ['g13','g14','g15'] },
-  { id: 'g17', category: 'Marketing',   name: 'Growth Hackers Club',         description: 'Acquisition channels, retention loops, and growth experiments.',            members: 3560, relatedGroups: ['g18','g19','g9','g11','g15'] },
-  { id: 'g18', category: 'Marketing',   name: 'Content Creators Pro',        description: 'Long-form, short-form, video — creating content that converts.',           members: 2100, relatedGroups: ['g17','g19','g15','g25'] },
-  { id: 'g19', category: 'Marketing',   name: 'SEO & Analytics Experts',     description: 'Organic search, Core Web Vitals, and data-driven content strategy.',       members: 1780, relatedGroups: ['g17','g18','g4'] },
-  { id: 'g20', category: 'Finance',     name: 'Angel Investors Circle',      description: 'Early-stage deal flow, due diligence, and portfolio building.',             members: 760,  relatedGroups: ['g21','g22','g9','g12'] },
-  { id: 'g21', category: 'Finance',     name: 'VC-Backed Founders',          description: 'Fundraising, term sheets, board dynamics, and scaling with capital.',       members: 1340, relatedGroups: ['g20','g22','g9','g11','g12'] },
-  { id: 'g22', category: 'Finance',     name: 'Crypto & DeFi',               description: 'On-chain finance, yield strategies, and the evolving DeFi stack.',         members: 2240, relatedGroups: ['g7','g20','g21'] },
-  { id: 'g23', category: 'Remote Work', name: 'Freelancers Network',         description: 'Clients, contracts, rates, and life as an independent professional.',      members: 4560, relatedGroups: ['g24','g9','g10','g18'] },
-  { id: 'g24', category: 'Remote Work', name: 'Digital Nomads',              description: 'Working from anywhere — visas, gear, co-working, and community.',         members: 6120, relatedGroups: ['g23','g9','g26'] },
-  { id: 'g25', category: 'Education',   name: 'EdTech Innovators',           description: 'Learning experiences, instructional design, and ed-tech product.',        members: 1050, relatedGroups: ['g26','g1','g8','g18'] },
-  { id: 'g26', category: 'Education',   name: 'Career Changers',             description: 'From any background into tech — stories, resources, and support.',        members: 3780, relatedGroups: ['g25','g5','g13','g24'] },
-  // ── Social platform communities (internal UFI groups) ────────────────────────
-  { id: 'gs1', category: 'Social', name: 'LinkedIn Professionals',       description: 'Connect with LinkedIn members across industries. Share profiles, posts, and network.',  members: 8420,  platform: 'linkedin',  platformUrl: 'https://www.linkedin.com/login', relatedGroups: ['g11','g9','g17'] },
-  { id: 'gs2', category: 'Social', name: 'GitHub Open Source',           description: 'Developers sharing repos, OSS projects, and code reviews from GitHub.',               members: 5910,  platform: 'github',    platformUrl: 'https://github.com/login', relatedGroups: ['g8','g5','g6'] },
-  { id: 'gs3', category: 'Social', name: 'X / Twitter Tech',             description: 'Hot takes, threads, and discussions from the tech Twitter/X community.',              members: 12300, platform: 'twitter',   platformUrl: 'https://twitter.com/i/flow/login', relatedGroups: ['g1','g3','g17'] },
-  { id: 'gs4', category: 'Social', name: 'Instagram Creatives',          description: 'Designers, photographers, and creative professionals sharing their work.',            members: 6780,  platform: 'instagram', platformUrl: 'https://www.instagram.com/accounts/login/', relatedGroups: ['g13','g15','g16'] },
-  { id: 'gs5', category: 'Social', name: 'Discord Communities',          description: 'Engineers, gamers, and community builders from Discord servers.',                     members: 9140,  platform: 'discord',   platformUrl: 'https://discord.com/login', relatedGroups: ['g5','g7','g8'] },
-  { id: 'gs6', category: 'Social', name: 'YouTube Creators & Viewers',   description: 'Content creators and professionals sharing insights via video.',                     members: 7230,  platform: 'youtube',   platformUrl: 'https://accounts.google.com/ServiceLogin?service=youtube', relatedGroups: ['g18','g25','g19'] },
-  { id: 'gs7', category: 'Social', name: 'Reddit Professional Network',  description: 'Discussions and AMAs from professional subreddits and communities.',               members: 15600, platform: 'reddit',    platformUrl: 'https://www.reddit.com/login', relatedGroups: ['g5','g11','g24'] },
-  { id: 'gs8', category: 'Social', name: 'Medium Writers & Readers',     description: 'Writers, thinkers, and readers sharing long-form content on Medium.',               members: 4320,  platform: 'medium',    platformUrl: 'https://medium.com/m/signin', relatedGroups: ['g18','g25','g19'] },
-  { id: 'gs9', category: 'Social', name: 'Dribbble Design Community',    description: 'Top designers sharing shots, portfolios, and feedback on Dribbble.',                members: 3810,  platform: 'dribbble',  platformUrl: 'https://dribbble.com/session/new', relatedGroups: ['g13','g14','g15'] },
-  { id: 'gs10',category: 'Social', name: 'Behance Portfolio Network',    description: 'Creative professionals showcasing projects and portfolios on Behance.',              members: 2940,  platform: 'behance',   platformUrl: 'https://www.behance.net/signin', relatedGroups: ['g13','g15','g16'] },
-  { id: 'gs11',category: 'Social', name: 'Indeed Job Seekers',           description: 'Job seekers and recruiters sharing opportunities and career advice.',               members: 11200, platform: 'indeed',    platformUrl: 'https://secure.indeed.com/account/login', relatedGroups: ['g26','g23','g11'] },
-  { id: 'gs12',category: 'Social', name: 'Facebook Professional Groups', description: 'Industry groups, mastermind circles, and networking from Facebook.',               members: 18700, platform: 'facebook',  platformUrl: 'https://www.facebook.com/login', relatedGroups: ['g17','g9','g11'] },
-
-  // ── Real public Reddit communities (isExternal: true) ────────────────────────
-  { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',           members: 3500000, isExternal: true, subreddit: 'MachineLearning',     externalUrl: 'https://reddit.com/r/MachineLearning' },
-  { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                     members: 2000000, isExternal: true, subreddit: 'artificial',          externalUrl: 'https://reddit.com/r/artificial' },
-  { id: 'ext_r_ds',       category: 'AI & ML',     name: 'r/datascience',            description: 'Data science career advice, tool comparisons, and project showcases from 1.2M+ members.',                         members: 1200000, isExternal: true, subreddit: 'datascience',         externalUrl: 'https://reddit.com/r/datascience' },
-  { id: 'ext_r_llm',      category: 'AI & ML',     name: 'r/LocalLLaMA',             description: 'Running LLMs locally — hardware setups, model comparisons, and fine-tuning guides.',                              members: 580000,  isExternal: true, subreddit: 'LocalLLaMA',          externalUrl: 'https://reddit.com/r/LocalLLaMA' },
-  { id: 'ext_r_prog',     category: 'Engineering', name: 'r/programming',            description: 'The original programming community — 6.3M+ developers sharing articles, tools, and industry discourse.',           members: 6300000, isExternal: true, subreddit: 'programming',         externalUrl: 'https://reddit.com/r/programming' },
-  { id: 'ext_r_webdev',   category: 'Engineering', name: 'r/webdev',                 description: 'Web development tutorials, job advice, roast-my-site threads, and frontend/backend discussions.',                  members: 2500000, isExternal: true, subreddit: 'webdev',              externalUrl: 'https://reddit.com/r/webdev' },
-  { id: 'ext_r_devops',   category: 'Engineering', name: 'r/devops',                 description: 'DevOps practices, Kubernetes, CI/CD pipelines, cloud infra, and SRE war stories.',                               members: 440000,  isExternal: true, subreddit: 'devops',              externalUrl: 'https://reddit.com/r/devops' },
-  { id: 'ext_r_react',    category: 'Engineering', name: 'r/reactjs',                description: 'React.js ecosystem — hooks, state management, Next.js, performance, and job hunting.',                             members: 500000,  isExternal: true, subreddit: 'reactjs',             externalUrl: 'https://reddit.com/r/reactjs' },
-  { id: 'ext_r_python',   category: 'Engineering', name: 'r/Python',                 description: 'Python scripts, libraries, career questions, and community projects from 1.6M+ Pythonistas.',                    members: 1600000, isExternal: true, subreddit: 'Python',              externalUrl: 'https://reddit.com/r/Python' },
-  { id: 'ext_r_js',       category: 'Engineering', name: 'r/javascript',             description: 'JavaScript ecosystem — frameworks, tooling, browser APIs, and TypeScript migration guides.',                       members: 2200000, isExternal: true, subreddit: 'javascript',          externalUrl: 'https://reddit.com/r/javascript' },
-  { id: 'ext_r_startups', category: 'Startups',    name: 'r/startups',               description: 'Founder stories, early-stage advice, product pivots, and team building from 1.4M+ entrepreneurs.',               members: 1400000, isExternal: true, subreddit: 'startups',            externalUrl: 'https://reddit.com/r/startups' },
-  { id: 'ext_r_entrep',   category: 'Startups',    name: 'r/Entrepreneur',           description: '1.5M+ business owners sharing revenue milestones, hiring tips, and marketing wins.',                              members: 1500000, isExternal: true, subreddit: 'Entrepreneur',        externalUrl: 'https://reddit.com/r/Entrepreneur' },
-  { id: 'ext_r_saas',     category: 'Startups',    name: 'r/SaaS',                   description: 'SaaS metrics, pricing strategy, churn reduction, and tool stack discussions.',                                    members: 290000,  isExternal: true, subreddit: 'SaaS',                externalUrl: 'https://reddit.com/r/SaaS' },
-  { id: 'ext_r_pm',       category: 'Startups',    name: 'r/ProductManagement',      description: 'Product manager career growth, roadmap frameworks, stakeholder management, and interview prep.',                  members: 220000,  isExternal: true, subreddit: 'ProductManagement',   externalUrl: 'https://reddit.com/r/ProductManagement' },
-  { id: 'ext_r_ux',       category: 'Design',      name: 'r/UXDesign',               description: 'UX research, portfolio critiques, design systems, and career advice from 530K+ designers.',                      members: 530000,  isExternal: true, subreddit: 'UXDesign',            externalUrl: 'https://reddit.com/r/UXDesign' },
-  { id: 'ext_r_gfx',      category: 'Design',      name: 'r/graphic_design',         description: 'Logo critiques, branding showcases, typography discussion, and freelance pricing from 5.6M+ creatives.',         members: 5600000, isExternal: true, subreddit: 'graphic_design',      externalUrl: 'https://reddit.com/r/graphic_design' },
-  { id: 'ext_r_mktg',     category: 'Marketing',   name: 'r/marketing',              description: 'Digital marketing strategies, campaign post-mortems, and tool recommendations.',                                  members: 500000,  isExternal: true, subreddit: 'marketing',           externalUrl: 'https://reddit.com/r/marketing' },
-  { id: 'ext_r_seo',      category: 'Marketing',   name: 'r/SEO',                    description: 'Search engine optimisation — technical SEO, content strategy, algorithm updates, and link building.',             members: 280000,  isExternal: true, subreddit: 'SEO',                 externalUrl: 'https://reddit.com/r/SEO' },
-  { id: 'ext_r_pf',       category: 'Finance',     name: 'r/personalfinance',        description: 'Budgeting, debt payoff, investing basics, and financial independence advice from 20M+ members.',                  members: 20000000,isExternal: true, subreddit: 'personalfinance',     externalUrl: 'https://reddit.com/r/personalfinance' },
-  { id: 'ext_r_inv',      category: 'Finance',     name: 'r/investing',              description: 'Long-term investing, ETFs, stock picks, and portfolio strategy from 2.5M+ investors.',                           members: 2500000, isExternal: true, subreddit: 'investing',           externalUrl: 'https://reddit.com/r/investing' },
-  { id: 'ext_r_crypto',   category: 'Finance',     name: 'r/CryptoCurrency',         description: 'Crypto news, DeFi protocols, NFT analysis, and on-chain data from 6M+ members.',                               members: 6000000, isExternal: true, subreddit: 'CryptoCurrency',      externalUrl: 'https://reddit.com/r/CryptoCurrency' },
-  { id: 'ext_r_nomad',    category: 'Remote Work', name: 'r/digitalnomad',           description: 'Visa guides, best coworking spots, tax strategies, and remote work tools from 1.8M+ nomads.',                   members: 1800000, isExternal: true, subreddit: 'digitalnomad',        externalUrl: 'https://reddit.com/r/digitalnomad' },
-  { id: 'ext_r_remote',   category: 'Remote Work', name: 'r/remotework',             description: 'Remote job leads, home office setups, async communication, and WFH culture.',                                    members: 450000,  isExternal: true, subreddit: 'remotework',          externalUrl: 'https://reddit.com/r/remotework' },
-  { id: 'ext_r_free',     category: 'Remote Work', name: 'r/freelance',              description: 'Freelance rates, client red flags, contract templates, and growing a solo business.',                            members: 400000,  isExternal: true, subreddit: 'freelance',           externalUrl: 'https://reddit.com/r/freelance' },
-  { id: 'ext_r_learn',    category: 'Education',   name: 'r/learnprogramming',       description: 'Beginner-friendly coding community — 4.3M+ people learning Python, JavaScript, and beyond.',                    members: 4300000, isExternal: true, subreddit: 'learnprogramming',    externalUrl: 'https://reddit.com/r/learnprogramming' },
-  { id: 'ext_r_cscareer', category: 'Education',   name: 'r/cscareerquestions',      description: 'Salary negotiations, interview prep, resume reviews, and career switching advice for developers.',               members: 1200000, isExternal: true, subreddit: 'cscareerquestions',   externalUrl: 'https://reddit.com/r/cscareerquestions' },
-
-  // ── Real Discord servers ──────────────────────────────────────────────────────
-  { id: 'ext_d_reactiflux', category: 'Engineering', name: 'Reactiflux Discord',    description: 'The largest React.js Discord server — 80K+ developers discussing React, Redux, GraphQL, and TypeScript.',         members: 80000,   isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/reactiflux' },
-  { id: 'ext_d_pydisc',    category: 'Engineering', name: 'Python Discord',          description: 'Official Python community Discord — 300K+ members, code reviews, project showcases, and mentorship.',            members: 300000,  isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/python' },
-  { id: 'ext_d_design',    category: 'Design',      name: 'Design Buddies Discord', description: '100K+ UX/UI designers sharing portfolio feedback, job leads, and career advice.',                                  members: 100000,  isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/designbuddies' },
-  { id: 'ext_d_tph',       category: 'Engineering', name: "The Programmer's Hangout",'description': 'Welcoming community for programmers at all levels — 80K+ members, code challenges, and project collabs.',       members: 80000,   isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/programming' },
-
-  // ── LinkedIn Groups ───────────────────────────────────────────────────────────
-  { id: 'ext_li_pm',       category: 'Startups',    name: 'Product Management Professionals', description: 'LinkedIn\'s largest PM group — product strategy, roadmapping, and career growth for product managers.', members: 500000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/42115' },
-  { id: 'ext_li_gh',       category: 'Marketing',   name: 'Growth Hackers (LinkedIn)',         description: 'Growth marketing tactics, A/B test results, and acquisition case studies shared by 300K+ marketers.',  members: 300000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/1868995' },
-
-  // ── Hacker News ──────────────────────────────────────────────────────────────
-  { id: 'ext_hn',          category: 'Engineering', name: 'Hacker News',            description: 'Y Combinator\'s community for startup and technology discussion — the internet\'s sharpest tech commentary.',       members: 5000000, isExternal: true, platform: 'hackernews', externalUrl: 'https://news.ycombinator.com' },
-  { id: 'ext_devto',       category: 'Engineering', name: 'DEV Community',          description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                           members: 1000000, isExternal: true, platform: 'devto',      externalUrl: 'https://dev.to' },
+  // ── AI & ML ──────────────────────────────────────────────────────────────────
+  { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',              members: 3500000, isExternal: true, subreddit: 'MachineLearning',   externalUrl: 'https://reddit.com/r/MachineLearning' },
+  { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                        members: 2000000, isExternal: true, subreddit: 'artificial',        externalUrl: 'https://reddit.com/r/artificial' },
+  { id: 'ext_r_ds',       category: 'AI & ML',     name: 'r/datascience',            description: 'Data science career advice, tool comparisons, and project showcases from 1.2M+ members.',                            members: 1200000, isExternal: true, subreddit: 'datascience',       externalUrl: 'https://reddit.com/r/datascience' },
+  { id: 'ext_r_llm',      category: 'AI & ML',     name: 'r/LocalLLaMA',             description: 'Running LLMs locally — hardware setups, model comparisons, and fine-tuning guides for 580K+ AI enthusiasts.',         members: 580000,  isExternal: true, subreddit: 'LocalLLaMA',        externalUrl: 'https://reddit.com/r/LocalLLaMA' },
+  // ── Engineering ──────────────────────────────────────────────────────────────
+  { id: 'ext_r_prog',     category: 'Engineering', name: 'r/programming',            description: 'The original programming community — 6.3M+ developers sharing articles, tools, and industry discourse.',              members: 6300000, isExternal: true, subreddit: 'programming',       externalUrl: 'https://reddit.com/r/programming' },
+  { id: 'ext_r_webdev',   category: 'Engineering', name: 'r/webdev',                 description: 'Web development tutorials, job advice, roast-my-site threads, and frontend/backend discussions.',                     members: 2500000, isExternal: true, subreddit: 'webdev',            externalUrl: 'https://reddit.com/r/webdev' },
+  { id: 'ext_r_devops',   category: 'Engineering', name: 'r/devops',                 description: 'DevOps practices, Kubernetes, CI/CD pipelines, cloud infra, and SRE war stories.',                                   members: 440000,  isExternal: true, subreddit: 'devops',            externalUrl: 'https://reddit.com/r/devops' },
+  { id: 'ext_r_react',    category: 'Engineering', name: 'r/reactjs',                description: 'React.js ecosystem — hooks, state management, Next.js, performance, and job hunting.',                               members: 500000,  isExternal: true, subreddit: 'reactjs',           externalUrl: 'https://reddit.com/r/reactjs' },
+  { id: 'ext_r_python',   category: 'Engineering', name: 'r/Python',                 description: 'Python scripts, libraries, career questions, and community projects from 1.6M+ Pythonistas.',                        members: 1600000, isExternal: true, subreddit: 'Python',            externalUrl: 'https://reddit.com/r/Python' },
+  { id: 'ext_r_js',       category: 'Engineering', name: 'r/javascript',             description: 'JavaScript ecosystem — frameworks, tooling, browser APIs, and TypeScript migration guides.',                          members: 2200000, isExternal: true, subreddit: 'javascript',        externalUrl: 'https://reddit.com/r/javascript' },
+  { id: 'ext_r_netsec',   category: 'Engineering', name: 'r/netsec',                 description: 'Network security, CTFs, vulnerability research, and infosec career advice from security professionals.',             members: 500000,  isExternal: true, subreddit: 'netsec',            externalUrl: 'https://reddit.com/r/netsec' },
+  { id: 'ext_r_gamedev',  category: 'Engineering', name: 'r/gamedev',                description: 'Game development tutorials, portfolio showcases, game engine discussions, and indie dev stories.',                    members: 900000,  isExternal: true, subreddit: 'gamedev',           externalUrl: 'https://reddit.com/r/gamedev' },
+  { id: 'ext_r_robotics', category: 'Engineering', name: 'r/robotics',               description: 'Robotics engineering, ROS, autonomous systems, and hardware hacking from hobbyists to researchers.',                  members: 250000,  isExternal: true, subreddit: 'robotics',          externalUrl: 'https://reddit.com/r/robotics' },
+  { id: 'ext_r_nocode',   category: 'Engineering', name: 'r/nocode',                 description: 'No-code and low-code tools, automation workflows, and building products without traditional programming.',             members: 120000,  isExternal: true, subreddit: 'nocode',            externalUrl: 'https://reddit.com/r/nocode' },
+  // ── Startups ─────────────────────────────────────────────────────────────────
+  { id: 'ext_r_startups', category: 'Startups',    name: 'r/startups',               description: 'Founder stories, early-stage advice, product pivots, and team building from 1.4M+ entrepreneurs.',                  members: 1400000, isExternal: true, subreddit: 'startups',          externalUrl: 'https://reddit.com/r/startups' },
+  { id: 'ext_r_entrep',   category: 'Startups',    name: 'r/Entrepreneur',           description: '1.5M+ business owners sharing revenue milestones, hiring tips, and marketing wins.',                                 members: 1500000, isExternal: true, subreddit: 'Entrepreneur',      externalUrl: 'https://reddit.com/r/Entrepreneur' },
+  { id: 'ext_r_saas',     category: 'Startups',    name: 'r/SaaS',                   description: 'SaaS metrics, pricing strategy, churn reduction, and tool stack discussions.',                                       members: 290000,  isExternal: true, subreddit: 'SaaS',              externalUrl: 'https://reddit.com/r/SaaS' },
+  { id: 'ext_r_pm',       category: 'Startups',    name: 'r/ProductManagement',      description: 'Product manager career growth, roadmap frameworks, stakeholder management, and interview prep.',                     members: 220000,  isExternal: true, subreddit: 'ProductManagement', externalUrl: 'https://reddit.com/r/ProductManagement' },
+  { id: 'ext_r_sideproj', category: 'Startups',    name: 'r/SideProject',            description: 'Builders showing off their side projects, getting feedback, and sharing launch stories.',                            members: 180000,  isExternal: true, subreddit: 'SideProject',       externalUrl: 'https://reddit.com/r/SideProject' },
+  // ── Design ───────────────────────────────────────────────────────────────────
+  { id: 'ext_r_ux',       category: 'Design',      name: 'r/UXDesign',               description: 'UX research, portfolio critiques, design systems, and career advice from 530K+ designers.',                         members: 530000,  isExternal: true, subreddit: 'UXDesign',          externalUrl: 'https://reddit.com/r/UXDesign' },
+  { id: 'ext_r_gfx',      category: 'Design',      name: 'r/graphic_design',         description: 'Logo critiques, branding showcases, typography discussion, and freelance pricing from 5.6M+ creatives.',            members: 5600000, isExternal: true, subreddit: 'graphic_design',    externalUrl: 'https://reddit.com/r/graphic_design' },
+  { id: 'ext_r_photo',    category: 'Design',      name: 'r/photography',            description: 'Camera gear, composition tips, RAW editing, and photo critique from 5M+ photography enthusiasts.',                   members: 5000000, isExternal: true, subreddit: 'photography',       externalUrl: 'https://reddit.com/r/photography' },
+  { id: 'ext_r_blender',  category: 'Design',      name: 'r/blender',                description: '3D modelling, sculpting, animation, and rendering with Blender — tutorials and showcases.',                          members: 700000,  isExternal: true, subreddit: 'blender',           externalUrl: 'https://reddit.com/r/blender' },
+  { id: 'ext_d_design',   category: 'Design',      name: 'Design Buddies Discord',   description: '100K+ UX/UI designers sharing portfolio feedback, job leads, and career advice.',                                    members: 100000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/designbuddies' },
+  // ── Marketing ────────────────────────────────────────────────────────────────
+  { id: 'ext_r_mktg',     category: 'Marketing',   name: 'r/marketing',              description: 'Digital marketing strategies, campaign post-mortems, and tool recommendations.',                                     members: 500000,  isExternal: true, subreddit: 'marketing',         externalUrl: 'https://reddit.com/r/marketing' },
+  { id: 'ext_r_seo',      category: 'Marketing',   name: 'r/SEO',                    description: 'Search engine optimisation — technical SEO, content strategy, algorithm updates, and link building.',               members: 280000,  isExternal: true, subreddit: 'SEO',               externalUrl: 'https://reddit.com/r/SEO' },
+  { id: 'ext_r_content',  category: 'Marketing',   name: 'r/content_marketing',      description: 'Content strategy, editorial calendars, distribution, and measuring ROI from 150K+ content marketers.',              members: 150000,  isExternal: true, subreddit: 'content_marketing', externalUrl: 'https://reddit.com/r/content_marketing' },
+  { id: 'ext_li_gh',      category: 'Marketing',   name: 'Growth Hackers (LinkedIn)',description: 'Growth marketing tactics, A/B test results, and acquisition case studies shared by 300K+ marketers.',               members: 300000,  isExternal: true, platform: 'linkedin',           externalUrl: 'https://linkedin.com/groups/1868995' },
+  // ── Finance ──────────────────────────────────────────────────────────────────
+  { id: 'ext_r_pf',       category: 'Finance',     name: 'r/personalfinance',        description: 'Budgeting, debt payoff, investing basics, and financial independence advice from 20M+ members.',                     members: 20000000,isExternal: true, subreddit: 'personalfinance',   externalUrl: 'https://reddit.com/r/personalfinance' },
+  { id: 'ext_r_inv',      category: 'Finance',     name: 'r/investing',              description: 'Long-term investing, ETFs, stock picks, and portfolio strategy from 2.5M+ investors.',                              members: 2500000, isExternal: true, subreddit: 'investing',         externalUrl: 'https://reddit.com/r/investing' },
+  { id: 'ext_r_crypto',   category: 'Finance',     name: 'r/CryptoCurrency',         description: 'Crypto news, DeFi protocols, NFT analysis, and on-chain data from 6M+ members.',                                   members: 6000000, isExternal: true, subreddit: 'CryptoCurrency',    externalUrl: 'https://reddit.com/r/CryptoCurrency' },
+  { id: 'ext_r_algotrade',category: 'Finance',     name: 'r/algotrading',            description: 'Algorithmic trading strategies, backtesting frameworks, quant finance, and data-driven investing.',                  members: 300000,  isExternal: true, subreddit: 'algotrading',       externalUrl: 'https://reddit.com/r/algotrading' },
+  { id: 'ext_r_fintech',  category: 'Finance',     name: 'r/fintech',                description: 'Financial technology news, product launches, startup funding, and the future of banking.',                           members: 140000,  isExternal: true, subreddit: 'fintech',           externalUrl: 'https://reddit.com/r/fintech' },
+  // ── Remote Work ──────────────────────────────────────────────────────────────
+  { id: 'ext_r_nomad',    category: 'Remote Work', name: 'r/digitalnomad',           description: 'Visa guides, best coworking spots, tax strategies, and remote work tools from 1.8M+ nomads.',                      members: 1800000, isExternal: true, subreddit: 'digitalnomad',      externalUrl: 'https://reddit.com/r/digitalnomad' },
+  { id: 'ext_r_remote',   category: 'Remote Work', name: 'r/remotework',             description: 'Remote job leads, home office setups, async communication, and WFH culture.',                                       members: 450000,  isExternal: true, subreddit: 'remotework',        externalUrl: 'https://reddit.com/r/remotework' },
+  { id: 'ext_r_free',     category: 'Remote Work', name: 'r/freelance',              description: 'Freelance rates, client red flags, contract templates, and growing a solo business.',                               members: 400000,  isExternal: true, subreddit: 'freelance',         externalUrl: 'https://reddit.com/r/freelance' },
+  // ── Education ────────────────────────────────────────────────────────────────
+  { id: 'ext_r_learn',    category: 'Education',   name: 'r/learnprogramming',       description: 'Beginner-friendly coding community — 4.3M+ people learning Python, JavaScript, and beyond.',                       members: 4300000, isExternal: true, subreddit: 'learnprogramming',  externalUrl: 'https://reddit.com/r/learnprogramming' },
+  { id: 'ext_r_cscareer', category: 'Education',   name: 'r/cscareerquestions',      description: 'Salary negotiations, interview prep, resume reviews, and career switching advice for developers.',                  members: 1200000, isExternal: true, subreddit: 'cscareerquestions', externalUrl: 'https://reddit.com/r/cscareerquestions' },
+  { id: 'ext_r_edtech',   category: 'Education',   name: 'r/edtech',                 description: 'Education technology, online learning platforms, instructional design, and the future of learning.',                members: 60000,   isExternal: true, subreddit: 'edtech',            externalUrl: 'https://reddit.com/r/edtech' },
+  { id: 'ext_r_prod',     category: 'Education',   name: 'r/productivity',           description: 'Productivity systems, time management, deep work, and personal efficiency from 1.5M+ members.',                    members: 1500000, isExternal: true, subreddit: 'productivity',      externalUrl: 'https://reddit.com/r/productivity' },
+  // ── Health Tech ──────────────────────────────────────────────────────────────
+  { id: 'ext_r_healthtech',category: 'Health',     name: 'r/healthtech',             description: 'Digital health, medical devices, health informatics, and the intersection of technology and medicine.',              members: 30000,   isExternal: true, subreddit: 'healthtech',        externalUrl: 'https://reddit.com/r/healthtech' },
+  { id: 'ext_r_mental',   category: 'Health',      name: 'r/mentalhealth',           description: 'Mental health awareness, resources, and supportive community for those navigating mental wellness.',                  members: 1000000, isExternal: true, subreddit: 'mentalhealth',      externalUrl: 'https://reddit.com/r/mentalhealth' },
+  // ── Climate & Space ──────────────────────────────────────────────────────────
+  { id: 'ext_r_sustain',  category: 'Climate',     name: 'r/sustainability',         description: 'Sustainable living, climate action, green tech, and environmental solutions from 700K+ members.',                   members: 700000,  isExternal: true, subreddit: 'sustainability',    externalUrl: 'https://reddit.com/r/sustainability' },
+  { id: 'ext_r_space',    category: 'Space',        name: 'r/space',                  description: 'Space exploration, astronomy, rockets, and the latest news from NASA, SpaceX, and ESA.',                           members: 25000000,isExternal: true, subreddit: 'space',             externalUrl: 'https://reddit.com/r/space' },
+  // ── Discord servers ──────────────────────────────────────────────────────────
+  { id: 'ext_d_reactiflux',category: 'Engineering',name: 'Reactiflux Discord',       description: 'The largest React.js Discord server — 80K+ developers discussing React, Redux, GraphQL, and TypeScript.',            members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/reactiflux' },
+  { id: 'ext_d_pydisc',   category: 'Engineering', name: 'Python Discord',           description: 'Official Python community Discord — 300K+ members, code reviews, project showcases, and mentorship.',               members: 300000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/python' },
+  { id: 'ext_d_tph',      category: 'Engineering', name: "The Programmer's Hangout", description: 'Welcoming community for programmers at all levels — code challenges, project collabs, and career advice.',           members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/programming' },
+  // ── LinkedIn groups ──────────────────────────────────────────────────────────
+  { id: 'ext_li_pm',      category: 'Startups',    name: 'Product Management Professionals', description: "LinkedIn's largest PM group — product strategy, roadmapping, and career growth for product managers.", members: 500000, isExternal: true, platform: 'linkedin',            externalUrl: 'https://linkedin.com/groups/42115' },
+  // ── Hacker News & DEV ────────────────────────────────────────────────────────
+  { id: 'ext_hn',         category: 'Engineering', name: 'Hacker News',              description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",          members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
+  { id: 'ext_devto',      category: 'Engineering', name: 'DEV Community',            description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                             members: 1000000, isExternal: true, platform: 'devto',              externalUrl: 'https://dev.to' },
 ];
 
 // Live in-memory groups list — populated from DB at startup, falls back to seed
@@ -658,6 +679,9 @@ async function migrateDB() {
 async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
+    // ── Purge all fake internal/platform-wrapper groups from previous seeds ──
+    await db.query(`DELETE FROM community_groups WHERE is_external = false OR is_external IS NULL`);
+
     for (const g of ALL_GROUPS_SEED) {
       await db.query(`
         INSERT INTO community_groups
@@ -919,24 +943,33 @@ app.get('/feed', authenticate, async (req, res) => {
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
 
+  // Connected social platforms → boost their posts
+  const connectedPlatforms = new Set(
+    Object.entries(user?.socialAccounts || {})
+      .filter(([, v]) => v?.connected)
+      .map(([k]) => k)
+  );
+
   // Categories relevant to this user
   const relevantCategories = new Set([
     ...(prefs.interests || []).map(i => INTEREST_TO_CATEGORY[i]).filter(Boolean),
     ...(ROLE_CATEGORIES[prefs.role] || []),
   ]);
 
-  function scorePost(groupId, cat) {
-    if (joined.has(groupId))               return 3;
-    if (cat && relevantCategories.has(cat)) return 2;
-    return 1;
+  function scorePost(groupId, cat, source) {
+    let s = 1; // baseline
+    if (joined.has(groupId))                s += 3; // from a group they follow
+    if (cat && relevantCategories.has(cat)) s += 2; // matches their interests/role
+    if (source && connectedPlatforms.has(source)) s += 2; // from a connected social
+    return s;
   }
 
-  // Internal posts
+  // Internal posts (user-created)
   const internal = posts.map((p) => {
     const author = users.find((u) => u.id === p.authorId);
     const group  = groups.find((g) => g.id === p.groupId);
     const cat    = group?.category;
-    const relevance = scorePost(p.groupId, cat);
+    const relevance = scorePost(p.groupId, cat, 'uficonnect');
     return {
       ...p,
       author:          author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
@@ -944,7 +977,7 @@ app.get('/feed', authenticate, async (req, res) => {
       likedByMe:       (p.likes || []).includes(req.user.id),
       likesCount:      (p.likes || []).length,
       fromJoinedGroup: joined.has(p.groupId),
-      forYou:          relevance >= 2,
+      forYou:          relevance >= 3,
       relevance,
       source:          'uficonnect',
       sourceLabel:     'UFIConnect',
@@ -958,16 +991,18 @@ app.get('/feed', authenticate, async (req, res) => {
   try {
     const raw = await getPersonalizedRedditPosts(prefs.interests || [], prefs.role || '');
     redditPosts = raw.map((p) => {
-      const group = groups.find((g) => g.id === p.groupId);
-      const cat   = group?.category || p.group?.category;
-      const relevance = scorePost(p.groupId, cat);
+      const group     = groups.find((g) => g.id === p.groupId);
+      const cat       = group?.category || p.group?.category;
+      const relevance = scorePost(p.groupId, cat, 'reddit');
+      const isConnectedSource = connectedPlatforms.has('reddit');
       return {
         ...p,
-        group:           group ? { id: group.id, name: group.name, category: cat } : p.group,
-        likedByMe:       false,
-        fromJoinedGroup: joined.has(p.groupId),
-        forYou:          relevance >= 2,
+        group:              group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
+        likedByMe:          false,
+        fromJoinedGroup:    joined.has(p.groupId),
+        forYou:             relevance >= 3,
         relevance,
+        connectedBoost:     isConnectedSource,
       };
     });
   } catch (e) {
