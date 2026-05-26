@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
+const https = require('https');
 const db = require('./db');
 
 dotenv.config();
@@ -96,6 +97,159 @@ const INTEREST_TO_CATEGORY = {
   'E-commerce': 'Startups', 'Dropshipping': 'Startups', 'Amazon FBA': 'Startups',
   'Shopify': 'Startups', 'D2C Brands': 'Startups',
 };
+
+// ─── Interest → subreddit mapping ────────────────────────────────────────────
+const INTEREST_TO_SUBREDDIT = {
+  'Machine Learning':   ['MachineLearning','deeplearning'],
+  'Deep Learning':      ['deeplearning','MachineLearning'],
+  'LLMs / GPT':         ['LocalLLaMA','singularity'],
+  'NLP / Text AI':      ['LanguageModelRoundup','MachineLearning'],
+  'Computer Vision':    ['computervision','MachineLearning'],
+  'AI Ethics':          ['AIethics','artificial'],
+  'AI Research':        ['MachineLearning','artificial'],
+  'Data Science':       ['datascience','datasets'],
+  'MLOps':              ['mlops','devops'],
+  'Web Development':    ['webdev','programming'],
+  'Mobile Development': ['androiddev','iOSProgramming'],
+  'DevOps / Cloud':     ['devops','aws'],
+  'Cybersecurity':      ['netsec','cybersecurity'],
+  'Blockchain / Web3':  ['ethereum','defi'],
+  'Open Source':        ['opensource','programming'],
+  'System Design':      ['ExperiencedDevs','programming'],
+  'Frontend Dev':       ['webdev','javascript'],
+  'Backend Dev':        ['node','golang'],
+  'Game Development':   ['gamedev','gamedesign'],
+  'Startups':           ['startups','entrepreneur'],
+  'SaaS':               ['SaaS','startups'],
+  'Bootstrapping':      ['entrepreneur','smallbusiness'],
+  'VC / Fundraising':   ['venturecapital','startups'],
+  'Growth Hacking':     ['GrowthHacking','startups'],
+  'B2B Sales':          ['sales','startups'],
+  'UX / UI Design':     ['UXDesign','userexperience'],
+  'Product Design':     ['ProductDesign','UXDesign'],
+  'Branding':           ['graphic_design','branding'],
+  'Design Systems':     ['UXDesign','webdev'],
+  'Visual Design':      ['graphic_design','design'],
+  'Illustration':       ['learnart','illustration'],
+  'Personal Finance':   ['personalfinance','FinancialPlanning'],
+  'Investing':          ['investing','stocks'],
+  'Crypto / DeFi':      ['CryptoCurrency','defi'],
+  'Fintech':            ['fintech','CryptoCurrency'],
+  'Stock Market':       ['stocks','investing'],
+  'Content Marketing':  ['marketing','content_marketing'],
+  'SEO / SEM':          ['SEO','bigseo'],
+  'Social Media':       ['socialmedia','marketing'],
+  'Email Marketing':    ['Emailmarketing','marketing'],
+  'Copywriting':        ['copywriting','marketing'],
+  'Remote Work':        ['remotework','digitalnomad'],
+  'Freelancing':        ['freelance','digitalnomad'],
+  'Digital Nomad':      ['digitalnomad','remotework'],
+  'Online Learning':    ['learnprogramming','edtech'],
+  'Career Switching':   ['cscareerquestions','learnprogramming'],
+  'Mentorship':         ['cscareerquestions','ExperiencedDevs'],
+  'Podcasting':         ['podcasting','content_marketing'],
+  'Technical Writing':  ['technicalwriting','writing'],
+  'Blogging':           ['blogging','writing'],
+  'E-commerce':         ['ecommerce','shopify'],
+  'Shopify':            ['shopify','ecommerce'],
+};
+
+// Role → subreddits
+const ROLE_TO_SUBREDDITS = {
+  'Engineer / Developer':     ['programming','webdev','devops'],
+  'Designer / Creative':      ['UXDesign','graphic_design','userexperience'],
+  'Product Manager':          ['ProductManagement','startups','UXDesign'],
+  'Marketer / Growth':        ['marketing','GrowthHacking','SEO'],
+  'Founder / Entrepreneur':   ['entrepreneur','startups','SaaS'],
+  'Investor':                 ['venturecapital','investing','startups'],
+  'Data / Analytics':         ['datascience','MachineLearning','datasets'],
+  'Student / Learner':        ['learnprogramming','cscareerquestions','webdev'],
+  'Sales / Business Dev':     ['sales','startups','entrepreneur'],
+  'Operations / Finance':     ['personalfinance','investing','entrepreneur'],
+  'Content Creator':          ['content_marketing','podcasting','blogging'],
+  'Community Manager':        ['community','socialmedia','marketing'],
+  'Researcher / Academic':    ['MachineLearning','science','datascience'],
+  'HR / People Ops':          ['humanresources','cscareerquestions','startups'],
+};
+
+// ─── Reddit live post fetching ────────────────────────────────────────────────
+const redditCache = new Map(); // subreddit → { posts, fetchedAt }
+const REDDIT_TTL  = 30 * 60 * 1000; // 30 minutes
+
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      headers: {
+        'User-Agent': 'UFIConnect/1.0 (https://uficonnect.org)',
+        'Accept': 'application/json',
+      },
+    };
+    https.get(url, opts, (res) => {
+      // Follow one redirect
+      if (res.statusCode === 301 || res.statusCode === 302) {
+        return fetchJSON(res.headers.location).then(resolve).catch(reject);
+      }
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch (e) { reject(new Error(`JSON parse failed for ${url}: ${e.message}`)); }
+      });
+    }).on('error', reject).setTimeout(8000, function() { this.destroy(new Error('timeout')); });
+  });
+}
+
+async function fetchSubredditPosts(sub) {
+  const cached = redditCache.get(sub);
+  if (cached && Date.now() - cached.fetchedAt < REDDIT_TTL) return cached.posts;
+
+  try {
+    const data = await fetchJSON(`https://www.reddit.com/r/${sub}/hot.json?limit=8&raw_json=1`);
+    const posts = (data?.data?.children || [])
+      .filter(({ data: p }) => !p.stickied && !p.over_18)
+      .map(({ data: p }) => {
+        // Find a matching group in our groups array
+        const matchedGroup = groups.find((g) => g.subreddit === sub || g.subreddit?.toLowerCase() === sub.toLowerCase());
+        return {
+          id:            `reddit_${p.id}`,
+          authorId:      `reddit_${p.author}`,
+          groupId:       matchedGroup?.id || `ext_${sub.toLowerCase()}`,
+          content:       p.selftext?.slice(0, 500) || p.title,
+          title:         p.title,
+          url:           `https://reddit.com${p.permalink}`,
+          source:        'reddit',
+          sourceLabel:   `r/${sub}`,
+          sourceUrl:     `https://reddit.com${p.permalink}`,
+          author:        { id: `reddit_${p.author}`, name: `u/${p.author}`, title: `r/${sub}`, organization: 'Reddit' },
+          likes:         [],
+          likesCount:    p.ups || 0,
+          commentsCount: p.num_comments || 0,
+          createdAt:     new Date(p.created_utc * 1000).toISOString(),
+          isExternal:    true,
+          group:         matchedGroup
+            ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category }
+            : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+        };
+      });
+    redditCache.set(sub, { posts, fetchedAt: Date.now() });
+    return posts;
+  } catch (e) {
+    console.warn(`Reddit fetch r/${sub}:`, e.message);
+    return redditCache.get(sub)?.posts || [];
+  }
+}
+
+async function getPersonalizedRedditPosts(interests = [], role = '') {
+  // Collect subreddits from interests + role, deduplicate, take up to 6
+  const subSet = new Set();
+  (ROLE_TO_SUBREDDITS[role] || []).forEach((s) => subSet.add(s));
+  interests.forEach((i) => (INTEREST_TO_SUBREDDIT[i] || []).forEach((s) => subSet.add(s)));
+  if (subSet.size === 0) ['programming','startups','MachineLearning'].forEach((s) => subSet.add(s));
+
+  const subs = [...subSet].slice(0, 6);
+  const results = await Promise.all(subs.map(fetchSubredditPosts));
+  return results.flat();
+}
 
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
 const PLATFORMS = {
@@ -294,8 +448,10 @@ const sampleUsers = [
   { id: 'su15', name: 'Cameron Davis',   title: 'EdTech Founder',     organization: 'Learn Forward',   avatar: null, joinedGroups: ['g25','g26','g9','g5'],         skills: ['Curriculum','EdTech','Community'] },
 ];
 
-// ─── Groups ───────────────────────────────────────────────────────────────────
-const groups = [
+// ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
+// ─── ALL_GROUPS_SEED — seeded into PostgreSQL at startup ─────────────────────
+const ALL_GROUPS_SEED = [
+  // ── UFIConnect internal groups ───────────────────────────────────────────────
   { id: 'g1',  category: 'AI & ML',     name: 'AI Product Managers',         description: 'Connect with PMs building AI, automation, and workflow tools.',              members: 1840, relatedGroups: ['g2','g3','g5','g11'] },
   { id: 'g2',  category: 'AI & ML',     name: 'Machine Learning Engineers',  description: 'Deep-dive discussions on models, infra, and production ML systems.',         members: 3210, relatedGroups: ['g1','g3','g4','g5','g8'] },
   { id: 'g3',  category: 'AI & ML',     name: 'Generative AI Builders',      description: 'LLMs, diffusion models, and the apps being built on top of them.',           members: 5620, relatedGroups: ['g1','g2','g4','g5','g7'] },
@@ -322,20 +478,65 @@ const groups = [
   { id: 'g24', category: 'Remote Work', name: 'Digital Nomads',              description: 'Working from anywhere — visas, gear, co-working, and community.',         members: 6120, relatedGroups: ['g23','g9','g26'] },
   { id: 'g25', category: 'Education',   name: 'EdTech Innovators',           description: 'Learning experiences, instructional design, and ed-tech product.',        members: 1050, relatedGroups: ['g26','g1','g8','g18'] },
   { id: 'g26', category: 'Education',   name: 'Career Changers',             description: 'From any background into tech — stories, resources, and support.',        members: 3780, relatedGroups: ['g25','g5','g13','g24'] },
-  // ── Social platform communities ──────────────────────────────────────────────
-  { id: 'gs1', category: 'Social',     name: 'LinkedIn Professionals',       description: 'Connect with LinkedIn members across industries. Share profiles, posts, and network.',  members: 8420, relatedGroups: ['g11','g9','g17'], platform: 'linkedin',  platformUrl: 'https://www.linkedin.com/login' },
-  { id: 'gs2', category: 'Social',     name: 'GitHub Open Source',           description: 'Developers sharing repos, OSS projects, and code reviews from GitHub.',               members: 5910, relatedGroups: ['g8','g5','g6'],  platform: 'github',    platformUrl: 'https://github.com/login' },
-  { id: 'gs3', category: 'Social',     name: 'X / Twitter Tech',             description: 'Hot takes, threads, and discussions from the tech Twitter/X community.',              members: 12300,relatedGroups: ['g1','g3','g17'], platform: 'twitter',   platformUrl: 'https://twitter.com/i/flow/login' },
-  { id: 'gs4', category: 'Social',     name: 'Instagram Creatives',          description: 'Designers, photographers, and creative professionals sharing their work.',            members: 6780, relatedGroups: ['g13','g15','g16'],platform: 'instagram', platformUrl: 'https://www.instagram.com/accounts/login/' },
-  { id: 'gs5', category: 'Social',     name: 'Discord Communities',          description: 'Engineers, gamers, and community builders from Discord servers.',                     members: 9140, relatedGroups: ['g5','g7','g8'],  platform: 'discord',   platformUrl: 'https://discord.com/login' },
-  { id: 'gs6', category: 'Social',     name: 'YouTube Creators & Viewers',   description: 'Content creators and professionals sharing insights via video.',                     members: 7230, relatedGroups: ['g18','g25','g19'],platform: 'youtube',   platformUrl: 'https://accounts.google.com/ServiceLogin?service=youtube' },
-  { id: 'gs7', category: 'Social',     name: 'Reddit Professional Network',  description: 'Discussions and AMAs from professional subreddits and communities.',               members: 15600,relatedGroups: ['g5','g11','g24'], platform: 'reddit',    platformUrl: 'https://www.reddit.com/login' },
-  { id: 'gs8', category: 'Social',     name: 'Medium Writers & Readers',     description: 'Writers, thinkers, and readers sharing long-form content on Medium.',               members: 4320, relatedGroups: ['g18','g25','g19'],platform: 'medium',    platformUrl: 'https://medium.com/m/signin' },
-  { id: 'gs9', category: 'Social',     name: 'Dribbble Design Community',    description: 'Top designers sharing shots, portfolios, and feedback on Dribbble.',                members: 3810, relatedGroups: ['g13','g14','g15'],platform: 'dribbble',  platformUrl: 'https://dribbble.com/session/new' },
-  { id: 'gs10',category: 'Social',     name: 'Behance Portfolio Network',    description: 'Creative professionals showcasing projects and portfolios on Behance.',              members: 2940, relatedGroups: ['g13','g15','g16'],platform: 'behance',   platformUrl: 'https://www.behance.net/signin' },
-  { id: 'gs11',category: 'Social',     name: 'Indeed Job Seekers',           description: 'Job seekers and recruiters sharing opportunities and career advice.',               members: 11200,relatedGroups: ['g26','g23','g11'],platform: 'indeed',    platformUrl: 'https://secure.indeed.com/account/login' },
-  { id: 'gs12',category: 'Social',     name: 'Facebook Professional Groups', description: 'Industry groups, mastermind circles, and networking from Facebook.',               members: 18700,relatedGroups: ['g17','g9','g11'], platform: 'facebook',  platformUrl: 'https://www.facebook.com/login' },
+  // ── Social platform communities (internal UFI groups) ────────────────────────
+  { id: 'gs1', category: 'Social', name: 'LinkedIn Professionals',       description: 'Connect with LinkedIn members across industries. Share profiles, posts, and network.',  members: 8420,  platform: 'linkedin',  platformUrl: 'https://www.linkedin.com/login', relatedGroups: ['g11','g9','g17'] },
+  { id: 'gs2', category: 'Social', name: 'GitHub Open Source',           description: 'Developers sharing repos, OSS projects, and code reviews from GitHub.',               members: 5910,  platform: 'github',    platformUrl: 'https://github.com/login', relatedGroups: ['g8','g5','g6'] },
+  { id: 'gs3', category: 'Social', name: 'X / Twitter Tech',             description: 'Hot takes, threads, and discussions from the tech Twitter/X community.',              members: 12300, platform: 'twitter',   platformUrl: 'https://twitter.com/i/flow/login', relatedGroups: ['g1','g3','g17'] },
+  { id: 'gs4', category: 'Social', name: 'Instagram Creatives',          description: 'Designers, photographers, and creative professionals sharing their work.',            members: 6780,  platform: 'instagram', platformUrl: 'https://www.instagram.com/accounts/login/', relatedGroups: ['g13','g15','g16'] },
+  { id: 'gs5', category: 'Social', name: 'Discord Communities',          description: 'Engineers, gamers, and community builders from Discord servers.',                     members: 9140,  platform: 'discord',   platformUrl: 'https://discord.com/login', relatedGroups: ['g5','g7','g8'] },
+  { id: 'gs6', category: 'Social', name: 'YouTube Creators & Viewers',   description: 'Content creators and professionals sharing insights via video.',                     members: 7230,  platform: 'youtube',   platformUrl: 'https://accounts.google.com/ServiceLogin?service=youtube', relatedGroups: ['g18','g25','g19'] },
+  { id: 'gs7', category: 'Social', name: 'Reddit Professional Network',  description: 'Discussions and AMAs from professional subreddits and communities.',               members: 15600, platform: 'reddit',    platformUrl: 'https://www.reddit.com/login', relatedGroups: ['g5','g11','g24'] },
+  { id: 'gs8', category: 'Social', name: 'Medium Writers & Readers',     description: 'Writers, thinkers, and readers sharing long-form content on Medium.',               members: 4320,  platform: 'medium',    platformUrl: 'https://medium.com/m/signin', relatedGroups: ['g18','g25','g19'] },
+  { id: 'gs9', category: 'Social', name: 'Dribbble Design Community',    description: 'Top designers sharing shots, portfolios, and feedback on Dribbble.',                members: 3810,  platform: 'dribbble',  platformUrl: 'https://dribbble.com/session/new', relatedGroups: ['g13','g14','g15'] },
+  { id: 'gs10',category: 'Social', name: 'Behance Portfolio Network',    description: 'Creative professionals showcasing projects and portfolios on Behance.',              members: 2940,  platform: 'behance',   platformUrl: 'https://www.behance.net/signin', relatedGroups: ['g13','g15','g16'] },
+  { id: 'gs11',category: 'Social', name: 'Indeed Job Seekers',           description: 'Job seekers and recruiters sharing opportunities and career advice.',               members: 11200, platform: 'indeed',    platformUrl: 'https://secure.indeed.com/account/login', relatedGroups: ['g26','g23','g11'] },
+  { id: 'gs12',category: 'Social', name: 'Facebook Professional Groups', description: 'Industry groups, mastermind circles, and networking from Facebook.',               members: 18700, platform: 'facebook',  platformUrl: 'https://www.facebook.com/login', relatedGroups: ['g17','g9','g11'] },
+
+  // ── Real public Reddit communities (isExternal: true) ────────────────────────
+  { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',           members: 3500000, isExternal: true, subreddit: 'MachineLearning',     externalUrl: 'https://reddit.com/r/MachineLearning' },
+  { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                     members: 2000000, isExternal: true, subreddit: 'artificial',          externalUrl: 'https://reddit.com/r/artificial' },
+  { id: 'ext_r_ds',       category: 'AI & ML',     name: 'r/datascience',            description: 'Data science career advice, tool comparisons, and project showcases from 1.2M+ members.',                         members: 1200000, isExternal: true, subreddit: 'datascience',         externalUrl: 'https://reddit.com/r/datascience' },
+  { id: 'ext_r_llm',      category: 'AI & ML',     name: 'r/LocalLLaMA',             description: 'Running LLMs locally — hardware setups, model comparisons, and fine-tuning guides.',                              members: 580000,  isExternal: true, subreddit: 'LocalLLaMA',          externalUrl: 'https://reddit.com/r/LocalLLaMA' },
+  { id: 'ext_r_prog',     category: 'Engineering', name: 'r/programming',            description: 'The original programming community — 6.3M+ developers sharing articles, tools, and industry discourse.',           members: 6300000, isExternal: true, subreddit: 'programming',         externalUrl: 'https://reddit.com/r/programming' },
+  { id: 'ext_r_webdev',   category: 'Engineering', name: 'r/webdev',                 description: 'Web development tutorials, job advice, roast-my-site threads, and frontend/backend discussions.',                  members: 2500000, isExternal: true, subreddit: 'webdev',              externalUrl: 'https://reddit.com/r/webdev' },
+  { id: 'ext_r_devops',   category: 'Engineering', name: 'r/devops',                 description: 'DevOps practices, Kubernetes, CI/CD pipelines, cloud infra, and SRE war stories.',                               members: 440000,  isExternal: true, subreddit: 'devops',              externalUrl: 'https://reddit.com/r/devops' },
+  { id: 'ext_r_react',    category: 'Engineering', name: 'r/reactjs',                description: 'React.js ecosystem — hooks, state management, Next.js, performance, and job hunting.',                             members: 500000,  isExternal: true, subreddit: 'reactjs',             externalUrl: 'https://reddit.com/r/reactjs' },
+  { id: 'ext_r_python',   category: 'Engineering', name: 'r/Python',                 description: 'Python scripts, libraries, career questions, and community projects from 1.6M+ Pythonistas.',                    members: 1600000, isExternal: true, subreddit: 'Python',              externalUrl: 'https://reddit.com/r/Python' },
+  { id: 'ext_r_js',       category: 'Engineering', name: 'r/javascript',             description: 'JavaScript ecosystem — frameworks, tooling, browser APIs, and TypeScript migration guides.',                       members: 2200000, isExternal: true, subreddit: 'javascript',          externalUrl: 'https://reddit.com/r/javascript' },
+  { id: 'ext_r_startups', category: 'Startups',    name: 'r/startups',               description: 'Founder stories, early-stage advice, product pivots, and team building from 1.4M+ entrepreneurs.',               members: 1400000, isExternal: true, subreddit: 'startups',            externalUrl: 'https://reddit.com/r/startups' },
+  { id: 'ext_r_entrep',   category: 'Startups',    name: 'r/Entrepreneur',           description: '1.5M+ business owners sharing revenue milestones, hiring tips, and marketing wins.',                              members: 1500000, isExternal: true, subreddit: 'Entrepreneur',        externalUrl: 'https://reddit.com/r/Entrepreneur' },
+  { id: 'ext_r_saas',     category: 'Startups',    name: 'r/SaaS',                   description: 'SaaS metrics, pricing strategy, churn reduction, and tool stack discussions.',                                    members: 290000,  isExternal: true, subreddit: 'SaaS',                externalUrl: 'https://reddit.com/r/SaaS' },
+  { id: 'ext_r_pm',       category: 'Startups',    name: 'r/ProductManagement',      description: 'Product manager career growth, roadmap frameworks, stakeholder management, and interview prep.',                  members: 220000,  isExternal: true, subreddit: 'ProductManagement',   externalUrl: 'https://reddit.com/r/ProductManagement' },
+  { id: 'ext_r_ux',       category: 'Design',      name: 'r/UXDesign',               description: 'UX research, portfolio critiques, design systems, and career advice from 530K+ designers.',                      members: 530000,  isExternal: true, subreddit: 'UXDesign',            externalUrl: 'https://reddit.com/r/UXDesign' },
+  { id: 'ext_r_gfx',      category: 'Design',      name: 'r/graphic_design',         description: 'Logo critiques, branding showcases, typography discussion, and freelance pricing from 5.6M+ creatives.',         members: 5600000, isExternal: true, subreddit: 'graphic_design',      externalUrl: 'https://reddit.com/r/graphic_design' },
+  { id: 'ext_r_mktg',     category: 'Marketing',   name: 'r/marketing',              description: 'Digital marketing strategies, campaign post-mortems, and tool recommendations.',                                  members: 500000,  isExternal: true, subreddit: 'marketing',           externalUrl: 'https://reddit.com/r/marketing' },
+  { id: 'ext_r_seo',      category: 'Marketing',   name: 'r/SEO',                    description: 'Search engine optimisation — technical SEO, content strategy, algorithm updates, and link building.',             members: 280000,  isExternal: true, subreddit: 'SEO',                 externalUrl: 'https://reddit.com/r/SEO' },
+  { id: 'ext_r_pf',       category: 'Finance',     name: 'r/personalfinance',        description: 'Budgeting, debt payoff, investing basics, and financial independence advice from 20M+ members.',                  members: 20000000,isExternal: true, subreddit: 'personalfinance',     externalUrl: 'https://reddit.com/r/personalfinance' },
+  { id: 'ext_r_inv',      category: 'Finance',     name: 'r/investing',              description: 'Long-term investing, ETFs, stock picks, and portfolio strategy from 2.5M+ investors.',                           members: 2500000, isExternal: true, subreddit: 'investing',           externalUrl: 'https://reddit.com/r/investing' },
+  { id: 'ext_r_crypto',   category: 'Finance',     name: 'r/CryptoCurrency',         description: 'Crypto news, DeFi protocols, NFT analysis, and on-chain data from 6M+ members.',                               members: 6000000, isExternal: true, subreddit: 'CryptoCurrency',      externalUrl: 'https://reddit.com/r/CryptoCurrency' },
+  { id: 'ext_r_nomad',    category: 'Remote Work', name: 'r/digitalnomad',           description: 'Visa guides, best coworking spots, tax strategies, and remote work tools from 1.8M+ nomads.',                   members: 1800000, isExternal: true, subreddit: 'digitalnomad',        externalUrl: 'https://reddit.com/r/digitalnomad' },
+  { id: 'ext_r_remote',   category: 'Remote Work', name: 'r/remotework',             description: 'Remote job leads, home office setups, async communication, and WFH culture.',                                    members: 450000,  isExternal: true, subreddit: 'remotework',          externalUrl: 'https://reddit.com/r/remotework' },
+  { id: 'ext_r_free',     category: 'Remote Work', name: 'r/freelance',              description: 'Freelance rates, client red flags, contract templates, and growing a solo business.',                            members: 400000,  isExternal: true, subreddit: 'freelance',           externalUrl: 'https://reddit.com/r/freelance' },
+  { id: 'ext_r_learn',    category: 'Education',   name: 'r/learnprogramming',       description: 'Beginner-friendly coding community — 4.3M+ people learning Python, JavaScript, and beyond.',                    members: 4300000, isExternal: true, subreddit: 'learnprogramming',    externalUrl: 'https://reddit.com/r/learnprogramming' },
+  { id: 'ext_r_cscareer', category: 'Education',   name: 'r/cscareerquestions',      description: 'Salary negotiations, interview prep, resume reviews, and career switching advice for developers.',               members: 1200000, isExternal: true, subreddit: 'cscareerquestions',   externalUrl: 'https://reddit.com/r/cscareerquestions' },
+
+  // ── Real Discord servers ──────────────────────────────────────────────────────
+  { id: 'ext_d_reactiflux', category: 'Engineering', name: 'Reactiflux Discord',    description: 'The largest React.js Discord server — 80K+ developers discussing React, Redux, GraphQL, and TypeScript.',         members: 80000,   isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/reactiflux' },
+  { id: 'ext_d_pydisc',    category: 'Engineering', name: 'Python Discord',          description: 'Official Python community Discord — 300K+ members, code reviews, project showcases, and mentorship.',            members: 300000,  isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/python' },
+  { id: 'ext_d_design',    category: 'Design',      name: 'Design Buddies Discord', description: '100K+ UX/UI designers sharing portfolio feedback, job leads, and career advice.',                                  members: 100000,  isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/designbuddies' },
+  { id: 'ext_d_tph',       category: 'Engineering', name: "The Programmer's Hangout",'description': 'Welcoming community for programmers at all levels — 80K+ members, code challenges, and project collabs.',       members: 80000,   isExternal: true, platform: 'discord', externalUrl: 'https://discord.gg/programming' },
+
+  // ── LinkedIn Groups ───────────────────────────────────────────────────────────
+  { id: 'ext_li_pm',       category: 'Startups',    name: 'Product Management Professionals', description: 'LinkedIn\'s largest PM group — product strategy, roadmapping, and career growth for product managers.', members: 500000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/42115' },
+  { id: 'ext_li_gh',       category: 'Marketing',   name: 'Growth Hackers (LinkedIn)',         description: 'Growth marketing tactics, A/B test results, and acquisition case studies shared by 300K+ marketers.',  members: 300000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/1868995' },
+
+  // ── Hacker News ──────────────────────────────────────────────────────────────
+  { id: 'ext_hn',          category: 'Engineering', name: 'Hacker News',            description: 'Y Combinator\'s community for startup and technology discussion — the internet\'s sharpest tech commentary.',       members: 5000000, isExternal: true, platform: 'hackernews', externalUrl: 'https://news.ycombinator.com' },
+  { id: 'ext_devto',       category: 'Engineering', name: 'DEV Community',          description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                           members: 1000000, isExternal: true, platform: 'devto',      externalUrl: 'https://dev.to' },
 ];
+
+// Live in-memory groups list — populated from DB at startup, falls back to seed
+let groups = [...ALL_GROUPS_SEED];
 
 // ─── Posts ────────────────────────────────────────────────────────────────────
 const posts = [
@@ -489,8 +690,85 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
+
+    // Groups table — persists across deploys
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS community_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        member_count INTEGER DEFAULT 0,
+        platform TEXT,
+        platform_url TEXT,
+        external_url TEXT,
+        subreddit TEXT,
+        is_external BOOLEAN DEFAULT false,
+        related_groups TEXT[] DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Posts table — persists across deploys
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS community_posts (
+        id TEXT PRIMARY KEY,
+        group_id TEXT,
+        author_id TEXT,
+        author_name TEXT,
+        author_title TEXT,
+        content TEXT NOT NULL,
+        url TEXT,
+        source TEXT DEFAULT 'uficonnect',
+        source_label TEXT,
+        likes TEXT[] DEFAULT '{}',
+        comments_count INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     console.log('✅ DB migration applied');
   } catch (err) { console.warn('DB migration:', err.message); }
+}
+
+// ─── Seed groups into DB and load back into memory ────────────────────────────
+async function seedAndLoadGroups() {
+  if (!db.isConnected()) return;
+  try {
+    for (const g of ALL_GROUPS_SEED) {
+      await db.query(`
+        INSERT INTO community_groups
+          (id,name,category,description,member_count,platform,platform_url,external_url,subreddit,is_external,related_groups)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        ON CONFLICT (id) DO UPDATE SET
+          name=EXCLUDED.name,
+          description=EXCLUDED.description,
+          member_count=GREATEST(community_groups.member_count, EXCLUDED.member_count),
+          platform=EXCLUDED.platform,
+          platform_url=EXCLUDED.platform_url,
+          external_url=EXCLUDED.external_url,
+          subreddit=EXCLUDED.subreddit,
+          is_external=EXCLUDED.is_external
+      `, [
+        g.id, g.name, g.category, g.description || '',
+        g.members || g.member_count || 0,
+        g.platform || null, g.platformUrl || null,
+        g.externalUrl || null, g.subreddit || null,
+        g.isExternal || false,
+        g.relatedGroups || [],
+      ]);
+    }
+    const { rows } = await db.query('SELECT * FROM community_groups ORDER BY member_count DESC');
+    groups.length = 0;
+    rows.forEach((r) => groups.push({
+      id: r.id, name: r.name, category: r.category,
+      description: r.description, members: r.member_count,
+      platform: r.platform, platformUrl: r.platform_url,
+      externalUrl: r.external_url, subreddit: r.subreddit,
+      isExternal: r.is_external, relatedGroups: r.related_groups || [],
+    }));
+    console.log(`✅ Loaded ${groups.length} groups from DB`);
+  } catch (err) { console.warn('seedAndLoadGroups:', err.message); }
 }
 
 function recommendGroups(userId, triggerGroupId, count = 3) {
@@ -715,50 +993,75 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
   res.json({ joinedGroups: user.joinedGroups });
 });
 
-// ─── Feed (global — all posts, personalized by interests & role) ─────────────
+// ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
+  const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
 
-  // Build the set of categories relevant to this user
+  // Categories relevant to this user
   const relevantCategories = new Set([
-    // From their selected interests
     ...(prefs.interests || []).map(i => INTEREST_TO_CATEGORY[i]).filter(Boolean),
-    // From their role
     ...(ROLE_CATEGORIES[prefs.role] || []),
   ]);
 
-  const scored = posts.map((p) => {
+  function scorePost(groupId, cat) {
+    if (joined.has(groupId))               return 3;
+    if (cat && relevantCategories.has(cat)) return 2;
+    return 1;
+  }
+
+  // Internal posts
+  const internal = posts.map((p) => {
     const author = sampleUsers.find((u) => u.id === p.authorId) || users.find((u) => u.id === p.authorId);
     const group  = groups.find((g) => g.id === p.groupId);
     const cat    = group?.category;
-
-    // Relevance score: 3 = joined group, 2 = matches interest/role category, 1 = everything else
-    let relevance = 1;
-    if (joined.has(p.groupId))          relevance = 3;
-    else if (cat && relevantCategories.has(cat)) relevance = 2;
-
+    const relevance = scorePost(p.groupId, cat);
     return {
       ...p,
-      author:        author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
-      group:         group  ? { id: group.id, name: group.name, category: cat } : null,
-      likedByMe:     p.likes.includes(req.user.id),
-      likesCount:    p.likes.length,
+      author:          author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
+      group:           group  ? { id: group.id, name: group.name, category: cat } : null,
+      likedByMe:       (p.likes || []).includes(req.user.id),
+      likesCount:      (p.likes || []).length,
       fromJoinedGroup: joined.has(p.groupId),
-      forYou:        relevance >= 2,   // used by client "For You" filter
+      forYou:          relevance >= 2,
       relevance,
+      source:          'uficonnect',
+      sourceLabel:     'UFIConnect',
+      sourceUrl:       null,
+      isExternal:      false,
     };
   });
 
-  // Sort: higher relevance first, then recency
-  scored.sort((a, b) =>
+  // Live Reddit posts — fetched async, cached 30 min
+  let redditPosts = [];
+  try {
+    const raw = await getPersonalizedRedditPosts(prefs.interests || [], prefs.role || '');
+    redditPosts = raw.map((p) => {
+      const group = groups.find((g) => g.id === p.groupId);
+      const cat   = group?.category || p.group?.category;
+      const relevance = scorePost(p.groupId, cat);
+      return {
+        ...p,
+        group:           group ? { id: group.id, name: group.name, category: cat } : p.group,
+        likedByMe:       false,
+        fromJoinedGroup: joined.has(p.groupId),
+        forYou:          relevance >= 2,
+        relevance,
+      };
+    });
+  } catch (e) {
+    console.warn('Reddit feed error:', e.message);
+  }
+
+  const all = [...internal, ...redditPosts];
+  all.sort((a, b) =>
     b.relevance !== a.relevance
       ? b.relevance - a.relevance
       : new Date(b.createdAt) - new Date(a.createdAt)
   );
 
-  res.json({ posts: scored });
+  res.json({ posts: all });
 });
 
 app.post('/feed/:postId/like', authenticate, (req, res) => {
@@ -958,15 +1261,35 @@ const OP_TYPE_META = {
   learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
 };
 
+// Role → preferred opportunity types
+const ROLE_OP_TYPES = {
+  'Engineer / Developer':     new Set(['job','gig','hackathon','opensource','learning']),
+  'Designer / Creative':      new Set(['job','gig','event','learning']),
+  'Product Manager':          new Set(['job','event','learning']),
+  'Marketer / Growth':        new Set(['job','gig','event','learning']),
+  'Founder / Entrepreneur':   new Set(['grant','event','learning','job']),
+  'Investor':                 new Set(['event','grant']),
+  'Data / Analytics':         new Set(['job','gig','hackathon','learning']),
+  'Student / Learner':        new Set(['learning','hackathon','opensource','grant']),
+  'Sales / Business Dev':     new Set(['job','event','gig']),
+  'Operations / Finance':     new Set(['job','event','learning']),
+  'Content Creator':          new Set(['gig','job','event','learning']),
+  'Community Manager':        new Set(['job','event','gig']),
+  'Researcher / Academic':    new Set(['grant','learning','hackathon']),
+  'HR / People Ops':          new Set(['job','event','learning']),
+};
+
 app.get('/opportunities', authenticate, async (req, res) => {
   const { type, remote, search } = req.query;
-  const user = await getUser(req.user.id);
-  const skills = new Set((user?.skills || []).map((s) => s.toLowerCase()));
+  const user      = await getUser(req.user.id);
+  const role      = user?.preferences?.role || '';
+  const skills    = new Set((user?.skills || []).map((s) => s.toLowerCase()));
   const interests = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
+  const roleTypes = ROLE_OP_TYPES[role] || new Set();
 
   let results = OPPORTUNITIES;
   if (type && type !== 'all') results = results.filter((o) => o.type === type);
-  if (remote === 'true') results = results.filter((o) => o.remote);
+  if (remote === 'true')       results = results.filter((o) => o.remote);
   if (search) {
     const q = search.toLowerCase();
     results = results.filter((o) =>
@@ -978,11 +1301,12 @@ app.get('/opportunities', authenticate, async (req, res) => {
 
   results = results.map((o) => {
     let score = 0;
-    o.tags.forEach((t) => {
-      if (skills.has(t.toLowerCase())) score += 3;
-    });
-    const catMap = { job: 'engineering', gig: 'engineering', grant: 'startups', event: 'networking', hackathon: 'engineering', opensource: 'engineering', learning: 'education' };
-    if (interests.has(catMap[o.type])) score += 1;
+    // Skill match — highest weight
+    o.tags.forEach((t) => { if (skills.has(t.toLowerCase())) score += 3; });
+    // Role-type match
+    if (roleTypes.has(o.type)) score += 2;
+    // Interest keyword match against tags
+    o.tags.forEach((t) => { if (interests.has(t.toLowerCase())) score += 1; });
     return { ...o, matchScore: score };
   });
 
@@ -1083,6 +1407,7 @@ app.post('/messages/:userId', authenticate, (req, res) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 db.initDB().then(async () => {
   await migrateDB();
+  await seedAndLoadGroups();
   app.listen(PORT, () =>
     console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );

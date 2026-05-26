@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -156,6 +157,34 @@ const DEFAULT_META = {
   fields: [],
 };
 
+function Toggle({ value, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      style={{
+        width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
+        background: value ? 'var(--primary)' : 'var(--border)',
+        position: 'relative', transition: 'background .2s', flexShrink: 0,
+      }}
+    >
+      <span style={{
+        position: 'absolute', top: 3, left: value ? 23 : 3,
+        width: 18, height: 18, borderRadius: '50%', background: '#fff',
+        transition: 'left .2s',
+      }} />
+    </button>
+  );
+}
+
+function SectionHeading({ children }) {
+  return (
+    <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 14 }}>
+      {children}
+    </h3>
+  );
+}
+
 export default function Settings() {
   const { profile, updateProfileLocally } = useAuth();
   const role = profile?.preferences?.role || '';
@@ -169,6 +198,23 @@ export default function Settings() {
     skills:       (profile?.skills || []).join(', '),
   });
   const [roleSettings, setRoleSettings] = useState({ ...(profile?.roleSettings || {}) });
+
+  // Notification prefs (stored in roleSettings under 'notifs_*')
+  const [notifs, setNotifs] = useState({
+    emailDigest:    roleSettings.notifs_emailDigest    ?? true,
+    communityUpdates: roleSettings.notifs_communityUpdates ?? true,
+    newOpportunities: roleSettings.notifs_newOpportunities ?? true,
+    mentions:       roleSettings.notifs_mentions       ?? true,
+  });
+
+  // Privacy prefs
+  const [privacy, setPrivacy] = useState({
+    publicProfile:  roleSettings.privacy_publicProfile  ?? true,
+    showEmail:      roleSettings.privacy_showEmail      ?? false,
+    showSkills:     roleSettings.privacy_showSkills     ?? true,
+    showGroups:     roleSettings.privacy_showGroups     ?? true,
+  });
+
   const [saving, setSaving] = useState(false);
   const [saved,  setSaved]  = useState(false);
   const [error,  setError]  = useState('');
@@ -176,12 +222,10 @@ export default function Settings() {
   function handleChange(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
   }
-
   function handleRoleField(e) {
     setRoleSettings(r => ({ ...r, [e.target.name]: e.target.value }));
   }
-
-  function handleToggle(key) {
+  function handleRoleToggle(key) {
     setRoleSettings(r => ({ ...r, [key]: !r[key] }));
   }
 
@@ -191,10 +235,21 @@ export default function Settings() {
     setError('');
     setSaved(false);
     try {
+      const merged = {
+        ...roleSettings,
+        notifs_emailDigest:       notifs.emailDigest,
+        notifs_communityUpdates:  notifs.communityUpdates,
+        notifs_newOpportunities:  notifs.newOpportunities,
+        notifs_mentions:          notifs.mentions,
+        privacy_publicProfile:    privacy.publicProfile,
+        privacy_showEmail:        privacy.showEmail,
+        privacy_showSkills:       privacy.showSkills,
+        privacy_showGroups:       privacy.showGroups,
+      };
       const payload = {
         ...form,
         skills: form.skills.split(',').map(s => s.trim()).filter(Boolean),
-        roleSettings,
+        roleSettings: merged,
       };
       const { data } = await client.patch('/profile', payload);
       updateProfileLocally(data.profile || data);
@@ -217,12 +272,40 @@ export default function Settings() {
     <Layout>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Manage your profile and role-specific preferences.</p>
+        <p className="page-subtitle">Manage your profile, preferences, and account details.</p>
       </div>
 
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {error  && <div className="auth-error">{error}</div>}
-        {saved  && <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>✓ Settings saved</div>}
+        {error && <div className="auth-error">{error}</div>}
+        {saved && (
+          <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>
+            ✓ Settings saved
+          </div>
+        )}
+
+        {/* ── Account info ── */}
+        <div className="card">
+          <SectionHeading>Account</SectionHeading>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
+            <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.9rem' }}>
+              {(profile.name || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{profile.name}</div>
+              <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{profile.email}</div>
+            </div>
+            <div style={{ marginLeft: 'auto' }}>
+              <Link to="/profile/connected-accounts">
+                <button type="button" className="btn btn-ghost btn-sm">Manage connected accounts →</button>
+              </Link>
+            </div>
+          </div>
+          <div className="form-group" style={{ marginBottom: 4 }}>
+            <label className="form-label">Email address</label>
+            <input className="form-input" value={profile.email} disabled style={{ background: 'var(--bg-secondary)', color: 'var(--muted)' }} />
+            <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Email cannot be changed. Contact support if you need help.</span>
+          </div>
+        </div>
 
         {/* ── Role badge ── */}
         {role && (
@@ -235,14 +318,14 @@ export default function Settings() {
               <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{meta.tagline}</div>
             </div>
             <span style={{ fontSize: '.72rem', color: 'var(--muted)', background: 'var(--surface)', padding: '3px 8px', borderRadius: 6, fontWeight: 500 }}>
-              From onboarding
+              Set during onboarding
             </span>
           </div>
         )}
 
         {/* ── General profile ── */}
         <div className="card">
-          <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 16 }}>General</h3>
+          <SectionHeading>Profile</SectionHeading>
           <div className="form-group">
             <label className="form-label">Full name</label>
             <input className="form-input" name="name" value={form.name} onChange={handleChange} placeholder="Your name" />
@@ -257,7 +340,7 @@ export default function Settings() {
           </div>
           <div className="form-group">
             <label className="form-label">Bio</label>
-            <textarea className="form-textarea" name="bio" value={form.bio} onChange={handleChange} placeholder="Tell people what you're working on…" />
+            <textarea className="form-textarea" name="bio" value={form.bio} onChange={handleChange} rows={3} placeholder="Tell people what you're working on…" />
           </div>
           <div className="form-group">
             <label className="form-label">Skills <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(comma-separated)</span></label>
@@ -268,51 +351,79 @@ export default function Settings() {
         {/* ── Role-specific fields ── */}
         {meta.fields.length > 0 && (
           <div className="card">
-            <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 16 }}>
-              {meta.icon} {role} details
-            </h3>
+            <SectionHeading>{meta.icon} {role} details</SectionHeading>
             {meta.fields.map(({ key, label, placeholder, type }) =>
               type === 'toggle' ? (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggle(key)}
-                    style={{
-                      width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
-                      background: roleSettings[key] ? 'var(--primary)' : 'var(--border)',
-                      position: 'relative', transition: 'background .2s',
-                    }}
-                  >
-                    <span style={{
-                      position: 'absolute', top: 3, left: roleSettings[key] ? 23 : 3,
-                      width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                      transition: 'left .2s',
-                    }} />
-                  </button>
+                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</span>
+                  <Toggle value={!!roleSettings[key]} onChange={() => handleRoleToggle(key)} />
                 </div>
               ) : (
                 <div key={key} className="form-group">
                   <label className="form-label">{label}</label>
-                  <input
-                    className="form-input"
-                    name={key}
-                    value={roleSettings[key] || ''}
-                    onChange={handleRoleField}
-                    placeholder={placeholder}
-                  />
+                  <input className="form-input" name={key} value={roleSettings[key] || ''} onChange={handleRoleField} placeholder={placeholder} />
                 </div>
               )
             )}
           </div>
         )}
 
+        {/* ── Notifications ── */}
+        <div className="card">
+          <SectionHeading>🔔 Notifications</SectionHeading>
+          {[
+            { key: 'emailDigest',       label: 'Weekly email digest',           desc: 'A summary of top posts and opportunities in your groups.' },
+            { key: 'communityUpdates',  label: 'Community updates',             desc: 'New members, posts, and announcements from your groups.' },
+            { key: 'newOpportunities',  label: 'New opportunities',             desc: 'Job listings, gigs, and grants matching your profile.' },
+            { key: 'mentions',          label: 'Mentions and replies',          desc: 'When someone mentions or replies to you.' },
+          ].map(({ key, label, desc }) => (
+            <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+              </div>
+              <Toggle value={!!notifs[key]} onChange={() => setNotifs(n => ({ ...n, [key]: !n[key] }))} />
+            </div>
+          ))}
+        </div>
+
+        {/* ── Privacy ── */}
+        <div className="card">
+          <SectionHeading>🔒 Privacy</SectionHeading>
+          {[
+            { key: 'publicProfile',  label: 'Public profile',     desc: 'Allow anyone on UFIConnect to view your profile.' },
+            { key: 'showEmail',      label: 'Show email address',  desc: 'Display your email on your public profile.' },
+            { key: 'showSkills',     label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
+            { key: 'showGroups',     label: 'Show groups',         desc: 'Let others see which groups you belong to.' },
+          ].map(({ key, label, desc }) => (
+            <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+              </div>
+              <Toggle value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
+            </div>
+          ))}
+        </div>
+
+        {/* ── Danger zone ── */}
+        <div className="card" style={{ borderColor: '#FCA5A5' }}>
+          <SectionHeading>⚠️ Account</SectionHeading>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete account</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Permanently remove your account and all data. This cannot be undone.</div>
+            </div>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => alert('Contact support@uficonnect.org to delete your account.')}>
+              Delete
+            </button>
+          </div>
+        </div>
+
         {/* ── Save ── */}
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, paddingBottom: 32 }}>
           <button className="btn btn-primary" type="submit" disabled={saving}>
-            {saving ? <span className="spinner" /> : 'Save settings'}
+            {saving ? <span className="spinner" /> : 'Save all settings'}
           </button>
         </div>
       </form>

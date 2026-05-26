@@ -12,15 +12,26 @@ const CATEGORY_META = {
   'Finance':     { icon: '💰', bg: '#F0F9FF', text: '#0284C7' },
   'Remote Work': { icon: '🌍', bg: '#EEF2FF', text: '#4338CA' },
   'Education':   { icon: '🎓', bg: '#FFF7ED', text: '#EA580C' },
+  'Social':      { icon: '🔗', bg: '#F9FAFB', text: '#6B7280' },
+};
+
+const PLATFORM_META = {
+  reddit:      { icon: '🟠', label: 'Reddit',       color: '#FF4500' },
+  discord:     { icon: '💬', label: 'Discord',       color: '#5865F2' },
+  linkedin:    { icon: '💼', label: 'LinkedIn',      color: '#0A66C2' },
+  hackernews:  { icon: '🔶', label: 'Hacker News',   color: '#FF6600' },
+  devto:       { icon: '👩‍💻', label: 'DEV.to',       color: '#3B49DF' },
+  github:      { icon: '🐙', label: 'GitHub',        color: '#24292F' },
 };
 
 export default function Groups() {
   const navigate = useNavigate();
-  const [groups,    setGroups]    = useState([]);
-  const [joined,    setJoined]    = useState(new Set());
+  const [groups,     setGroups]     = useState([]);
+  const [joined,     setJoined]     = useState(new Set());
   const [categories, setCategories] = useState([]);
-  const [filter,    setFilter]    = useState('all');
-  const [loading,   setLoading]   = useState(true);
+  const [filter,     setFilter]     = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'community' | 'external'
+  const [loading,    setLoading]    = useState(true);
 
   useEffect(() => {
     Promise.all([
@@ -50,19 +61,38 @@ export default function Groups() {
     } catch (err) { console.error(err); }
   }
 
-  const displayed = filter === 'all'
-    ? groups
-    : groups.filter((g) => g.category === filter);
+  let displayed = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  if (typeFilter === 'community') displayed = displayed.filter((g) => !g.isExternal);
+  if (typeFilter === 'external')  displayed = displayed.filter((g) => g.isExternal);
 
   return (
     <Layout>
       <div className="page-header">
         <h1 className="page-title">Discover Groups</h1>
-        <p className="page-subtitle">Find communities that match your interests and goals.</p>
+        <p className="page-subtitle">
+          UFIConnect communities + real public groups from Reddit, Discord, LinkedIn, and more.
+        </p>
+      </div>
+
+      {/* Type tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        {[
+          { key: 'all',       label: '🌐 All' },
+          { key: 'community', label: '🏠 UFIConnect' },
+          { key: 'external',  label: '🔗 Public Platforms' },
+        ].map(({ key, label }) => (
+          <button
+            key={key}
+            className={`filter-btn${typeFilter === key ? ' active' : ''}`}
+            onClick={() => setTypeFilter(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Category filter */}
-      <div className="filter-bar">
+      <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
         <button className={`filter-btn${filter === 'all' ? ' active' : ''}`} onClick={() => setFilter('all')}>
           All
         </button>
@@ -82,42 +112,88 @@ export default function Groups() {
           <span className="spinner spinner-primary" />
         </div>
       ) : (
-        <div className="groups-grid">
-          {displayed.map((group) => {
-            const meta   = CATEGORY_META[group.category] || { icon: '📌', bg: '#F1F5F9', text: '#64748B' };
-            const isJoin = joined.has(group.id);
-            return (
-              <div
-                key={group.id}
-                className="card group-card"
-                onClick={() => navigate(`/groups/${group.id}`)}
-              >
-                <div className="group-card-header">
-                  <span className="group-icon">{meta.icon}</span>
-                  <div>
-                    <div className="group-name">{group.name}</div>
-                    <span
-                      className="group-category-badge"
-                      style={{ background: meta.bg, color: meta.text }}
-                    >
-                      {group.category}
+        <>
+          <p style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 12 }}>
+            {displayed.length} group{displayed.length !== 1 ? 's' : ''}
+            {displayed.filter(g => g.isExternal).length > 0
+              ? ` · ${displayed.filter(g => g.isExternal).length} from public platforms`
+              : ''}
+          </p>
+          <div className="groups-grid">
+            {displayed.map((group) => {
+              const meta    = CATEGORY_META[group.category] || { icon: '📌', bg: '#F1F5F9', text: '#64748B' };
+              const isJoin  = joined.has(group.id);
+              const platMeta = group.platform ? PLATFORM_META[group.platform] : null;
+
+              return (
+                <div
+                  key={group.id}
+                  className="card group-card"
+                  onClick={() => group.isExternal
+                    ? window.open(group.externalUrl, '_blank', 'noopener,noreferrer')
+                    : navigate(`/groups/${group.id}`)
+                  }
+                  style={{ cursor: 'pointer', position: 'relative' }}
+                >
+                  {/* External badge */}
+                  {group.isExternal && platMeta && (
+                    <div style={{
+                      position: 'absolute', top: 10, right: 10,
+                      fontSize: '.65rem', fontWeight: 700,
+                      color: platMeta.color, background: `${platMeta.color}18`,
+                      padding: '2px 7px', borderRadius: 4,
+                      display: 'flex', alignItems: 'center', gap: 3,
+                    }}>
+                      {platMeta.icon} {platMeta.label}
+                    </div>
+                  )}
+
+                  <div className="group-card-header">
+                    <span className="group-icon">{meta.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="group-name" style={{ paddingRight: group.isExternal ? 80 : 0 }}>
+                        {group.name}
+                      </div>
+                      <span
+                        className="group-category-badge"
+                        style={{ background: meta.bg, color: meta.text }}
+                      >
+                        {group.category}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="group-desc">{group.description}</p>
+
+                  <div className="group-footer">
+                    <span className="group-members">
+                      👥 {group.members?.toLocaleString()} members
                     </span>
+                    {group.isExternal ? (
+                      <a
+                        href={group.externalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="btn btn-sm btn-outline"
+                        style={{ borderColor: platMeta?.color || 'var(--primary)', color: platMeta?.color || 'var(--primary)' }}
+                      >
+                        Visit →
+                      </a>
+                    ) : (
+                      <button
+                        className={`btn btn-sm${isJoin ? ' btn-ghost' : ' btn-primary'}`}
+                        onClick={(e) => handleJoin(e, group.id)}
+                      >
+                        {isJoin ? 'Joined ✓' : 'Join'}
+                      </button>
+                    )}
                   </div>
                 </div>
-                <p className="group-desc">{group.description}</p>
-                <div className="group-footer">
-                  <span className="group-members">👥 {group.members?.toLocaleString()} members</span>
-                  <button
-                    className={`btn btn-sm${isJoin ? ' btn-ghost' : ' btn-primary'}`}
-                    onClick={(e) => handleJoin(e, group.id)}
-                  >
-                    {isJoin ? 'Joined ✓' : 'Join'}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </>
       )}
     </Layout>
   );
