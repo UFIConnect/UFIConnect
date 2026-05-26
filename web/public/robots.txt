@@ -6,8 +6,7 @@ Sitemap: https://uficonnect.org/sitemap.xml
 
 # Block private/API routes from indexing
 Disallow: /api/
-Disallow: /login
-Disallow: /register
 Disallow: /onboarding
 Disallow: /settings
 Disallow: /messages
+Disallow: /profile

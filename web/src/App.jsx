@@ -3,6 +3,7 @@ import { useAuth } from './contexts/AuthContext';
 
 import Login            from './pages/Login';
 import Register         from './pages/Register';
+import Landing          from './pages/Landing';
 import Onboarding       from './pages/Onboarding';
 import Feed             from './pages/Feed';
 import Groups           from './pages/Groups';
@@ -27,6 +28,14 @@ function RequireOnboarding({ children }) {
   return children;
 }
 
+function HomeRoute() {
+  const { token, profile, loading } = useAuth();
+  if (loading) return <div className="splash">Loading…</div>;
+  if (!token) return <Landing />;
+  if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
+  return <Feed />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -39,10 +48,8 @@ export default function App() {
         <RequireAuth><Onboarding /></RequireAuth>
       }/>
 
-      {/* Auth + onboarding complete */}
-      <Route path="/" element={
-        <RequireAuth><RequireOnboarding><Feed /></RequireOnboarding></RequireAuth>
-      }/>
+      {/* Home: Landing for public, Feed for authenticated */}
+      <Route path="/" element={<HomeRoute />} />
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
       }/>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
@@ -26,6 +27,20 @@ const PLATFORM_META = {
 };
 
 export default function Groups() {
+  const navigate = useNavigate();
+
+  return (
+    <>
+      <Helmet>
+        <title>Tech Communities & Developer Groups | UFIConnect</title>
+        <meta name="description" content="Discover 50+ professional communities on UFIConnect. Join Reddit communities, Discord servers, LinkedIn groups, Hacker News, and DEV.to — all curated by your role and interests." />
+      </Helmet>
+      {GroupsContent()}
+    </>
+  );
+}
+
+function GroupsContent() {
   const navigate = useNavigate();
   const [groups,     setGroups]     = useState([]);
   const [joined,     setJoined]     = useState(new Set());

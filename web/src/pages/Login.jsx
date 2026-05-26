@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
@@ -29,7 +30,13 @@ export default function Login() {
   }
 
   return (
-    <div className="auth-page">
+    <>
+      <Helmet>
+        <title>Sign In | UFIConnect</title>
+        <meta name="description" content="Sign in to your UFIConnect account to access your personalized feed, manage your profile, and follow communities." />
+        <meta name="robots" content="noindex" />
+      </Helmet>
+      <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">UF</div>
@@ -81,5 +88,6 @@ export default function Login() {
         </div>
       </div>
     </div>
+    </>
   );
 }

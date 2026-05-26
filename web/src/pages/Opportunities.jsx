@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
@@ -71,8 +72,13 @@ export default function Opportunities() {
   }, [filter, remote, liveOnly, search]);
 
   return (
-    <Layout>
-      <div className="page-header">
+    <>
+      <Helmet>
+        <title>Remote Jobs, Grants & Tech Opportunities | UFIConnect</title>
+        <meta name="description" content="Discover remote jobs, gigs, grants, hackathons, and learning opportunities curated for your role. Find roles that match your skills and interests." />
+      </Helmet>
+      <Layout>
+        <div className="page-header">
         <h1 className="page-title">Opportunities</h1>
         <p className="page-subtitle">
           Jobs, gigs, grants, events, hackathons — personalised to your role and skills.
@@ -196,6 +202,7 @@ export default function Opportunities() {
           })}
         </div>
       )}
-    </Layout>
+      </Layout>
+    </>
   );
 }
