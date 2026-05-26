@@ -417,36 +417,8 @@ const INDEED_JOBS = [
 ];
 
 // ─── Registered users ─────────────────────────────────────────────────────────
-const users = [
-  {
-    id: 'u1', name: 'Maria Chen', email: 'maria@example.com',
-    passwordHash: bcrypt.hashSync('password123', 10),
-    title: 'Product Lead', bio: 'Building the future of distributed teams.',
-    skills: ['Community', 'Growth', 'Strategy'], organization: 'Future Networks',
-    joinedGroups: ['g1', 'g2', 'g7'], onboardingComplete: true,
-    preferences: { role: 'Product Manager', goals: ['Connect with peers in my field', 'Stay updated on trends'], interests: ['AI & ML', 'Startups', 'Engineering'], experience: 'Senior (7-14 years)' },
-    socialAccounts: {},
-  },
-];
-
-// ─── Sample community users ───────────────────────────────────────────────────
-const sampleUsers = [
-  { id: 'su1',  name: 'Alex Park',       title: 'ML Engineer',        organization: 'OpenCore',        avatar: null, joinedGroups: ['g1','g2','g3','g5'],           skills: ['PyTorch','MLOps','Python'] },
-  { id: 'su2',  name: 'Jordan Lee',      title: 'Product Designer',   organization: 'Pixel Labs',      avatar: null, joinedGroups: ['g13','g14','g15','g16'],        skills: ['Figma','UX Research','Systems'] },
-  { id: 'su3',  name: 'Sam Rivera',      title: 'Growth Lead',        organization: 'Launchpad',       avatar: null, joinedGroups: ['g9','g10','g11','g17','g18'],   skills: ['SEO','Paid Ads','Analytics'] },
-  { id: 'su4',  name: 'Casey Morgan',    title: 'CTO',                organization: 'Stackr',          avatar: null, joinedGroups: ['g5','g6','g9','g11','g12'],    skills: ['Go','Kubernetes','Architecture'] },
-  { id: 'su5',  name: 'Riley Chen',      title: 'VC Analyst',         organization: 'Seed Capital',   avatar: null, joinedGroups: ['g20','g21','g22','g12'],       skills: ['Due Diligence','Finance','Web3'] },
-  { id: 'su6',  name: 'Morgan Kim',      title: 'Senior PM',          organization: 'Wave',            avatar: null, joinedGroups: ['g1','g11','g13','g17'],        skills: ['Roadmapping','Data','Strategy'] },
-  { id: 'su7',  name: 'Taylor Nguyen',   title: 'Founder',            organization: 'Nomad OS',        avatar: null, joinedGroups: ['g9','g23','g24','g10'],        skills: ['Fundraising','Remote','Product'] },
-  { id: 'su8',  name: 'Drew Santos',     title: 'DevOps Engineer',    organization: 'CloudBridge',     avatar: null, joinedGroups: ['g5','g6','g7','g8'],           skills: ['Terraform','AWS','CI/CD'] },
-  { id: 'su9',  name: 'Avery Patel',     title: 'Data Scientist',     organization: 'Insight Co',      avatar: null, joinedGroups: ['g2','g3','g4','g5'],           skills: ['Python','SQL','LLMs'] },
-  { id: 'su10', name: 'Quinn Zhang',     title: 'UX Designer',        organization: 'Form Studio',     avatar: null, joinedGroups: ['g13','g15','g16','g17'],       skills: ['Prototyping','Motion','Figma'] },
-  { id: 'su11', name: 'Blake Thompson',  title: 'Marketing Director', organization: 'Amplify',         avatar: null, joinedGroups: ['g17','g18','g19','g11'],       skills: ['Content','Growth','Branding'] },
-  { id: 'su12', name: 'Reese Williams',  title: 'Full Stack Dev',     organization: 'BuildCo',         avatar: null, joinedGroups: ['g5','g6','g8','g25'],          skills: ['React','Node','Postgres'] },
-  { id: 'su13', name: 'Jamie Foster',    title: 'Content Lead',       organization: 'Story',           avatar: null, joinedGroups: ['g18','g23','g24','g26'],       skills: ['Writing','Video','SEO'] },
-  { id: 'su14', name: 'Skyler Brooks',   title: 'Startup Advisor',    organization: 'Independent',     avatar: null, joinedGroups: ['g9','g10','g11','g12','g20'],  skills: ['GTM','Hiring','Fundraising'] },
-  { id: 'su15', name: 'Cameron Davis',   title: 'EdTech Founder',     organization: 'Learn Forward',   avatar: null, joinedGroups: ['g25','g26','g9','g5'],         skills: ['Curriculum','EdTech','Community'] },
-];
+// Live users — populated from PostgreSQL at login/register, no hardcoded demos
+let users = [];
 
 // ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
 // ─── ALL_GROUPS_SEED — seeded into PostgreSQL at startup ─────────────────────
@@ -538,60 +510,11 @@ const ALL_GROUPS_SEED = [
 // Live in-memory groups list — populated from DB at startup, falls back to seed
 let groups = [...ALL_GROUPS_SEED];
 
-// ─── Posts ────────────────────────────────────────────────────────────────────
-const posts = [
-  // g1 – AI Product Managers
-  { id: 'p1',  authorId: 'su6', groupId: 'g1', createdAt: ago(1.5*H), likes: ['su1','su9'], commentsCount: 4, content: 'Just shipped our first AI feature. Took 3x longer than expected because of evaluation frameworks — turns out measuring quality is harder than building the thing. Happy to do an AMA on what we learned.' },
-  { id: 'p2',  authorId: 'su1', groupId: 'g1', createdAt: ago(6*H),   likes: ['su6','u1'],  commentsCount: 7, content: 'Hot take: most "AI features" are just search with extra steps. The real value is in workflow integration. Curious if others are seeing the same pattern.' },
-  { id: 'p3',  authorId: 'u1',  groupId: 'g1', createdAt: ago(1*D),   likes: ['su1','su6','su9'], commentsCount: 11, content: 'We ran an experiment: one team used AI-assisted roadmapping, one did it manually. The AI team moved 40% faster but flagged 2x fewer risks. Trade-offs are real.' },
+// Real posts — user-created, stored in community_posts table and kept in memory
+let posts = [];
 
-  // g2 – Machine Learning Engineers
-  { id: 'p4',  authorId: 'su9', groupId: 'g2', createdAt: ago(2*H),   likes: ['su1','su4','su8'],  commentsCount: 9,  content: 'What is everyone using for RAG pipelines in 2025? We evaluated LlamaIndex vs LangChain and ended up rolling our own lightweight version. The overhead of both frameworks was killing latency.' },
-  { id: 'p5',  authorId: 'su1', groupId: 'g2', createdAt: ago(14*H),  likes: ['su4','su9'],        commentsCount: 5,  content: 'Finally got inference latency under 100ms. The trick was quantization + dynamic batching together. Neither alone was enough. Happy to share the config if useful.' },
-  { id: 'p6',  authorId: 'su4', groupId: 'g2', createdAt: ago(2*D),   likes: ['su1'],              commentsCount: 3,  content: 'Unpopular opinion: most teams should be using fine-tuned smaller models instead of GPT-4 for their specific tasks. We cut costs 8x with better accuracy on our domain.' },
-
-  // g3 – Generative AI Builders
-  { id: 'p7',  authorId: 'su9', groupId: 'g3', createdAt: ago(3*H),   likes: ['su1','su6','su4'],  commentsCount: 14, content: 'Built a full product design assistant using image generation + code execution. Launch is in 2 weeks. The hardest part was not the AI — it was the UX for handling failures gracefully.' },
-  { id: 'p8',  authorId: 'su1', groupId: 'g3', createdAt: ago(1*D),   likes: ['su9'],              commentsCount: 6,  content: 'Anyone else finding that structured outputs with Pydantic + tool use is now the default way to build AI features? Feels like the pattern has fully matured.' },
-
-  // g5 – Full-Stack Builders
-  { id: 'p9',  authorId: 'su12', groupId: 'g5', createdAt: ago(4*H),  likes: ['su4','su8'],        commentsCount: 8,  content: 'React Server Components in production — 6 months in. Biggest win: 40% less JS sent to the client. Biggest headache: the mental model shift for the whole team. Worth it though.' },
-  { id: 'p10', authorId: 'su8',  groupId: 'g5', createdAt: ago(18*H), likes: ['su12','su4','su1'], commentsCount: 12, content: 'Expo + Bun is an incredible DX combo for mobile. Build times dropped from 45s to 8s. If you are still on npm for a React Native project, try it this weekend.' },
-  { id: 'p11', authorId: 'su4',  groupId: 'g5', createdAt: ago(2*D),  likes: ['su8','su12'],       commentsCount: 5,  content: 'Monorepo or multi-repo for a team of 12? We tried both. Monorepo won for us because shared types across backend and frontend eliminated an entire class of runtime bugs.' },
-
-  // g9 – Remote Startup Founders
-  { id: 'p12', authorId: 'su7',  groupId: 'g9', createdAt: ago(1*H),  likes: ['su3','su14','su4'], commentsCount: 18, content: '3 years fully remote, team across 12 countries. The thing that actually makes async culture work is not tools — it is documentation discipline. Write down every decision, no exceptions.' },
-  { id: 'p13', authorId: 'su14', groupId: 'g9', createdAt: ago(8*H),  likes: ['su7','su3'],        commentsCount: 9,  content: 'Hiring remotely is now genuinely easier than local for us. The talent pool is incomparably deeper and people who choose remote work tend to be more self-directed.' },
-  { id: 'p14', authorId: 'su3',  groupId: 'g9', createdAt: ago(3*D),  likes: ['su7','su4','su14'], commentsCount: 22, content: 'We ran the numbers on office vs fully remote for a 20-person company. Remote saves approximately $380k/year when you factor in real estate, commute benefits, and reduced attrition.' },
-
-  // g11 – SaaS Founders
-  { id: 'p15', authorId: 'su3',  groupId: 'g11', createdAt: ago(5*H),  likes: ['su6','su14','su7'], commentsCount: 15, content: 'Went from $0 to $10k MRR in 8 months with zero paid ads. Channel breakdown: 60% content/SEO, 25% community, 15% cold outbound. The SEO took 5 months to kick in but now compounds.' },
-  { id: 'p16', authorId: 'su14', groupId: 'g11', createdAt: ago(1*D),  likes: ['su3','su6'],        commentsCount: 7,  content: 'Question for the room: when did you hire your first dedicated customer success person? We are at $25k MRR and churn just started becoming a real problem.' },
-  { id: 'p17', authorId: 'su6',  groupId: 'g11', createdAt: ago(4*D),  likes: ['su3','su14','su7'], commentsCount: 19, content: 'The most underrated SaaS metric is time-to-value. We obsessed over it and got new users to their first "aha moment" in under 4 minutes. Churn dropped 40% in the next quarter.' },
-
-  // g13 – UX/UI Designers
-  { id: 'p18', authorId: 'su2',  groupId: 'g13', createdAt: ago(2*H),  likes: ['su10','su6'],       commentsCount: 6,  content: 'Design systems are only as good as your documentation. We open-sourced ours and the most valuable thing we added was not components — it was the "when NOT to use this" section for each pattern.' },
-  { id: 'p19', authorId: 'su10', groupId: 'g13', createdAt: ago(12*H), likes: ['su2'],              commentsCount: 4,  content: 'Hot take: accessibility audits should happen before visual design, not after. Designing with constraints from the start produces better work, not worse.' },
-
-  // g17 – Growth Hackers
-  { id: 'p20', authorId: 'su11', groupId: 'g17', createdAt: ago(3*H),  likes: ['su3','su6','su10'], commentsCount: 11, content: 'LinkedIn organic reach is at an all-time high right now. We got 180k impressions on a post last week with zero paid boost. The algorithm is clearly rewarding text-first content.' },
-  { id: 'p21', authorId: 'su3',  groupId: 'g17', createdAt: ago(2*D),  likes: ['su11'],             commentsCount: 8,  content: 'Email is still the highest ROI channel for B2B SaaS, full stop. We track every channel religiously and email beats paid by 4x on customer LTV. Do not neglect your list.' },
-
-  // g24 – Digital Nomads
-  { id: 'p22', authorId: 'su7',  groupId: 'g24', createdAt: ago(6*H),  likes: ['su13','su3'],       commentsCount: 13, content: 'Portugal Digital Nomad Visa process took us 3 months but was worth it. NHR tax status + amazing coworking scene in Lisbon. Happy to share the exact documents we used.' },
-  { id: 'p23', authorId: 'su13', groupId: 'g24', createdAt: ago(1*D),  likes: ['su7','su3','su14'], commentsCount: 20, content: 'Best coworking spots in Southeast Asia in 2025: (1) Hubud, Bali — community is unreal, (2) The Work Loft, Bangkok — best internet I have ever had, (3) Common Ground, KL — perfect for heads-down weeks.' },
-
-  // g26 – Career Changers
-  { id: 'p24', authorId: 'su15', groupId: 'g26', createdAt: ago(4*H),  likes: ['su12','su13'],      commentsCount: 16, content: 'Left a 10-year career in finance to become a developer at 34. 18 months later I have a senior engineering role. The hardest part was not the technical skills — it was giving myself permission to be a beginner again.' },
-  { id: 'p25', authorId: 'su12', groupId: 'g26', createdAt: ago(2*D),  likes: ['su15','su13','su2'],commentsCount: 9,  content: 'Bootcamp grad hiring thread — drop your portfolio below. I personally review every single one and forward the good ones to our hiring manager. We have 3 open roles right now.' },
-];
-
-// ─── Connections ──────────────────────────────────────────────────────────────
-const connections = [
-  { id: 'c1', fromId: 'u1', toId: 'su1', status: 'accepted', createdAt: ago(5*D) },
-  { id: 'c2', fromId: 'u1', toId: 'su6', status: 'accepted', createdAt: ago(3*D) },
-  { id: 'c3', fromId: 'su3', toId: 'u1', status: 'pending',  createdAt: ago(2*H) },
-];
+// Real connections — user-created
+let connections = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -863,7 +786,7 @@ app.post('/auth/login', async (req, res) => {
     }
   }
 
-  // Fall back to in-memory (covers demo user)
+  // Fall back to in-memory cache (users synced from DB at login)
   const user = users.find((u) => u.email === emailLc || u.email === email);
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
@@ -949,10 +872,7 @@ app.get('/groups/:id/members', authenticate, (req, res) => {
   if (!group) return res.status(404).json({ message: 'Group not found.' });
 
   const requesterId = req.user.id;
-  const allMembers = [
-    ...sampleUsers.filter((u) => u.joinedGroups.includes(groupId)),
-    ...users.filter((u) => u.joinedGroups.includes(groupId) && u.id !== requesterId),
-  ];
+  const allMembers = users.filter((u) => u.joinedGroups.includes(groupId) && u.id !== requesterId);
 
   const membersWithStatus = allMembers.map((u) => ({
     ...sanitizeUser(u),
@@ -1013,7 +933,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Internal posts
   const internal = posts.map((p) => {
-    const author = sampleUsers.find((u) => u.id === p.authorId) || users.find((u) => u.id === p.authorId);
+    const author = users.find((u) => u.id === p.authorId);
     const group  = groups.find((g) => g.id === p.groupId);
     const cat    = group?.category;
     const relevance = scorePost(p.groupId, cat);
@@ -1064,6 +984,33 @@ app.get('/feed', authenticate, async (req, res) => {
   res.json({ posts: all });
 });
 
+// Create a post in a group
+app.post('/groups/:id/posts', authenticate, async (req, res) => {
+  const user  = await getUser(req.user.id);
+  const group = groups.find((g) => g.id === req.params.id);
+  if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+  const { content } = req.body;
+  if (!content?.trim()) return res.status(400).json({ message: 'Content is required.' });
+
+  const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const post = {
+    id, authorId: user.id, groupId: group.id,
+    content: content.trim(), likes: [], commentsCount: 0,
+    createdAt: new Date().toISOString(),
+    source: 'uficonnect', sourceLabel: 'UFIConnect',
+  };
+  posts.unshift(post);
+
+  if (db.isConnected()) {
+    db.query(
+      `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
+       VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIConnect',$6) ON CONFLICT DO NOTHING`,
+      [id, group.id, user.id, user.name, content.trim(), post.createdAt]
+    ).catch(e => console.error('create post DB:', e.message));
+  }
+  res.status(201).json({ post });
+});
+
 app.post('/feed/:postId/like', authenticate, (req, res) => {
   const post = posts.find((p) => p.id === req.params.postId);
   if (!post) return res.status(404).json({ message: 'Post not found.' });
@@ -1102,7 +1049,7 @@ app.get('/users/connections', authenticate, (req, res) => {
     .filter((c) => (c.fromId === uid || c.toId === uid) && c.status === 'accepted')
     .map((c) => {
       const otherId = c.fromId === uid ? c.toId : c.fromId;
-      const other = sampleUsers.find((u) => u.id === otherId) || users.find((u) => u.id === otherId);
+      const other = users.find((u) => u.id === otherId);
       return other ? sanitizeUser(other) : null;
     })
     .filter(Boolean);
@@ -1340,7 +1287,7 @@ const conversations = [
 
 function getOtherUser(conv, userId) {
   const otherId = conv.participants.find((p) => p !== userId);
-  return sampleUsers.find((u) => u.id === otherId) || users.find((u) => u.id === otherId);
+  return users.find((u) => u.id === otherId);
 }
 
 app.get('/messages', authenticate, (req, res) => {
@@ -1405,9 +1352,29 @@ app.post('/messages/:userId', authenticate, (req, res) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+async function loadPostsFromDB() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM community_posts ORDER BY created_at DESC LIMIT 500`
+    );
+    posts.length = 0;
+    rows.forEach((r) => posts.push({
+      id: r.id, authorId: r.author_id, groupId: r.group_id,
+      content: r.content, likes: r.likes || [],
+      commentsCount: r.comments_count || 0,
+      createdAt: r.created_at, url: r.url,
+      source: r.source || 'uficonnect',
+      sourceLabel: r.source_label || 'UFIConnect',
+    }));
+    if (rows.length) console.log(`✅ Loaded ${rows.length} posts from DB`);
+  } catch (err) { console.warn('loadPostsFromDB:', err.message); }
+}
+
 db.initDB().then(async () => {
   await migrateDB();
   await seedAndLoadGroups();
+  await loadPostsFromDB();
   app.listen(PORT, () =>
     console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );

@@ -22,6 +22,7 @@ const PLATFORM_META = {
   hackernews:  { icon: '🔶', label: 'Hacker News',   color: '#FF6600' },
   devto:       { icon: '👩‍💻', label: 'DEV.to',       color: '#3B49DF' },
   github:      { icon: '🐙', label: 'GitHub',        color: '#24292F' },
+  uficonnect:  { icon: '🌐', label: 'UFIConnect',    color: '#6366F1' },
 };
 
 export default function Groups() {
@@ -135,18 +136,23 @@ export default function Groups() {
                   }
                   style={{ cursor: 'pointer', position: 'relative' }}
                 >
-                  {/* External badge */}
-                  {group.isExternal && platMeta && (
-                    <div style={{
-                      position: 'absolute', top: 10, right: 10,
-                      fontSize: '.65rem', fontWeight: 700,
-                      color: platMeta.color, background: `${platMeta.color}18`,
-                      padding: '2px 7px', borderRadius: 4,
-                      display: 'flex', alignItems: 'center', gap: 3,
-                    }}>
-                      {platMeta.icon} {platMeta.label}
-                    </div>
-                  )}
+                  {/* Origin badge — always shown */}
+                  {(() => {
+                    const origin = group.isExternal
+                      ? (platMeta || PLATFORM_META.uficonnect)
+                      : PLATFORM_META.uficonnect;
+                    return (
+                      <div style={{
+                        position: 'absolute', top: 10, right: 10,
+                        fontSize: '.65rem', fontWeight: 700,
+                        color: origin.color, background: `${origin.color}18`,
+                        padding: '2px 7px', borderRadius: 4,
+                        display: 'flex', alignItems: 'center', gap: 3,
+                      }}>
+                        {origin.icon} {origin.label}
+                      </div>
+                    );
+                  })()}
 
                   <div className="group-card-header">
                     <span className="group-icon">{meta.icon}</span>

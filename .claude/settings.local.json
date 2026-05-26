@@ -135,7 +135,10 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" https://uficonnect.org)",
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\" https://www.uficonnect.org)",
       "Bash(curl -sk -o /dev/null -w \"%{http_code}\" --max-time 10 https://uficonnect.org)",
-      "Bash(node --check index.js)"
+      "Bash(node --check index.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 10 https://uficonnect-api.onrender.com/health)",
+      "Bash(sed -i '' 's/sampleUsers\\\\.find\\(\\(u\\) => u\\\\.id === p\\\\.authorId\\) || //g' /Users/yosuf/Desktop/app/backend/index.js)",
+      "Bash(sed -i '' 's/sampleUsers\\\\.find\\(\\(u\\) => u\\\\.id === otherId\\) || //g' /Users/yosuf/Desktop/app/backend/index.js)"
     ],
     "additionalDirectories": [
       "/private/tmp"
