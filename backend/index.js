@@ -218,14 +218,19 @@ function fetchJSON(url) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent': 'UFIConnect/1.0 (https://uficonnect.org)',
+        'User-Agent': 'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept': 'application/json',
       },
     };
     https.get(url, opts, (res) => {
-      // Follow one redirect
-      if (res.statusCode === 301 || res.statusCode === 302) {
+      // Follow redirects
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
         return fetchJSON(res.headers.location).then(resolve).catch(reject);
+      }
+      // Reject on non-success HTTP status (catches 429, 403, 503, etc.)
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume(); // drain the response
+        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
       }
       let data = '';
       res.on('data', (c) => data += c);
@@ -235,6 +240,71 @@ function fetchJSON(url) {
       });
     }).on('error', reject).setTimeout(8000, function() { this.destroy(new Error('timeout')); });
   });
+}
+
+// ─── Hacker News live post fetching (Algolia API — never blocked) ─────────────
+const HN_TTL = 30 * 60 * 1000;
+let hnCache = { posts: [], fetchedAt: 0 };
+
+// Map interests/role to HN search queries
+const INTEREST_TO_HN_QUERY = {
+  'AI & Machine Learning': 'machine learning', 'Generative AI': 'generative AI',
+  'LLMs & Chatbots': 'LLM', 'Frontend Dev': 'frontend', 'Backend Dev': 'backend',
+  'Cloud & DevOps': 'devops', 'Cybersecurity': 'security', 'Data Science': 'data science',
+  'Web3 / Crypto': 'crypto', 'SaaS': 'SaaS', 'Startups': 'startup',
+  'UI/UX Design': 'design', 'Remote Work': 'remote work', 'Personal Finance': 'finance',
+  'Investing': 'investing', 'Climate Tech': 'climate', 'Health Tech': 'health tech',
+  'Game Dev': 'game dev', 'Open Source': 'open source', 'Mobile Dev': 'mobile',
+};
+const ROLE_TO_HN_QUERY = {
+  'Engineer / Developer': 'programming', 'Designer / Creative': 'design',
+  'Product Manager': 'product management', 'Marketer / Growth': 'growth marketing',
+  'Founder / Entrepreneur': 'startup', 'Data / Analytics': 'data science',
+  'Content Creator': 'content', 'Researcher / Academic': 'research',
+};
+
+async function fetchHNPosts(interests = [], role = '') {
+  // Pick a search query from the user's interests
+  let query = '';
+  for (const i of interests) {
+    if (INTEREST_TO_HN_QUERY[i]) { query = INTEREST_TO_HN_QUERY[i]; break; }
+  }
+  if (!query && role) query = ROLE_TO_HN_QUERY[role] || 'technology';
+  if (!query) query = 'technology';
+
+  const cacheKey = `__hn_${query}__`;
+  const cached = redditCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < HN_TTL) return cached.posts;
+
+  try {
+    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=20&numericFilters=points>5`;
+    const data = await fetchJSON(url);
+    const posts = (data?.hits || [])
+      .filter(h => h.title && h.url)
+      .map(h => ({
+        id:            `hn_${h.objectID}`,
+        authorId:      `hn_${h.author}`,
+        groupId:       'ext_hn',
+        content:       h.title,
+        title:         h.title,
+        url:           h.url,
+        source:        'hackernews',
+        sourceLabel:   'Hacker News',
+        sourceUrl:     h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+        author:        { id: `hn_${h.author}`, name: h.author, title: 'Hacker News', organization: 'YC' },
+        likes:         [],
+        likesCount:    h.points || 0,
+        commentsCount: h.num_comments || 0,
+        createdAt:     h.created_at,
+        isExternal:    true,
+        group:         { id: 'ext_hn', name: 'Hacker News', category: 'Engineering' },
+      }));
+    redditCache.set(cacheKey, { posts, fetchedAt: Date.now() });
+    return posts;
+  } catch (e) {
+    console.warn('HN fetch:', e.message);
+    return redditCache.get(cacheKey)?.posts || [];
+  }
 }
 
 async function fetchSubredditPosts(sub) {
@@ -986,37 +1056,49 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Live Reddit posts — fetched async, cached 30 min
-  let redditPosts = [];
-  try {
-    const raw = await getPersonalizedRedditPosts(prefs.interests || [], prefs.role || '');
-    redditPosts = raw.map((p) => {
-      const group     = groups.find((g) => g.id === p.groupId);
-      const cat       = group?.category || p.group?.category;
-      const relevance = scorePost(p.groupId, cat, 'reddit');
-      const isConnectedSource = connectedPlatforms.has('reddit');
-      return {
-        ...p,
-        group:              group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
-        likedByMe:          false,
-        fromJoinedGroup:    joined.has(p.groupId),
-        forYou:             relevance >= 2,
-        relevance,
-        connectedBoost:     isConnectedSource,
-      };
-    });
-  } catch (e) {
-    console.warn('Reddit feed error:', e.message);
+  function mapExternalPost(p, source) {
+    const group     = groups.find((g) => g.id === p.groupId);
+    const cat       = group?.category || p.group?.category;
+    const relevance = scorePost(p.groupId, cat, source);
+    return {
+      ...p,
+      group:           group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
+      likedByMe:       false,
+      fromJoinedGroup: joined.has(p.groupId),
+      forYou:          relevance >= 2,
+      relevance,
+      connectedBoost:  connectedPlatforms.has(source),
+    };
   }
 
-  const all = [...internal, ...redditPosts];
+  // Fetch Reddit + HN in parallel — HN (Algolia) is always available even if Reddit is blocked
+  const [redditRaw, hnRaw] = await Promise.all([
+    getPersonalizedRedditPosts(prefs.interests || [], prefs.role || '').catch(e => {
+      console.warn('Reddit feed error:', e.message); return [];
+    }),
+    fetchHNPosts(prefs.interests || [], prefs.role || '').catch(e => {
+      console.warn('HN feed error:', e.message); return [];
+    }),
+  ]);
+
+  const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
+  const hnPosts     = hnRaw.map(p => mapExternalPost(p, 'hackernews'));
+
+  // Deduplicate by id, merge all sources
+  const seen = new Set();
+  const all  = [...internal, ...redditPosts, ...hnPosts].filter(p => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
+
   all.sort((a, b) =>
     b.relevance !== a.relevance
       ? b.relevance - a.relevance
       : new Date(b.createdAt) - new Date(a.createdAt)
   );
 
-  res.json({ posts: all });
+  res.json({ posts: all, sources: { reddit: redditPosts.length, hn: hnPosts.length, internal: internal.length } });
 });
 
 // Create a post in a group

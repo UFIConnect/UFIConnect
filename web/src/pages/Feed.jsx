@@ -185,10 +185,15 @@ export default function Feed() {
     filter === 'foryou'  ? posts.filter(p => p.forYou || p.fromJoinedGroup)
     : filter === 'all'   ? posts
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
-    : filter === 'live'  ? posts.filter(p => p.isExternal)
+    : filter === 'reddit'? posts.filter(p => p.source === 'reddit')
+    : filter === 'hn'    ? posts.filter(p => p.source === 'hackernews')
     : posts.filter(p => p.group?.category === filter);
 
+  // If forYou returns nothing, fall back to showing all — never a blank feed
   const displayed = (filter === 'foryou' && filtered.length === 0) ? posts : filtered;
+
+  const redditCount = posts.filter(p => p.source === 'reddit').length;
+  const hnCount     = posts.filter(p => p.source === 'hackernews').length;
 
   return (
     <Layout>
@@ -198,8 +203,8 @@ export default function Feed() {
         </h1>
         <p className="page-subtitle">
           {hasPrefs
-            ? `Curated for ${role ? `${role}s` : 'you'} · live posts from Reddit + UFIConnect community.`
-            : 'Live posts from Reddit and the UFIConnect community.'}
+            ? `Personalised for ${role ? `${role}s` : 'you'} · live posts from Reddit, Hacker News + community.`
+            : 'Live posts from Reddit, Hacker News, and the community.'}
         </p>
       </div>
 
@@ -207,7 +212,12 @@ export default function Feed() {
       <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
         <button className={`filter-btn${filter === 'foryou' ? ' active' : ''}`} onClick={() => setFilter('foryou')}>✦ For You</button>
         <button className={`filter-btn${filter === 'all'    ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
-        <button className={`filter-btn${filter === 'live'   ? ' active' : ''}`} onClick={() => setFilter('live')}>🟠 Live (Reddit)</button>
+        {redditCount > 0 && (
+          <button className={`filter-btn${filter === 'reddit' ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({redditCount})</button>
+        )}
+        {hnCount > 0 && (
+          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
+        )}
         <button className={`filter-btn${filter === 'mine'   ? ' active' : ''}`} onClick={() => setFilter('mine')}>⭐ My groups</button>
         {categories.map(cat => (
           <button key={cat} className={`filter-btn${filter === cat ? ' active' : ''}`} onClick={() => setFilter(cat)}>
