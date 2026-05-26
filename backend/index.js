@@ -242,122 +242,323 @@ function fetchJSON(url) {
   });
 }
 
-// ─── Hacker News live post fetching (Algolia API — never blocked) ─────────────
-const HN_TTL = 30 * 60 * 1000;
-let hnCache = { posts: [], fetchedAt: 0 };
-
-// Map interests/role to HN search queries
-const INTEREST_TO_HN_QUERY = {
-  'AI & Machine Learning': 'machine learning', 'Generative AI': 'generative AI',
-  'LLMs & Chatbots': 'LLM', 'Frontend Dev': 'frontend', 'Backend Dev': 'backend',
-  'Cloud & DevOps': 'devops', 'Cybersecurity': 'security', 'Data Science': 'data science',
-  'Web3 / Crypto': 'crypto', 'SaaS': 'SaaS', 'Startups': 'startup',
-  'UI/UX Design': 'design', 'Remote Work': 'remote work', 'Personal Finance': 'finance',
-  'Investing': 'investing', 'Climate Tech': 'climate', 'Health Tech': 'health tech',
-  'Game Dev': 'game dev', 'Open Source': 'open source', 'Mobile Dev': 'mobile',
+// ─── Search keyword per interest (used by Reddit, HN, DEV.to) ────────────────
+// Keys match EXACTLY the Onboarding.jsx INTERESTS[] array
+const INTEREST_TO_KEYWORDS = {
+  'AI & Machine Learning':    'machine learning AI',
+  'Generative AI':            'generative AI image generation',
+  'LLMs & Chatbots':          'large language model LLM chatbot',
+  'Computer Vision':          'computer vision object detection',
+  'Data Science':             'data science analytics',
+  'Developer Tools':          'developer tools productivity',
+  'Open Source':              'open source software',
+  'Cybersecurity':            'cybersecurity infosec hacking',
+  'Cloud & DevOps':           'cloud DevOps Kubernetes',
+  'Frontend Dev':             'frontend development JavaScript React',
+  'Backend Dev':              'backend development API Node Python',
+  'Mobile Dev':               'mobile app development iOS Android',
+  'Web3 / Crypto':            'Web3 blockchain crypto',
+  'Blockchain':               'blockchain decentralized',
+  'Hardware / IoT':           'hardware IoT Raspberry Pi',
+  'Robotics':                 'robotics automation',
+  'AR / VR':                  'augmented reality virtual reality',
+  'Quantum Computing':        'quantum computing',
+  'Game Dev':                 'game development indie game',
+  'No-Code / Low-Code':       'no-code low-code automation',
+  'SaaS':                     'SaaS software as a service',
+  'B2B / Enterprise':         'B2B enterprise software sales',
+  'Marketplaces':             'marketplace platform two-sided',
+  'D2C / Consumer Apps':      'direct to consumer app startup',
+  'Bootstrapping':            'bootstrapping indie hacker',
+  'Venture Capital':          'venture capital VC funding',
+  'Angel Investing':          'angel investing startup funding',
+  'Fundraising':              'fundraising startup pitch',
+  'Growth Marketing':         'growth marketing growth hacking',
+  'Product-Led Growth':       'product led growth PLG',
+  'Sales & Revenue':          'sales revenue B2B',
+  'Partnerships':             'partnerships business development',
+  'UI/UX Design':             'UX design user experience',
+  'Design Systems':           'design system component library',
+  'Brand Identity':           'brand identity branding logo',
+  'Motion Design':            'motion design animation after effects',
+  '3D & CGI':                 '3D CGI blender rendering',
+  'Photography':              'photography camera photo',
+  'Film & Video':             'filmmaking video production',
+  'Music Production':         'music production DAW beats',
+  'FinTech':                  'fintech financial technology',
+  'DeFi / Crypto Finance':    'DeFi decentralized finance crypto',
+  'Personal Finance':         'personal finance budgeting money',
+  'Real Estate':              'real estate investing property',
+  'Trading & Quant':          'algorithmic trading quantitative finance',
+  'InsurTech':                'insurtech insurance technology',
+  'Health Tech':              'health tech digital health medical',
+  'BioTech':                  'biotechnology biology research',
+  'Climate Tech':             'climate tech sustainability green energy',
+  'EdTech':                   'education technology edtech learning',
+  'LegalTech':                'legal tech law technology',
+  'GovTech':                  'govtech government technology policy',
+  'AgriTech':                 'agriculture tech farming innovation',
+  'SpaceTech':                'space technology rocket satellite',
+  'PropTech':                 'proptech real estate technology',
+  'RetailTech':               'retail technology e-commerce',
+  'FoodTech':                 'food technology restaurant innovation',
+  'SportsTech':               'sports technology analytics',
+  'Remote Work':              'remote work work from home distributed',
+  'Future of Work':           'future of work hybrid remote',
+  'Recruiting & Hiring':      'recruiting hiring talent acquisition',
+  'Leadership':               'leadership management team',
+  'Diversity & Inclusion':    'diversity inclusion DEI workplace',
+  'Mental Health & Wellness': 'mental health wellness mindfulness',
+  'Creator Economy':          'creator economy YouTube newsletter',
+  'Podcasting':               'podcasting podcast audio',
+  'Newsletter & Writing':     'newsletter writing substack',
+  'YouTube & Video':          'YouTube video content creator',
+  'Social Media':             'social media marketing content',
+  'SEO & Content':            'SEO content marketing search',
+  'E-commerce':               'e-commerce online store shopify',
+  'Dropshipping':             'dropshipping e-commerce',
+  'Amazon FBA':               'Amazon FBA seller marketplace',
+  'Subscription Businesses':  'subscription business recurring revenue',
+  'Career Growth':            'career growth job interview salary',
+  'Productivity':             'productivity time management focus',
+  'Public Speaking':          'public speaking presentation communication',
+  'Side Projects':            'side project indie maker build',
+  'Freelancing':              'freelancing freelancer contract work',
+  'Social Impact':            'social impact nonprofit sustainability',
 };
-const ROLE_TO_HN_QUERY = {
-  'Engineer / Developer': 'programming', 'Designer / Creative': 'design',
-  'Product Manager': 'product management', 'Marketer / Growth': 'growth marketing',
-  'Founder / Entrepreneur': 'startup', 'Data / Analytics': 'data science',
-  'Content Creator': 'content', 'Researcher / Academic': 'research',
+
+// DEV.to tag mapping (one tag per interest)
+const INTEREST_TO_DEVTO_TAG = {
+  'AI & Machine Learning': 'machinelearning', 'Generative AI': 'ai',
+  'LLMs & Chatbots': 'ai', 'Computer Vision': 'machinelearning',
+  'Data Science': 'datascience', 'Developer Tools': 'programming',
+  'Open Source': 'opensource', 'Cybersecurity': 'security',
+  'Cloud & DevOps': 'devops', 'Frontend Dev': 'javascript',
+  'Backend Dev': 'python', 'Mobile Dev': 'flutter',
+  'Web3 / Crypto': 'blockchain', 'Game Dev': 'gamedev',
+  'No-Code / Low-Code': 'nocode', 'SaaS': 'startup',
+  'UI/UX Design': 'ux', 'Design Systems': 'css',
+  'Photography': 'design', 'FinTech': 'fintech',
+  'Health Tech': 'healthtech', 'Climate Tech': 'sustainability',
+  'EdTech': 'education', 'Remote Work': 'career',
+  'Career Growth': 'career', 'Productivity': 'productivity',
+  'Freelancing': 'career', 'Side Projects': 'showdev',
+  'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
 };
 
-async function fetchHNPosts(interests = [], role = '') {
-  // Pick a search query from the user's interests
-  let query = '';
-  for (const i of interests) {
-    if (INTEREST_TO_HN_QUERY[i]) { query = INTEREST_TO_HN_QUERY[i]; break; }
-  }
-  if (!query && role) query = ROLE_TO_HN_QUERY[role] || 'technology';
-  if (!query) query = 'technology';
+const ROLE_TO_KEYWORDS = {
+  'Engineer / Developer':   'software engineering programming',
+  'Designer / Creative':    'UX design creative',
+  'Product Manager':        'product management roadmap',
+  'Marketer / Growth':      'growth marketing digital marketing',
+  'Founder / Entrepreneur': 'startup entrepreneurship',
+  'Investor':               'venture capital investing startup',
+  'Data / Analytics':       'data science analytics',
+  'Student / Learner':      'learning programming tutorial',
+  'Sales / Business Dev':   'sales business development',
+  'Content Creator':        'content creation YouTube newsletter',
+  'Researcher / Academic':  'research academic science',
+  'HR / People Ops':        'HR recruiting people operations',
+};
 
-  const cacheKey = `__hn_${query}__`;
-  const cached = redditCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < HN_TTL) return cached.posts;
+// ─── Post fetch cache (all sources share one Map) ────────────────────────────
+const postCache = new Map();
+const CACHE_TTL = 30 * 60 * 1000; // 30 min
 
+function getCached(key)       { const c = postCache.get(key); return (c && Date.now() - c.t < CACHE_TTL) ? c.v : null; }
+function setCached(key, val)  { postCache.set(key, { v: val, t: Date.now() }); }
+
+// ─── Reddit: search by keyword across all of Reddit ──────────────────────────
+async function fetchRedditByKeyword(keyword, limit = 5) {
+  const key = `reddit_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
   try {
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=20&numericFilters=points>5`;
+    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(keyword)}&sort=hot&limit=${limit}&raw_json=1&type=link`;
+    const data = await fetchJSON(url);
+    const posts = (data?.data?.children || [])
+      .filter(({ data: p }) => !p.stickied && !p.over_18 && p.title)
+      .map(({ data: p }) => {
+        const sub = p.subreddit;
+        const matchedGroup = groups.find((g) => g.subreddit?.toLowerCase() === sub?.toLowerCase());
+        return {
+          id:            `reddit_${p.id}`,
+          authorId:      `reddit_${p.author}`,
+          groupId:       matchedGroup?.id || `ext_${sub?.toLowerCase()}`,
+          content:       p.selftext?.slice(0, 400) || p.title,
+          title:         p.title,
+          source:        'reddit',
+          sourceLabel:   `r/${sub}`,
+          sourceUrl:     `https://www.reddit.com${p.permalink}`,
+          topic:         keyword,
+          author:        { id: `reddit_${p.author}`, name: `u/${p.author}`, title: `r/${sub}`, organization: 'Reddit' },
+          likes: [], likesCount: p.ups || 0, commentsCount: p.num_comments || 0,
+          createdAt:     new Date(p.created_utc * 1000).toISOString(),
+          isExternal:    true,
+          group:         matchedGroup
+            ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
+            : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Reddit search "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── Hacker News: search by keyword via Algolia ───────────────────────────────
+async function fetchHNByKeyword(keyword, limit = 8) {
+  const key = `hn_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=${limit}&numericFilters=points>3`;
     const data = await fetchJSON(url);
     const posts = (data?.hits || [])
-      .filter(h => h.title && h.url)
+      .filter(h => h.title && (h.url || h.objectID))
       .map(h => ({
         id:            `hn_${h.objectID}`,
         authorId:      `hn_${h.author}`,
         groupId:       'ext_hn',
-        content:       h.title,
+        content:       h.story_text?.slice(0, 400) || h.title,
         title:         h.title,
-        url:           h.url,
         source:        'hackernews',
         sourceLabel:   'Hacker News',
         sourceUrl:     h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+        topic:         keyword,
         author:        { id: `hn_${h.author}`, name: h.author, title: 'Hacker News', organization: 'YC' },
-        likes:         [],
-        likesCount:    h.points || 0,
-        commentsCount: h.num_comments || 0,
+        likes: [], likesCount: h.points || 0, commentsCount: h.num_comments || 0,
         createdAt:     h.created_at,
         isExternal:    true,
-        group:         { id: 'ext_hn', name: 'Hacker News', category: 'Engineering' },
+        group:         { id: 'ext_hn', name: 'Hacker News', category: 'Engineering', externalUrl: 'https://news.ycombinator.com' },
       }));
-    redditCache.set(cacheKey, { posts, fetchedAt: Date.now() });
+    setCached(key, posts);
     return posts;
   } catch (e) {
-    console.warn('HN fetch:', e.message);
-    return redditCache.get(cacheKey)?.posts || [];
+    console.warn(`HN search "${keyword}":`, e.message);
+    return getCached(key) || [];
   }
 }
 
-async function fetchSubredditPosts(sub) {
-  const cached = redditCache.get(sub);
-  if (cached && Date.now() - cached.fetchedAt < REDDIT_TTL) return cached.posts;
-
+// ─── DEV.to: search by tag ───────────────────────────────────────────────────
+async function fetchDevToByTag(tag, limit = 5) {
+  const key = `devto_tag_${tag}`;
+  const cached = getCached(key);
+  if (cached) return cached;
   try {
-    const data = await fetchJSON(`https://www.reddit.com/r/${sub}/hot.json?limit=5&raw_json=1`);
-    const posts = (data?.data?.children || [])
-      .filter(({ data: p }) => !p.stickied && !p.over_18)
-      .map(({ data: p }) => {
-        // Find a matching group in our groups array
-        const matchedGroup = groups.find((g) => g.subreddit === sub || g.subreddit?.toLowerCase() === sub.toLowerCase());
-        return {
-          id:            `reddit_${p.id}`,
-          authorId:      `reddit_${p.author}`,
-          groupId:       matchedGroup?.id || `ext_${sub.toLowerCase()}`,
-          content:       p.selftext?.slice(0, 500) || p.title,
-          title:         p.title,
-          url:           `https://reddit.com${p.permalink}`,
-          source:        'reddit',
-          sourceLabel:   `r/${sub}`,
-          sourceUrl:     `https://reddit.com${p.permalink}`,
-          author:        { id: `reddit_${p.author}`, name: `u/${p.author}`, title: `r/${sub}`, organization: 'Reddit' },
-          likes:         [],
-          likesCount:    p.ups || 0,
-          commentsCount: p.num_comments || 0,
-          createdAt:     new Date(p.created_utc * 1000).toISOString(),
-          isExternal:    true,
-          group:         matchedGroup
-            ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category }
-            : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
-        };
-      });
-    redditCache.set(sub, { posts, fetchedAt: Date.now() });
+    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=${limit}&top=7`;
+    const data = await fetchJSON(url);
+    const posts = (data || [])
+      .filter(a => a.title && a.url)
+      .map(a => ({
+        id:            `devto_${a.id}`,
+        authorId:      `devto_${a.user?.username}`,
+        groupId:       'ext_devto',
+        content:       a.description || a.title,
+        title:         a.title,
+        source:        'devto',
+        sourceLabel:   'DEV.to',
+        sourceUrl:     a.url,
+        topic:         tag,
+        author:        { id: `devto_${a.user?.username}`, name: a.user?.name || a.user?.username, title: 'DEV.to', organization: 'DEV Community' },
+        likes: [], likesCount: a.public_reactions_count || 0, commentsCount: a.comments_count || 0,
+        createdAt:     a.published_at,
+        isExternal:    true,
+        coverImage:    a.cover_image || a.social_image || null,
+        group:         { id: 'ext_devto', name: 'DEV Community', category: 'Engineering', externalUrl: 'https://dev.to' },
+      }));
+    setCached(key, posts);
     return posts;
   } catch (e) {
-    console.warn(`Reddit fetch r/${sub}:`, e.message);
-    return redditCache.get(sub)?.posts || [];
+    console.warn(`DEV.to tag "${tag}":`, e.message);
+    return getCached(key) || [];
   }
 }
 
-async function getPersonalizedRedditPosts(interests = [], role = '') {
-  // Interests first (most specific), then role defaults
-  const subSet = new Set();
-  interests.forEach((i) => (INTEREST_TO_SUBREDDIT[i] || []).forEach((s) => subSet.add(s)));
-  (ROLE_TO_SUBREDDITS[role] || []).forEach((s) => subSet.add(s));
-  if (subSet.size === 0) ['programming','startups','MachineLearning','webdev'].forEach((s) => subSet.add(s));
+// ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
+// These platforms have no free public post APIs; we generate deep-link search
+// cards that open the platform's own search results for the user's topics.
+function generateSocialSearchCards(interests = [], connectedPlatforms = new Set()) {
+  const SOCIAL_SEARCH = {
+    linkedin: {
+      label: 'LinkedIn', icon: '💼', color: '#0A66C2',
+      url: (q) => `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(q)}`,
+    },
+    twitter: {
+      label: 'X (Twitter)', icon: '𝕏', color: '#000000',
+      url: (q) => `https://twitter.com/search?q=${encodeURIComponent(q)}&f=live`,
+    },
+    facebook: {
+      label: 'Facebook', icon: '🔵', color: '#1877F2',
+      url: (q) => `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}`,
+    },
+  };
 
-  // Up to 15 subreddits for a truly globalised feed
-  const subs = [...subSet].slice(0, 15);
-  const results = await Promise.all(subs.map(fetchSubredditPosts));
-  return results.flat();
+  const cards = [];
+  const platforms = [...connectedPlatforms].filter(p => SOCIAL_SEARCH[p]);
+  if (platforms.length === 0) return [];
+
+  // Up to 3 interests × connected platforms = max 9 cards; limit to 5
+  const topInterests = interests.slice(0, 3);
+  for (const platform of platforms) {
+    const meta = SOCIAL_SEARCH[platform];
+    for (const interest of topInterests) {
+      const kw = INTEREST_TO_KEYWORDS[interest] || interest;
+      cards.push({
+        id:           `social_${platform}_${interest.replace(/\s+/g,'_')}`,
+        type:         'social_search',
+        source:       platform,
+        sourceLabel:  meta.label,
+        sourceUrl:    meta.url(interest),
+        title:        `Browse "${interest}" posts on ${meta.label}`,
+        content:      `Tap to search ${meta.label} for the latest posts about ${interest}.`,
+        topic:        interest,
+        isExternal:   true,
+        isSocialCard: true,
+        author:       { name: meta.label, title: `Search on ${meta.label}` },
+        group:        { name: meta.label, category: 'Social' },
+        likes: [], likesCount: 0, commentsCount: 0,
+        createdAt:    new Date().toISOString(),
+        relevance:    4, // always shown near top when connected
+        forYou:       true,
+      });
+    }
+  }
+  return cards.slice(0, 5);
+}
+
+// ─── Master feed fetcher: all topics × all sources ───────────────────────────
+async function fetchAllTopicPosts(interests = [], role = '') {
+  // Build list of topics to search (interests first, then role keyword as fallback)
+  const keywords = interests
+    .map(i => INTEREST_TO_KEYWORDS[i])
+    .filter(Boolean);
+  const roleKeyword = ROLE_TO_KEYWORDS[role];
+  if (keywords.length === 0 && roleKeyword) keywords.push(roleKeyword);
+  if (keywords.length === 0) keywords.push('technology startup programming');
+
+  // Pick up to 5 unique topics to avoid too many requests
+  const topics = [...new Set(keywords)].slice(0, 5);
+
+  // For each topic: fetch Reddit + HN in parallel; DEV.to uses tag mapping
+  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw, 4));
+  const hnPromises     = topics.map(kw => fetchHNByKeyword(kw, 5));
+  const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))].slice(0, 3);
+  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag, 5));
+
+  const [redditResults, hnResults, devtoResults] = await Promise.all([
+    Promise.all(redditPromises).catch(() => []),
+    Promise.all(hnPromises).catch(() => []),
+    Promise.all(devtoPromises).catch(() => []),
+  ]);
+
+  return {
+    reddit: redditResults.flat(),
+    hn:     hnResults.flat(),
+    devto:  devtoResults.flat(),
+  };
 }
 
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
@@ -1071,22 +1272,30 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch Reddit + HN in parallel — HN (Algolia) is always available even if Reddit is blocked
-  const [redditRaw, hnRaw] = await Promise.all([
-    getPersonalizedRedditPosts(prefs.interests || [], prefs.role || '').catch(e => {
-      console.warn('Reddit feed error:', e.message); return [];
-    }),
-    fetchHNPosts(prefs.interests || [], prefs.role || '').catch(e => {
-      console.warn('HN feed error:', e.message); return [];
-    }),
-  ]);
+  // Fetch posts from all public sources (Reddit, HN, DEV.to) for user's topics
+  const { reddit: redditRaw, hn: hnRaw, devto: devtoRaw } = await fetchAllTopicPosts(
+    prefs.interests || [], prefs.role || ''
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], devto: [] }; });
+
+  // Generate social search cards for connected platforms
+  const socialCards = generateSocialSearchCards(prefs.interests || [], connectedPlatforms);
 
   const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
   const hnPosts     = hnRaw.map(p => mapExternalPost(p, 'hackernews'));
+  const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
+
+  // Boost social cards based on connected platforms
+  const socialMapped = socialCards.map(p => ({
+    ...p,
+    fromJoinedGroup: false,
+    forYou: true,
+    relevance: connectedPlatforms.has(p.source) ? 5 : 3,
+    connectedBoost: connectedPlatforms.has(p.source),
+  }));
 
   // Deduplicate by id, merge all sources
   const seen = new Set();
-  const all  = [...internal, ...redditPosts, ...hnPosts].filter(p => {
+  const all  = [...internal, ...redditPosts, ...hnPosts, ...devtoPosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1098,7 +1307,16 @@ app.get('/feed', authenticate, async (req, res) => {
       : new Date(b.createdAt) - new Date(a.createdAt)
   );
 
-  res.json({ posts: all, sources: { reddit: redditPosts.length, hn: hnPosts.length, internal: internal.length } });
+  res.json({
+    posts: all,
+    sources: {
+      reddit:   redditPosts.length,
+      hn:       hnPosts.length,
+      devto:    devtoPosts.length,
+      social:   socialMapped.length,
+      internal: internal.length,
+    },
+  });
 });
 
 // Create a post in a group

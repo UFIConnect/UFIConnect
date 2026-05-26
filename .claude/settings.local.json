@@ -138,10 +138,28 @@
       "Bash(node --check index.js)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 10 https://uficonnect-api.onrender.com/health)",
       "Bash(sed -i '' 's/sampleUsers\\\\.find\\(\\(u\\) => u\\\\.id === p\\\\.authorId\\) || //g' /Users/yosuf/Desktop/app/backend/index.js)",
-      "Bash(sed -i '' 's/sampleUsers\\\\.find\\(\\(u\\) => u\\\\.id === otherId\\) || //g' /Users/yosuf/Desktop/app/backend/index.js)"
+      "Bash(sed -i '' 's/sampleUsers\\\\.find\\(\\(u\\) => u\\\\.id === otherId\\) || //g' /Users/yosuf/Desktop/app/backend/index.js)",
+      "Bash(curl -s \"https://remotive.com/api/remote-jobs?limit=3\")",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\); const j=JSON.parse\\(d\\); console.log\\(j.job_count, j.jobs[0]?.title, j.jobs[0]?.category\\)\")",
+      "Bash(curl -s \"https://remotive.com/api/remote-jobs?category=software-dev&limit=2\")",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\); const j=JSON.parse\\(d\\); j.jobs.forEach\\(x => console.log\\(x.title, '|', x.company_name, '|', x.salary\\)\\)\")",
+      "Bash(curl -s \"https://remotive.com/api/remote-jobs?category=software-dev&limit=1\")",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\); const j=JSON.parse\\(d\\); console.log\\(JSON.stringify\\(j.jobs[0], null, 2\\)\\)\")",
+      "Bash(cp ~/Downloads/googleb2389e02302caba3.html /Users/yosuf/Desktop/app/web/public/googleb2389e02302caba3.html && echo \"done\")",
+      "Bash(curl -s -A \"UFIConnect/1.0 \\(https://uficonnect.org\\)\" \"https://www.reddit.com/r/webdev/hot.json?limit=3&raw_json=1\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(len\\(d['data']['children']\\), 'posts'\\); print\\(d['data']['children'][0]['data']['title'][:60]\\)\")",
+      "Bash(curl -s -A \"UFIConnect/1.0\" \"https://hn.algolia.com/api/v1/search?tags=story&hitsPerPage=5\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(h['title'][:70]\\) for h in d['hits']]\")",
+      "Bash(curl -s -A \"UFIConnect/1.0\" \"https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=5\")",
+      "Bash(curl -s \"https://dev.to/api/articles?tag=machinelearning&per_page=3&top=1\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(a['title'][:60], '|', a['url'][:50]\\) for a in d]\")",
+      "Bash(curl -s -A \"UFIConnect/1.0 \\(https://uficonnect.org\\)\" \"https://www.reddit.com/search.json?q=machine+learning&sort=hot&limit=3&raw_json=1\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(p['data']['title'][:60]\\) for p in d['data']['children']]\")",
+      "Bash(node --check backend/index.js)"
     ],
     "additionalDirectories": [
-      "/private/tmp"
+      "/private/tmp",
+      "/Users/yosuf/Downloads"
     ]
   }
 }

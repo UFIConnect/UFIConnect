@@ -32,6 +32,10 @@ const SOURCE_META = {
   reddit:      { label: 'Reddit',       color: '#FF4500', icon: '🟠' },
   hackernews:  { label: 'Hacker News',  color: '#FF6600', icon: '🔶' },
   devto:       { label: 'DEV.to',       color: '#3B49DF', icon: '👩‍💻' },
+  linkedin:    { label: 'LinkedIn',     color: '#0A66C2', icon: '💼' },
+  twitter:     { label: 'X (Twitter)',  color: '#000000', icon: '𝕏' },
+  facebook:    { label: 'Facebook',     color: '#1877F2', icon: '🔵' },
+  indeed:      { label: 'Indeed',       color: '#2164F3', icon: '🔍' },
   uficonnect:  { label: 'UFIConnect',   color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -39,14 +43,59 @@ function categoryStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
+/** Card for social search deep-links (LinkedIn/Twitter/Facebook) */
+function SocialSearchCard({ post }) {
+  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
+  return (
+    <a
+      href={post.sourceUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ textDecoration: 'none', display: 'block', marginBottom: 12 }}
+    >
+      <div
+        className="card post-card"
+        style={{
+          borderLeft: `3px solid ${src.color}`,
+          cursor: 'pointer',
+          background: `${src.color}08`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: '1.6rem' }}>{src.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '.95rem', color: 'var(--text)' }}>
+              {post.title}
+              <span style={{ marginLeft: 6, fontSize: '.75rem', color: src.color }}>↗</span>
+            </div>
+            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 3 }}>
+              {post.content}
+            </div>
+          </div>
+        </div>
+        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          {post.topic && (
+            <span style={{ fontSize: '.68rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 7px', borderRadius: 4 }}>
+              🏷 {post.topic}
+            </span>
+          )}
+          <span style={{ fontSize: '.7rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 10px', borderRadius: 4, marginLeft: 'auto' }}>
+            Search {src.label} →
+          </span>
+        </div>
+      </div>
+    </a>
+  );
+}
+
 function PostCard({ post, onLike }) {
-  const c = categoryStyle(post.group?.category);
+  const c   = categoryStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  const postUrl    = post.isExternal ? post.sourceUrl : null;
-  const cardProps  = postUrl
-    ? { as: 'a', href: postUrl, target: '_blank', rel: 'noopener noreferrer' }
-    : {};
+  // Social search cards get their own special renderer
+  if (post.isSocialCard) return <SocialSearchCard post={post} />;
+
+  const postUrl = post.isExternal ? post.sourceUrl : null;
 
   return (
     <div
@@ -55,9 +104,9 @@ function PostCard({ post, onLike }) {
       onClick={postUrl ? () => window.open(postUrl, '_blank', 'noopener,noreferrer') : undefined}
     >
       {/* Group tag + meta row */}
-      {post.group && (
-        <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-          {post.isExternal ? (
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+        {post.group && (
+          post.isExternal ? (
             <a
               href={post.group.externalUrl || postUrl || '#'}
               target="_blank" rel="noopener noreferrer"
@@ -74,12 +123,18 @@ function PostCard({ post, onLike }) {
                 {post.group.name}
               </span>
             </Link>
-          )}
-          {post.fromJoinedGroup && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>· your group</span>}
-          {!post.fromJoinedGroup && post.forYou && <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>}
-          {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
-        </div>
-      )}
+          )
+        )}
+        {/* Topic tag */}
+        {post.topic && (
+          <span style={{ fontSize: '.68rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>
+            🏷 {post.topic}
+          </span>
+        )}
+        {post.fromJoinedGroup && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>· your group</span>}
+        {!post.fromJoinedGroup && post.forYou && <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>}
+        {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
+      </div>
 
       {/* Author row */}
       <div className="post-header">
@@ -176,10 +231,15 @@ export default function Feed() {
     try { await client.post(`/feed/${postId}/like`); } catch {}
   }
 
-  const categories = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
-  const firstName  = profile?.name?.split(' ')[0] || '';
-  const role       = profile?.preferences?.role || '';
-  const hasPrefs   = !!(profile?.preferences?.interests?.length || role);
+  const categories    = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
+  const firstName     = profile?.name?.split(' ')[0] || '';
+  const role          = profile?.preferences?.role || '';
+  const hasPrefs      = !!(profile?.preferences?.interests?.length || role);
+
+  const redditCount   = posts.filter(p => p.source === 'reddit').length;
+  const hnCount       = posts.filter(p => p.source === 'hackernews').length;
+  const devtoCount    = posts.filter(p => p.source === 'devto').length;
+  const socialCount   = posts.filter(p => p.isSocialCard).length;
 
   const filtered =
     filter === 'foryou'  ? posts.filter(p => p.forYou || p.fromJoinedGroup)
@@ -187,13 +247,18 @@ export default function Feed() {
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
     : filter === 'reddit'? posts.filter(p => p.source === 'reddit')
     : filter === 'hn'    ? posts.filter(p => p.source === 'hackernews')
+    : filter === 'devto' ? posts.filter(p => p.source === 'devto')
+    : filter === 'social'? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
 
   // If forYou returns nothing, fall back to showing all — never a blank feed
   const displayed = (filter === 'foryou' && filtered.length === 0) ? posts : filtered;
 
-  const redditCount = posts.filter(p => p.source === 'reddit').length;
-  const hnCount     = posts.filter(p => p.source === 'hackernews').length;
+  const sourcesSummary = [
+    redditCount > 0 && `${redditCount} Reddit`,
+    hnCount     > 0 && `${hnCount} HN`,
+    devtoCount  > 0 && `${devtoCount} DEV.to`,
+  ].filter(Boolean).join(' · ');
 
   return (
     <Layout>
@@ -203,8 +268,8 @@ export default function Feed() {
         </h1>
         <p className="page-subtitle">
           {hasPrefs
-            ? `Personalised for ${role ? `${role}s` : 'you'} · live posts from Reddit, Hacker News + community.`
-            : 'Live posts from Reddit, Hacker News, and the community.'}
+            ? `Personalised for ${role ? `${role}s` : 'you'} · ${sourcesSummary || 'live posts from Reddit, Hacker News & DEV.to'}.`
+            : 'Live public posts from Reddit, Hacker News, DEV.to and the community.'}
         </p>
       </div>
 
@@ -217,6 +282,12 @@ export default function Feed() {
         )}
         {hnCount > 0 && (
           <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
+        )}
+        {devtoCount > 0 && (
+          <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV.to ({devtoCount})</button>
+        )}
+        {socialCount > 0 && (
+          <button className={`filter-btn${filter === 'social' ? ' active' : ''}`} onClick={() => setFilter('social')}>🔗 Social ({socialCount})</button>
         )}
         <button className={`filter-btn${filter === 'mine'   ? ' active' : ''}`} onClick={() => setFilter('mine')}>⭐ My groups</button>
         {categories.map(cat => (
@@ -235,7 +306,8 @@ export default function Feed() {
           <div className="empty-icon">📭</div>
           <div className="empty-title">Nothing here yet</div>
           <div className="empty-desc">
-            <Link to="/groups">Join some groups</Link> to see their posts here.
+            <Link to="/groups">Join some groups</Link> to see their posts here, or complete your{' '}
+            <Link to="/onboarding">profile preferences</Link> to personalise your feed.
           </div>
         </div>
       ) : (
