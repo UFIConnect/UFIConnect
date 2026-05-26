@@ -1208,6 +1208,73 @@ const OP_TYPE_META = {
   learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
 };
 
+// ─── Remotive live job fetching ───────────────────────────────────────────────
+const remotiveCache = new Map(); // category → { jobs, fetchedAt }
+const REMOTIVE_TTL  = 30 * 60 * 1000; // 30 minutes
+
+// Role → Remotive job categories
+const ROLE_TO_REMOTIVE = {
+  'Engineer / Developer':   ['software-dev', 'devops-sysadmin'],
+  'Designer / Creative':    ['design'],
+  'Product Manager':        ['product'],
+  'Marketer / Growth':      ['marketing'],
+  'Founder / Entrepreneur': ['product', 'software-dev'],
+  'Investor':               ['finance-legal'],
+  'Data / Analytics':       ['data'],
+  'Student / Learner':      ['software-dev', 'data'],
+  'Sales / Business Dev':   ['sales'],
+  'Operations / Finance':   ['finance-legal', 'hr'],
+  'Content Creator':        ['writing', 'marketing'],
+  'Community Manager':      ['marketing', 'hr'],
+  'Researcher / Academic':  ['data', 'software-dev'],
+  'HR / People Ops':        ['hr'],
+};
+
+async function fetchRemotiveJobs(category) {
+  const cached = remotiveCache.get(category);
+  if (cached && Date.now() - cached.fetchedAt < REMOTIVE_TTL) return cached.jobs;
+
+  try {
+    const data = await fetchJSON(
+      `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=20`
+    );
+    const jobs = (data?.jobs || []).map((j) => ({
+      id:        `remotive_${j.id}`,
+      type:      'job',
+      title:     j.title,
+      org:       j.company_name || 'Unknown',
+      location:  j.candidate_required_location || 'Remote',
+      pay:       j.salary || '',
+      tags:      (j.tags || []).slice(0, 5),
+      source:    'Remotive',
+      sourceUrl: j.url || 'https://remotive.com',
+      posted:    j.publication_date || new Date().toISOString(),
+      remote:    true,
+      isLive:    true,
+      logo:      j.company_logo || null,
+    }));
+    remotiveCache.set(category, { jobs, fetchedAt: Date.now() });
+    return jobs;
+  } catch (e) {
+    console.warn(`Remotive fetch [${category}]:`, e.message);
+    return remotiveCache.get(category)?.jobs || [];
+  }
+}
+
+async function getLiveJobs(role) {
+  const cats = ROLE_TO_REMOTIVE[role] || ['software-dev'];
+  // Deduplicate categories
+  const uniqCats = [...new Set(cats)].slice(0, 2);
+  const results = await Promise.all(uniqCats.map(fetchRemotiveJobs));
+  // Deduplicate by id (same job can appear in multiple categories)
+  const seen = new Set();
+  return results.flat().filter((j) => {
+    if (seen.has(j.id)) return false;
+    seen.add(j.id);
+    return true;
+  });
+}
+
 // Role → preferred opportunity types
 const ROLE_OP_TYPES = {
   'Engineer / Developer':     new Set(['job','gig','hackathon','opensource','learning']),
@@ -1234,7 +1301,24 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const interests = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
   const roleTypes = ROLE_OP_TYPES[role] || new Set();
 
-  let results = OPPORTUNITIES;
+  // Fetch live jobs from Remotive (non-blocking, 5s timeout fallback)
+  let liveJobs = [];
+  try {
+    liveJobs = await Promise.race([
+      getLiveJobs(role),
+      new Promise((resolve) => setTimeout(() => resolve([]), 5000)),
+    ]);
+  } catch (e) { /* silently skip live jobs on error */ }
+
+  // Combine curated list + live jobs (deduplicate by id)
+  const seenIds = new Set();
+  const allOps = [...OPPORTUNITIES, ...liveJobs].filter((o) => {
+    if (seenIds.has(o.id)) return false;
+    seenIds.add(o.id);
+    return true;
+  });
+
+  let results = allOps;
   if (type && type !== 'all') results = results.filter((o) => o.type === type);
   if (remote === 'true')       results = results.filter((o) => o.remote);
   if (search) {
@@ -1242,23 +1326,25 @@ app.get('/opportunities', authenticate, async (req, res) => {
     results = results.filter((o) =>
       o.title.toLowerCase().includes(q) ||
       o.org.toLowerCase().includes(q) ||
-      o.tags.some((t) => t.toLowerCase().includes(q))
+      (o.tags || []).some((t) => t.toLowerCase().includes(q))
     );
   }
 
   results = results.map((o) => {
     let score = 0;
     // Skill match — highest weight
-    o.tags.forEach((t) => { if (skills.has(t.toLowerCase())) score += 3; });
+    (o.tags || []).forEach((t) => { if (skills.has(t.toLowerCase())) score += 3; });
     // Role-type match
     if (roleTypes.has(o.type)) score += 2;
     // Interest keyword match against tags
-    o.tags.forEach((t) => { if (interests.has(t.toLowerCase())) score += 1; });
+    (o.tags || []).forEach((t) => { if (interests.has(t.toLowerCase())) score += 1; });
+    // Boost live listings slightly to surface them
+    if (o.isLive) score += 1;
     return { ...o, matchScore: score };
   });
 
   results.sort((a, b) => b.matchScore - a.matchScore || new Date(b.posted) - new Date(a.posted));
-  res.json({ opportunities: results, meta: OP_TYPE_META });
+  res.json({ opportunities: results, meta: OP_TYPE_META, liveCount: liveJobs.length });
 });
 
 // ─── Messages ─────────────────────────────────────────────────────────────────

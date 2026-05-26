@@ -24,11 +24,32 @@ function timeAgo(iso) {
   return `${Math.floor(d)}d ago`;
 }
 
+function SourceBadge({ opp }) {
+  if (opp.source === 'LinkedIn') {
+    return (
+      <span style={{ fontSize: '.75rem', fontWeight: 600, color: '#0A66C2', background: '#E8F0FB', padding: '3px 8px', borderRadius: 4 }}>
+        🔷 LinkedIn
+      </span>
+    );
+  }
+  if (opp.source === 'Remotive') {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '.75rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '3px 8px', borderRadius: 4 }}>
+        🔴 Live · Remotive
+      </span>
+    );
+  }
+  return (
+    <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>via {opp.source}</span>
+  );
+}
+
 export default function Opportunities() {
   const [opps,      setOpps]      = useState([]);
+  const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('all');
   const [remote,    setRemote]    = useState(false);
-  const [linkedin,  setLinkedin]  = useState(false);
+  const [liveOnly,  setLiveOnly]  = useState(false);
   const [search,    setSearch]    = useState('');
   const [loading,   setLoading]   = useState(true);
 
@@ -41,18 +62,26 @@ export default function Opportunities() {
     client.get('/opportunities', { params })
       .then(({ data }) => {
         let list = data.opportunities || [];
-        if (linkedin) list = list.filter(o => o.source === 'LinkedIn');
+        if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
         setOpps(list);
+        setLiveCount(data.liveCount || 0);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [filter, remote, linkedin, search]);
+  }, [filter, remote, liveOnly, search]);
 
   return (
     <Layout>
       <div className="page-header">
         <h1 className="page-title">Opportunities</h1>
-        <p className="page-subtitle">Jobs, gigs, grants, events, hackathons and more — tailored to your profile.</p>
+        <p className="page-subtitle">
+          Jobs, gigs, grants, events, hackathons — personalised to your role and skills.
+          {liveCount > 0 && (
+            <span style={{ marginLeft: 8, fontSize: '.78rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
+              🔴 {liveCount} live listings
+            </span>
+          )}
+        </p>
       </div>
 
       {/* Search */}
@@ -84,11 +113,11 @@ export default function Opportunities() {
           🌍 Remote only
         </button>
         <button
-          className={`filter-btn${linkedin ? ' active' : ''}`}
-          style={linkedin ? { background:'#0A66C2', color:'#fff', borderColor:'#0A66C2' } : {}}
-          onClick={() => setLinkedin((l) => !l)}
+          className={`filter-btn${liveOnly ? ' active' : ''}`}
+          style={liveOnly ? { background: '#2563EB', color: '#fff', borderColor: '#2563EB' } : {}}
+          onClick={() => setLiveOnly((l) => !l)}
         >
-          🔷 LinkedIn
+          🔴 Live jobs
         </button>
       </div>
 
@@ -115,31 +144,49 @@ export default function Opportunities() {
                   >
                     {meta.emoji} {meta.label}
                   </span>
-                  {opp.remote && <span className="tag" style={{ fontSize: '.7rem' }}>🌍 Remote</span>}
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {opp.isLive && (
+                      <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#DCFCE7', padding: '2px 7px', borderRadius: 4 }}>
+                        ● LIVE
+                      </span>
+                    )}
+                    {opp.remote && <span className="tag" style={{ fontSize: '.7rem' }}>🌍 Remote</span>}
+                  </div>
                 </div>
-                <div className="opp-title">{opp.title}</div>
-                <div className="opp-org">{opp.org}</div>
+
+                {/* Company logo + title row */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 2 }}>
+                  {opp.logo && (
+                    <img
+                      src={opp.logo}
+                      alt={opp.org}
+                      style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'contain', border: '1px solid #E2E8F0', flexShrink: 0 }}
+                      onError={(e) => { e.target.style.display = 'none'; }}
+                    />
+                  )}
+                  <div>
+                    <div className="opp-title">{opp.title}</div>
+                    <div className="opp-org">{opp.org}</div>
+                  </div>
+                </div>
+
                 <div className="opp-meta">
                   <span>📍 {opp.location}</span>
                   {opp.pay && <span className="opp-pay">💵 {opp.pay}</span>}
                   <span>🕐 Posted {timeAgo(opp.posted)}</span>
                   {opp.matchScore > 0 && (
-                    <span style={{ color:'var(--success)' }}>⭐ {opp.matchScore} match points</span>
+                    <span style={{ color:'var(--success)' }}>⭐ {opp.matchScore} match</span>
                   )}
                 </div>
+
                 <div className="tags" style={{ marginBottom: 12 }}>
-                  {opp.tags.map((t) => (
+                  {(opp.tags || []).map((t) => (
                     <span key={t} className="tag">{t}</span>
                   ))}
                 </div>
+
                 <div className="opp-footer">
-                  {opp.source === 'LinkedIn' ? (
-                    <span style={{ fontSize: '.75rem', fontWeight: 600, color: '#0A66C2', background: '#E8F0FB', padding: '3px 8px', borderRadius: 4 }}>
-                      🔷 LinkedIn
-                    </span>
-                  ) : (
-                    <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>via {opp.source}</span>
-                  )}
+                  <SourceBadge opp={opp} />
                   <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer">
                     <button className="btn btn-primary btn-sm">View →</button>
                   </a>
