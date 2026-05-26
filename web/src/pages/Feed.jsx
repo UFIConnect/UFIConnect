@@ -237,7 +237,6 @@ export default function Feed() {
   const hasPrefs      = !!(profile?.preferences?.interests?.length || role);
 
   const redditCount   = posts.filter(p => p.source === 'reddit').length;
-  const hnCount       = posts.filter(p => p.source === 'hackernews').length;
   const devtoCount    = posts.filter(p => p.source === 'devto').length;
   const socialCount   = posts.filter(p => p.isSocialCard).length;
 
@@ -246,7 +245,6 @@ export default function Feed() {
     : filter === 'all'   ? posts
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
     : filter === 'reddit'? posts.filter(p => p.source === 'reddit')
-    : filter === 'hn'    ? posts.filter(p => p.source === 'hackernews')
     : filter === 'devto' ? posts.filter(p => p.source === 'devto')
     : filter === 'social'? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
@@ -256,7 +254,6 @@ export default function Feed() {
 
   const sourcesSummary = [
     redditCount > 0 && `${redditCount} Reddit`,
-    hnCount     > 0 && `${hnCount} HN`,
     devtoCount  > 0 && `${devtoCount} DEV.to`,
   ].filter(Boolean).join(' · ');
 
@@ -279,9 +276,6 @@ export default function Feed() {
         <button className={`filter-btn${filter === 'all'    ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
         {redditCount > 0 && (
           <button className={`filter-btn${filter === 'reddit' ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({redditCount})</button>
-        )}
-        {hnCount > 0 && (
-          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
         )}
         {devtoCount > 0 && (
           <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV.to ({devtoCount})</button>

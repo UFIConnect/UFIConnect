@@ -155,7 +155,8 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(a['title'][:60], '|', a['url'][:50]\\) for a in d]\")",
       "Bash(curl -s -A \"UFIConnect/1.0 \\(https://uficonnect.org\\)\" \"https://www.reddit.com/search.json?q=machine+learning&sort=hot&limit=3&raw_json=1\")",
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); [print\\(p['data']['title'][:60]\\) for p in d['data']['children']]\")",
-      "Bash(node --check backend/index.js)"
+      "Bash(node --check backend/index.js)",
+      "Bash(node --check /Users/yosuf/Desktop/app/backend/index.js)"
     ],
     "additionalDirectories": [
       "/private/tmp",

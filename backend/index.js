@@ -542,21 +542,18 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   // Pick up to 5 unique topics to avoid too many requests
   const topics = [...new Set(keywords)].slice(0, 5);
 
-  // For each topic: fetch Reddit + HN in parallel; DEV.to uses tag mapping
-  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw, 4));
-  const hnPromises     = topics.map(kw => fetchHNByKeyword(kw, 5));
+  // For each topic: fetch Reddit; DEV.to uses tag mapping
+  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw, 5));
   const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))].slice(0, 3);
-  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag, 5));
+  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag, 6));
 
-  const [redditResults, hnResults, devtoResults] = await Promise.all([
+  const [redditResults, devtoResults] = await Promise.all([
     Promise.all(redditPromises).catch(() => []),
-    Promise.all(hnPromises).catch(() => []),
     Promise.all(devtoPromises).catch(() => []),
   ]);
 
   return {
     reddit: redditResults.flat(),
-    hn:     hnResults.flat(),
     devto:  devtoResults.flat(),
   };
 }
@@ -1272,16 +1269,15 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch posts from all public sources (Reddit, HN, DEV.to) for user's topics
-  const { reddit: redditRaw, hn: hnRaw, devto: devtoRaw } = await fetchAllTopicPosts(
+  // Fetch posts from Reddit + DEV.to for user's topics
+  const { reddit: redditRaw, devto: devtoRaw } = await fetchAllTopicPosts(
     prefs.interests || [], prefs.role || ''
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], devto: [] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], devto: [] }; });
 
   // Generate social search cards for connected platforms
   const socialCards = generateSocialSearchCards(prefs.interests || [], connectedPlatforms);
 
   const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
-  const hnPosts     = hnRaw.map(p => mapExternalPost(p, 'hackernews'));
   const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
 
   // Boost social cards based on connected platforms
@@ -1295,7 +1291,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Deduplicate by id, merge all sources
   const seen = new Set();
-  const all  = [...internal, ...redditPosts, ...hnPosts, ...devtoPosts, ...socialMapped].filter(p => {
+  const all  = [...internal, ...redditPosts, ...devtoPosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1311,7 +1307,6 @@ app.get('/feed', authenticate, async (req, res) => {
     posts: all,
     sources: {
       reddit:   redditPosts.length,
-      hn:       hnPosts.length,
       devto:    devtoPosts.length,
       social:   socialMapped.length,
       internal: internal.length,
