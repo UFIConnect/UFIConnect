@@ -604,9 +604,76 @@ input, textarea, select { font-family: inherit; }
 .empty-desc { font-size: .875rem; color: var(--muted); }
 
 /* ── Responsive ───────────────────────────────────────────── */
+/* ── Bottom nav (mobile only) ─────────────────────────────── */
+.bottom-nav {
+  display: none;
+}
+
 @media (max-width: 768px) {
+  /* Hide sidebar, show bottom nav */
   .sidebar { display: none; }
-  .main { padding: 16px; }
+  .main { padding: 16px 12px; padding-bottom: 76px; }
+
+  /* Bottom tab bar */
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: var(--card);
+    border-top: 1px solid var(--border);
+    z-index: 200;
+    padding: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 4px;
+    gap: 3px;
+    font-size: .62rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-decoration: none;
+    border: none;
+    background: none;
+    cursor: pointer;
+    transition: color .15s;
+    min-height: 56px;
+  }
+  .bottom-nav-item .nav-icon {
+    font-size: 1.3rem;
+    line-height: 1;
+  }
+  .bottom-nav-item.active {
+    color: var(--primary);
+  }
+  .bottom-nav-item:active {
+    opacity: 0.7;
+  }
+
+  /* Layout tweaks */
   .groups-grid { grid-template-columns: 1fr; }
-  .option-grid { grid-template-columns: 1fr; }
+  .option-grid  { grid-template-columns: 1fr; }
+
+  /* Filter bar scrolls horizontally */
+  .filter-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .filter-bar::-webkit-scrollbar { display: none; }
+  .filter-btn { white-space: nowrap; flex-shrink: 0; }
+
+  /* Page header tighter */
+  .page-header { margin-bottom: 16px; }
+  .page-title  { font-size: 1.3rem; }
+
+  /* Cards full-width */
+  .card { border-radius: 10px; }
+
+  /* Auth pages */
+  .auth-card { padding: 24px 20px; }
 }
