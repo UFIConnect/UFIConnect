@@ -43,47 +43,51 @@ function PostCard({ post, onLike }) {
   const c = categoryStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
+  const postUrl    = post.isExternal ? post.sourceUrl : null;
+  const cardProps  = postUrl
+    ? { as: 'a', href: postUrl, target: '_blank', rel: 'noopener noreferrer' }
+    : {};
+
   return (
-    <div className="card post-card" style={{ marginBottom: 12 }}>
-      {/* Group tag row */}
+    <div
+      className="card post-card"
+      style={{ marginBottom: 12, cursor: postUrl ? 'pointer' : 'default', textDecoration: 'none', display: 'block' }}
+      onClick={postUrl ? () => window.open(postUrl, '_blank', 'noopener,noreferrer') : undefined}
+    >
+      {/* Group tag + meta row */}
       {post.group && (
         <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
           {post.isExternal ? (
-            <a href={post.group.externalUrl || '#'} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-              <span style={{
-                fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px',
-                background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6,
-              }}>
+            <a
+              href={post.group.externalUrl || postUrl || '#'}
+              target="_blank" rel="noopener noreferrer"
+              style={{ textDecoration: 'none' }}
+              onClick={e => e.stopPropagation()}
+            >
+              <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px', background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6 }}>
                 {post.group.name}
               </span>
             </a>
           ) : (
-            <Link to={`/groups/${post.group.id}`} style={{ textDecoration: 'none' }}>
-              <span style={{
-                fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px',
-                background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6,
-              }}>
+            <Link to={`/groups/${post.group.id}`} style={{ textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
+              <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px', background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6 }}>
                 {post.group.name}
               </span>
             </Link>
           )}
-          {post.fromJoinedGroup && (
-            <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>· your group</span>
-          )}
-          {!post.fromJoinedGroup && post.forYou && (
-            <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>
-          )}
+          {post.fromJoinedGroup && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>· your group</span>}
+          {!post.fromJoinedGroup && post.forYou && <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>}
+          {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
         </div>
       )}
 
-      {/* Author */}
+      {/* Author row */}
       <div className="post-header">
         <div className="avatar avatar-md">{initials(post.author?.name)}</div>
         <div className="post-meta">
           <div className="post-author">{post.author?.name || 'Anonymous'}</div>
           <div className="post-source">
-            {post.author?.title}
-            {post.author?.organization ? ` · ${post.author.organization}` : ''}
+            {post.author?.title}{post.author?.organization ? ` · ${post.author.organization}` : ''}
           </div>
         </div>
         <span style={{ fontSize: '.75rem', color: 'var(--muted)', marginLeft: 'auto' }}>
@@ -91,20 +95,29 @@ function PostCard({ post, onLike }) {
         </span>
       </div>
 
-      {/* Title (external posts only) */}
+      {/* Title — clickable link for external posts */}
       {post.title && post.isExternal && (
-        <p style={{ fontWeight: 600, fontSize: '.92rem', margin: '8px 0 4px', color: 'var(--text)' }}>
-          {post.title}
-        </p>
+        <a
+          href={postUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          style={{ textDecoration: 'none', color: 'inherit' }}
+        >
+          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '8px 0 4px', color: 'var(--text)', lineHeight: 1.4 }}>
+            {post.title}
+            <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
+          </p>
+        </a>
       )}
 
       <p className="post-content" style={{ marginTop: post.title && post.isExternal ? 0 : undefined }}>
         {post.content}
       </p>
 
-      {/* Source attribution */}
+      {/* Footer: actions + source */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-        <div className="post-actions" style={{ marginTop: 0 }}>
+        <div className="post-actions" style={{ marginTop: 0 }} onClick={e => e.stopPropagation()}>
           <button
             className={`post-action-btn${post.likedByMe ? ' liked' : ''}`}
             onClick={() => !post.isExternal && onLike(post.id)}
@@ -115,21 +128,17 @@ function PostCard({ post, onLike }) {
           <button className="post-action-btn">💬 {post.commentsCount || 0}</button>
         </div>
 
-        {/* Source link */}
+        {/* Source badge */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           {post.isExternal && post.sourceUrl ? (
             <a
               href={post.sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                fontSize: '.7rem', color: src.color, fontWeight: 600,
-                display: 'flex', alignItems: 'center', gap: 3,
-                textDecoration: 'none', padding: '2px 8px',
-                background: `${src.color}14`, borderRadius: 4,
-              }}
+              onClick={e => e.stopPropagation()}
+              style={{ fontSize: '.7rem', color: src.color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none', padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}
             >
-              {src.icon} {post.sourceLabel || src.label} · view original ↗
+              {src.icon} {post.sourceLabel || src.label} · open ↗
             </a>
           ) : (
             <span style={{ fontSize: '.68rem', color: 'var(--muted)', opacity: 0.7 }}>

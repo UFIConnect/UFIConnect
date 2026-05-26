@@ -977,7 +977,7 @@ app.get('/feed', authenticate, async (req, res) => {
       likedByMe:       (p.likes || []).includes(req.user.id),
       likesCount:      (p.likes || []).length,
       fromJoinedGroup: joined.has(p.groupId),
-      forYou:          relevance >= 3,
+      forYou:          relevance >= 2,
       relevance,
       source:          'uficonnect',
       sourceLabel:     'UFIConnect',
@@ -1000,7 +1000,7 @@ app.get('/feed', authenticate, async (req, res) => {
         group:              group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
         likedByMe:          false,
         fromJoinedGroup:    joined.has(p.groupId),
-        forYou:             relevance >= 3,
+        forYou:             relevance >= 2,
         relevance,
         connectedBoost:     isConnectedSource,
       };
