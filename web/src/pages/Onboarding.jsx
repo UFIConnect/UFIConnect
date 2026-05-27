@@ -10,14 +10,19 @@ const ROLES = [
   { value: 'Marketer / Growth',      label: '📈 Marketer / Growth',        desc: 'SEO, Content, Ads' },
   { value: 'Founder / Entrepreneur', label: '🚀 Founder / Entrepreneur',   desc: 'Building something new' },
   { value: 'Investor / VC',          label: '💰 Investor / VC',            desc: 'VC, Angel, LP' },
-  { value: 'Data / Analytics',       label: '📊 Data / Analytics',         desc: 'Data Sci, BI, MLOps' },
+  { value: 'Data / Analytics',       label: '📊 Data / Analytics',         desc: 'Insights, BI, strategy' },
   { value: 'Student / Learner',      label: '🎓 Student / Learner',        desc: 'Growing & exploring' },
   { value: 'Sales / Business Dev',   label: '🤝 Sales / Business Dev',     desc: 'Revenue, partnerships' },
   { value: 'Operations / Finance',   label: '⚙️ Operations / Finance',     desc: 'Ops, accounting, strategy' },
   { value: 'Content Creator',        label: '🎬 Content Creator',          desc: 'Video, writing, podcasts' },
   { value: 'Community Manager',      label: '🌐 Community Manager',        desc: 'Grow & engage communities' },
-  { value: 'Researcher / Academic',  label: '🔬 Researcher / Academic',    desc: 'R&D, academia, science' },
-  { value: 'HR / People Ops',        label: '👥 HR / People Ops',          desc: 'Recruiting, culture, L&D' },
+  { value: 'Educator / Trainer',     label: '📚 Educator / Trainer',        desc: 'Learning, coaching, curriculum' },
+  { value: 'Healthcare Professional',label: '🩺 Healthcare Professional',   desc: 'Wellness, care, patient experience' },
+  { value: 'Legal / Compliance',     label: '⚖️ Legal / Compliance',        desc: 'Policy, contracts, ethics' },
+  { value: 'Creative Director',      label: '🎭 Creative Director',         desc: 'Storytelling, media, art' },
+  { value: 'Community Builder',      label: '🌟 Community Builder',         desc: 'Events, engagement, culture' },
+  { value: 'Small Business Owner',   label: '🏪 Small Business Owner',      desc: 'Local business, retail, hospitality' },
+  { value: 'Executive / Founder',    label: '👔 Executive / Founder',       desc: 'Leadership, strategy, growth' },
 ];
 
 const GOALS = [
@@ -47,16 +52,18 @@ const INTERESTS = [
   // Design & Creative
   'UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design',
   '3D & CGI', 'Photography', 'Film & Video', 'Music Production',
-  // Finance
-  'FinTech', 'DeFi / Crypto Finance', 'Personal Finance', 'Real Estate',
-  'Trading & Quant', 'InsurTech',
-  // Industries
+  'Visual Storytelling', 'Brand Strategy',
+  // Finance & Operations
+  'FinTech', 'Corporate Finance', 'Personal Finance', 'Real Estate',
+  'Supply Chain', 'Customer Experience', 'Operations Excellence', 'Business Strategy',
+  // Industry & Impact
   'Health Tech', 'BioTech', 'Climate Tech', 'EdTech',
   'LegalTech', 'GovTech', 'AgriTech', 'SpaceTech',
   'PropTech', 'RetailTech', 'FoodTech', 'SportsTech',
+  'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
   // People & Culture
   'Remote Work', 'Future of Work', 'Recruiting & Hiring', 'Leadership',
-  'Diversity & Inclusion', 'Mental Health & Wellness',
+  'Diversity & Inclusion', 'Mental Health & Wellness', 'People Ops',
   // Content & Media
   'Creator Economy', 'Podcasting', 'Newsletter & Writing',
   'YouTube & Video', 'Social Media', 'SEO & Content',
@@ -150,7 +157,7 @@ export default function Onboarding() {
         {/* Step 1 — Goals */}
         {step === 1 && (<>
           <h1 className="onboarding-title">What are you here for?</h1>
-          <p className="onboarding-sub">Pick everything that applies — no wrong answers.</p>
+          <p className="onboarding-sub">Pick everything that applies — your feed will reflect your career, creativity, and community goals.</p>
           <div className="option-grid">
             {GOALS.map(({ value, label, desc }) => (
               <button key={value}

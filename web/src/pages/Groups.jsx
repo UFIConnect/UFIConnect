@@ -17,12 +17,12 @@ const CATEGORY_META = {
 };
 
 const PLATFORM_META = {
-  reddit:      { icon: '🟠', label: 'Reddit',       color: '#FF4500' },
-  discord:     { icon: '💬', label: 'Discord',       color: '#5865F2' },
-  linkedin:    { icon: '💼', label: 'LinkedIn',      color: '#0A66C2' },
-  hackernews:  { icon: '🔶', label: 'Hacker News',   color: '#FF6600' },
-  devto:       { icon: '👩‍💻', label: 'DEV.to',       color: '#3B49DF' },
-  github:      { icon: '🐙', label: 'GitHub',        color: '#24292F' },
+  reddit:      { icon: '🟠', label: 'Reddit',         color: '#FF4500' },
+  discord:     { icon: '💬', label: 'Discord',        color: '#5865F2' },
+  linkedin:    { icon: '💼', label: 'LinkedIn',       color: '#0A66C2' },
+  hackernews:  { icon: '🔶', label: 'News',           color: '#FF6600' },
+  devto:       { icon: '👩‍💻', label: 'DEV Community',  color: '#3B49DF' },
+  github:      { icon: '🐙', label: 'GitHub',         color: '#24292F' },
   uficonnect:  { icon: '🌐', label: 'UFIConnect',    color: '#6366F1' },
 };
 
@@ -32,8 +32,8 @@ export default function Groups() {
   return (
     <>
       <Helmet>
-        <title>Tech Communities & Developer Groups | UFIConnect</title>
-        <meta name="description" content="Discover 50+ professional communities on UFIConnect. Join Reddit communities, Discord servers, LinkedIn groups, Hacker News, and DEV.to — all curated by your role and interests." />
+        <title>Professional Communities & Groups | UFIConnect</title>
+        <meta name="description" content="Discover 50+ professional communities on UFIConnect. Join business, creative, education, and industry groups from Reddit, Discord, LinkedIn, and more — all curated by your role and interests." />
       </Helmet>
       {GroupsContent()}
     </>
@@ -83,7 +83,7 @@ function GroupsContent() {
       <div className="page-header">
         <h1 className="page-title">Discover Groups</h1>
         <p className="page-subtitle">
-          Real public communities from Reddit, Discord, LinkedIn, Hacker News, and more — follow any to personalise your feed.
+          Real public communities from Reddit, Discord, LinkedIn, News, and more — follow any to personalise your feed with business, creative, and industry conversations.
         </p>
       </div>
 

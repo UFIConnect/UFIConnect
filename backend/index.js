@@ -18,6 +18,11 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : true; // allow all in dev
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
+// Holomine brain service (simulated or external via HOLOMINE_URL)
+try {
+  const holomine = require('./holomine');
+  holomine.register(app, { externalUrl: process.env.HOLOMINE_URL || null });
+} catch (err) { console.warn('holomine module not loaded:', err.message); }
 
 // Health-check endpoint (used by AWS load balancer / monitoring)
 app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
@@ -244,7 +249,7 @@ function fetchJSON(url) {
   });
 }
 
-// ─── Search keyword per interest (used by Reddit, HN, DEV.to) ────────────────
+// ─── Search keyword per interest (used by Reddit, News, DEV Community) ─────────────
 // Keys match EXACTLY the Onboarding.jsx INTERESTS[] array
 const INTEREST_TO_KEYWORDS = {
   'AI & Machine Learning':    'machine learning AI',
@@ -329,7 +334,7 @@ const INTEREST_TO_KEYWORDS = {
   'Social Impact':            'social impact nonprofit sustainability',
 };
 
-// DEV.to tag mapping (one tag per interest)
+// DEV Community tag mapping (one tag per interest)
 const INTEREST_TO_DEVTO_TAG = {
   'AI & Machine Learning': 'machinelearning', 'Generative AI': 'ai',
   'LLMs & Chatbots': 'ai', 'Computer Vision': 'machinelearning',
@@ -431,7 +436,7 @@ async function fetchRedditByKeyword(keyword) {
   }
 }
 
-// ─── Hacker News: search by keyword via Algolia ───────────────────────────────
+// ─── News: search by keyword via Algolia ───────────────────────────────────
 async function fetchHNByKeyword(keyword) {
   const key = `hn_kw_${keyword}`;
   const cached = getCached(key);
@@ -449,14 +454,14 @@ async function fetchHNByKeyword(keyword) {
         content:       h.story_text?.slice(0, 400) || h.title,
         title:         h.title,
         source:        'hackernews',
-        sourceLabel:   'Hacker News',
+        sourceLabel:   'News',
         sourceUrl:     h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
         topic:         keyword,
-        author:        { id: `hn_${h.author}`, name: h.author, title: 'Hacker News', organization: 'YC' },
+        author:        { id: `hn_${h.author}`, name: h.author, title: 'News', organization: 'YC' },
         likes: [], likesCount: h.points || 0, commentsCount: h.num_comments || 0,
         createdAt:     h.created_at,
         isExternal:    true,
-        group:         { id: 'ext_hn', name: 'Hacker News', category: 'Engineering', externalUrl: 'https://news.ycombinator.com' },
+        group:         { id: 'ext_hn', name: 'News', category: 'Engineering', externalUrl: 'https://news.ycombinator.com' },
       }));
     setCached(key, posts);
     return posts;
@@ -466,13 +471,13 @@ async function fetchHNByKeyword(keyword) {
   }
 }
 
-// ─── DEV.to: search by tag ───────────────────────────────────────────────────
+// ─── DEV Community: search by tag ─────────────────────────────────────────────
 async function fetchDevToByTag(tag) {
   const key = `devto_tag_${tag}`;
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // DEV.to API caps at 1000 articles per page
+    // dev.to API caps at 1000 articles per page
     const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=1000&top=7`;
     const data = await fetchJSON(url);
     const posts = (data || [])
@@ -484,10 +489,10 @@ async function fetchDevToByTag(tag) {
         content:       a.description || a.title,
         title:         a.title,
         source:        'devto',
-        sourceLabel:   'DEV.to',
+        sourceLabel:   'DEV Community',
         sourceUrl:     a.url,
         topic:         tag,
-        author:        { id: `devto_${a.user?.username}`, name: a.user?.name || a.user?.username, title: 'DEV.to', organization: 'DEV Community' },
+        author:        { id: `devto_${a.user?.username}`, name: a.user?.name || a.user?.username, title: 'DEV Community', organization: 'DEV Community' },
         likes: [], likesCount: a.public_reactions_count || 0, commentsCount: a.comments_count || 0,
         createdAt:     a.published_at,
         isExternal:    true,
@@ -497,7 +502,7 @@ async function fetchDevToByTag(tag) {
     setCached(key, posts);
     return posts;
   } catch (e) {
-    console.warn(`DEV.to tag "${tag}":`, e.message);
+    console.warn(`DEV Community tag "${tag}":`, e.message);
     return getCached(key) || [];
   }
 }
@@ -644,6 +649,17 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
     behance:   { label: 'Behance',       icon: '🎨', color: '#053EFF',
       url: (q) => `https://www.behance.net/search/projects?search=${encodeURIComponent(q)}` },
   };
+  const SOCIAL_MEDIA_PREVIEW = {
+    linkedin:  { mediaType: 'image', mediaLabel: 'Post preview', caption: 'Professional thought leadership and career updates.' },
+    twitter:   { mediaType: 'image', mediaLabel: 'Tweet preview', caption: 'Short-form updates, image threads, and community reactions.' },
+    facebook:  { mediaType: 'image', mediaLabel: 'Post preview', caption: 'Community posts, event updates, and visual stories.' },
+    instagram: { mediaType: 'image', mediaLabel: 'Photo preview', caption: 'Visual and creator content in your feed.' },
+    youtube:   { mediaType: 'video', mediaLabel: 'Video preview', caption: 'Video highlights and creator conversations.' },
+    discord:   { mediaType: 'image', mediaLabel: 'Community preview', caption: 'Discussion snippets from your favourite groups.' },
+    indeed:    { mediaType: 'image', mediaLabel: 'Jobs preview', caption: 'Highlighted jobs and hiring opportunities.' },
+    dribbble:  { mediaType: 'image', mediaLabel: 'Design preview', caption: 'Creative shots and portfolio updates.' },
+    behance:   { mediaType: 'image', mediaLabel: 'Portfolio preview', caption: 'Showcasing concept work and case studies.' },
+  };
 
   const cards = [];
   // Show all platforms — connected ones get a boost, unconnected still appear
@@ -653,6 +669,8 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
     const meta = SOCIAL_SEARCH[platform];
     const isConnected = connectedPlatforms.has(platform);
     for (const interest of interests) {
+      const preview = SOCIAL_MEDIA_PREVIEW[platform] || { mediaType: 'image', mediaLabel: 'Preview', caption: 'Explore related media for this topic.' };
+      const seed = `${platform}_${interest.replace(/\s+/g,'_').toLowerCase()}`;
       cards.push({
         id:           `social_${platform}_${interest.replace(/\s+/g,'_')}`,
         type:         'social_search',
@@ -671,6 +689,10 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
         relevance:    isConnected ? 5 : 3,
         forYou:       true,
         connectedBoost: isConnected,
+        mediaType:    preview.mediaType,
+        mediaUrl:     `https://picsum.photos/seed/${encodeURIComponent(seed)}/800/450`,
+        mediaLabel:   preview.mediaLabel,
+        mediaCaption: preview.caption,
       });
     }
   }
@@ -949,8 +971,8 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_d_tph',      category: 'Engineering', name: "The Programmer's Hangout", description: 'Welcoming community for programmers at all levels — code challenges, project collabs, and career advice.',           members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/programming' },
   // ── LinkedIn groups ──────────────────────────────────────────────────────────
   { id: 'ext_li_pm',      category: 'Startups',    name: 'Product Management Professionals', description: "LinkedIn's largest PM group — product strategy, roadmapping, and career growth for product managers.", members: 500000, isExternal: true, platform: 'linkedin',            externalUrl: 'https://linkedin.com/groups/42115' },
-  // ── Hacker News & DEV ────────────────────────────────────────────────────────
-  { id: 'ext_hn',         category: 'Engineering', name: 'Hacker News',              description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",          members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
+  // ── News & DEV Community ───────────────────────────────────────────────────────
+  { id: 'ext_hn',         category: 'Engineering', name: 'News',                     description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",          members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
   { id: 'ext_devto',      category: 'Engineering', name: 'DEV Community',            description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                             members: 1000000, isExternal: true, platform: 'devto',              externalUrl: 'https://dev.to' },
 ];
 

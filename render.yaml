@@ -30,6 +30,9 @@ services:
   - type: web
     name: uficonnect-web
     runtime: static
+    domains:
+      - uficonnect.org
+      - www.uficonnect.org
     rootDir: web
     buildCommand: npm install && npm run build
     staticPublishPath: dist

@@ -74,8 +74,8 @@ export default function Opportunities() {
   return (
     <>
       <Helmet>
-        <title>Remote Jobs, Grants & Tech Opportunities | UFIConnect</title>
-        <meta name="description" content="Discover remote jobs, gigs, grants, hackathons, and learning opportunities curated for your role. Find roles that match your skills and interests." />
+        <title>Jobs, Gigs, Grants & Opportunities | UFIConnect</title>
+        <meta name="description" content="Discover jobs, gigs, grants, events, and learning opportunities across business, creative, education, and leadership paths. Find roles that match your skills and interests." />
       </Helmet>
       <Layout>
         <div className="page-header">

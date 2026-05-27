@@ -30,8 +30,8 @@ const CATEGORY_COLORS = {
 
 const SOURCE_META = {
   reddit:      { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
-  hackernews:  { label: 'Hacker News',   color: '#FF6600', icon: '🔶' },
-  devto:       { label: 'DEV.to',        color: '#3B49DF', icon: '👩‍💻' },
+  hackernews:  { label: 'News',          color: '#FF6600', icon: '🔶' },
+  devto:       { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
   linkedin:    { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
   twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
   facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
@@ -90,6 +90,25 @@ function SocialSearchCard({ post }) {
             Search {src.label} →
           </span>
         </div>
+        {post.mediaUrl && (
+          <div style={{ marginTop: 14, borderRadius: 18, overflow: 'hidden', position: 'relative', background: '#111' }}>
+            <img
+              src={post.mediaUrl}
+              alt={post.mediaLabel || 'Media preview'}
+              style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 160, filter: post.mediaType === 'video' ? 'brightness(0.92)' : 'none' }}
+            />
+            {post.mediaType === 'video' && (
+              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 60, height: 60, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.7rem' }}>
+                ▶
+              </div>
+            )}
+            {post.mediaCaption && (
+              <div style={{ padding: '10px 14px', fontSize: '.82rem', color: 'var(--muted)', background: '#fff' }}>
+                {post.mediaCaption}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </a>
   );
@@ -176,6 +195,26 @@ function PostCard({ post, onLike }) {
       <p className="post-content" style={{ marginTop: post.title && post.isExternal ? 0 : undefined }}>
         {post.content}
       </p>
+
+      {post.mediaUrl && (
+        <div style={{ marginTop: 14, borderRadius: 18, overflow: 'hidden', position: 'relative', background: '#111' }}>
+          <img
+            src={post.mediaUrl}
+            alt={post.mediaLabel || 'Media preview'}
+            style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 180, filter: post.mediaType === 'video' ? 'brightness(0.95)' : 'none' }}
+          />
+          {post.mediaType === 'video' && (
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 64, height: 64, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.8rem' }}>
+              ▶
+            </div>
+          )}
+          {post.mediaCaption && (
+            <div style={{ padding: '10px 14px', fontSize: '.82rem', color: 'var(--muted)', background: '#fff' }}>
+              {post.mediaCaption}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Footer: actions + source */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
@@ -267,9 +306,9 @@ export default function Feed() {
 
   const sourcesSummary = [
     redditCount  > 0 && `${redditCount} Reddit`,
-    hnCount      > 0 && `${hnCount} HN`,
+    hnCount      > 0 && `${hnCount} News`,
     githubCount  > 0 && `${githubCount} GitHub`,
-    devtoCount   > 0 && `${devtoCount} DEV.to`,
+    devtoCount   > 0 && `${devtoCount} DEV Community`,
     mediumCount  > 0 && `${mediumCount} Medium`,
     socialCount  > 0 && `${socialCount} social`,
   ].filter(Boolean).join(' · ');
@@ -282,8 +321,8 @@ export default function Feed() {
         </h1>
         <p className="page-subtitle">
           {hasPrefs
-            ? `Personalised for ${role ? `${role}s` : 'you'} · ${sourcesSummary || 'live posts from Reddit, Hacker News & DEV.to'}.`
-            : 'Live posts from Reddit, Hacker News, DEV.to + social search across LinkedIn, GitHub, YouTube & more.'}
+            ? `Personalised for ${role ? `${role}s` : 'you'} · ${sourcesSummary || 'live updates from communities, stories, and conversations'}.`
+            : 'Live updates from communities, stories, and social conversations across the web.'}
         </p>
       </div>
 
@@ -295,13 +334,13 @@ export default function Feed() {
           <button className={`filter-btn${filter === 'reddit' ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({redditCount})</button>
         )}
         {hnCount > 0 && (
-          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 HN ({hnCount})</button>
+          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 News ({hnCount})</button>
         )}
         {githubCount > 0 && (
           <button className={`filter-btn${filter === 'github' ? ' active' : ''}`} onClick={() => setFilter('github')}>🐙 GitHub ({githubCount})</button>
         )}
         {devtoCount > 0 && (
-          <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV.to ({devtoCount})</button>
+          <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV Community ({devtoCount})</button>
         )}
         {mediumCount > 0 && (
           <button className={`filter-btn${filter === 'medium' ? ' active' : ''}`} onClick={() => setFilter('medium')}>📝 Medium ({mediumCount})</button>
