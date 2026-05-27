@@ -6,6 +6,7 @@ import client from '../api/client';
 /* ─── Data ─────────────────────────────────────────────────────────────────── */
 
 const ROLES = [
+  // Professional / Business
   { value: 'Engineer / Developer',     icon: '💻', label: 'Engineer / Developer',     desc: 'Software, ML, DevOps, Infrastructure' },
   { value: 'Designer / Creative',      icon: '🎨', label: 'Designer / Creative',       desc: 'UI/UX, Brand, Motion, Visual Storytelling' },
   { value: 'Product Manager',          icon: '📋', label: 'Product Manager',           desc: 'Strategy, roadmaps, and user outcomes' },
@@ -21,10 +22,21 @@ const ROLES = [
   { value: 'Educator / Trainer',       icon: '📚', label: 'Educator / Trainer',        desc: 'Teaching, coaching, and curriculum design' },
   { value: 'Healthcare Professional',  icon: '🩺', label: 'Healthcare Professional',   desc: 'Wellness, care delivery, and patient experience' },
   { value: 'Legal / Compliance',       icon: '⚖️', label: 'Legal / Compliance',        desc: 'Policy, contracts, and regulatory affairs' },
-  { value: 'Executive / Founder',      icon: '👔', label: 'Executive / Founder',       desc: 'C-suite leadership, strategy, and company vision' },
+  { value: 'Executive / Leader',       icon: '👔', label: 'Executive / Leader',        desc: 'C-suite leadership, strategy, and company vision' },
   { value: 'Small Business Owner',     icon: '🏪', label: 'Small Business Owner',      desc: 'Running and growing an independent business' },
   { value: 'Creative Director',        icon: '🎭', label: 'Creative Director',         desc: 'Directing brand stories, campaigns, and media' },
   { value: 'HR / People Ops',          icon: '👥', label: 'HR / People Ops',           desc: 'Recruiting, culture, learning and development' },
+  // Lifestyle & General
+  { value: 'Athlete / Coach',          icon: '🏆', label: 'Athlete / Coach',           desc: 'Sports, performance training, and coaching' },
+  { value: 'Musician / Artist',        icon: '🎵', label: 'Musician / Artist',         desc: 'Music, performance, and creative arts' },
+  { value: 'Journalist / Writer',      icon: '✍️', label: 'Journalist / Writer',       desc: 'Reporting, writing, and media storytelling' },
+  { value: 'Chef / Food Creator',      icon: '👨‍🍳', label: 'Chef / Food Creator',      desc: 'Cooking, culinary arts, and food content' },
+  { value: 'Fitness Trainer',          icon: '💪', label: 'Fitness Trainer',           desc: 'Personal training, wellness, and movement' },
+  { value: 'Gamer / Streamer',         icon: '🎮', label: 'Gamer / Streamer',          desc: 'Gaming, streaming, and esports content' },
+  { value: 'Real Estate Pro',          icon: '🏠', label: 'Real Estate Pro',           desc: 'Property sales, investment, and development' },
+  { value: 'Event Planner',            icon: '🎉', label: 'Event Planner',             desc: 'Events, hospitality, and memorable experiences' },
+  { value: 'Social Worker / Advocate', icon: '🤲', label: 'Social Worker / Advocate',  desc: 'Community service, activism, and social impact' },
+  { value: 'Parent / Caregiver',       icon: '👨‍👩‍👧', label: 'Parent / Caregiver',       desc: 'Family life, childcare, and parenting community' },
 ];
 
 const GOALS = [
@@ -42,30 +54,65 @@ const GOALS = [
 
 // Interests shown to everyone (canonical list)
 const ALL_INTERESTS = [
+  // ── Tech & Engineering ───────────────────────────────────────────────────────
   'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
   'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',
   'Cloud & DevOps', 'Frontend Dev', 'Backend Dev', 'Mobile Dev',
   'Web3 / Crypto', 'Blockchain', 'Hardware / IoT', 'Robotics',
   'AR / VR', 'Quantum Computing', 'Game Dev', 'No-Code / Low-Code',
+  // ── Business & Startups ──────────────────────────────────────────────────────
   'SaaS', 'B2B / Enterprise', 'Marketplaces', 'D2C / Consumer Apps',
   'Bootstrapping', 'Venture Capital', 'Angel Investing', 'Fundraising',
   'Growth Marketing', 'Product-Led Growth', 'Sales & Revenue', 'Partnerships',
+  // ── Design & Creative ────────────────────────────────────────────────────────
   'UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design',
   '3D & CGI', 'Photography', 'Film & Video', 'Music Production',
   'Visual Storytelling', 'Brand Strategy',
+  // ── Finance & Industries ─────────────────────────────────────────────────────
   'FinTech', 'Corporate Finance', 'Personal Finance', 'Real Estate',
   'Supply Chain', 'Customer Experience', 'Operations Excellence', 'Business Strategy',
   'Health Tech', 'BioTech', 'Climate Tech', 'EdTech',
   'LegalTech', 'GovTech', 'AgriTech', 'SpaceTech',
   'PropTech', 'RetailTech', 'FoodTech', 'SportsTech',
+  // ── People & Work ────────────────────────────────────────────────────────────
   'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
   'Remote Work', 'Future of Work', 'Recruiting & Hiring', 'Leadership',
   'Diversity & Inclusion', 'Mental Health & Wellness', 'People Ops',
+  // ── Content & Media ──────────────────────────────────────────────────────────
   'Creator Economy', 'Podcasting', 'Newsletter & Writing',
   'YouTube & Video', 'Social Media', 'SEO & Content',
+  // ── E-commerce & Career ──────────────────────────────────────────────────────
   'E-commerce', 'Dropshipping', 'Amazon FBA', 'Subscription Businesses',
   'Career Growth', 'Productivity', 'Public Speaking', 'Side Projects',
   'Freelancing', 'Social Impact',
+  // ── Health & Fitness ─────────────────────────────────────────────────────────
+  'Fitness & Gym', 'Yoga & Meditation', 'Running & Cycling',
+  'Nutrition & Diet', 'Sports & Athletics',
+  // ── Music & Audio ────────────────────────────────────────────────────────────
+  'Music Discovery', 'Live Events & Concerts', 'Songwriting', 'DJing & Remixing',
+  // ── Sports ───────────────────────────────────────────────────────────────────
+  'Football & Soccer', 'Basketball', 'Tennis & Golf', 'Combat Sports',
+  'Esports & Competitive Gaming',
+  // ── Arts & Culture ───────────────────────────────────────────────────────────
+  'Art & Painting', 'Theatre & Performing Arts', 'Museums & Galleries', 'Cultural Events',
+  // ── Food & Cooking ───────────────────────────────────────────────────────────
+  'Cooking & Recipes', 'Restaurant Culture', 'Wine & Spirits',
+  'Coffee Culture', 'Baking & Pastry',
+  // ── Travel ───────────────────────────────────────────────────────────────────
+  'Travel & Adventure', 'Solo Travel', 'Cultural Tourism', 'Budget Travel',
+  // ── Fashion & Style ──────────────────────────────────────────────────────────
+  'Fashion & Style', 'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
+  // ── Books & Literature ───────────────────────────────────────────────────────
+  'Reading & Book Clubs', 'Fiction & Storytelling', 'Non-Fiction & Learning',
+  'Poetry & Creative Writing',
+  // ── Gaming ───────────────────────────────────────────────────────────────────
+  'Video Games', 'Mobile Gaming', 'Game Streaming & Content', 'Tabletop & Board Games',
+  // ── Home & Lifestyle ─────────────────────────────────────────────────────────
+  'Interior Design & Decor', 'Home Improvement', 'Gardening & Plants', 'Pet Ownership',
+  // ── Mindfulness & Philosophy ─────────────────────────────────────────────────
+  'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
+  // ── Family & Community ───────────────────────────────────────────────────────
+  'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
 ];
 
 // Role → top suggested interests (shown first and pre-highlighted)
@@ -85,10 +132,21 @@ const ROLE_SUGGESTED = {
   'Educator / Trainer':      ['EdTech', 'Career Growth', 'Productivity', 'Leadership', 'Diversity & Inclusion', 'Mental Health & Wellness', 'Public Speaking', 'Newsletter & Writing', 'Social Impact', 'AI & Machine Learning'],
   'Healthcare Professional': ['Health Tech', 'BioTech', 'Mental Health & Wellness', 'AI & Machine Learning', 'Data Science', 'Wellness', 'Social Impact', 'Productivity', 'Career Growth', 'Leadership'],
   'Legal / Compliance':      ['LegalTech', 'Corporate Finance', 'FinTech', 'Business Strategy', 'Leadership', 'Career Growth', 'Privacy', 'AI Ethics', 'Data Science', 'GovTech'],
-  'Executive / Founder':     ['Leadership', 'Business Strategy', 'SaaS', 'Fundraising', 'AI & Machine Learning', 'Productivity', 'Venture Capital', 'Growth Marketing', 'People Ops', 'Career Growth'],
+  'Executive / Leader':      ['Leadership', 'Business Strategy', 'SaaS', 'Fundraising', 'AI & Machine Learning', 'Productivity', 'Venture Capital', 'Growth Marketing', 'People Ops', 'Career Growth'],
   'Small Business Owner':    ['E-commerce', 'Growth Marketing', 'Personal Finance', 'Social Media', 'Operations Excellence', 'Hospitality', 'FoodTech', 'RetailTech', 'Freelancing', 'Side Projects'],
   'Creative Director':       ['Brand Identity', 'Visual Storytelling', 'Motion Design', 'Film & Video', 'UI/UX Design', 'Creator Economy', 'Brand Strategy', '3D & CGI', 'Photography', 'Music Production'],
   'HR / People Ops':         ['Recruiting & Hiring', 'Diversity & Inclusion', 'People Ops', 'Leadership', 'Mental Health & Wellness', 'EdTech', 'Career Growth', 'Remote Work', 'Future of Work', 'Productivity'],
+  // New general / lifestyle roles
+  'Athlete / Coach':          ['Sports & Athletics', 'Fitness & Gym', 'Running & Cycling', 'Nutrition & Diet', 'Mental Health & Wellness', 'Leadership', 'Career Growth', 'Productivity', 'Social Impact', 'Side Projects'],
+  'Musician / Artist':        ['Music Discovery', 'Live Events & Concerts', 'Creator Economy', 'Music Production', 'Songwriting', 'YouTube & Video', 'Social Media', 'Brand Identity', 'Side Projects', 'Career Growth'],
+  'Journalist / Writer':      ['Newsletter & Writing', 'SEO & Content', 'Social Media', 'Fiction & Storytelling', 'Non-Fiction & Learning', 'Reading & Book Clubs', 'Career Growth', 'Creator Economy', 'Podcasting', 'Public Speaking'],
+  'Chef / Food Creator':      ['Cooking & Recipes', 'Restaurant Culture', 'Baking & Pastry', 'Wine & Spirits', 'Coffee Culture', 'FoodTech', 'Creator Economy', 'YouTube & Video', 'Social Media', 'Brand Identity'],
+  'Fitness Trainer':          ['Fitness & Gym', 'Yoga & Meditation', 'Running & Cycling', 'Nutrition & Diet', 'Sports & Athletics', 'Mental Health & Wellness', 'Creator Economy', 'Social Media', 'Career Growth', 'Health Tech'],
+  'Gamer / Streamer':         ['Video Games', 'Game Streaming & Content', 'Mobile Gaming', 'Esports & Competitive Gaming', 'YouTube & Video', 'Creator Economy', 'Social Media', 'Side Projects', 'Career Growth', 'Game Dev'],
+  'Real Estate Pro':          ['Real Estate', 'PropTech', 'Personal Finance', 'Business Strategy', 'FinTech', 'Leadership', 'Interior Design & Decor', 'Home Improvement', 'Career Growth', 'Productivity'],
+  'Event Planner':            ['Cultural Events', 'Hospitality', 'Leadership', 'Social Media', 'Brand Identity', 'Career Growth', 'Productivity', 'Travel & Adventure', 'Diversity & Inclusion', 'Creator Economy'],
+  'Social Worker / Advocate': ['Social Impact', 'Diversity & Inclusion', 'Mental Health & Wellness', 'Leadership', 'Nonprofit Impact', 'Environmental Activism', 'Parenting & Family', 'Career Growth', 'Public Speaking', 'EdTech'],
+  'Parent / Caregiver':       ['Parenting & Family', 'Mental Health & Wellness', 'Wellness', 'Nutrition & Diet', 'EdTech', 'Career Growth', 'Productivity', 'Reading & Book Clubs', 'Mindfulness & Meditation', 'Personal Finance'],
 };
 
 // Interest → unlocks these related interests
@@ -112,6 +170,24 @@ const INTEREST_CONNECTIONS = {
   'Remote Work':             ['Future of Work', 'Productivity', 'Freelancing', 'Digital Nomad'],
   'Leadership':              ['People Ops', 'Diversity & Inclusion', 'Business Strategy', 'Career Growth'],
   'Side Projects':           ['Open Source', 'Bootstrapping', 'Freelancing', 'SaaS', 'Creator Economy'],
+  // Lifestyle interest connections
+  'Fitness & Gym':           ['Running & Cycling', 'Nutrition & Diet', 'Sports & Athletics', 'Yoga & Meditation', 'Mental Health & Wellness'],
+  'Yoga & Meditation':       ['Mindfulness & Meditation', 'Mental Health & Wellness', 'Spirituality', 'Fitness & Gym', 'Philosophy & Ethics'],
+  'Running & Cycling':       ['Fitness & Gym', 'Sports & Athletics', 'Nutrition & Diet'],
+  'Sports & Athletics':      ['Fitness & Gym', 'Running & Cycling', 'Combat Sports', 'Esports & Competitive Gaming', 'SportsTech'],
+  'Music Discovery':         ['Live Events & Concerts', 'Music Production', 'Creator Economy', 'Songwriting', 'DJing & Remixing'],
+  'Live Events & Concerts':  ['Music Discovery', 'Cultural Events', 'Travel & Adventure', 'Creator Economy'],
+  'Video Games':             ['Game Streaming & Content', 'Esports & Competitive Gaming', 'Mobile Gaming', 'Game Dev', 'Tabletop & Board Games'],
+  'Game Streaming & Content': ['Video Games', 'YouTube & Video', 'Creator Economy', 'Social Media'],
+  'Cooking & Recipes':       ['Baking & Pastry', 'Restaurant Culture', 'Wine & Spirits', 'Coffee Culture', 'FoodTech'],
+  'Travel & Adventure':      ['Solo Travel', 'Cultural Tourism', 'Budget Travel', 'Cultural Events', 'Photography'],
+  'Fashion & Style':         ['Streetwear', 'Sustainable Fashion', 'Beauty & Skincare', 'Photography', 'Brand Identity'],
+  'Sustainable Fashion':     ['Fashion & Style', 'Sustainability', 'Environmental Activism', 'Zero Waste Living'],
+  'Reading & Book Clubs':    ['Fiction & Storytelling', 'Non-Fiction & Learning', 'Poetry & Creative Writing', 'Newsletter & Writing'],
+  'Art & Painting':          ['Photography', 'Theatre & Performing Arts', 'Museums & Galleries', '3D & CGI', 'Motion Design'],
+  'Mindfulness & Meditation': ['Yoga & Meditation', 'Mental Health & Wellness', 'Philosophy & Ethics', 'Spirituality', 'Productivity'],
+  'Parenting & Family':      ['Mental Health & Wellness', 'Wellness', 'EdTech', 'Productivity', 'Personal Finance'],
+  'Environmental Activism':  ['Sustainability', 'Zero Waste Living', 'Climate Tech', 'Social Impact', 'Nonprofit Impact'],
 };
 
 const EXPERIENCE = [

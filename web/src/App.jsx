@@ -12,6 +12,7 @@ import Opportunities    from './pages/Opportunities';
 import Messages         from './pages/Messages';
 import Conversation     from './pages/Conversation';
 import Profile          from './pages/Profile';
+import Post             from './pages/Post';
 import ConnectedAccounts from './pages/ConnectedAccounts';
 import Settings          from './pages/Settings';
 import AgentDashboard    from './pages/AgentDashboard';
@@ -75,6 +76,9 @@ export default function App() {
       }/>
       <Route path="/profile/connected-accounts" element={
         <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/post" element={
+        <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/settings" element={
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>

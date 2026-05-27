@@ -952,9 +952,16 @@ const INDEED_JOBS = [
 let users = [];
 
 // ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
-// ─── ALL_GROUPS_SEED — REAL external communities only, seeded into PostgreSQL ─
-// No fake internal groups. Every entry is a real public community.
+// ─── ALL_GROUPS_SEED — internal UFIConnect communities + external platforms ───
+// Internal groups use the 'ufi-' prefix. External groups link to real platforms.
 const ALL_GROUPS_SEED = [
+  // ── UFIConnect Internal Communities ──────────────────────────────────────────
+  { id: 'ufi-general',   category: 'General',     name: 'General Discussion',     description: 'The main UFIConnect feed — share anything on your mind with the whole community.', members: 0, isExternal: false },
+  { id: 'ufi-tech',      category: 'Engineering', name: 'Tech Hub',               description: 'Software, AI, DevOps, and everything tech. A space for builders and engineers.',     members: 0, isExternal: false },
+  { id: 'ufi-business',  category: 'Startups',    name: 'Business & Startups',    description: 'Founders, operators, and investors sharing wins, lessons, and opportunities.',       members: 0, isExternal: false },
+  { id: 'ufi-creative',  category: 'Design',      name: 'Creative Corner',        description: 'Design, art, video, music, and creative work of all kinds. Share your craft.',       members: 0, isExternal: false },
+  { id: 'ufi-career',    category: 'Education',   name: 'Career Growth',          description: 'Job searching, salary talk, career pivots, mentorship, and professional advice.',     members: 0, isExternal: false },
+  { id: 'ufi-wellness',  category: 'Health',      name: 'Wellness & Lifestyle',   description: 'Health, fitness, mindfulness, travel, food, and everything that makes life good.',   members: 0, isExternal: false },
   // ── AI & ML ──────────────────────────────────────────────────────────────────
   { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',              members: 3500000, isExternal: true, subreddit: 'MachineLearning',   externalUrl: 'https://reddit.com/r/MachineLearning' },
   { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                        members: 2000000, isExternal: true, subreddit: 'artificial',        externalUrl: 'https://reddit.com/r/artificial' },
@@ -1185,8 +1192,8 @@ async function migrateDB() {
 async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
-    // ── Purge all fake internal/platform-wrapper groups from previous seeds ──
-    await db.query(`DELETE FROM community_groups WHERE is_external = false OR is_external IS NULL`);
+    // ── Purge only OLD fake internal/platform-wrapper groups (non ufi- prefix) ──
+    await db.query(`DELETE FROM community_groups WHERE (is_external = false OR is_external IS NULL) AND id NOT LIKE 'ufi-%'`);
 
     for (const g of ALL_GROUPS_SEED) {
       await db.query(`
@@ -2152,8 +2159,36 @@ async function loadPostsFromDB() {
   } catch (err) { console.warn('loadPostsFromDB:', err.message); }
 }
 
+// ─── Pre-load all users from DB into memory so restarts don't wipe sessions ──
+async function preloadUsersFromDB() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.query('SELECT * FROM users');
+    let loaded = 0;
+    for (const row of rows) {
+      const mem = dbRowToMemUser(row);
+      // Attach social accounts
+      try {
+        const { rows: saRows } = await db.query(
+          'SELECT platform, platform_user_id, connected_at FROM social_accounts WHERE user_id = $1',
+          [row.id]
+        );
+        saRows.forEach(sa => {
+          mem.socialAccounts[sa.platform] = { connected: true, username: sa.platform_user_id, connectedAt: sa.connected_at };
+        });
+      } catch (_) {}
+      syncToMemory(mem);
+      loaded++;
+    }
+    console.log(`[startup] Preloaded ${loaded} users from DB into memory`);
+  } catch (err) {
+    console.warn('[startup] preloadUsersFromDB failed:', err.message);
+  }
+}
+
 db.initDB().then(async () => {
   await migrateDB();
+  await preloadUsersFromDB();
   await seedAndLoadGroups();
   await loadPostsFromDB();
   app.listen(PORT, () =>
