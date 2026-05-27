@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -13,8 +13,24 @@ function timeAgo(iso) {
 }
 
 function initials(name = '') {
-  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
+
+const SOURCE_META = {
+  reddit:      { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
+  hackernews:  { label: 'Hacker News',   color: '#FF6600', icon: '🔶' },
+  devto:       { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
+  linkedin:    { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
+  twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
+  facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
+  instagram:   { label: 'Instagram',     color: '#E1306C', icon: '📸' },
+  tiktok:      { label: 'TikTok',        color: '#010101', icon: '🎵' },
+  github:      { label: 'GitHub',        color: '#24292F', icon: '🐙' },
+  youtube:     { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
+  medium:      { label: 'Medium',        color: '#1A8917', icon: '📝' },
+  discord:     { label: 'Discord',       color: '#5865F2', icon: '💬' },
+  uficonnect:  { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
+};
 
 const CATEGORY_COLORS = {
   'AI & ML':     { text: '#2563EB', bg: '#EFF6FF' },
@@ -27,39 +43,100 @@ const CATEGORY_COLORS = {
   'Education':   { text: '#7C3AED', bg: '#F3EEFF' },
   'Social':      { text: '#6B7280', bg: '#F9FAFB' },
 };
-
-const SOURCE_META = {
-  reddit:      { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
-  hackernews:  { label: 'News',          color: '#FF6600', icon: '🔶' },
-  devto:       { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
-  linkedin:    { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
-  twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
-  facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
-  instagram:   { label: 'Instagram',     color: '#E1306C', icon: '📸' },
-  tiktok:      { label: 'TikTok',        color: '#010101', icon: '🎵' },
-  github:      { label: 'GitHub',        color: '#24292F', icon: '🐙' },
-  youtube:     { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
-  medium:      { label: 'Medium',        color: '#1A8917', icon: '📝' },
-  discord:     { label: 'Discord',       color: '#5865F2', icon: '💬' },
-  indeed:      { label: 'Indeed Jobs',   color: '#2164F3', icon: '🔍' },
-  dribbble:    { label: 'Dribbble',      color: '#EA4C89', icon: '🏀' },
-  behance:     { label: 'Behance',       color: '#053EFF', icon: '🎨' },
-  uficonnect:  { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
-};
-
-function categoryStyle(cat) {
+function catStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
+}
+
+/** Expandable text — shows full content, "Show less" toggle if long */
+function PostText({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const LIMIT = 500;
+  const isLong = text.length > LIMIT;
+  const shown  = isLong && !expanded ? text.slice(0, LIMIT) + '…' : text;
+  return (
+    <div>
+      <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>{shown}</p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded(e => !e)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '.8rem', fontWeight: 600, padding: 0 }}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Inline comments panel */
+function CommentsPanel({ postId, count }) {
+  const [open,     setOpen]     = useState(false);
+  const [comments, setComments] = useState([]);
+  const [loading,  setLoading]  = useState(false);
+  const [loaded,   setLoaded]   = useState(false);
+
+  function toggle() {
+    if (!open && !loaded) {
+      setLoading(true);
+      client.get(`/feed/${postId}/comments`)
+        .then(({ data }) => { setComments(data.comments || []); setLoaded(true); })
+        .catch(() => setLoaded(true))
+        .finally(() => setLoading(false));
+    }
+    setOpen(o => !o);
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          fontSize: '.78rem', color: 'var(--muted)', fontWeight: 600,
+          display: 'flex', alignItems: 'center', gap: 4, padding: 0,
+        }}
+      >
+        💬 {count || 0} comment{count !== 1 ? 's' : ''}
+        {count > 0 && <span style={{ fontSize: '.7rem', opacity: .7 }}>{open ? ' ▲' : ' ▼'}</span>}
+      </button>
+      {open && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          {loading ? (
+            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Loading comments…</div>
+          ) : comments.length === 0 ? (
+            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>No comments to show.</div>
+          ) : (
+            comments.map(c => (
+              <div key={c.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <div className="avatar" style={{ width: 22, height: 22, fontSize: '.65rem', borderRadius: '50%', background: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
+                    {(c.author || '?')[0].toUpperCase()}
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: '.8rem' }}>{c.author}</span>
+                  <span style={{ fontSize: '.72rem', color: 'var(--muted)' }}>{timeAgo(c.created)}</span>
+                  {c.score > 0 && <span style={{ fontSize: '.7rem', color: '#FF4500', marginLeft: 'auto' }}>▲ {c.score}</span>}
+                </div>
+                <p style={{ margin: 0, fontSize: '.83rem', lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** YouTube embed card */
 function YouTubeCard({ post }) {
-  const [expanded, setExpanded] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const src = SOURCE_META.youtube;
-  const c   = categoryStyle(post.group?.category);
+  const c   = catStyle(post.group?.category);
   return (
     <div className="card post-card" style={{ marginBottom: 12 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
         {post.group && (
@@ -68,62 +145,34 @@ function YouTubeCard({ post }) {
           </span>
         )}
         {post.topic && (
-          <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4, marginLeft: 2 }}>
+          <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>
             🏷 {post.topic}
           </span>
         )}
         <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
       </div>
 
-      {/* Title */}
-      <a
-        href={post.sourceUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ textDecoration: 'none', color: 'inherit' }}
-      >
-        <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>
-          {post.title}
-          <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
-        </p>
-      </a>
+      <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
 
-      {/* Embed or thumbnail */}
       {post.embedId ? (
-        expanded ? (
+        playing ? (
           <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
-            <iframe
-              width="100%"
-              height="100%"
+            <iframe width="100%" height="100%"
               src={`https://www.youtube.com/embed/${post.embedId}?autoplay=1`}
-              title={post.title}
-              frameBorder="0"
+              title={post.title} frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-              style={{ display: 'block' }}
+              allowFullScreen style={{ display: 'block' }}
             />
           </div>
         ) : (
-          <div
-            style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10 }}
-            onClick={() => setExpanded(true)}
-          >
+          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10 }}
+            onClick={() => setPlaying(true)}>
             {post.mediaUrl && (
-              <img
-                src={post.mediaUrl}
-                alt={post.title}
-                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
-              />
+              <img src={post.mediaUrl} alt={post.title}
+                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }} />
             )}
-            <div style={{
-              position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <div style={{
-                width: 64, height: 64, borderRadius: '50%', background: '#FF0000',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 20px rgba(0,0,0,.4)',
-              }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
                 <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
               </div>
             </div>
@@ -135,120 +184,38 @@ function YouTubeCard({ post }) {
         </div>
       ) : null}
 
-      {post.content && !expanded && (
-        <p style={{ fontSize: '.85rem', color: 'var(--muted)', margin: '0 0 8px', lineHeight: 1.5 }}>
-          {post.content.slice(0, 200)}{post.content.length > 200 ? '…' : ''}
-        </p>
-      )}
+      {post.content && <PostText text={post.content} />}
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <CommentsPanel postId={post.id} count={post.commentsCount} />
         <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: '.72rem', color: src.color, fontWeight: 600, textDecoration: 'none', padding: '3px 9px', background: `${src.color}14`, borderRadius: 4 }}>
-          ▶️ Watch on YouTube ↗
+          style={{ marginLeft: 'auto', fontSize: '.72rem', color: src.color, fontWeight: 600, textDecoration: 'none', padding: '3px 9px', background: `${src.color}14`, borderRadius: 4 }}>
+          ▶️ Watch ↗
         </a>
-        {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
       </div>
     </div>
   );
 }
 
-/** Social search card (for unconnected platforms) */
-function SocialSearchCard({ post }) {
-  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
-  return (
-    <a
-      href={post.sourceUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      style={{ textDecoration: 'none', display: 'block', marginBottom: 12 }}
-    >
-      <div
-        className="card post-card"
-        style={{ borderLeft: `3px solid ${src.color}`, cursor: 'pointer', background: `${src.color}08` }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: '1.6rem' }}>{src.icon}</span>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: '.95rem', color: 'var(--text)' }}>
-              {post.title}
-              <span style={{ marginLeft: 6, fontSize: '.75rem', color: src.color }}>↗</span>
-            </div>
-            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 3 }}>{post.content}</div>
-          </div>
-        </div>
-        <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          {post.topic && (
-            <span style={{ fontSize: '.68rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 7px', borderRadius: 4 }}>
-              🏷 {post.topic}
-            </span>
-          )}
-          <span style={{ fontSize: '.7rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 10px', borderRadius: 4, marginLeft: 'auto' }}>
-            See on {src.label} →
-          </span>
-        </div>
-        {post.mediaUrl && (
-          <div style={{ marginTop: 14, borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#111' }}>
-            <img
-              src={post.mediaUrl}
-              alt={post.mediaLabel || 'Preview'}
-              style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 160,
-                filter: post.mediaType === 'video' ? 'brightness(0.92)' : 'none' }}
-            />
-            {post.mediaType === 'video' && (
-              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-                width: 60, height: 60, borderRadius: '50%', background: 'rgba(0,0,0,0.55)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.7rem' }}>
-                ▶
-              </div>
-            )}
-            {post.mediaCaption && (
-              <div style={{ padding: '10px 14px', fontSize: '.82rem', color: 'var(--muted)', background: '#fff' }}>
-                {post.mediaCaption}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </a>
-  );
-}
-
-function PostCard({ post, onLike }) {
-  const c   = categoryStyle(post.group?.category);
+/** Unified post card — handles all sources the same way */
+function PostCard({ post }) {
+  const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  if (post.isSocialCard)           return <SocialSearchCard post={post} />;
-  if (post.source === 'youtube')   return <YouTubeCard post={post} />;
+  if (post.source === 'youtube') return <YouTubeCard post={post} />;
 
-  const postUrl = post.isExternal ? post.sourceUrl : null;
+  const isExternal = post.isExternal;
 
   return (
-    <div
-      className="card post-card"
-      style={{ marginBottom: 12, cursor: postUrl ? 'pointer' : 'default' }}
-      onClick={postUrl ? () => window.open(postUrl, '_blank', 'noopener,noreferrer') : undefined}
-    >
-      {/* Source / community row */}
+    <div className="card post-card" style={{ marginBottom: 12 }}>
+      {/* Source row */}
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
-        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>
-          {post.sourceLabel || src.label}
-        </span>
+        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
         {post.group && (
-          post.isExternal ? (
-            <a href={post.group.externalUrl || postUrl || '#'} target="_blank" rel="noopener noreferrer"
-              style={{ textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
-              <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>
-                {post.group.name}
-              </span>
-            </a>
-          ) : (
-            <Link to={`/groups/${post.group.id}`} style={{ textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
-              <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>
-                {post.group.name}
-              </span>
-            </Link>
-          )
+          <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>
+            {post.group.name}
+          </span>
         )}
         {post.topic && (
           <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>
@@ -257,14 +224,11 @@ function PostCard({ post, onLike }) {
         )}
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
         {!post.fromJoinedGroup && post.forYou && <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>}
-        {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
-        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>
-          {timeAgo(post.createdAt)}
-        </span>
+        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
       </div>
 
-      {/* Author — internal posts show full name; social posts show handle */}
-      {!post.isExternal && (
+      {/* Author — internal posts show full name; external show platform handle if set */}
+      {!isExternal && (
         <div className="post-header" style={{ marginBottom: 8 }}>
           <div className="avatar avatar-md">{initials(post.author?.name)}</div>
           <div className="post-meta">
@@ -275,103 +239,70 @@ function PostCard({ post, onLike }) {
           </div>
         </div>
       )}
-      {/* Social platform posts — show handle */}
-      {post.isExternal && post.connectedBoost && post.author?.name && (
+      {isExternal && post.author?.name && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: `${src.color}20`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.85rem', flexShrink: 0 }}>
+          <div style={{ width: 30, height: 30, borderRadius: '50%', background: `${src.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.85rem', flexShrink: 0 }}>
             {src.icon}
           </div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '.82rem', color: 'var(--text)' }}>{post.author.name}</div>
-            <div style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{post.sourceLabel || src.label}</div>
+            <div style={{ fontWeight: 700, fontSize: '.82rem' }}>{post.author.name}</div>
+            <div style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{src.label}</div>
           </div>
         </div>
       )}
 
-      {/* Title for external article posts */}
-      {post.title && post.isExternal && !post.connectedBoost && (
-        <a
-          href={postUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()}
-          style={{ textDecoration: 'none', color: 'inherit' }}
-        >
-          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', color: 'var(--text)', lineHeight: 1.4 }}>
-            {post.title}
-            <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
-          </p>
-        </a>
+      {/* Title (clickable for external article posts) */}
+      {post.title && (
+        isExternal && post.sourceUrl ? (
+          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>
+              {post.title}
+              <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
+            </p>
+          </a>
+        ) : (
+          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>
+        )
       )}
 
-      <p className="post-content">
-        {(post.content || '').slice(0, 380)}{(post.content || '').length > 380 ? '…' : ''}
-      </p>
+      {/* Full text */}
+      <PostText text={post.content} />
 
-      {/* Media: images */}
+      {/* Image */}
       {post.mediaUrl && post.mediaType === 'image' && (
         <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden' }}>
-          <img
-            src={post.mediaUrl}
-            alt={post.title || 'Post image'}
-            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 380 }}
-            onError={e => { e.currentTarget.style.display = 'none'; }}
-          />
+          <img src={post.mediaUrl} alt={post.title || 'Post image'}
+            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
+            onError={e => { e.currentTarget.style.display = 'none'; }} />
         </div>
       )}
 
-      {/* Media: video thumbnail with play overlay (TikTok, social video posts) */}
+      {/* Video thumbnail (non-YouTube) */}
       {post.mediaUrl && post.mediaType === 'video' && (
         <a href={post.sourceUrl || '#'} target="_blank" rel="noopener noreferrer"
-          onClick={e => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
-          <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000', cursor: 'pointer' }}>
-            <img
-              src={post.mediaUrl}
-              alt="Video thumbnail"
+          style={{ textDecoration: 'none', display: 'block', marginTop: 12 }}>
+          <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000', cursor: 'pointer' }}>
+            <img src={post.mediaUrl} alt="Video"
               style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.85 }}
-              onError={e => { e.currentTarget.style.display = 'none'; }}
-            />
+              onError={e => { e.currentTarget.style.display = 'none'; }} />
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 56, height: 56, borderRadius: '50%', background: `${src.color}dd`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: `${src.color}dd`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
                 <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
               </div>
             </div>
-            {post.source === 'tiktok' && (
-              <div style={{ position: 'absolute', bottom: 10, right: 12,
-                background: 'rgba(0,0,0,.6)', borderRadius: 6, padding: '2px 8px',
-                fontSize: '.72rem', color: '#fff', fontWeight: 700 }}>
-                🎵 TikTok
-              </div>
-            )}
           </div>
         </a>
       )}
 
-      {/* Footer */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-        <div className="post-actions" style={{ marginTop: 0 }} onClick={e => e.stopPropagation()}>
-          <button
-            className={`post-action-btn${post.likedByMe ? ' liked' : ''}`}
-            onClick={() => !post.isExternal && onLike(post.id)}
-            style={post.isExternal ? { cursor: 'default', opacity: 0.7 } : {}}
-          >
-            {post.likedByMe ? '❤️' : '🤍'} {post.likesCount || 0}
-          </button>
-          <button className="post-action-btn">💬 {post.commentsCount || 0}</button>
-        </div>
-
-        {post.isExternal && post.sourceUrl && (
-          <a
-            href={post.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+      {/* Footer: comments + source link */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
+        <CommentsPanel postId={post.id} count={post.commentsCount || 0} />
+        {isExternal && post.sourceUrl && (
+          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
-            style={{ fontSize: '.7rem', color: src.color, fontWeight: 600, display: 'flex', alignItems: 'center',
-              gap: 3, textDecoration: 'none', padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}
-          >
+            style={{ marginLeft: 'auto', fontSize: '.7rem', color: src.color, fontWeight: 600,
+              display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none',
+              padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}>
             {src.icon} {src.label} ↗
           </a>
         )}
@@ -385,30 +316,26 @@ export default function Feed() {
   const [posts,   setPosts]   = useState([]);
   const [filter,  setFilter]  = useState('foryou');
   const [loading, setLoading] = useState(true);
+  const intervalRef = useRef(null);
 
-  useEffect(() => {
-    setLoading(true);
+  const loadFeed = useCallback(() => {
     client.get('/feed')
       .then(({ data }) => setPosts(data.posts || []))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleLike(postId) {
-    setPosts((prev) =>
-      prev.map((p) =>
-        p.id === postId
-          ? { ...p, likedByMe: !p.likedByMe, likesCount: p.likedByMe ? p.likesCount - 1 : p.likesCount + 1 }
-          : p
-      )
-    );
-    try { await client.post(`/feed/${postId}/like`); } catch {}
-  }
+  useEffect(() => {
+    loadFeed();
+    // Auto-refresh every 3 minutes
+    intervalRef.current = setInterval(loadFeed, 3 * 60 * 1000);
+    return () => clearInterval(intervalRef.current);
+  }, [loadFeed]);
 
-  const categories  = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
-  const firstName   = profile?.name?.split(' ')[0] || '';
-  const role        = profile?.preferences?.role || '';
-  const hasPrefs    = !!(profile?.preferences?.interests?.length || role);
+  const categories = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
+  const firstName  = profile?.name?.split(' ')[0] || '';
+  const role       = profile?.preferences?.role || '';
+  const hasPrefs   = !!(profile?.preferences?.interests?.length || role);
 
   const counts = {
     reddit:  posts.filter(p => p.source === 'reddit').length,
@@ -417,8 +344,16 @@ export default function Feed() {
     devto:   posts.filter(p => p.source === 'devto').length,
     medium:  posts.filter(p => p.source === 'medium').length,
     youtube: posts.filter(p => p.source === 'youtube').length,
-    social:  posts.filter(p => p.isSocialCard).length,
   };
+
+  const sourceSummary = [
+    counts.reddit  > 0 && `${counts.reddit} Reddit`,
+    counts.hn      > 0 && `${counts.hn} News`,
+    counts.github  > 0 && `${counts.github} GitHub`,
+    counts.devto   > 0 && `${counts.devto} DEV`,
+    counts.medium  > 0 && `${counts.medium} Medium`,
+    counts.youtube > 0 && `${counts.youtube} YouTube`,
+  ].filter(Boolean).join(' · ');
 
   const filtered =
     filter === 'foryou'  ? posts.filter(p => p.forYou || p.fromJoinedGroup)
@@ -430,19 +365,9 @@ export default function Feed() {
     : filter === 'devto'   ? posts.filter(p => p.source === 'devto')
     : filter === 'medium'  ? posts.filter(p => p.source === 'medium')
     : filter === 'youtube' ? posts.filter(p => p.source === 'youtube')
-    : filter === 'social'  ? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
 
   const displayed = (filter === 'foryou' && filtered.length === 0) ? posts : filtered;
-
-  const sourceSummary = [
-    counts.reddit  > 0 && `${counts.reddit} Reddit`,
-    counts.hn      > 0 && `${counts.hn} News`,
-    counts.github  > 0 && `${counts.github} GitHub`,
-    counts.devto   > 0 && `${counts.devto} DEV`,
-    counts.medium  > 0 && `${counts.medium} Medium`,
-    counts.youtube > 0 && `${counts.youtube} YouTube`,
-  ].filter(Boolean).join(' · ');
 
   return (
     <Layout>
@@ -457,7 +382,6 @@ export default function Feed() {
         </p>
       </div>
 
-      {/* Filter bar */}
       <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
         <button className={`filter-btn${filter === 'foryou'  ? ' active' : ''}`} onClick={() => setFilter('foryou')}>✦ For You</button>
         <button className={`filter-btn${filter === 'all'     ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
@@ -478,9 +402,6 @@ export default function Feed() {
         )}
         {counts.medium > 0 && (
           <button className={`filter-btn${filter === 'medium'  ? ' active' : ''}`} onClick={() => setFilter('medium')}>📝 Medium ({counts.medium})</button>
-        )}
-        {counts.social > 0 && (
-          <button className={`filter-btn${filter === 'social'  ? ' active' : ''}`} onClick={() => setFilter('social')}>🔗 Social ({counts.social})</button>
         )}
         <button className={`filter-btn${filter === 'mine'    ? ' active' : ''}`} onClick={() => setFilter('mine')}>⭐ My Groups</button>
         {categories.map(cat => (
@@ -505,8 +426,8 @@ export default function Feed() {
         </div>
       ) : (
         <div>
-          {displayed.map((post) => (
-            <PostCard key={post.id} post={post} onLike={handleLike} />
+          {displayed.map(post => (
+            <PostCard key={post.id} post={post} />
           ))}
         </div>
       )}

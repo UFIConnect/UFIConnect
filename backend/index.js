@@ -904,6 +904,32 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   };
 }
 
+// ─── Background feed refresh (runs every 5 minutes) ──────────────────────────
+const globalFeedCache = { posts: [], refreshedAt: 0 };
+
+async function refreshGlobalFeedCache() {
+  const commonInterests = [
+    'AI & Machine Learning','SaaS','Design Systems','Growth Marketing',
+    'Data Science','Open Source','Frontend Dev','Backend Dev',
+    'Venture Capital','Content Creator','Remote Work','Cybersecurity',
+    'Blockchain','FinTech','Health Tech','EdTech',
+  ];
+  const commonRole = 'Engineer / Developer';
+  try {
+    const result = await fetchAllTopicPosts(commonInterests, commonRole);
+    const all = [...result.reddit, ...result.hn, ...result.github, ...result.devto, ...result.medium, ...result.youtube];
+    if (all.length > 0) {
+      globalFeedCache.posts = all;
+      globalFeedCache.refreshedAt = Date.now();
+    }
+  } catch (e) { console.warn('globalFeedCache refresh error:', e.message); }
+}
+
+// Seed immediately on startup (non-blocking)
+refreshGlobalFeedCache();
+// Refresh every 5 minutes
+setInterval(refreshGlobalFeedCache, 5 * 60 * 1000);
+
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
 const PLATFORMS = {
   linkedin: {
@@ -1797,9 +1823,6 @@ app.get('/feed', authenticate, async (req, res) => {
     joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
   )).flat();
 
-  // Generate social search cards for connected platforms
-  const socialCards = generateSocialSearchCards(prefs.interests || [], connectedPlatforms);
-
   const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
   const hnPosts     = (hnRaw    || []).map(p => mapExternalPost(p, 'hackernews'));
   const githubPosts = (githubRaw|| []).map(p => mapExternalPost(p, 'github'));
@@ -1807,7 +1830,7 @@ app.get('/feed', authenticate, async (req, res) => {
   const mediumPosts  = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
   const youtubePosts = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
 
-  // Connected social platform posts — topic-matched posts with photos/videos
+  // Connected social platform posts — rendered as regular native posts (no connectedBoost/isSocialCard)
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
   const connectedSocialPosts = [];
   const PLATFORM_URLS = { twitter: 'https://x.com', tiktok: 'https://tiktok.com', instagram: 'https://instagram.com', facebook: 'https://facebook.com', linkedin: 'https://linkedin.com', reddit: 'https://reddit.com' };
@@ -1836,12 +1859,16 @@ app.get('/feed', authenticate, async (req, res) => {
         author:        { id: `${platform}_user`, name: p.author || null, title: p.source, organization: platform },
         likes:         [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
         createdAt:     p.time || new Date().toISOString(),
-        isExternal:    true,
+        isExternal:    false,
         group:         { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
-        forYou:        true, fromJoinedGroup: false, relevance: 5, connectedBoost: true,
+        forYou:        true, fromJoinedGroup: false, relevance: 5,
+        connectedBoost: false, isSocialCard: false,
       });
     });
   }
+
+  // Include background-cached global posts (already fetched, mapped by source)
+  const cachedMapped = globalFeedCache.posts.map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
@@ -1856,18 +1883,9 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Boost social cards based on connected platforms
-  const socialMapped = socialCards.map(p => ({
-    ...p,
-    fromJoinedGroup: false,
-    forYou: true,
-    relevance: connectedPlatforms.has(p.source) ? 5 : 3,
-    connectedBoost: connectedPlatforms.has(p.source),
-  }));
-
   // Deduplicate by id across all sources
   const seen = new Set();
-  const all  = [...internal, ...joinedGroupPosts, ...connectedSocialPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...youtubePosts, ...socialMapped].filter(p => {
+  const all  = [...internal, ...joinedGroupPosts, ...connectedSocialPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...youtubePosts, ...cachedMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1905,11 +1923,39 @@ app.get('/feed', authenticate, async (req, res) => {
       devto:        devtoPosts.length,
       medium:       mediumPosts.length,
       youtube:      youtubePosts.length,
-      social:       socialMapped.length,
+      cached:       cachedMapped.length,
       joinedGroups: joinedGroupPosts.length,
       internal:     internal.length,
     },
   });
+});
+
+// ─── Reddit post comments ─────────────────────────────────────────────────────
+app.get('/feed/:postId/comments', authenticate, async (req, res) => {
+  const { postId } = req.params;
+  // postId is like "reddit_t3_abc123" — extract the Reddit thing ID
+  const redditId = postId.replace(/^reddit_/, '');
+  if (!redditId.startsWith('t3_') && !redditId.match(/^[a-z0-9]+$/i)) {
+    return res.json({ comments: [] });
+  }
+  try {
+    const url  = `https://www.reddit.com/comments/${redditId.replace('t3_','')}.json?limit=20&depth=2`;
+    const data = await fetchJSON(url);
+    const listing = Array.isArray(data) ? data[1]?.data?.children : [];
+    const comments = (listing || [])
+      .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
+      .slice(0, 15)
+      .map(c => ({
+        id:      c.data.id,
+        author:  c.data.author,
+        body:    c.data.body,
+        score:   c.data.score,
+        created: new Date(c.data.created_utc * 1000).toISOString(),
+      }));
+    res.json({ comments });
+  } catch (e) {
+    res.json({ comments: [] });
+  }
 });
 
 // Create a post in a group
