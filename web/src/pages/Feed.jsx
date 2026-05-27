@@ -33,6 +33,7 @@ const SOURCE_META = {
   mastodon:      { label: 'Mastodon',      color: '#6364FF', icon: '🦣' },
   lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: '🦞' },
   arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: '🔬' },
+  indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
   uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -51,87 +52,16 @@ function catStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
-/** Expandable text — shows full content, "Show less" toggle if long */
+/** Full post text — no truncation */
 function PostText({ text }) {
-  const [expanded, setExpanded] = useState(false);
   if (!text) return null;
-  const LIMIT = 500;
-  const isLong = text.length > LIMIT;
-  const shown  = isLong && !expanded ? text.slice(0, LIMIT) + '…' : text;
   return (
-    <div>
-      <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>{shown}</p>
-      {isLong && (
-        <button
-          type="button"
-          onClick={() => setExpanded(e => !e)}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '.8rem', fontWeight: 600, padding: 0 }}
-        >
-          {expanded ? 'Show less' : 'Show more'}
-        </button>
-      )}
-    </div>
+    <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
+      {text}
+    </p>
   );
 }
 
-/** Inline comments panel */
-function CommentsPanel({ postId, count }) {
-  const [open,     setOpen]     = useState(false);
-  const [comments, setComments] = useState([]);
-  const [loading,  setLoading]  = useState(false);
-  const [loaded,   setLoaded]   = useState(false);
-
-  function toggle() {
-    if (!open && !loaded) {
-      setLoading(true);
-      client.get(`/feed/${postId}/comments`)
-        .then(({ data }) => { setComments(data.comments || []); setLoaded(true); })
-        .catch(() => setLoaded(true))
-        .finally(() => setLoading(false));
-    }
-    setOpen(o => !o);
-  }
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={toggle}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          fontSize: '.78rem', color: 'var(--muted)', fontWeight: 600,
-          display: 'flex', alignItems: 'center', gap: 4, padding: 0,
-        }}
-      >
-        💬 {count || 0} comment{count !== 1 ? 's' : ''}
-        {count > 0 && <span style={{ fontSize: '.7rem', opacity: .7 }}>{open ? ' ▲' : ' ▼'}</span>}
-      </button>
-      {open && (
-        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-          {loading ? (
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>Loading comments…</div>
-          ) : comments.length === 0 ? (
-            <div style={{ color: 'var(--muted)', fontSize: '.82rem' }}>No comments to show.</div>
-          ) : (
-            comments.map(c => (
-              <div key={c.id} style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <div className="avatar" style={{ width: 22, height: 22, fontSize: '.65rem', borderRadius: '50%', background: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flexShrink: 0 }}>
-                    {(c.author || '?')[0].toUpperCase()}
-                  </div>
-                  <span style={{ fontWeight: 700, fontSize: '.8rem' }}>{c.author}</span>
-                  <span style={{ fontSize: '.72rem', color: 'var(--muted)' }}>{timeAgo(c.created)}</span>
-                  {c.score > 0 && <span style={{ fontSize: '.7rem', color: '#FF4500', marginLeft: 'auto' }}>▲ {c.score}</span>}
-                </div>
-                <p style={{ margin: 0, fontSize: '.83rem', lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
-              </div>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** YouTube embed card */
 function YouTubeCard({ post }) {
@@ -191,7 +121,6 @@ function YouTubeCard({ post }) {
       {post.content && <PostText text={post.content} />}
 
       <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <CommentsPanel postId={post.id} count={post.commentsCount} />
         <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
           style={{ marginLeft: 'auto', fontSize: '.72rem', color: src.color, fontWeight: 600, textDecoration: 'none', padding: '3px 9px', background: `${src.color}14`, borderRadius: 4 }}>
           ▶️ Watch ↗
@@ -298,10 +227,9 @@ function PostCard({ post }) {
         </a>
       )}
 
-      {/* Footer: comments + source link */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10 }}>
-        <CommentsPanel postId={post.id} count={post.commentsCount || 0} />
-        {isExternal && post.sourceUrl && (
+      {/* Footer: source link only */}
+      {isExternal && post.sourceUrl && (
+        <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
             style={{ marginLeft: 'auto', fontSize: '.7rem', color: src.color, fontWeight: 600,
@@ -309,8 +237,8 @@ function PostCard({ post }) {
               padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}>
             {src.icon} {src.label} ↗
           </a>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

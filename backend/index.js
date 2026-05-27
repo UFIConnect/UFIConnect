@@ -2249,40 +2249,72 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Connected social platform posts — rendered as regular native posts (no connectedBoost/isSocialCard)
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
+  // ── Social platform posts — shown for ALL users, topic-matched, top 5 per platform ──
+  const PLATFORM_URLS = {
+    twitter: 'https://x.com', tiktok: 'https://tiktok.com',
+    instagram: 'https://instagram.com', facebook: 'https://facebook.com',
+    linkedin: 'https://linkedin.com', reddit: 'https://reddit.com',
+    indeed: 'https://indeed.com',
+  };
+  const ALL_SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter', 'tiktok', 'reddit'];
   const connectedSocialPosts = [];
-  const PLATFORM_URLS = { twitter: 'https://x.com', tiktok: 'https://tiktok.com', instagram: 'https://instagram.com', facebook: 'https://facebook.com', linkedin: 'https://linkedin.com', reddit: 'https://reddit.com' };
-  for (const platform of connectedPlatforms) {
+
+  for (const platform of ALL_SOCIAL_PLATFORMS) {
     const platformPosts = SOCIAL_POSTS[platform] || [];
-    // Score posts by topic relevance; pick top 4 per platform
-    const scored = platformPosts.map(p => {
-      const postTopics = (p.topics || []).map(t => t.toLowerCase());
-      const matchScore = postTopics.filter(t => userInterests.has(t)).length;
-      return { p, score: matchScore };
-    }).sort((a, b) => b.score - a.score).slice(0, 4);
+    // Score by topic match; always include at least 3, up to 5 most relevant
+    const scored = platformPosts
+      .map(p => {
+        const postTopics = (p.topics || []).map(t => t.toLowerCase());
+        const matchScore = userInterests.size > 0
+          ? postTopics.filter(t => userInterests.has(t)).length
+          : 1;
+        return { p, score: matchScore };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
 
     scored.forEach(({ p }) => {
       connectedSocialPosts.push({
-        id:            `${p.id}_conn`,
-        authorId:      `${platform}_user`,
-        groupId:       `ext_${platform}`,
-        content:       p.content,
-        title:         p.title || null,
-        source:        platform,
-        sourceLabel:   p.source || platform,
-        sourceUrl:     PLATFORM_URLS[platform] || `https://${platform}.com`,
-        topic:         (p.topics || [])[0] || (prefs.interests || [])[0] || '',
-        mediaUrl:      p.mediaUrl || null,
-        mediaType:     p.mediaType || null,
-        author:        { id: `${platform}_user`, name: p.author || null, title: p.source, organization: platform },
-        likes:         [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-        createdAt:     p.time || new Date().toISOString(),
-        isExternal:    false,
-        group:         { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
-        forYou:        true, fromJoinedGroup: false, relevance: 5,
-        connectedBoost: false, isSocialCard: false,
+        id:          `${p.id}_social`,
+        authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
+        groupId:     `ext_${platform}`,
+        content:     p.content,
+        title:       p.title || null,
+        source:      platform,
+        sourceLabel: p.source || platform,
+        sourceUrl:   PLATFORM_URLS[platform] || `https://${platform}.com`,
+        topic:       (p.topics || [])[0] || '',
+        mediaUrl:    p.mediaUrl || null,
+        mediaType:   p.mediaType || null,
+        author:      { id: `${platform}_${p.author}`, name: p.author || null, title: p.source, organization: platform },
+        likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
+        createdAt:   p.time || new Date().toISOString(),
+        isExternal:  false,
+        group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
+        forYou:      true, fromJoinedGroup: false, relevance: 5,
+        connectedBoost: connectedPlatforms.has(platform), isSocialCard: false,
       });
     });
   }
+
+  // ── Indeed job posts in feed ───────────────────────────────────────────────
+  const indeedPosts = INDEED_JOBS.slice(0, 5).map(j => ({
+    id:          `indeed_${j.id}`,
+    authorId:    'indeed_jobs',
+    groupId:     'ext_indeed',
+    content:     `${j.type} · ${j.location}${j.salary ? ' · ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
+    title:       `${j.title} @ ${j.company}`,
+    source:      'indeed',
+    sourceLabel: 'Indeed',
+    sourceUrl:   `https://www.indeed.com/jobs?q=${encodeURIComponent(j.title)}&l=${encodeURIComponent(j.location)}`,
+    topic:       'career growth',
+    author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
+    likes: [], likesCount: 0, commentsCount: 0,
+    createdAt:   j.posted || new Date().toISOString(),
+    isExternal:  true,
+    group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
+    forYou:      true, fromJoinedGroup: false, relevance: 3,
+  }));
 
   // Include background-cached global posts (already fetched, mapped by source)
   // Background-cached posts (global refresh + DB)
@@ -2308,7 +2340,8 @@ app.get('/feed', authenticate, async (req, res) => {
   // Deduplicate by id across all sources
   const seen = new Set();
   const all  = [
-    ...internal, ...joinedGroupPosts, ...connectedSocialPosts,
+    ...internal, ...joinedGroupPosts,
+    ...connectedSocialPosts, ...indeedPosts,
     ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts, ...cachedMapped, ...dbPosts,
