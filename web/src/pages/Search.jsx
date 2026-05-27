@@ -143,20 +143,37 @@ export default function Search() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                     <div>
-                      <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{user.name}</div>
+                      <div style={{ fontWeight: 700, fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {user.name}
+                        {user.id === profile?.id && (
+                          <span style={{ fontSize: '.68rem', fontWeight: 700, background: 'var(--primary-light)', color: 'var(--primary)', padding: '1px 8px', borderRadius: 10 }}>
+                            You
+                          </span>
+                        )}
+                      </div>
                       {user.title && (
                         <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>
                           {user.title}{user.organization ? ` · ${user.organization}` : ''}
                         </div>
                       )}
                     </div>
-                    <button
-                      className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
-                      style={{ borderRadius: 20, flexShrink: 0, minWidth: 84 }}
-                      onClick={e => toggleFollow(user, e)}
-                    >
-                      {user.isFollowing ? '✓ Following' : '+ Follow'}
-                    </button>
+                    {user.id !== profile?.id ? (
+                      <button
+                        className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                        style={{ borderRadius: 20, flexShrink: 0, minWidth: 84 }}
+                        onClick={e => toggleFollow(user, e)}
+                      >
+                        {user.isFollowing ? '✓ Following' : '+ Follow'}
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ borderRadius: 20, flexShrink: 0 }}
+                        onClick={e => { e.stopPropagation(); navigate('/profile'); }}
+                      >
+                        Edit profile
+                      </button>
+                    )}
                   </div>
 
                   {user.bio && (

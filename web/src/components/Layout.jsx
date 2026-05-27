@@ -7,6 +7,7 @@ const IS_LOCAL = typeof window !== 'undefined' &&
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/search',        icon: '🔍', label: 'Search'       },
+  { to: '/groups',        icon: '🌐', label: 'Discover'     },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
   // Agents tab — visible on localhost only

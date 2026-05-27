@@ -1950,7 +1950,7 @@ app.get('/users/search', authenticate, (req, res) => {
   const role = (req.query.role || '').toLowerCase().trim();
   const myId = req.user.id;
 
-  let results = users.filter(u => u.id !== myId && u.onboardingComplete);
+  let results = users.filter(u => u.onboardingComplete);
   if (q) {
     results = results.filter(u =>
       (u.name || '').toLowerCase().includes(q) ||
