@@ -1308,6 +1308,7 @@ function fullProfile(user) {
     id: user.id, name: user.name, email: user.email, title: user.title,
     bio: user.bio, skills: user.skills, organization: user.organization,
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
+    profileHidden: user.profileHidden || false,
     preferences: user.preferences,
     links: user.links || {},
     roleSettings: user.roleSettings || {},
@@ -1333,6 +1334,7 @@ function dbRowToMemUser(row) {
     organization: row.organization || '',
     joinedGroups: row.joined_groups || [],
     onboardingComplete: row.onboarding_complete || false,
+    profileHidden: row.profile_hidden || false,
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
@@ -1385,6 +1387,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -1589,7 +1592,7 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization, links, roleSettings } = req.body;
+  const { name, title, bio, skills, organization, links, roleSettings, profileHidden } = req.body;
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
@@ -1597,11 +1600,12 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
+  if (profileHidden !== undefined) user.profileHidden = profileHidden;
   if (db.isConnected() && isDBId(user.id)) {
     db.query(
-      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7 WHERE id=$8`,
+      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8 WHERE id=$9`,
       [user.name, user.title, user.bio, user.skills, user.organization,
-       JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.id]
+       JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false, user.id]
     ).catch(e => console.error('PATCH profile DB:', e.message));
   }
   res.json(fullProfile(user));
@@ -1954,7 +1958,7 @@ app.get('/users/search', authenticate, (req, res) => {
   const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
   const myRole      = (myUser?.preferences?.role || '').toLowerCase();
 
-  let results = users.filter(u => u.onboardingComplete);
+  let results = users.filter(u => u.onboardingComplete && (!u.profileHidden || u.id === myId));
 
   if (q) {
     results = results.filter(u =>

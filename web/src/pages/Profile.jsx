@@ -46,9 +46,11 @@ export default function Profile() {
   const [connected,   setConnected]   = useState({});
   const [platforms,   setPlatforms]   = useState([]);
   // Skills tab state
-  const [skillInput,  setSkillInput]  = useState('');
-  const [skills,      setSkills]      = useState([]);
-  const [skillSaving, setSkillSaving] = useState(false);
+  const [skillInput,    setSkillInput]    = useState('');
+  const [skills,        setSkills]        = useState([]);
+  const [skillSaving,   setSkillSaving]   = useState(false);
+  // Privacy
+  const [hiddenSaving,  setHiddenSaving]  = useState(false);
 
   useEffect(() => {
     client.get('/social/platforms')
@@ -77,6 +79,16 @@ export default function Profile() {
 
   function removeSkill(s) {
     setSkills(prev => prev.filter(x => x !== s));
+  }
+
+  async function toggleProfileHidden() {
+    setHiddenSaving(true);
+    try {
+      const newVal = !profile.profileHidden;
+      const { data } = await client.patch('/profile', { profileHidden: newVal });
+      updateProfileLocally(data.profile || data);
+    } catch {}
+    finally { setHiddenSaving(false); }
   }
 
   async function saveSkills() {
@@ -220,6 +232,43 @@ export default function Profile() {
               </div>
             </div>
           )}
+
+          {/* Privacy */}
+          <div className="card">
+            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Privacy</h3>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 }}>
+              <div>
+                <div style={{ fontWeight:600, fontSize:'.9rem', marginBottom:3 }}>
+                  {profile.profileHidden ? '🔒 Profile hidden' : '🌐 Profile visible'}
+                </div>
+                <div style={{ fontSize:'.8rem', color:'var(--muted)', lineHeight:1.5 }}>
+                  {profile.profileHidden
+                    ? 'Your profile is hidden from search. Only you can see it.'
+                    : 'Your profile appears in search so others can find and follow you.'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={toggleProfileHidden}
+                disabled={hiddenSaving}
+                style={{
+                  flexShrink: 0,
+                  width: 48, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
+                  background: profile.profileHidden ? '#6B7280' : 'var(--primary)',
+                  position: 'relative', transition: 'background .2s',
+                  opacity: hiddenSaving ? 0.6 : 1,
+                }}
+                title={profile.profileHidden ? 'Make profile visible' : 'Hide profile'}
+              >
+                <span style={{
+                  position:'absolute', top:3, left: profile.profileHidden ? 3 : 23,
+                  width:20, height:20, borderRadius:'50%', background:'#fff',
+                  transition:'left .2s', boxShadow:'0 1px 4px rgba(0,0,0,.2)',
+                  display:'block',
+                }} />
+              </button>
+            </div>
+          </div>
 
           {/* Preferences */}
           {profile.preferences && (
