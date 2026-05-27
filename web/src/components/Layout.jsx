@@ -1,17 +1,13 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const IS_LOCAL = typeof window !== 'undefined' &&
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/search',        icon: '🔍', label: 'Search'       },
   { to: '/groups',        icon: '🌐', label: 'Groups'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
-  // Agents tab — visible on localhost only
-  ...(IS_LOCAL ? [{ to: '/agents', icon: '🤖', label: 'Agents' }] : []),
+  { to: '/hq',            icon: '🏢', label: 'HQ'           },
 ];
 
 function initials(name = '') {

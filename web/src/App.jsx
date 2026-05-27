@@ -88,8 +88,9 @@ export default function App() {
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
       }/>
 
-      {/* Agent Control Room — public, no auth required */}
-      <Route path="/agents" element={<AgentDashboard />} />
+      {/* Agent Control Room — live on public domain */}
+      <Route path="/hq"     element={<AgentDashboard />} />
+      <Route path="/agents" element={<Navigate to="/hq" replace />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
