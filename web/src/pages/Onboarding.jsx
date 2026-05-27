@@ -203,15 +203,27 @@ const STEPS = ['Your Role', 'Topics', 'Goals', 'Experience'];
 
 /* ─── Component ─────────────────────────────────────────────────────────────── */
 
+function loadSignupCtx() {
+  try { return JSON.parse(localStorage.getItem('ufi_signup_ctx') || 'null'); } catch { return null; }
+}
+
 export default function Onboarding() {
   const { updateProfileLocally } = useAuth();
   const navigate = useNavigate();
 
-  const [step,       setStep]       = useState(0);
-  const [role,       setRole]       = useState('');
-  const [interests,  setInterests]  = useState([]);
+  // Read registration context once on mount
+  const signupCtx = loadSignupCtx();
+  const ctxRole        = signupCtx?.role        || '';
+  const ctxExperience  = signupCtx?.experience  || '';
+  const ctxPreInterests = signupCtx?.preInterests || [];
+
+  const [step,       setStep]       = useState(ctxRole ? 1 : 0);
+  const [role,       setRole]       = useState(ctxRole);
+  const [interests,  setInterests]  = useState(
+    ctxRole && ctxPreInterests.length > 0 ? ctxPreInterests.slice(0, 5) : []
+  );
   const [goals,      setGoals]      = useState([]);
-  const [experience, setExperience] = useState('');
+  const [experience, setExperience] = useState(ctxExperience);
   const [loading,    setLoading]    = useState(false);
   const [lastPicked, setLastPicked] = useState('');
 
@@ -247,10 +259,16 @@ export default function Onboarding() {
   async function handleFinish() {
     setLoading(true);
     try {
-      await client.post('/profile/onboarding', { role, goals, interests, experience });
+      const payload = { role, goals, interests, experience };
+      const ctx = loadSignupCtx();
+      if (ctx?.bio)   payload.bio   = ctx.bio;
+      if (ctx?.title) payload.title = ctx.title;
+      await client.post('/profile/onboarding', payload);
+      localStorage.removeItem('ufi_signup_ctx');
       updateProfileLocally({ onboardingComplete: true });
       navigate('/', { replace: true });
     } catch {
+      localStorage.removeItem('ufi_signup_ctx');
       updateProfileLocally({ onboardingComplete: true });
       navigate('/', { replace: true });
     } finally {
@@ -315,9 +333,28 @@ export default function Onboarding() {
         {/* ── Step 1 — Interests / Topics ── */}
         {step === 1 && (
           <>
+            {/* Personalisation banner when role came from registration */}
+            {ctxRole && (
+              <div style={{
+                marginBottom: 16, padding: '10px 14px', borderRadius: 10,
+                background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <span style={{ fontSize: '.83rem', color: 'var(--primary)', fontWeight: 600 }}>
+                  ✦ Personalised for <strong>{ctxRole}</strong> — topics and interests pre-loaded
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setStep(0)}
+                  style={{ fontSize: '.72rem', color: 'var(--primary)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}
+                >
+                  Change role
+                </button>
+              </div>
+            )}
             <h1 className="onboarding-title">What topics interest you?</h1>
             <p className="onboarding-sub">
-              {role ? `Based on your role as a ${role}, we've highlighted the most relevant topics first.` : 'Pick as many as you like — your feed will reflect these.'}
+              {role ? `Recommended topics for a ${role} are highlighted first.` : 'Pick as many as you like — your feed will reflect these.'}
               {' '}Selecting a topic unlocks related ones below.
             </p>
 

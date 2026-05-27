@@ -1,33 +1,57 @@
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
-const ROLE_PREFIXES = [
-  'Senior', 'Lead', 'Head', 'Principal', 'Chief', 'Global', 'Regional', 'Director', 'Manager', 'Specialist', 'Coordinator',
-  'Analyst', 'Advisor', 'Consultant', 'Strategist', 'Architect', 'Engineer', 'Developer', 'Scientist', 'Supervisor', 'Producer',
-  'Officer', 'Editor', 'Writer', 'Researcher', 'Curator', 'Facilitator', 'Coach', 'Trainer', 'Associate', 'Executive', 'Partner'
+const FEATURES = [
+  {
+    icon: '🎯',
+    title: 'Personalized from day one',
+    desc: 'Pick your role and experience level during signup. Your feed, communities, and opportunities are tailored instantly — no setup required.',
+  },
+  {
+    icon: '🌐',
+    title: '80+ Live Communities',
+    desc: 'Real professional communities across engineering, design, startups, finance, wellness, gaming, and more — curated around your role and interests.',
+  },
+  {
+    icon: '💼',
+    title: 'Real Opportunities',
+    desc: 'Jobs, gigs, grants, events, and learning resources across creative, corporate, and startup paths. Filtered to match your goals.',
+  },
+  {
+    icon: '🔍',
+    title: 'Find your people',
+    desc: 'Search professionals by name, role, skill, or interest. Follow the people who inspire you and build your professional circle.',
+  },
+  {
+    icon: '📰',
+    title: 'A feed that learns you',
+    desc: 'Posts from Reddit, LinkedIn, GitHub, Twitter, Instagram, TikTok, and more — round-robin mixed so no single platform dominates.',
+  },
+  {
+    icon: '✏️',
+    title: 'Post to your community',
+    desc: 'Share insights, ask questions, and build in public inside UFIConnect groups. Your community, your voice.',
+  },
 ];
 
-const ROLE_FOCUS = [
-  'Marketing', 'Growth', 'Operations', 'Finance', 'People Ops', 'Human Resources', 'Product', 'Community', 'Brand', 'Content',
-  'Design', 'Creative', 'Strategy', 'Education', 'Learning', 'Health', 'Wellness', 'Legal', 'Compliance', 'Sustainability',
-  'Customer Experience', 'Support', 'Success', 'Fulfillment', 'Supply Chain', 'Data', 'AI', 'Analytics', 'Security', 'Risk',
-  'Quality', 'Engineering', 'Development', 'Software', 'Platform', 'Infrastructure', 'Cloud', 'DevOps', 'Systems', 'Mobile',
-  'Frontend', 'Backend', 'Motion', 'Video', 'Social Media', 'Public Relations', 'Events', 'Corporate Communications',
-  'Investor Relations', 'Partnerships', 'Business Development', 'Sales Enablement', 'E-commerce', 'Retail', 'Hospitality',
-  'Real Estate', 'Manufacturing', 'Logistics', 'Media', 'Publishing', 'Writing', 'Podcasting', 'Healthcare', 'Biotech',
-  'Food', 'AgTech', 'Energy', 'Climate', 'FinTech', 'Crypto', 'LegalTech', 'Sports', 'Entertainment', 'Gaming', 'Travel',
-  'Tourism', 'Nonprofit', 'Philanthropy', 'Diversity & Inclusion', 'Equity', 'Government Affairs', 'Policy', 'Research',
-  'Product Marketing', 'Audience Development', 'User Experience', 'Customer Success', 'Change Management', 'Performance',
-  'Corporate Strategy', 'Investor Success', 'Brand Experience', 'Creative Operations', 'Employee Experience'
+const ROLE_PREVIEWS = [
+  { icon: '💻', label: 'Engineer', color: '#2563EB' },
+  { icon: '🎨', label: 'Designer', color: '#7C3AED' },
+  { icon: '🚀', label: 'Founder', color: '#D97706' },
+  { icon: '📈', label: 'Marketer', color: '#059669' },
+  { icon: '📋', label: 'Product', color: '#0284C7' },
+  { icon: '💰', label: 'Investor', color: '#DB2777' },
+  { icon: '🎬', label: 'Creator', color: '#EA580C' },
+  { icon: '📊', label: 'Data', color: '#7C3AED' },
+  { icon: '🎓', label: 'Student', color: '#6D28D9' },
+  { icon: '⚙️', label: 'Ops', color: '#059669' },
+  { icon: '🩺', label: 'Healthcare', color: '#DC2626' },
+  { icon: '🏆', label: 'Athlete', color: '#B45309' },
+  { icon: '🎵', label: 'Musician', color: '#0891B2' },
+  { icon: '👨‍🍳', label: 'Chef', color: '#D97706' },
+  { icon: '🏠', label: 'Real Estate', color: '#065F46' },
+  { icon: '🌐', label: 'Community', color: '#0284C7' },
 ];
-
-const roles = Array.from(new Set([
-  'Engineer', 'Designer', 'Product Manager', 'Founder', 'Marketer', 'Sales Leader', 'Operations Lead', 'HR Leader',
-  'Investor', 'Researcher', 'Educator', 'Consultant', 'Creative Director', 'Community Manager', 'Finance Lead', 'Legal Advisor',
-  'Healthcare Leader', 'Small Business Owner',
-  ...ROLE_PREFIXES.flatMap((prefix) => ROLE_FOCUS.map((focus) => `${prefix} ${focus}`)),
-  ...['Senior', 'Lead', 'Head', 'Chief', 'Director', 'Principal', 'Global', 'Regional'].flatMap((prefix) => ['Program', 'Portfolio', 'Campaign', 'Product', 'Operations', 'Growth', 'Customer', 'Partnerships'].map((focus) => `${prefix} ${focus}`)),
-])).sort((a, b) => a.localeCompare(b));
 
 export default function Landing() {
   return (
@@ -37,124 +61,172 @@ export default function Landing() {
         <meta name="description" content="UFIConnect is a clean, focused professional network for business, creative, educator, and operations talent. Discover communities, opportunities, and connections that move your career forward." />
         <meta name="keywords" content="professional network, career growth, creative community, business network, healthcare professionals, education, operations, jobs, gigs, opportunities" />
       </Helmet>
+
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>
-      {/* Header */}
-      <header style={{ padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,.05)', background: '#fff', boxShadow: 'var(--shadow)' }}>
-        <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '40px', height: '40px', background: 'var(--primary)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '900', fontSize: '1.1rem' }}>
-              UF
+
+        {/* Header */}
+        <header style={{ padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,.05)', background: '#fff', boxShadow: 'var(--shadow)' }}>
+          <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '40px', height: '40px', background: 'var(--primary)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '900', fontSize: '1.1rem' }}>
+                UF
+              </div>
+              <span style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFIConnect</span>
             </div>
-            <span style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFIConnect</span>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <Link to="/login"
+                style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: 'var(--primary)', border: '1.5px solid var(--primary)', background: 'transparent', textDecoration: 'none' }}
+                onMouseEnter={e => e.target.style.background = 'var(--primary-light)'}
+                onMouseLeave={e => e.target.style.background = 'transparent'}
+              >
+                Sign In
+              </Link>
+              <Link to="/register"
+                style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', textDecoration: 'none' }}
+                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
+                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
+              >
+                Get Started Free
+              </Link>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <Link to="/login" style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: 'var(--primary)', border: '1.5px solid var(--primary)', background: 'transparent', transition: 'all .15s', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.background = 'var(--primary-light)'} onMouseLeave={(e) => e.target.style.background = 'transparent'}>
-              Sign In
-            </Link>
-            <Link to="/register" style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', border: 'none', transition: 'all .15s', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.background = 'var(--primary-hover)'} onMouseLeave={(e) => e.target.style.background = 'var(--primary)'}>
-              Get Started Free
-            </Link>
-          </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Main content */}
-      <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 32px' }}>
-        <div style={{ maxWidth: '900px', textAlign: 'center', width: '100%' }}>
+        <main style={{ flex: 1 }}>
           {/* Hero */}
-          <h1 style={{ fontSize: '3rem', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '16px', lineHeight: '1.1' }}>
-            Professional networking for all ambitious talent
-          </h1>
-          <p style={{ fontSize: '1.2rem', color: 'var(--muted)', marginBottom: '32px', lineHeight: '1.6', maxWidth: '700px', margin: '0 auto 32px' }}>
-            A clean, focused platform to discover communities, projects, jobs, and learning paths — no ads, no noise, just the people and ideas that help your career thrive.
-          </p>
+          <section style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '80px 32px 60px' }}>
+            <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
+              No ads. No noise. Just your career.
+            </div>
+            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
+              Professional networking built for every kind of ambition
+            </h1>
+            <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '680px', margin: '0 auto 36px' }}>
+              Pick your role during signup and get a personalized feed, curated communities, and relevant opportunities — instantly. No algorithm gaming, no corporate ads.
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
+              <Link to="/register"
+                style={{ padding: '13px 36px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
+                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
+                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
+              >
+                Get Started Free →
+              </Link>
+              <a href="#features"
+                style={{ padding: '13px 36px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '600', color: 'var(--primary)', background: 'transparent', border: '1.5px solid var(--primary)', textDecoration: 'none', display: 'inline-block' }}
+                onMouseEnter={e => e.target.style.background = 'var(--primary-light)'}
+                onMouseLeave={e => e.target.style.background = 'transparent'}
+              >
+                Learn More
+              </a>
+            </div>
 
-          {/* CTA buttons */}
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginBottom: '60px' }}>
-            <Link to="/register" style={{ padding: '12px 32px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', border: 'none', transition: 'all .15s', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.background = 'var(--primary-hover)'} onMouseLeave={(e) => e.target.style.background = 'var(--primary)'}>
-              Get Started Free
-            </Link>
-            <a href="#features" style={{ padding: '12px 32px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '600', color: 'var(--primary)', background: 'transparent', border: '1.5px solid var(--primary)', transition: 'all .15s', textDecoration: 'none' }} onMouseEnter={(e) => e.target.style.background = 'var(--primary-light)'} onMouseLeave={(e) => e.target.style.background = 'transparent'}>
-              Learn More
-            </a>
-          </div>
+            {/* Role pills preview */}
+            <div style={{ marginBottom: 0 }}>
+              <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
+                Built for every professional — choose your role at signup
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                {ROLE_PREVIEWS.map(({ icon, label, color }) => (
+                  <span key={label} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '6px 14px', borderRadius: 20, background: '#fff',
+                    border: `1.5px solid ${color}40`, color, fontWeight: 600, fontSize: '.8rem',
+                    boxShadow: 'var(--shadow)',
+                  }}>
+                    {icon} {label}
+                  </span>
+                ))}
+                <span style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.8rem' }}>
+                  + more
+                </span>
+              </div>
+            </div>
+          </section>
 
           {/* Features */}
-          <div id="features" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '60px' }}>
-            <div style={{ background: '#fff', padding: '24px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '1.8rem', marginBottom: '12px' }}>🌐</div>
-              <h3 style={{ fontSize: '.95rem', fontWeight: '700', marginBottom: '8px' }}>50+ Live Communities</h3>
-              <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: '1.5' }}>Business, creative, education, and industry communities curated around your role and goals.</p>
+          <section id="features" style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '10px' }}>
+                Everything you need to grow professionally
+              </h2>
+              <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
+                One platform. Your feed, your network, your opportunities — personalized around who you are and where you're going.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+                {FEATURES.map(({ icon, title, desc }) => (
+                  <div key={title} style={{ padding: '24px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' }}>
+                    <div style={{ fontSize: '1.8rem', marginBottom: '12px' }}>{icon}</div>
+                    <h3 style={{ fontSize: '.95rem', fontWeight: '700', marginBottom: '8px' }}>{title}</h3>
+                    <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: '1.6', margin: 0 }}>{desc}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div style={{ background: '#fff', padding: '24px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '1.8rem', marginBottom: '12px' }}>💼</div>
-              <h3 style={{ fontSize: '.95rem', fontWeight: '700', marginBottom: '8px' }}>Real Opportunities</h3>
-              <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: '1.5' }}>Jobs, gigs, grants, events, and learning resources across creative, corporate, and startup paths.</p>
-            </div>
-            <div style={{ background: '#fff', padding: '24px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '1.8rem', marginBottom: '12px' }}>⚡</div>
-              <h3 style={{ fontSize: '.95rem', fontWeight: '700', marginBottom: '8px' }}>Quick profile macros</h3>
-              <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: '1.5' }}>Launch faster with pre-built role headlines and polished professional copy that fit your experience.</p>
-            </div>
-            <div style={{ background: '#fff', padding: '24px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
-              <div style={{ fontSize: '1.8rem', marginBottom: '12px' }}>✨</div>
-              <h3 style={{ fontSize: '.95rem', fontWeight: '700', marginBottom: '8px' }}>Media review & previews</h3>
-              <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: '1.5' }}>See instant visual previews for articles, videos, and community posts so you can review what matters faster.</p>
-            </div>
-          </div>
+          </section>
 
-          {/* YAML sample block */}
-          <div style={{ marginBottom: '60px' }}>
-            <h2 style={{ fontSize: '1.3rem', fontWeight: '800', marginBottom: '18px' }}>Macro-ready profile templates</h2>
-            <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '18px', maxWidth: '700px', margin: '0 auto 18px' }}>
-              Build a polished profile in seconds with copy-ready YAML templates for roles, focus areas, and key strengths.
-            </p>
-            <pre style={{ margin: 0, padding: '24px', borderRadius: '18px', background: '#0F172A', color: '#E2E8F0', fontSize: '.9rem', lineHeight: '1.6', overflowX: 'auto', border: '1px solid rgba(226, 232, 240, 0.15)' }}>
-{`profile:
-  name: "Amina Davis"
-  role: "Senior Community Growth Lead"
-  focus: "Bridges brand, learning, and partner ecosystems"
-  location: "Hybrid"
-
-highlights:
-  - "Ad-free professional network"
-  - "Instant media review previews"
-  - "500+ tailored role templates"
-
-tags:
-  - "Creative Operations"
-  - "Education"
-  - "Media & Publishing"`}
-            </pre>
-          </div>
-
-          {/* Roles grid */}
-          <div style={{ marginBottom: '60px' }}>
-            <h2 style={{ fontSize: '1.3rem', fontWeight: '800', marginBottom: '24px' }}>Built for 500+ Professional Roles</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', maxHeight: '520px', overflow: 'auto', paddingRight: '6px' }}>
-              {roles.map(role => (
-                <div key={role} style={{ background: '#fff', padding: '12px 16px', borderRadius: 'var(--radius-sm)', fontSize: '.82rem', fontWeight: '500', border: '1px solid var(--border)', boxShadow: 'var(--shadow)' }}>
-                  {role}
-                </div>
-              ))}
+          {/* Social proof strip */}
+          <section style={{ background: 'var(--primary)', padding: '40px 32px', color: '#fff', textAlign: 'center' }}>
+            <div style={{ maxWidth: 800, margin: '0 auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '48px', flexWrap: 'wrap' }}>
+                {[
+                  { stat: '80+', label: 'Live Communities' },
+                  { stat: '16+', label: 'Professional Roles' },
+                  { stat: '6+', label: 'Social Platforms' },
+                  { stat: '100%', label: 'Ad-free' },
+                ].map(({ stat, label }) => (
+                  <div key={label}>
+                    <div style={{ fontSize: '2rem', fontWeight: 900, marginBottom: 4 }}>{stat}</div>
+                    <div style={{ fontSize: '.85rem', opacity: .85 }}>{label}</div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </section>
+
+          {/* How it works */}
+          <section style={{ padding: '70px 32px', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)' }}>
+            <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>Up and running in 3 steps</h2>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px', marginBottom: '44px' }}>
+                {[
+                  { step: '1', icon: '🎯', title: 'Pick your role', desc: 'Choose from 16+ professional roles. Get a bio template, title suggestions, and matching interests pre-loaded.' },
+                  { step: '2', icon: '🎨', title: 'Tune your feed', desc: 'Select interests and goals in a 4-step onboarding that connects directly to your registration choices.' },
+                  { step: '3', icon: '🚀', title: 'Start connecting', desc: 'Your personalized feed is live. Discover people to follow, communities to join, and opportunities to pursue.' },
+                ].map(({ step, icon, title, desc }) => (
+                  <div key={step} style={{ background: '#fff', padding: '28px 20px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--primary)', color: '#fff', fontWeight: 800, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>{step}</div>
+                    <div style={{ fontSize: '1.8rem', marginBottom: 10 }}>{icon}</div>
+                    <div style={{ fontWeight: 700, fontSize: '.95rem', marginBottom: 8 }}>{title}</div>
+                    <div style={{ fontSize: '.84rem', color: 'var(--muted)', lineHeight: 1.6 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
 
           {/* Bottom CTA */}
-          <div style={{ background: '#fff', padding: '40px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-md)', border: '1px solid var(--border)' }}>
-            <h3 style={{ fontSize: '1.3rem', fontWeight: '800', marginBottom: '12px' }}>Ready to join the network?</h3>
-            <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '24px' }}>Sign up for free in under 2 minutes. No credit card required.</p>
-            <Link to="/register" style={{ padding: '12px 32px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', border: 'none', transition: 'all .15s', textDecoration: 'none', display: 'inline-block' }} onMouseEnter={(e) => e.target.style.background = 'var(--primary-hover)'} onMouseLeave={(e) => e.target.style.background = 'var(--primary)'}>
-              Get Started Free
-            </Link>
-          </div>
-        </div>
-      </main>
+          <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+            <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Ready to join the network?</h3>
+              <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '28px', lineHeight: 1.6 }}>
+                Free forever. Pick your role, personalize your feed, and start connecting with ambitious professionals in minutes.
+              </p>
+              <Link to="/register"
+                style={{ padding: '14px 40px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
+                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
+                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
+              >
+                Get Started Free →
+              </Link>
+            </div>
+          </section>
+        </main>
 
-      {/* Footer */}
-      <footer style={{ padding: '32px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-        <p>© 2025 UFIConnect. A cleaner way to network and grow.</p>
-      </footer>
+        {/* Footer */}
+        <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
+          <p>© 2025 UFIConnect. A cleaner way to network and grow.</p>
+        </footer>
       </div>
     </>
   );

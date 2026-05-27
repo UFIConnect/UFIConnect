@@ -5,131 +5,149 @@ import { useAuth } from '../contexts/AuthContext';
 
 const ROLE_MACROS = [
   {
-    role: 'Engineer / Developer',
-    icon: '💻',
-    label: 'Developer',
-    title: 'Software Engineer',
+    role: 'Engineer / Developer', icon: '💻', label: 'Developer', color: '#2563EB', bg: '#EFF6FF',
     desc: 'Build products and ship code',
-    color: '#2563EB', bg: '#EFF6FF',
-    related: ['AI & Machine Learning', 'Open Source', 'Cloud & DevOps', 'Side Projects'],
+    titles: ['Software Engineer', 'Full-Stack Developer', 'Backend Engineer', 'Frontend Developer', 'ML Engineer', 'DevOps Engineer'],
+    bioTemplate: "Software engineer who loves building scalable systems and shipping products that make a real difference.",
+    related: ['AI & Machine Learning', 'Open Source', 'Cloud & DevOps', 'Backend Dev', 'Frontend Dev'],
   },
   {
-    role: 'Designer / Creative',
-    icon: '🎨',
-    label: 'Designer',
-    title: 'UX/UI Designer',
+    role: 'Designer / Creative', icon: '🎨', label: 'Designer', color: '#7C3AED', bg: '#F3EEFF',
     desc: 'Create beautiful experiences',
-    color: '#7C3AED', bg: '#F3EEFF',
-    related: ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design'],
+    titles: ['UX/UI Designer', 'Product Designer', 'Brand Designer', 'Visual Designer', 'Creative Director', 'Motion Designer'],
+    bioTemplate: "Designer passionate about crafting intuitive, beautiful experiences that connect people with ideas.",
+    related: ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design', 'Photography'],
   },
   {
-    role: 'Founder / Entrepreneur',
-    icon: '🚀',
-    label: 'Founder',
-    title: 'Founder & CEO',
+    role: 'Founder / Entrepreneur', icon: '🚀', label: 'Founder', color: '#D97706', bg: '#FFFBEB',
     desc: 'Building something new',
-    color: '#D97706', bg: '#FFFBEB',
-    related: ['SaaS', 'Bootstrapping', 'Fundraising', 'Growth Marketing'],
+    titles: ['Founder & CEO', 'Co-Founder', 'Startup Founder', 'Indie Hacker', 'Builder', 'Entrepreneur'],
+    bioTemplate: "Founder building in public. I love turning ideas into products and finding early adopters who believe in the vision.",
+    related: ['SaaS', 'Bootstrapping', 'Fundraising', 'Growth Marketing', 'Side Projects'],
   },
   {
-    role: 'Marketer / Growth',
-    icon: '📈',
-    label: 'Marketer',
-    title: 'Growth Marketing Lead',
+    role: 'Marketer / Growth', icon: '📈', label: 'Marketer', color: '#059669', bg: '#ECFDF5',
     desc: 'Drive acquisition and growth',
-    color: '#059669', bg: '#ECFDF5',
-    related: ['Growth Marketing', 'SEO & Content', 'Social Media', 'Creator Economy'],
+    titles: ['Growth Marketing Lead', 'Head of Marketing', 'Digital Marketing Manager', 'Content Strategist', 'SEO Specialist', 'Brand Manager'],
+    bioTemplate: "Growth marketer obsessed with finding channels that convert and stories that stick.",
+    related: ['Growth Marketing', 'SEO & Content', 'Creator Economy', 'Social Media', 'Brand Identity'],
   },
   {
-    role: 'Product Manager',
-    icon: '📋',
-    label: 'Product',
-    title: 'Senior Product Manager',
+    role: 'Product Manager', icon: '📋', label: 'Product', color: '#0284C7', bg: '#F0F9FF',
     desc: 'Strategy, roadmaps, outcomes',
-    color: '#0284C7', bg: '#F0F9FF',
-    related: ['SaaS', 'AI & Machine Learning', 'Product-Led Growth', 'B2B / Enterprise'],
+    titles: ['Senior Product Manager', 'Product Lead', 'Head of Product', 'Associate PM', 'Group PM', 'VP of Product'],
+    bioTemplate: "Product manager who thrives at the intersection of user needs, business goals, and engineering constraints.",
+    related: ['SaaS', 'AI & Machine Learning', 'Product-Led Growth', 'B2B / Enterprise', 'Growth Marketing'],
   },
   {
-    role: 'Investor / VC',
-    icon: '💰',
-    label: 'Investor',
-    title: 'Venture Capital / Angel Investor',
+    role: 'Investor / VC', icon: '💰', label: 'Investor', color: '#DB2777', bg: '#FDF2F8',
     desc: 'Back great founders and ideas',
-    color: '#DB2777', bg: '#FDF2F8',
-    related: ['Venture Capital', 'Angel Investing', 'FinTech', 'SaaS'],
+    titles: ['Angel Investor', 'Venture Partner', 'VC Analyst', 'Investment Manager', 'Fund Manager', 'Limited Partner'],
+    bioTemplate: "Investor backing ambitious founders at the intersection of technology and human impact.",
+    related: ['Venture Capital', 'Angel Investing', 'FinTech', 'SaaS', 'Health Tech'],
   },
   {
-    role: 'Content Creator',
-    icon: '🎬',
-    label: 'Creator',
-    title: 'Content Creator',
+    role: 'Content Creator', icon: '🎬', label: 'Creator', color: '#EA580C', bg: '#FFF7ED',
     desc: 'Video, writing, and podcasts',
-    color: '#EA580C', bg: '#FFF7ED',
-    related: ['Creator Economy', 'YouTube & Video', 'Newsletter & Writing', 'Social Media'],
+    titles: ['Content Creator', 'YouTuber', 'Podcast Host', 'Newsletter Writer', 'Social Media Creator', 'Blogger'],
+    bioTemplate: "Content creator making videos, writing, and building an audience around things I genuinely care about.",
+    related: ['Creator Economy', 'YouTube & Video', 'Podcasting', 'Newsletter & Writing', 'Social Media'],
   },
   {
-    role: 'Data / Analytics',
-    icon: '📊',
-    label: 'Data',
-    title: 'Data Scientist / Analyst',
+    role: 'Data / Analytics', icon: '📊', label: 'Data', color: '#7C3AED', bg: '#F3EEFF',
     desc: 'Turn data into decisions',
-    color: '#7C3AED', bg: '#F3EEFF',
-    related: ['Data Science', 'AI & Machine Learning', 'Cloud & DevOps', 'Open Source'],
+    titles: ['Data Scientist', 'Data Analyst', 'ML Engineer', 'BI Lead', 'Analytics Engineer', 'Quant Researcher'],
+    bioTemplate: "Data scientist who finds signal in noise and translates complex analytics into clear business decisions.",
+    related: ['Data Science', 'AI & Machine Learning', 'Cloud & DevOps', 'Open Source', 'Business Strategy'],
   },
   {
-    role: 'Student / Learner',
-    icon: '🎓',
-    label: 'Student',
-    title: 'Student / Early Career',
-    desc: 'Growing and exploring new fields',
-    color: '#6D28D9', bg: '#F5F3FF',
-    related: ['Career Growth', 'AI & Machine Learning', 'Open Source', 'Side Projects'],
+    role: 'Student / Learner', icon: '🎓', label: 'Student', color: '#6D28D9', bg: '#F5F3FF',
+    desc: 'Growing and exploring',
+    titles: ['Student', 'Junior Developer', 'Bootcamp Graduate', 'Recent Graduate', 'Aspiring Engineer', 'Career Switcher'],
+    bioTemplate: "Student and lifelong learner exploring new technologies and building projects to sharpen my skills.",
+    related: ['Career Growth', 'AI & Machine Learning', 'Open Source', 'Side Projects', 'Developer Tools'],
   },
   {
-    role: 'Operations / Finance',
-    icon: '⚙️',
-    label: 'Operations',
-    title: 'Operations & Strategy Lead',
-    desc: 'Process, logistics, and business',
-    color: '#059669', bg: '#ECFDF5',
-    related: ['Business Strategy', 'FinTech', 'Operations Excellence', 'Corporate Finance'],
+    role: 'Operations / Finance', icon: '⚙️', label: 'Operations', color: '#059669', bg: '#ECFDF5',
+    desc: 'Process, logistics, business',
+    titles: ['Operations Manager', 'COO', 'Finance Manager', 'Business Analyst', 'Strategy Lead', 'Chief of Staff'],
+    bioTemplate: "Operations and finance professional focused on building systems that scale and businesses that last.",
+    related: ['Business Strategy', 'FinTech', 'Operations Excellence', 'Corporate Finance', 'Leadership'],
   },
   {
-    role: 'Community Manager',
-    icon: '🌐',
-    label: 'Community',
-    title: 'Community Manager',
+    role: 'Community Manager', icon: '🌐', label: 'Community', color: '#0284C7', bg: '#F0F9FF',
     desc: 'Grow and engage communities',
-    color: '#0284C7', bg: '#F0F9FF',
-    related: ['Creator Economy', 'Social Media', 'Diversity & Inclusion', 'Leadership'],
+    titles: ['Community Manager', 'Head of Community', 'Developer Relations', 'Community Lead', 'Partnership Manager'],
+    bioTemplate: "Community builder who thrives on creating genuine connections and spaces where people grow together.",
+    related: ['Creator Economy', 'Social Media', 'Diversity & Inclusion', 'Leadership', 'EdTech'],
   },
   {
-    role: 'Healthcare Professional',
-    icon: '🩺',
-    label: 'Healthcare',
-    title: 'Healthcare Professional',
-    desc: 'Wellness, care, and patient experience',
-    color: '#DC2626', bg: '#FEF2F2',
-    related: ['Health Tech', 'BioTech', 'Mental Health & Wellness', 'AI & Machine Learning'],
+    role: 'Healthcare Professional', icon: '🩺', label: 'Healthcare', color: '#DC2626', bg: '#FEF2F2',
+    desc: 'Wellness, care, and impact',
+    titles: ['Healthcare Professional', 'Nurse Practitioner', 'Physician', 'Healthcare Manager', 'Medical Researcher'],
+    bioTemplate: "Healthcare professional committed to improving patient outcomes and advancing evidence-based care.",
+    related: ['Health Tech', 'BioTech', 'Mental Health & Wellness', 'AI & Machine Learning', 'Data Science'],
   },
+  {
+    role: 'Athlete / Coach', icon: '🏆', label: 'Athlete', color: '#B45309', bg: '#FEF3C7',
+    desc: 'Sports, performance, coaching',
+    titles: ['Personal Trainer', 'Sports Coach', 'Athletic Director', 'Performance Coach', 'Fitness Instructor'],
+    bioTemplate: "Athlete and coach dedicated to unlocking human performance and helping people reach their physical best.",
+    related: ['Sports & Athletics', 'Fitness & Gym', 'Running & Cycling', 'Nutrition & Diet', 'Leadership'],
+  },
+  {
+    role: 'Musician / Artist', icon: '🎵', label: 'Musician', color: '#0891B2', bg: '#ECFEFF',
+    desc: 'Music, art, and creativity',
+    titles: ['Musician', 'Music Producer', 'Artist', 'Songwriter', 'DJ', 'Performer'],
+    bioTemplate: "Musician and artist exploring sound, expression, and the spaces where creativity meets culture.",
+    related: ['Music Discovery', 'Music Production', 'Songwriting', 'Creator Economy', 'Live Events & Concerts'],
+  },
+  {
+    role: 'Chef / Food Creator', icon: '👨‍🍳', label: 'Chef', color: '#D97706', bg: '#FFFBEB',
+    desc: 'Culinary arts and food content',
+    titles: ['Executive Chef', 'Food Creator', 'Chef', 'Culinary Director', 'Recipe Developer', 'Food Blogger'],
+    bioTemplate: "Chef and food creator passionate about ingredients, technique, and sharing stories through food.",
+    related: ['Cooking & Recipes', 'Restaurant Culture', 'Baking & Pastry', 'FoodTech', 'Creator Economy'],
+  },
+  {
+    role: 'Real Estate Pro', icon: '🏠', label: 'Real Estate', color: '#065F46', bg: '#ECFDF5',
+    desc: 'Property, investment, development',
+    titles: ['Real Estate Agent', 'Property Developer', 'Real Estate Investor', 'Mortgage Broker', 'Property Manager'],
+    bioTemplate: "Real estate professional helping people find homes, build wealth, and navigate property markets.",
+    related: ['Real Estate', 'PropTech', 'Personal Finance', 'Business Strategy', 'Interior Design & Decor'],
+  },
+];
+
+const EXPERIENCE_LEVELS = [
+  { value: 'student', icon: '🌱', label: 'Early',    desc: '0–2 yrs' },
+  { value: 'junior',  icon: '📗', label: 'Junior',    desc: '2–4 yrs' },
+  { value: 'mid',     icon: '📘', label: 'Mid',       desc: '4–7 yrs' },
+  { value: 'senior',  icon: '📙', label: 'Senior',    desc: '7–12 yrs' },
+  { value: 'exec',    icon: '🏆', label: 'Executive', desc: 'C-suite / Founder' },
 ];
 
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', title: '' });
-  const [selectedRole, setSelectedRole] = useState(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+
+  const [form,        setForm]       = useState({ name: '', email: '', password: '', confirmPassword: '' });
+  const [selectedMacro, setMacro]   = useState(null);
+  const [title,       setTitle]      = useState('');
+  const [bio,         setBio]        = useState('');
+  const [experience,  setExperience] = useState('');
+  const [error,       setError]      = useState('');
+  const [loading,     setLoading]    = useState(false);
 
   function handleChange(e) {
-    setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+    setForm(f => ({ ...f, [e.target.name]: e.target.value }));
     setError('');
   }
 
   function selectMacro(macro) {
-    setSelectedRole(macro);
-    setForm(f => ({ ...f, title: macro.title }));
+    setMacro(macro);
+    setTitle(macro.titles[0]);
+    setBio(macro.bioTemplate);
+    if (!experience) setExperience('mid');
   }
 
   async function handleSubmit(e) {
@@ -145,7 +163,17 @@ export default function Register() {
     }
     setLoading(true);
     try {
-      await register(form.name, form.email, form.password, form.title);
+      await register(form.name, form.email, form.password, title);
+      // Persist signup context for onboarding to read
+      if (selectedMacro) {
+        localStorage.setItem('ufi_signup_ctx', JSON.stringify({
+          role: selectedMacro.role,
+          experience,
+          bio: bio.trim(),
+          title: title.trim(),
+          preInterests: selectedMacro.related,
+        }));
+      }
       navigate('/onboarding', { replace: true });
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed. Please try again.');
@@ -158,37 +186,30 @@ export default function Register() {
     <>
       <Helmet>
         <title>Join UFIConnect — Professional Network for All Careers</title>
-        <meta name="description" content="Create your UFIConnect account to discover communities, opportunities, and connections across business, creative, education, and leadership roles." />
+        <meta name="description" content="Create your UFIConnect account and get a personalized feed from day one." />
       </Helmet>
+
       <div className="auth-page">
-        <div className="auth-card" style={{ maxWidth: 520 }}>
+        <div className="auth-card" style={{ maxWidth: 580 }}>
           <div className="auth-logo">
             <div className="auth-logo-icon">UF</div>
             <span className="auth-logo-name">UFIConnect</span>
           </div>
-          <p className="auth-tagline">Professional networking for business, creative, and community leaders.</p>
-
           <h1 className="auth-heading">Create your account</h1>
-          <p className="auth-sub">Join ambitious professionals across technology, design, marketing, finance, and beyond.</p>
+          <p className="auth-sub">Pick your role to personalize your experience from day one.</p>
 
-          {/* Role macros */}
-          <div style={{ margin: '20px 0' }}>
-            <div style={{ fontSize: '.86rem', fontWeight: 700, marginBottom: 6, color: 'var(--text)' }}>
-              What best describes you?
-            </div>
-            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginBottom: 14 }}>
-              Select your role to personalise your profile and feed from day one.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8 }}>
-              {ROLE_MACROS.map((macro) => {
-                const isSel = selectedRole?.role === macro.role;
+          {/* ── Role picker ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 7 }}>
+              {ROLE_MACROS.map(macro => {
+                const isSel = selectedMacro?.role === macro.role;
                 return (
                   <button
                     key={macro.role}
                     type="button"
                     onClick={() => selectMacro(macro)}
                     style={{
-                      padding: '12px 10px', borderRadius: 12, textAlign: 'center', cursor: 'pointer',
+                      padding: '11px 8px', borderRadius: 12, textAlign: 'center', cursor: 'pointer',
                       border: `2px solid ${isSel ? macro.color : 'var(--border)'}`,
                       background: isSel ? macro.bg : 'var(--surface)',
                       transition: 'all .18s',
@@ -196,46 +217,83 @@ export default function Register() {
                       boxShadow: isSel ? `0 4px 14px ${macro.color}30` : 'none',
                     }}
                   >
-                    <div style={{ fontSize: '1.5rem', marginBottom: 4 }}>{macro.icon}</div>
-                    <div style={{ fontWeight: 700, fontSize: '.78rem', color: isSel ? macro.color : 'var(--text)' }}>
+                    <div style={{ fontSize: '1.4rem', marginBottom: 3 }}>{macro.icon}</div>
+                    <div style={{ fontWeight: 700, fontSize: '.75rem', color: isSel ? macro.color : 'var(--text)' }}>
                       {macro.label}
                     </div>
-                    <div style={{ fontSize: '.68rem', color: 'var(--muted)', marginTop: 2, lineHeight: 1.3 }}>
+                    <div style={{ fontSize: '.65rem', color: 'var(--muted)', marginTop: 1, lineHeight: 1.3 }}>
                       {macro.desc}
                     </div>
-                    {isSel && (
-                      <div style={{ marginTop: 6, fontSize: '.65rem', fontWeight: 700, color: macro.color }}>✓ Selected</div>
-                    )}
+                    {isSel && <div style={{ marginTop: 4, fontSize: '.62rem', fontWeight: 700, color: macro.color }}>✓</div>}
                   </button>
                 );
               })}
             </div>
-
-            {/* Related interests preview */}
-            {selectedRole && (
-              <div style={{ marginTop: 14, padding: '12px 14px', background: selectedRole.bg,
-                borderRadius: 10, border: `1px solid ${selectedRole.color}30` }}>
-                <div style={{ fontSize: '.75rem', fontWeight: 700, color: selectedRole.color, marginBottom: 8 }}>
-                  {selectedRole.icon} Your feed will include topics like:
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {selectedRole.related.map(topic => (
-                    <span key={topic} style={{ padding: '4px 10px', borderRadius: 16, background: '#fff',
-                      color: selectedRole.color, fontSize: '.72rem', fontWeight: 600,
-                      border: `1px solid ${selectedRole.color}40` }}>
-                      {topic}
-                    </span>
-                  ))}
-                  <span style={{ padding: '4px 10px', borderRadius: 16, background: 'transparent',
-                    color: 'var(--muted)', fontSize: '.72rem', fontStyle: 'italic' }}>
-                    + more in setup →
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
-          {error && <div className="auth-error">{error}</div>}
+          {/* ── Expanded personalisation (shown after role is picked) ── */}
+          {selectedMacro && (
+            <div style={{
+              marginBottom: 20, padding: '16px', borderRadius: 14,
+              background: selectedMacro.bg, border: `1.5px solid ${selectedMacro.color}30`,
+            }}>
+              {/* Title suggestions */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: '.75rem', fontWeight: 700, color: selectedMacro.color, marginBottom: 8 }}>
+                  {selectedMacro.icon} Choose a title — or type your own below
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {selectedMacro.titles.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setTitle(t)}
+                      style={{
+                        padding: '5px 12px', borderRadius: 16, fontSize: '.77rem', fontWeight: title === t ? 700 : 500,
+                        border: `1.5px solid ${title === t ? selectedMacro.color : selectedMacro.color + '50'}`,
+                        background: title === t ? selectedMacro.color : '#fff',
+                        color: title === t ? '#fff' : selectedMacro.color,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Experience picker */}
+              <div>
+                <div style={{ fontSize: '.75rem', fontWeight: 700, color: selectedMacro.color, marginBottom: 8 }}>
+                  Experience level
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {EXPERIENCE_LEVELS.map(({ value, icon, label, desc }) => {
+                    const sel = experience === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setExperience(value)}
+                        style={{
+                          padding: '6px 12px', borderRadius: 20, fontSize: '.75rem', fontWeight: sel ? 700 : 500,
+                          border: `1.5px solid ${sel ? selectedMacro.color : selectedMacro.color + '40'}`,
+                          background: sel ? selectedMacro.color : '#fff',
+                          color: sel ? '#fff' : selectedMacro.color,
+                          cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                        }}
+                      >
+                        {icon} {label}
+                        <span style={{ fontSize: '.65rem', opacity: .75 }}>({desc})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
 
           <form onSubmit={handleSubmit}>
             <div className="form-group">
@@ -252,10 +310,30 @@ export default function Register() {
               <label className="form-label">
                 Professional title <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>
               </label>
-              <input className="form-input" type="text" name="title"
-                placeholder="e.g. Operations Lead, Creative Director, Software Engineer"
-                value={form.title} onChange={handleChange} />
+              <input
+                className="form-input" type="text" name="title"
+                placeholder="e.g. Software Engineer, Creative Director, Founder"
+                value={title} onChange={e => setTitle(e.target.value)}
+              />
             </div>
+
+            {/* Bio — shown once macro is selected */}
+            {selectedMacro && (
+              <div className="form-group">
+                <label className="form-label">
+                  Starter bio <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional — edit or keep)</span>
+                </label>
+                <textarea
+                  className="form-textarea"
+                  rows={2}
+                  value={bio}
+                  onChange={e => setBio(e.target.value)}
+                  placeholder="A short bio visible on your public profile…"
+                  style={{ resize: 'vertical', fontSize: '.88rem', lineHeight: 1.6 }}
+                />
+              </div>
+            )}
+
             <div className="form-group">
               <label className="form-label">Password</label>
               <input className="form-input" type="password" name="password"
@@ -266,6 +344,7 @@ export default function Register() {
               <input className="form-input" type="password" name="confirmPassword"
                 placeholder="Re-enter your password" value={form.confirmPassword} onChange={handleChange} autoComplete="new-password" />
             </div>
+
             <button className="btn btn-primary btn-full btn-lg" type="submit" disabled={loading}>
               {loading ? <span className="spinner" /> : 'Create account →'}
             </button>

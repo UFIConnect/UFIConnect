@@ -1616,6 +1616,9 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   };
   user.preferences = prefs;
   user.onboardingComplete = true;
+  // Optional fields carried from registration context
+  if (req.body.bio  && !user.bio)   user.bio   = req.body.bio;
+  if (req.body.title && !user.title) user.title = req.body.title;
   const suggested = pickOnboardingGroups(prefs);
   suggested.forEach((gid) => {
     if (!user.joinedGroups.includes(gid)) {
@@ -1626,8 +1629,8 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   });
   if (db.isConnected() && isDBId(user.id)) {
     db.query(
-      `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5 WHERE id=$6`,
-      [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.id]
+      `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8`,
+      [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', user.id]
     ).catch(e => console.error('onboarding DB:', e.message));
   }
   res.json({ profile: fullProfile(user), autoJoined: suggested });
