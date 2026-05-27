@@ -787,6 +787,200 @@ async function fetchYouTubeByKeyword(keyword) {
   }
 }
 
+// ─── Stack Overflow: questions by tag ────────────────────────────────────────
+const INTEREST_TO_SO_TAG = {
+  'AI & Machine Learning': 'machine-learning', 'Data Science': 'pandas',
+  'Computer Vision': 'computer-vision', 'LLMs & Chatbots': 'llm',
+  'Frontend Dev': 'javascript', 'Backend Dev': 'python',
+  'Mobile Dev': 'swift', 'Cloud & DevOps': 'docker',
+  'Cybersecurity': 'security', 'Open Source': 'git',
+  'Web3 / Crypto': 'solidity', 'Game Dev': 'unity3d',
+  'No-Code / Low-Code': 'webflow', 'Developer Tools': 'vscode',
+  'Database': 'postgresql', 'APIs & Integrations': 'api',
+};
+
+async function fetchStackOverflowByTag(tag) {
+  const key = `so_tag_${tag}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=votes&site=stackoverflow&pagesize=100&filter=default`;
+    const data = await fetchJSON(url);
+    const posts = (data?.items || [])
+      .filter(q => q.title && q.link && !q.closed_date)
+      .map(q => ({
+        id:          `so_${q.question_id}`,
+        authorId:    `so_${q.owner?.user_id}`,
+        groupId:     'ext_stackoverflow',
+        content:     `${q.answer_count} answer${q.answer_count !== 1 ? 's' : ''} · ${q.view_count?.toLocaleString()} views · Tags: ${(q.tags || []).join(', ')}`,
+        title:       q.title,
+        source:      'stackoverflow',
+        sourceLabel: 'Stack Overflow',
+        sourceUrl:   q.link,
+        topic:       tag,
+        author:      { id: `so_${q.owner?.user_id}`, name: q.owner?.display_name, title: 'Stack Overflow', organization: 'Stack Exchange' },
+        likes: [], likesCount: q.score || 0, commentsCount: q.answer_count || 0,
+        createdAt:   new Date((q.creation_date || 0) * 1000).toISOString(),
+        isExternal:  true,
+        group:       { id: 'ext_stackoverflow', name: 'Stack Overflow', category: 'Engineering', externalUrl: 'https://stackoverflow.com' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`StackOverflow tag "${tag}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── Mastodon: public hashtag timeline ───────────────────────────────────────
+const INTEREST_TO_MASTODON_TAG = {
+  'AI & Machine Learning': 'AI', 'Open Source': 'OpenSource',
+  'Developer Tools': 'programming', 'Frontend Dev': 'WebDev',
+  'Backend Dev': 'Python', 'Cybersecurity': 'InfoSec',
+  'Cloud & DevOps': 'DevOps', 'UI/UX Design': 'UXDesign',
+  'FinTech': 'FinTech', 'Climate Tech': 'ClimateChange',
+  'EdTech': 'Education', 'Career Growth': 'Career',
+  'Side Projects': 'IndieHackers', 'Productivity': 'GTD',
+  'Data Science': 'DataScience', 'Startup': 'Startup',
+};
+
+async function fetchMastodonByTag(tag) {
+  const key = `mastodon_tag_${tag}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`;
+    const data = await fetchJSON(url);
+    const posts = (data || [])
+      .filter(t => t.content && t.account && !t.sensitive)
+      .map(t => {
+        const text = t.content.replace(/<[^>]+>/g, '').trim().slice(0, 500);
+        return {
+          id:          `mastodon_${t.id}`,
+          authorId:    `mastodon_${t.account.id}`,
+          groupId:     'ext_mastodon',
+          content:     text,
+          title:       text.slice(0, 100),
+          source:      'mastodon',
+          sourceLabel: `@${t.account.acct}`,
+          sourceUrl:   t.url,
+          topic:       tag,
+          author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon' },
+          likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
+          createdAt:   t.created_at,
+          isExternal:  true,
+          mediaUrl:    t.media_attachments?.[0]?.preview_url || null,
+          mediaType:   t.media_attachments?.[0]?.type === 'image' ? 'image' : null,
+          group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: 'https://mastodon.social' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Mastodon tag "${tag}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── Lobsters: tech link aggregator ──────────────────────────────────────────
+const LOBSTERS_TAGS = {
+  'AI & Machine Learning': 'ml', 'Frontend Dev': 'web',
+  'Backend Dev': 'programming', 'Cybersecurity': 'security',
+  'Cloud & DevOps': 'devops', 'Open Source': 'release',
+  'Developer Tools': 'tools', 'Data Science': 'datascience',
+  'Web3 / Crypto': 'crypto', 'Game Dev': 'gamedev',
+};
+
+async function fetchLobstersByTag(tag) {
+  const key = `lobsters_${tag}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://lobste.rs/t/${encodeURIComponent(tag)}.json`;
+    const data = await fetchJSON(url);
+    const posts = (data || [])
+      .filter(s => s.title && s.short_id)
+      .map(s => ({
+        id:          `lobsters_${s.short_id}`,
+        authorId:    `lobsters_${s.submitter_user}`,
+        groupId:     'ext_lobsters',
+        content:     s.description || s.title,
+        title:       s.title,
+        source:      'lobsters',
+        sourceLabel: 'Lobsters',
+        sourceUrl:   s.url || `https://lobste.rs/s/${s.short_id}`,
+        topic:       tag,
+        author:      { id: `lobsters_${s.submitter_user}`, name: s.submitter_user, title: 'Lobsters', organization: 'Lobsters' },
+        likes: [], likesCount: s.score || 0, commentsCount: s.comment_count || 0,
+        createdAt:   s.created_at || new Date().toISOString(),
+        isExternal:  true,
+        group:       { id: 'ext_lobsters', name: 'Lobsters', category: 'Engineering', externalUrl: 'https://lobste.rs' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Lobsters tag "${tag}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── arXiv: academic papers (AI, ML, Data Science, etc.) ─────────────────────
+const INTEREST_TO_ARXIV = {
+  'AI & Machine Learning': 'machine learning', 'Computer Vision': 'computer vision',
+  'Data Science': 'data science', 'LLMs & Chatbots': 'large language models',
+  'Cybersecurity': 'cybersecurity', 'Generative AI': 'generative AI',
+  'Blockchain / Web3': 'blockchain', 'Health Tech': 'healthcare AI',
+  'Climate Tech': 'climate change AI', 'Researcher / Academic': 'deep learning',
+};
+
+function parseArxivAtom(xml) {
+  const entries = [];
+  for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const s = m[1];
+    const get = (re) => (re.exec(s) || [])[1]?.trim() || '';
+    const id       = get(/<id>(.*?)<\/id>/).split('/abs/')[1] || '';
+    const title    = get(/<title>([\s\S]*?)<\/title>/).replace(/\s+/g, ' ');
+    const summary  = get(/<summary>([\s\S]*?)<\/summary>/).replace(/\s+/g, ' ').trim().slice(0, 500);
+    const published = get(/<published>(.*?)<\/published>/);
+    const link     = `https://arxiv.org/abs/${id}`;
+    const authors  = [...s.matchAll(/<name>(.*?)<\/name>/g)].map(a => a[1]).slice(0, 3).join(', ');
+    if (id && title) entries.push({ id, title, summary, published, link, authors });
+  }
+  return entries;
+}
+
+async function fetchArxivByKeyword(keyword) {
+  const key = `arxiv_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&max_results=50&sortBy=submittedDate&sortOrder=descending`;
+    const xml  = await fetchText(url);
+    const entries = parseArxivAtom(xml);
+    const posts = entries.map(e => ({
+      id:          `arxiv_${e.id.replace(/[^a-z0-9]/gi, '_')}`,
+      authorId:    `arxiv_${e.authors.split(',')[0]?.trim().replace(/\s/g,'_')}`,
+      groupId:     'ext_arxiv',
+      content:     e.summary,
+      title:       e.title,
+      source:      'arxiv',
+      sourceLabel: `📄 ${e.authors || 'arXiv'}`,
+      sourceUrl:   e.link,
+      topic:       keyword,
+      author:      { id: `arxiv_${e.id}`, name: e.authors, title: 'Research Paper', organization: 'arXiv' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   e.published || new Date().toISOString(),
+      isExternal:  true,
+      group:       { id: 'ext_arxiv', name: 'arXiv Research', category: 'Engineering', externalUrl: 'https://arxiv.org' },
+    }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`arXiv keyword "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
 // ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
@@ -862,45 +1056,57 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
   return cards;
 }
 
-// ─── Master feed fetcher: all topics × all sources ───────────────────────────
+// ─── Master feed fetcher: all topics × all 10 sources (100 posts each) ───────
+// Per-source cap: 100 posts returned per fetch call.
+// Sources: Reddit, HackerNews, DEV.to, GitHub, Medium, YouTube,
+//          Stack Overflow, Mastodon, Lobsters, arXiv
+const PER_SOURCE_CAP = 100;
+
 async function fetchAllTopicPosts(interests = [], role = '') {
-  // Build list of topics to search (interests first, then role keyword as fallback)
-  const keywords = interests
-    .map(i => INTEREST_TO_KEYWORDS[i])
-    .filter(Boolean);
+  const keywords = interests.map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
   const roleKeyword = ROLE_TO_KEYWORDS[role];
   if (keywords.length === 0 && roleKeyword) keywords.push(roleKeyword);
   if (keywords.length === 0) keywords.push('technology startup programming');
-
-  // Use all unique topics — no cap, maximize coverage
   const topics = [...new Set(keywords)];
 
-  // For each topic: fetch Reddit, HN, DEV.to, GitHub, Medium — each owns its limits
-  const redditPromises  = topics.map(kw => fetchRedditByKeyword(kw));
-  const hnPromises      = topics.map(kw => fetchHNByKeyword(kw));
-  const githubPromises  = topics.map(kw => fetchGitHubByKeyword(kw));
-  const youtubePromises = topics.map(kw => fetchYouTubeByKeyword(kw));
-  const devtoTags       = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
-  const mediumTags      = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
-  const devtoPromises   = devtoTags.map(tag => fetchDevToByTag(tag));
-  const mediumPromises  = mediumTags.map(tag => fetchMediumByTag(tag));
+  // Tag mappings per new source
+  const soTags      = [...new Set(interests.map(i => INTEREST_TO_SO_TAG[i]).filter(Boolean))];
+  const mastoTags   = [...new Set(interests.map(i => INTEREST_TO_MASTODON_TAG[i]).filter(Boolean))];
+  const lobTags     = [...new Set(interests.map(i => LOBSTERS_TAGS[i]).filter(Boolean))];
+  const arxivKws    = [...new Set(interests.map(i => INTEREST_TO_ARXIV[i]).filter(Boolean))];
+  const devtoTags   = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
+  const mediumTags  = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
 
-  const [redditResults, hnResults, githubResults, devtoResults, mediumResults, youtubeResults] = await Promise.all([
-    Promise.all(redditPromises).catch(() => []),
-    Promise.all(hnPromises).catch(() => []),
-    Promise.all(githubPromises).catch(() => []),
-    Promise.all(devtoPromises).catch(() => []),
-    Promise.all(mediumPromises).catch(() => []),
-    Promise.all(youtubePromises).catch(() => []),
+  const cap = arr => arr.slice(0, PER_SOURCE_CAP);
+
+  const [
+    redditResults, hnResults, githubResults, youtubeResults,
+    devtoResults, mediumResults,
+    soResults, mastoResults, lobResults, arxivResults,
+  ] = await Promise.all([
+    Promise.all(topics.map(kw => fetchRedditByKeyword(kw))).catch(() => []),
+    Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => []),
+    Promise.all(topics.map(kw => fetchGitHubByKeyword(kw))).catch(() => []),
+    Promise.all(topics.map(kw => fetchYouTubeByKeyword(kw))).catch(() => []),
+    Promise.all(devtoTags.map(t => fetchDevToByTag(t))).catch(() => []),
+    Promise.all(mediumTags.map(t => fetchMediumByTag(t))).catch(() => []),
+    Promise.all(soTags.map(t => fetchStackOverflowByTag(t))).catch(() => []),
+    Promise.all(mastoTags.map(t => fetchMastodonByTag(t))).catch(() => []),
+    Promise.all(lobTags.map(t => fetchLobstersByTag(t))).catch(() => []),
+    Promise.all(arxivKws.map(k => fetchArxivByKeyword(k))).catch(() => []),
   ]);
 
   return {
-    reddit:  redditResults.flat(),
-    hn:      hnResults.flat(),
-    github:  githubResults.flat(),
-    devto:   devtoResults.flat(),
-    medium:  mediumResults.flat(),
-    youtube: youtubeResults.flat(),
+    reddit:       cap(redditResults.flat()),
+    hn:           cap(hnResults.flat()),
+    github:       cap(githubResults.flat()),
+    devto:        cap(devtoResults.flat()),
+    medium:       cap(mediumResults.flat()),
+    youtube:      cap(youtubeResults.flat()),
+    stackoverflow: cap(soResults.flat()),
+    mastodon:     cap(mastoResults.flat()),
+    lobsters:     cap(lobResults.flat()),
+    arxiv:        cap(arxivResults.flat()),
   };
 }
 
@@ -930,11 +1136,19 @@ async function refreshGlobalFeedCache() {
   const commonRole = 'Engineer / Developer';
   try {
     const result = await fetchAllTopicPosts(commonInterests, commonRole);
-    const all = [...result.reddit, ...result.hn, ...result.github, ...result.devto, ...result.medium, ...result.youtube];
+    const all = [
+      ...result.reddit, ...result.hn, ...result.github, ...result.devto,
+      ...result.medium, ...result.youtube, ...result.stackoverflow,
+      ...result.mastodon, ...result.lobsters, ...result.arxiv,
+    ];
     if (all.length > 0) {
       globalFeedCache.posts = all;
       globalFeedCache.refreshedAt = Date.now();
-      logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts indexed`, '#4ADE80');
+      logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
+      // Persist to DB in background
+      savePostsToDB(all).then(n => {
+        if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
+      }).catch(() => {});
     }
   } catch (e) {
     console.warn('globalFeedCache refresh error:', e.message);
@@ -1552,8 +1766,108 @@ async function migrateDB() {
       )
     `);
 
+    // Feed post cache — stores fetched external posts across restarts
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS feed_posts_cache (
+        id              TEXT PRIMARY KEY,
+        source          TEXT NOT NULL,
+        title           TEXT,
+        content         TEXT,
+        author_name     TEXT,
+        source_url      TEXT,
+        media_url       TEXT,
+        media_type      TEXT,
+        topic           TEXT,
+        likes_count     INTEGER DEFAULT 0,
+        comments_count  INTEGER DEFAULT 0,
+        post_created_at TIMESTAMPTZ,
+        fetched_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
+
     console.log('✅ DB migration applied');
   } catch (err) { console.warn('DB migration:', err.message); }
+}
+
+// ─── Save external posts to persistent DB cache ───────────────────────────────
+const MAX_CACHED_DB_POSTS = 100000;
+
+async function savePostsToDB(posts) {
+  if (!db.isConnected() || !posts.length) return;
+  let saved = 0;
+  for (const p of posts) {
+    try {
+      await db.query(
+        `INSERT INTO feed_posts_cache
+           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ON CONFLICT (id) DO UPDATE SET
+           likes_count    = EXCLUDED.likes_count,
+           comments_count = EXCLUDED.comments_count,
+           fetched_at     = NOW()`,
+        [
+          p.id, p.source,
+          (p.title || '').slice(0, 500),
+          (p.content || '').slice(0, 2000),
+          p.author?.name || null,
+          p.sourceUrl || null,
+          p.mediaUrl || null,
+          p.mediaType || null,
+          p.topic || null,
+          p.likesCount || 0,
+          p.commentsCount || 0,
+          p.createdAt || new Date().toISOString(),
+        ]
+      );
+      saved++;
+    } catch { /* skip individual bad rows */ }
+  }
+  // Trim to cap — keep newest posts
+  db.query(
+    `DELETE FROM feed_posts_cache WHERE id IN (
+       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
+     )`, [MAX_CACHED_DB_POSTS]
+  ).catch(() => {});
+  return saved;
+}
+
+// ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
+async function getPostsFromDB(topics = [], limit = 500) {
+  if (!db.isConnected()) return [];
+  try {
+    const { rows } = topics.length
+      ? await db.query(
+          `SELECT * FROM feed_posts_cache
+           WHERE topic = ANY($1::text[])
+           ORDER BY post_created_at DESC, likes_count DESC
+           LIMIT $2`,
+          [topics, limit]
+        )
+      : await db.query(
+          `SELECT * FROM feed_posts_cache
+           ORDER BY post_created_at DESC, likes_count DESC
+           LIMIT $1`,
+          [limit]
+        );
+    return rows.map(r => ({
+      id:          r.id,
+      source:      r.source,
+      title:       r.title,
+      content:     r.content,
+      sourceUrl:   r.source_url,
+      mediaUrl:    r.media_url,
+      mediaType:   r.media_type,
+      topic:       r.topic,
+      likesCount:  r.likes_count,
+      commentsCount: r.comments_count,
+      createdAt:   r.post_created_at,
+      author:      { name: r.author_name },
+      isExternal:  true,
+    }));
+  } catch { return []; }
 }
 
 // ─── Seed groups into DB and load back into memory ────────────────────────────
@@ -1903,10 +2217,18 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch posts from all live sources for user's topics
-  const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw, medium: mediumRaw, youtube: youtubeRaw } = await fetchAllTopicPosts(
+  // Fetch posts from all 10 live sources for user's topics
+  const liveResult = await fetchAllTopicPosts(
     prefs.interests || [], prefs.role || ''
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], github: [], devto: [], medium: [], youtube: [] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[] }; });
+
+  const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw,
+          medium: mediumRaw, youtube: youtubeRaw,
+          stackoverflow: soRaw, mastodon: mastoRaw, lobsters: lobRaw, arxiv: arxivRaw } = liveResult;
+
+  // Persist new posts to DB in background (non-blocking)
+  const allLive = [...redditRaw,...hnRaw,...githubRaw,...devtoRaw,...mediumRaw,...youtubeRaw,...soRaw,...mastoRaw,...lobRaw,...arxivRaw];
+  savePostsToDB(allLive).catch(() => {});
 
   // Fetch live posts from all joined Reddit groups
   const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
@@ -1920,6 +2242,10 @@ app.get('/feed', authenticate, async (req, res) => {
   const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
   const mediumPosts  = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
   const youtubePosts = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
+  const soPosts     = soRaw.map(p => mapExternalPost(p, 'stackoverflow'));
+  const mastoPosts  = mastoRaw.map(p => mapExternalPost(p, 'mastodon'));
+  const lobPosts    = lobRaw.map(p => mapExternalPost(p, 'lobsters'));
+  const arxivPosts  = arxivRaw.map(p => mapExternalPost(p, 'arxiv'));
 
   // Connected social platform posts — rendered as regular native posts (no connectedBoost/isSocialCard)
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
@@ -1959,7 +2285,12 @@ app.get('/feed', authenticate, async (req, res) => {
   }
 
   // Include background-cached global posts (already fetched, mapped by source)
+  // Background-cached posts (global refresh + DB)
   const cachedMapped = globalFeedCache.posts.map(p => mapExternalPost(p, p.source || 'reddit'));
+
+  // DB-persisted posts (topic-filtered, sorted by recency + engagement)
+  const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
+  const dbPosts = (await getPostsFromDB(userTopics, 300)).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
@@ -1976,7 +2307,12 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Deduplicate by id across all sources
   const seen = new Set();
-  const all  = [...internal, ...joinedGroupPosts, ...connectedSocialPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...youtubePosts, ...cachedMapped].filter(p => {
+  const all  = [
+    ...internal, ...joinedGroupPosts, ...connectedSocialPosts,
+    ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts,
+    ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
+    ...lobPosts, ...arxivPosts, ...cachedMapped, ...dbPosts,
+  ].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -2008,12 +2344,17 @@ app.get('/feed', authenticate, async (req, res) => {
   res.json({
     posts: mixed,
     sources: {
-      reddit:       redditPosts.length,
-      hackernews:   hnPosts.length,
-      github:       githubPosts.length,
-      devto:        devtoPosts.length,
-      medium:       mediumPosts.length,
-      youtube:      youtubePosts.length,
+      reddit:        redditPosts.length,
+      hackernews:    hnPosts.length,
+      github:        githubPosts.length,
+      devto:         devtoPosts.length,
+      medium:        mediumPosts.length,
+      youtube:       youtubePosts.length,
+      stackoverflow: soPosts.length,
+      mastodon:      mastoPosts.length,
+      lobsters:      lobPosts.length,
+      arxiv:         arxivPosts.length,
+      db:            dbPosts.length,
       cached:       cachedMapped.length,
       joinedGroups: joinedGroupPosts.length,
       internal:     internal.length,

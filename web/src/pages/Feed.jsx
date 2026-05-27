@@ -17,19 +17,23 @@ function initials(name = '') {
 }
 
 const SOURCE_META = {
-  reddit:      { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
-  hackernews:  { label: 'Hacker News',   color: '#FF6600', icon: '🔶' },
-  devto:       { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
-  linkedin:    { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
-  twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
-  facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
-  instagram:   { label: 'Instagram',     color: '#E1306C', icon: '📸' },
-  tiktok:      { label: 'TikTok',        color: '#010101', icon: '🎵' },
-  github:      { label: 'GitHub',        color: '#24292F', icon: '🐙' },
-  youtube:     { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
-  medium:      { label: 'Medium',        color: '#1A8917', icon: '📝' },
-  discord:     { label: 'Discord',       color: '#5865F2', icon: '💬' },
-  uficonnect:  { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
+  reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
+  hackernews:    { label: 'Hacker News',   color: '#FF6600', icon: '🔶' },
+  devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
+  linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
+  twitter:       { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
+  facebook:      { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
+  instagram:     { label: 'Instagram',     color: '#E1306C', icon: '📸' },
+  tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
+  github:        { label: 'GitHub',        color: '#24292F', icon: '🐙' },
+  youtube:       { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
+  medium:        { label: 'Medium',        color: '#1A8917', icon: '📝' },
+  discord:       { label: 'Discord',       color: '#5865F2', icon: '💬' },
+  stackoverflow: { label: 'Stack Overflow',color: '#F48024', icon: '📚' },
+  mastodon:      { label: 'Mastodon',      color: '#6364FF', icon: '🦣' },
+  lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: '🦞' },
+  arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: '🔬' },
+  uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
 
 const CATEGORY_COLORS = {
