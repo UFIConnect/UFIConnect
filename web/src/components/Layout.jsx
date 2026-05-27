@@ -3,12 +3,16 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 
+const IS_LOCAL = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/groups',        icon: '🔍', label: 'Discover'     },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/messages',      icon: '💬', label: 'Messages'     },
-  { to: '/agents',        icon: '🤖', label: 'Agents'       },
+  // Agents tab — visible on localhost only
+  ...(IS_LOCAL ? [{ to: '/agents', icon: '🤖', label: 'Agents' }] : []),
   { to: '/profile',       icon: '👤', label: 'Profile'      },
 ];
 

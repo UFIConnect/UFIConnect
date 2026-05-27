@@ -637,18 +637,18 @@ export default function AgentDashboard() {
     <Layout>
       <style>{`
         @keyframes agentIdle {
-          0%,100% { transform: translate(-50%,-50%) scale(1);      }
-          50%      { transform: translate(-50%,-54%) scale(1.06);   }
+          0%,100% { transform: scale(1);              }
+          50%      { transform: translateY(-4px) scale(1.06); }
         }
         @keyframes agentWalk {
-          0%,100% { transform: translate(-50%,-50%);  }
-          25%      { transform: translate(-50%,-56%);  }
-          75%      { transform: translate(-50%,-44%);  }
+          0%,100% { transform: translateY(0px);  }
+          25%      { transform: translateY(-6px); }
+          75%      { transform: translateY(-6px); }
         }
         @keyframes agentArrive {
-          0%   { transform: translate(-50%,-50%) scale(0.7); opacity: 0; }
-          60%  { transform: translate(-50%,-54%) scale(1.15); }
-          100% { transform: translate(-50%,-50%) scale(1);   opacity: 1; }
+          0%   { transform: scale(0.6); opacity: 0; }
+          60%  { transform: scale(1.18); }
+          100% { transform: scale(1);   opacity: 1; }
         }
         @keyframes agentTaskFade {
           from { opacity: 0; transform: translateY(3px); }

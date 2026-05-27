@@ -16,6 +16,10 @@ import ConnectedAccounts from './pages/ConnectedAccounts';
 import Settings          from './pages/Settings';
 import AgentDashboard    from './pages/AgentDashboard';
 
+// Agents are only accessible on localhost — never exposed on the public domain
+const IS_LOCAL = typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
   if (loading) return <div className="splash">Loading…</div>;
@@ -76,9 +80,11 @@ export default function App() {
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
       }/>
 
-      {/* Agent Control Room */}
+      {/* Agent Control Room — localhost only */}
       <Route path="/agents" element={
-        <RequireAuth><AgentDashboard /></RequireAuth>
+        IS_LOCAL
+          ? <RequireAuth><AgentDashboard /></RequireAuth>
+          : <Navigate to="/" replace />
       }/>
 
       {/* Fallback */}
