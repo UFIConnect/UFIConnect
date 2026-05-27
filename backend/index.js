@@ -1060,7 +1060,7 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
 // Per-source cap: 100 posts returned per fetch call.
 // Sources: Reddit, HackerNews, DEV.to, GitHub, Medium, YouTube,
 //          Stack Overflow, Mastodon, Lobsters, arXiv
-const PER_SOURCE_CAP = 100;
+const PER_SOURCE_CAP = 75;
 
 async function fetchAllTopicPosts(interests = [], role = '') {
   const keywords = interests.map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
@@ -1127,11 +1127,22 @@ function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
 async function refreshGlobalFeedCache() {
+  // 36 topics × 10 source types = 360 live endpoint calls per refresh cycle
   const commonInterests = [
-    'AI & Machine Learning','SaaS','Design Systems','Growth Marketing',
-    'Data Science','Open Source','Frontend Dev','Backend Dev',
-    'Venture Capital','Content Creator','Remote Work','Cybersecurity',
-    'Blockchain','FinTech','Health Tech','EdTech',
+    // Tech & Engineering
+    'AI & Machine Learning','Generative AI','LLMs & Chatbots','Computer Vision',
+    'Data Science','Developer Tools','Open Source','Cybersecurity',
+    'Cloud & DevOps','Frontend Dev','Backend Dev','Mobile Dev',
+    'Web3 / Crypto','Game Dev','No-Code / Low-Code',
+    // Business & Startups
+    'SaaS','Venture Capital','Growth Marketing','Design Systems',
+    'UI/UX Design','SEO & Content','Newsletter & Writing',
+    // Finance & Career
+    'FinTech','Career Growth','Productivity','Freelancing','Side Projects',
+    // Media & Community
+    'Content Creator','Remote Work','EdTech','Health Tech','Climate Tech',
+    // Lifestyle (broad appeal)
+    'Fitness & Gym','Travel & Adventure','Cooking & Recipes','Music Discovery',
   ];
   const commonRole = 'Engineer / Developer';
   try {
@@ -2271,7 +2282,7 @@ app.get('/feed', authenticate, async (req, res) => {
         return { p, score: matchScore };
       })
       .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .slice(0, 75);
 
     scored.forEach(({ p }) => {
       connectedSocialPosts.push({
@@ -2298,7 +2309,7 @@ app.get('/feed', authenticate, async (req, res) => {
   }
 
   // ── Indeed job posts in feed ───────────────────────────────────────────────
-  const indeedPosts = INDEED_JOBS.slice(0, 5).map(j => ({
+  const indeedPosts = INDEED_JOBS.slice(0, 75).map(j => ({
     id:          `indeed_${j.id}`,
     authorId:    'indeed_jobs',
     groupId:     'ext_indeed',
