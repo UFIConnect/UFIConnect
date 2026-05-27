@@ -36,6 +36,7 @@ const SOURCE_META = {
   twitter:     { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
   facebook:    { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
   instagram:   { label: 'Instagram',     color: '#E1306C', icon: '📸' },
+  tiktok:      { label: 'TikTok',        color: '#010101', icon: '🎵' },
   github:      { label: 'GitHub',        color: '#24292F', icon: '🐙' },
   youtube:     { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
   medium:      { label: 'Medium',        color: '#1A8917', icon: '📝' },
@@ -262,7 +263,7 @@ function PostCard({ post, onLike }) {
         </span>
       </div>
 
-      {/* Author (internal posts only) */}
+      {/* Author — internal posts show full name; social posts show handle */}
       {!post.isExternal && (
         <div className="post-header" style={{ marginBottom: 8 }}>
           <div className="avatar avatar-md">{initials(post.author?.name)}</div>
@@ -274,9 +275,22 @@ function PostCard({ post, onLike }) {
           </div>
         </div>
       )}
+      {/* Social platform posts — show handle */}
+      {post.isExternal && post.connectedBoost && post.author?.name && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: `${src.color}20`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.85rem', flexShrink: 0 }}>
+            {src.icon}
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '.82rem', color: 'var(--text)' }}>{post.author.name}</div>
+            <div style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{post.sourceLabel || src.label}</div>
+          </div>
+        </div>
+      )}
 
-      {/* Title for external posts */}
-      {post.title && post.isExternal && (
+      {/* Title for external article posts */}
+      {post.title && post.isExternal && !post.connectedBoost && (
         <a
           href={postUrl}
           target="_blank"
@@ -295,16 +309,45 @@ function PostCard({ post, onLike }) {
         {(post.content || '').slice(0, 380)}{(post.content || '').length > 380 ? '…' : ''}
       </p>
 
-      {/* Media: cover image (DEV.to, Reddit image posts, social) */}
+      {/* Media: images */}
       {post.mediaUrl && post.mediaType === 'image' && (
         <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden' }}>
           <img
             src={post.mediaUrl}
-            alt={post.title || 'Article image'}
-            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 320 }}
+            alt={post.title || 'Post image'}
+            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 380 }}
             onError={e => { e.currentTarget.style.display = 'none'; }}
           />
         </div>
+      )}
+
+      {/* Media: video thumbnail with play overlay (TikTok, social video posts) */}
+      {post.mediaUrl && post.mediaType === 'video' && (
+        <a href={post.sourceUrl || '#'} target="_blank" rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()} style={{ textDecoration: 'none', display: 'block' }}>
+          <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000', cursor: 'pointer' }}>
+            <img
+              src={post.mediaUrl}
+              alt="Video thumbnail"
+              style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.85 }}
+              onError={e => { e.currentTarget.style.display = 'none'; }}
+            />
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: `${src.color}dd`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
+                <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
+              </div>
+            </div>
+            {post.source === 'tiktok' && (
+              <div style={{ position: 'absolute', bottom: 10, right: 12,
+                background: 'rgba(0,0,0,.6)', borderRadius: 6, padding: '2px 8px',
+                fontSize: '.72rem', color: '#fff', fontWeight: 700 }}>
+                🎵 TikTok
+              </div>
+            )}
+          </div>
+        </a>
       )}
 
       {/* Footer */}

@@ -6,8 +6,7 @@ const IS_LOCAL = typeof window !== 'undefined' &&
 
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
-  { to: '/groups',        icon: '🔍', label: 'Discover'     },
-  { to: '/post',          icon: '✏️', label: 'Post'         },
+  { to: '/search',        icon: '🔍', label: 'Search'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
   // Agents tab — visible on localhost only
@@ -83,23 +82,8 @@ export default function Layout({ children }) {
             end={to === '/'}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
-            {to === '/post' ? (
-              <>
-                <span
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 38, height: 38, borderRadius: '50%', background: 'var(--primary)',
-                    color: '#fff', fontSize: '1.1rem', marginBottom: 2,
-                  }}
-                >{icon}</span>
-                <span style={{ fontSize: '.6rem', display: 'block' }}>{label}</span>
-              </>
-            ) : (
-              <>
-                <span className="nav-icon">{icon}</span>
-                {label}
-              </>
-            )}
+            <span className="nav-icon">{icon}</span>
+            {label}
           </NavLink>
         ))}
       </nav>

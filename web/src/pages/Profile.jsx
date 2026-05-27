@@ -22,6 +22,7 @@ const SOCIALS = [
   { key: 'github',    label: 'GitHub',     icon: '🐙', color: '#24292F', loginUrl: 'https://github.com/login' },
   { key: 'twitter',   label: 'X / Twitter',icon: '🐦', color: '#000000', loginUrl: 'https://twitter.com/i/flow/login' },
   { key: 'instagram', label: 'Instagram',  icon: '📸', color: '#E1306C', loginUrl: 'https://www.instagram.com/accounts/login/' },
+  { key: 'tiktok',    label: 'TikTok',     icon: '🎵', color: '#010101', loginUrl: 'https://www.tiktok.com/login' },
   { key: 'discord',   label: 'Discord',    icon: '💬', color: '#5865F2', loginUrl: 'https://discord.com/login' },
   { key: 'youtube',   label: 'YouTube',    icon: '▶️', color: '#FF0000', loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube' },
   { key: 'reddit',    label: 'Reddit',     icon: '🟠', color: '#FF4500', loginUrl: 'https://www.reddit.com/login' },
@@ -32,18 +33,22 @@ const SOCIALS = [
   { key: 'indeed',    label: 'Indeed',     icon: '💼', color: '#003A9B', loginUrl: 'https://secure.indeed.com/account/login' },
 ];
 
-const TABS = ['Overview', 'Socials', 'Attachments'];
+const TABS = ['Overview', 'Skills', 'Socials', 'Attachments'];
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
-  const [tab,       setTab]       = useState('Overview');
-  const [editing,   setEditing]   = useState(false);
-  const [form,      setForm]      = useState(null);
-  const [links,     setLinks]     = useState(null);
-  const [saving,    setSaving]    = useState(false);
-  const [error,     setError]     = useState('');
-  const [connected, setConnected] = useState({});
-  const [platforms, setPlatforms] = useState([]);
+  const [tab,         setTab]         = useState('Overview');
+  const [editing,     setEditing]     = useState(false);
+  const [form,        setForm]        = useState(null);
+  const [links,       setLinks]       = useState(null);
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+  const [connected,   setConnected]   = useState({});
+  const [platforms,   setPlatforms]   = useState([]);
+  // Skills tab state
+  const [skillInput,  setSkillInput]  = useState('');
+  const [skills,      setSkills]      = useState([]);
+  const [skillSaving, setSkillSaving] = useState(false);
 
   useEffect(() => {
     client.get('/social/platforms')
@@ -57,6 +62,32 @@ export default function Profile() {
       })
       .catch(() => {});
   }, []);
+
+  // Sync skills from profile when profile loads or tab changes
+  useEffect(() => {
+    if (profile?.skills) setSkills(profile.skills);
+  }, [profile, tab]);
+
+  function addSkill() {
+    const trimmed = skillInput.trim();
+    if (!trimmed || skills.includes(trimmed)) { setSkillInput(''); return; }
+    setSkills(prev => [...prev, trimmed]);
+    setSkillInput('');
+  }
+
+  function removeSkill(s) {
+    setSkills(prev => prev.filter(x => x !== s));
+  }
+
+  async function saveSkills() {
+    setSkillSaving(true);
+    try {
+      const payload = { name: profile.name, title: profile.title, bio: profile.bio, organization: profile.organization, skills, links: profile.links || {} };
+      const { data } = await client.patch('/profile', payload);
+      updateProfileLocally(data.profile || data);
+    } catch {}
+    finally { setSkillSaving(false); }
+  }
 
   function startEdit() {
     setForm({
@@ -141,6 +172,9 @@ export default function Profile() {
 
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
+          <Link to={`/u/${profile.id}`}>
+            <button className="btn btn-ghost btn-sm">👁 Public view</button>
+          </Link>
           <Link to="/profile/connected-accounts">
             <button className="btn btn-ghost btn-sm">🔗 Connected accounts</button>
           </Link>
@@ -148,19 +182,22 @@ export default function Profile() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0 }}>
-        {TABS.map((t) => (
-          <button key={t} onClick={() => { setTab(t); setEditing(false); }}
-            style={{
-              padding:'10px 18px', border:'none', background:'none', cursor:'pointer',
-              fontWeight: tab === t ? 700 : 500,
-              color: tab === t ? 'var(--primary)' : 'var(--muted)',
-              borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
-              fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
-            }}>
-            {t === 'Attachments' ? '📎 Attachments' : '👤 Overview'}
-          </button>
-        ))}
+      <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
+        {TABS.map((t) => {
+          const icons = { Overview: '👤', Skills: '🛠', Socials: '🔗', Attachments: '📎' };
+          return (
+            <button key={t} onClick={() => { setTab(t); setEditing(false); }}
+              style={{
+                padding:'10px 16px', border:'none', background:'none', cursor:'pointer', whiteSpace:'nowrap',
+                fontWeight: tab === t ? 700 : 500,
+                color: tab === t ? 'var(--primary)' : 'var(--muted)',
+                borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
+                fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
+              }}>
+              {icons[t]} {t}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── OVERVIEW TAB ─────────────────────────────────────── */}
@@ -250,6 +287,58 @@ export default function Profile() {
             <button className="btn btn-ghost" type="button" onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </form>
+      )}
+
+      {/* ── SKILLS TAB ───────────────────────────────────────── */}
+      {tab === 'Skills' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div className="card">
+            <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Your Skills</h3>
+
+            {/* Existing badges */}
+            {skills.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                {skills.map(s => (
+                  <span
+                    key={s}
+                    className="tag tag-primary"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: '.82rem' }}
+                  >
+                    {s}
+                    <button
+                      type="button"
+                      onClick={() => removeSkill(s)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, lineHeight: 1, fontSize: '.85rem', opacity: .7 }}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '.88rem', marginBottom: 14 }}>No skills added yet. Add some below.</p>
+            )}
+
+            {/* Add input */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="form-input"
+                placeholder="Add a skill (e.g. React, Python, UX Design)…"
+                value={skillInput}
+                onChange={e => setSkillInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }}
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-primary btn-sm" type="button" onClick={addSkill} style={{ flexShrink: 0 }}>
+                Add
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
+              <button className="btn btn-primary btn-sm" onClick={saveSkills} disabled={skillSaving}>
+                {skillSaving ? <span className="spinner" /> : 'Save skills'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── SOCIALS TAB ──────────────────────────────────────── */}

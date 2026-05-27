@@ -195,6 +195,67 @@ const INTEREST_TO_SUBREDDIT = {
   'Side Projects':            ['SideProject','Entrepreneur'],
   'Freelancing':              ['freelance','digitalnomad'],
   'Social Impact':            ['nonprofit','socialentrepreneurship'],
+  // Health & Fitness
+  'Fitness & Gym':            ['Fitness','GYM'],
+  'Yoga & Meditation':        ['yoga','Meditation'],
+  'Running & Cycling':        ['running','cycling'],
+  'Nutrition & Diet':         ['nutrition','loseit'],
+  'Sports & Athletics':       ['sports','AmateurAthetics'],
+  // Music
+  'Music Discovery':          ['Music','ifyoulikeblank'],
+  'Live Events & Concerts':   ['concerts','Music'],
+  'Songwriting':              ['songwriting','WeAreTheMusicMakers'],
+  'DJing & Remixing':         ['DJs','edmproduction'],
+  // Sports
+  'Football & Soccer':        ['soccer','football'],
+  'Basketball':               ['nba','Basketball'],
+  'Tennis & Golf':            ['tennis','golf'],
+  'Combat Sports':            ['MMA','Boxing'],
+  'Esports & Competitive Gaming': ['esports','competitivegaming'],
+  // Arts & Culture
+  'Art & Painting':           ['ArtFundamentals','painting'],
+  'Theatre & Performing Arts': ['theater','acting'],
+  'Museums & Galleries':      ['museums','ArtHistory'],
+  'Cultural Events':          ['festivals','CulturalExchange'],
+  // Food & Cooking
+  'Cooking & Recipes':        ['Cooking','recipes'],
+  'Restaurant Culture':       ['food','restaurants'],
+  'Wine & Spirits':           ['wine','cocktails'],
+  'Coffee Culture':           ['Coffee','espresso'],
+  'Baking & Pastry':          ['Baking','ArtisanBread'],
+  // Travel
+  'Travel & Adventure':       ['travel','solotravel'],
+  'Solo Travel':              ['solotravel','backpacking'],
+  'Cultural Tourism':         ['travel','TravelHacks'],
+  'Budget Travel':            ['solotravel','Shoestring'],
+  // Fashion
+  'Fashion & Style':          ['malefashionadvice','femalefashionadvice'],
+  'Streetwear':               ['streetwear','Sneakers'],
+  'Sustainable Fashion':      ['sustainablefashion','ZeroWaste'],
+  'Beauty & Skincare':        ['SkincareAddiction','MakeupAddiction'],
+  // Books & Literature
+  'Reading & Book Clubs':     ['books','bookclub'],
+  'Fiction & Storytelling':   ['books','Fantasy'],
+  'Non-Fiction & Learning':   ['books','selfimprovement'],
+  'Poetry & Creative Writing': ['Poetry','writing'],
+  // Gaming
+  'Video Games':              ['gaming','Games'],
+  'Mobile Gaming':            ['AndroidGaming','iosgaming'],
+  'Game Streaming & Content': ['Twitch','letsplay'],
+  'Tabletop & Board Games':   ['boardgames','DnD'],
+  // Home & Lifestyle
+  'Interior Design & Decor':  ['interiordesign','malelivingspace'],
+  'Home Improvement':         ['HomeImprovement','DIY'],
+  'Gardening & Plants':       ['gardening','houseplants'],
+  'Pet Ownership':            ['pets','dogs'],
+  // Mindfulness & Philosophy
+  'Mindfulness & Meditation': ['Meditation','Mindfulness'],
+  'Philosophy & Ethics':      ['philosophy','Stoicism'],
+  'Spirituality':             ['spirituality','religion'],
+  // Family & Environment
+  'Parenting & Family':       ['Parenting','daddit'],
+  'Environmental Activism':   ['environment','climate'],
+  'Zero Waste Living':        ['ZeroWaste','sustainability'],
 };
 
 // Role → subreddits
@@ -332,6 +393,67 @@ const INTEREST_TO_KEYWORDS = {
   'Side Projects':            'side project indie maker build',
   'Freelancing':              'freelancing freelancer contract work',
   'Social Impact':            'social impact nonprofit sustainability',
+  // Health & Fitness
+  'Fitness & Gym':            'fitness gym workout strength training',
+  'Yoga & Meditation':        'yoga meditation mindfulness breathwork',
+  'Running & Cycling':        'running cycling marathon triathlon',
+  'Nutrition & Diet':         'nutrition diet meal prep healthy eating',
+  'Sports & Athletics':       'sports athletics performance training',
+  // Music
+  'Music Discovery':          'music new releases albums playlist',
+  'Live Events & Concerts':   'concerts live music events festivals',
+  'Songwriting':              'songwriting lyrics composition music',
+  'DJing & Remixing':         'DJ mixing remixing electronic music',
+  // Sports
+  'Football & Soccer':        'football soccer Premier League MLS',
+  'Basketball':               'basketball NBA college hoops',
+  'Tennis & Golf':            'tennis golf ATP PGA tournament',
+  'Combat Sports':            'MMA boxing UFC wrestling martial arts',
+  'Esports & Competitive Gaming': 'esports competitive gaming tournament',
+  // Arts & Culture
+  'Art & Painting':           'art painting illustration gallery',
+  'Theatre & Performing Arts': 'theatre performing arts stage acting',
+  'Museums & Galleries':      'museum gallery exhibition art culture',
+  'Cultural Events':          'cultural events festivals community arts',
+  // Food & Cooking
+  'Cooking & Recipes':        'cooking recipes home chef meals',
+  'Restaurant Culture':       'restaurant food dining culinary',
+  'Wine & Spirits':           'wine spirits cocktails tasting',
+  'Coffee Culture':           'coffee espresso specialty barista',
+  'Baking & Pastry':          'baking bread pastry dessert cakes',
+  // Travel
+  'Travel & Adventure':       'travel adventure explore destination',
+  'Solo Travel':              'solo travel backpacking independent journey',
+  'Cultural Tourism':         'cultural tourism heritage history world',
+  'Budget Travel':            'budget travel cheap flights hostels',
+  // Fashion
+  'Fashion & Style':          'fashion style outfit trends clothing',
+  'Streetwear':               'streetwear hypebeast sneakers hype drop',
+  'Sustainable Fashion':      'sustainable fashion ethical slow fashion',
+  'Beauty & Skincare':        'beauty skincare makeup wellness routine',
+  // Books & Literature
+  'Reading & Book Clubs':     'books reading book club literature',
+  'Fiction & Storytelling':   'fiction storytelling novels narrative',
+  'Non-Fiction & Learning':   'non-fiction learning self-improvement books',
+  'Poetry & Creative Writing': 'poetry creative writing prose writing',
+  // Gaming
+  'Video Games':              'video games gaming releases reviews',
+  'Mobile Gaming':            'mobile gaming iOS Android games',
+  'Game Streaming & Content': 'game streaming Twitch YouTube content creator',
+  'Tabletop & Board Games':   'tabletop board games D&D card games',
+  // Home & Lifestyle
+  'Interior Design & Decor':  'interior design home decor renovation',
+  'Home Improvement':         'home improvement DIY renovation projects',
+  'Gardening & Plants':       'gardening plants growing outdoor garden',
+  'Pet Ownership':            'pets dogs cats animal care',
+  // Mindfulness
+  'Mindfulness & Meditation': 'mindfulness meditation mental clarity',
+  'Philosophy & Ethics':      'philosophy ethics stoicism thinking',
+  'Spirituality':             'spirituality faith wellness personal growth',
+  // Family & Environment
+  'Parenting & Family':       'parenting family kids child development',
+  'Environmental Activism':   'environmental activism climate protest green',
+  'Zero Waste Living':        'zero waste sustainability eco-friendly living',
 };
 
 // DEV Community tag mapping (one tag per interest)
@@ -907,31 +1029,78 @@ const PLATFORMS = {
 };
 
 // ─── Mock social posts per platform ──────────────────────────────────────────
+// Each post has `topics[]` — matched against user's selected interests.
+// Photos: picsum.photos (free, deterministic, no key). Videos: mediaType:'video'
 const SOCIAL_POSTS = {
   facebook: [
-    { id: 'fb1', platform: 'facebook', source: 'Product Builders Group', author: 'James Liu', avatar: 'JL', content: 'Our PM community just hit 50k members. Running a free workshop on AI feature prioritisation next Thursday — link in comments.', time: ago(1.2*H), likes: 312, comments: 47 },
-    { id: 'fb2', platform: 'facebook', source: 'Remote Work Collective', author: 'Priya Nair', avatar: 'PN', content: 'Poll results: 78% of remote workers say async-first culture is the single biggest driver of productivity. Not tools, not meetings — culture.', time: ago(5*H), likes: 891, comments: 134 },
-    { id: 'fb3', platform: 'facebook', source: 'Startup Founders Hub', author: 'Marco Rossi', avatar: 'MR', content: 'Just closed our Series A. 18 months of runway, 8 months of hard work. The fundraising advice I wish I had: your deck tells a story, not a business plan.', time: ago(1*D), likes: 2103, comments: 289 },
+    { id: 'fb1',  platform: 'facebook', source: 'Product Builders Group',   author: 'James Liu',     topics: ['saas','product manager','career growth'], content: 'Our PM community just hit 50k members. Running a free workshop on AI feature prioritisation next Thursday — link in comments.', time: ago(1.2*H), likes: 312,   comments: 47  },
+    { id: 'fb2',  platform: 'facebook', source: 'Remote Work Collective',    author: 'Priya Nair',    topics: ['remote work','productivity','future of work'], content: 'Poll results: 78% of remote workers say async-first culture is the single biggest driver of productivity. Not tools, not meetings — culture.', time: ago(5*H), likes: 891, comments: 134, mediaUrl: 'https://picsum.photos/seed/fb-remote/800/420', mediaType: 'image' },
+    { id: 'fb3',  platform: 'facebook', source: 'Startup Founders Hub',      author: 'Marco Rossi',   topics: ['founder / entrepreneur','bootstrapping','fundraising'], content: 'Just closed our Series A. 18 months of runway, 8 months of hard work. The fundraising advice I wish I had: your deck tells a story, not a business plan.', time: ago(1*D), likes: 2103, comments: 289 },
+    { id: 'fb4',  platform: 'facebook', source: 'Design & Tech Community',   author: 'Lena Torres',   topics: ['ui/ux design','brand identity','creative director'], content: 'The difference between a good designer and a great one: great designers ask "why does this need to exist?" before "how should it look?". Sharing 3 frameworks that changed how I approach product design.', time: ago(7*H), likes: 1450, comments: 198, mediaUrl: 'https://picsum.photos/seed/fb-design/800/420', mediaType: 'image' },
+    { id: 'fb5',  platform: 'facebook', source: 'Entrepreneurs Unite',       author: 'Felix Oduya',   topics: ['founder / entrepreneur','sales & revenue','b2b / enterprise'], content: 'Year 2 update: We were rejected by 47 accelerators. Now we have 3 enterprise contracts totalling $480k ARR. Persistence is not glamorous but it is everything.', time: ago(2*D), likes: 5620, comments: 731 },
+    { id: 'fb6',  platform: 'facebook', source: 'Women in Tech',             author: 'Aisha Mohammed', topics: ['career growth','diversity & inclusion','leadership'], content: 'Just wrapped our annual salary negotiation workshop. 94% of attendees said they had never negotiated their first offer. Start there. The worst they can say is no.', time: ago(10*H), likes: 3280, comments: 445, mediaUrl: 'https://picsum.photos/seed/fb-career/800/420', mediaType: 'image' },
+    { id: 'fb7',  platform: 'facebook', source: 'Fitness & Wellness Hub',    author: 'Carlos Reyes',  topics: ['fitness & gym','nutrition & diet','sports & athletics'], content: 'Week 12 transformation complete. No fad diets, no 3-hour gym sessions. Just consistency, protein targets, and sleep. Happy to share my full plan in the comments.', time: ago(4*H), likes: 8920, comments: 1230, mediaUrl: 'https://picsum.photos/seed/fb-fitness/800/420', mediaType: 'image' },
+    { id: 'fb8',  platform: 'facebook', source: 'Foodies & Home Chefs',      author: 'Sofia Martini', topics: ['cooking & recipes','baking & pastry','restaurant culture'], content: 'Made this sourdough loaf from a starter I have been nurturing for 3 years. The crust, the crumb — worth every hour of waiting. Recipe in comments! 🍞', time: ago(6*H), likes: 12400, comments: 890, mediaUrl: 'https://picsum.photos/seed/fb-bread/800/420', mediaType: 'image' },
+    { id: 'fb9',  platform: 'facebook', source: 'Travel Addicts Community',  author: 'Yuki Tanaka',   topics: ['travel & adventure','solo travel','cultural tourism'], content: 'Solo trip to Kyoto during cherry blossom season. No tour guide, no group. Just me, a JR Pass, and 2 weeks of pure exploration. Album below 👇', time: ago(12*H), likes: 34200, comments: 2180, mediaUrl: 'https://picsum.photos/seed/fb-kyoto/800/420', mediaType: 'image' },
+    { id: 'fb10', platform: 'facebook', source: 'Music Makers Network',      author: 'Devon Clarke',  topics: ['music discovery','songwriting','music production'], content: 'Finally finished my EP after 14 months of writing and producing solo from my bedroom. Self-released last night — already at 2k streams. If you make music independently, you belong here.', time: ago(8*H), likes: 4100, comments: 560 },
   ],
   instagram: [
-    { id: 'ig1', platform: 'instagram', source: '@ux_weekly', author: 'ux_weekly', avatar: 'UW', content: 'The best interfaces are the ones users never notice. Frictionless design is invisible design. Swipe for 5 principles we learned from 10k usability tests. 🎨', time: ago(3*H), likes: 4820, comments: 203 },
-    { id: 'ig2', platform: 'instagram', source: '@buildinpublic', author: 'buildinpublic', avatar: 'BP', content: 'Month 6 revenue update: $0 → $8,400 MRR. No VC, no paid ads, just content and community. Thread in bio. 🚀', time: ago(8*H), likes: 7341, comments: 512 },
-    { id: 'ig3', platform: 'instagram', source: '@devlife', author: 'devlife', avatar: 'DL', content: 'POV: your side project just got its first paying customer at 2am on a Tuesday. This is the way. 💻', time: ago(2*D), likes: 18900, comments: 841 },
+    { id: 'ig1',  platform: 'instagram', source: '@ux.weekly',         author: '@ux.weekly',         topics: ['ui/ux design','design systems','brand identity'], content: 'The best interfaces are the ones users never notice. Frictionless design is invisible design. Swipe → 5 principles from 10k usability tests. 🎨', time: ago(3*H), likes: 4820,  comments: 203,  mediaUrl: 'https://picsum.photos/seed/ig-ux/600/600',        mediaType: 'image' },
+    { id: 'ig2',  platform: 'instagram', source: '@buildinpublic',     author: '@buildinpublic',     topics: ['saas','bootstrapping','side projects'], content: 'Month 6 revenue: $0 → $8,400 MRR. No VC, no paid ads. Just content and community. Thread in bio. 🚀', time: ago(8*H), likes: 7341,  comments: 512,  mediaUrl: 'https://picsum.photos/seed/ig-startup/600/600',   mediaType: 'image' },
+    { id: 'ig3',  platform: 'instagram', source: '@devlife.co',        author: '@devlife.co',        topics: ['engineer / developer','side projects','career growth'], content: 'POV: your side project just got its first paying customer at 2am on a Tuesday. This is the way. 💻', time: ago(2*D), likes: 18900, comments: 841,  mediaUrl: 'https://picsum.photos/seed/ig-dev/600/600',       mediaType: 'image' },
+    { id: 'ig4',  platform: 'instagram', source: '@designinspo',       author: '@designinspo',       topics: ['brand identity','motion design','ui/ux design'], content: 'Colour palette breakdown from the most-saved brand redesigns of 2025. Save this. Your next project will thank you. 🎨✨', time: ago(5*H), likes: 22400, comments: 1190, mediaUrl: 'https://picsum.photos/seed/ig-colour/600/600',     mediaType: 'image' },
+    { id: 'ig5',  platform: 'instagram', source: '@techfounder',       author: '@techfounder',       topics: ['remote work','productivity','founder / entrepreneur'], content: 'My home office setup after 4 years of remote work. Every item has a reason. Ask me anything. 🏠💻', time: ago(14*H), likes: 31200, comments: 2040, mediaUrl: 'https://picsum.photos/seed/ig-homeoffice/600/600', mediaType: 'image' },
+    { id: 'ig6',  platform: 'instagram', source: '@fitwithlena',       author: '@fitwithlena',       topics: ['fitness & gym','yoga & meditation','nutrition & diet'], content: '6am workout ✅ Matcha ✅ Cold plunge ✅ Your morning routine is your ROI. 💪 What does yours look like?', time: ago(3*H), likes: 41200, comments: 2890, mediaUrl: 'https://picsum.photos/seed/ig-morning/600/600',    mediaType: 'image' },
+    { id: 'ig7',  platform: 'instagram', source: '@chefamara',         author: '@chefamara',         topics: ['cooking & recipes','restaurant culture','food & cooking'], content: 'Homemade ramen from scratch. 12-hour pork bone broth. Yes it is worth it. Recipe in highlights. 🍜', time: ago(6*H), likes: 28900, comments: 1740, mediaUrl: 'https://picsum.photos/seed/ig-ramen/600/600',      mediaType: 'image' },
+    { id: 'ig8',  platform: 'instagram', source: '@wanderlens',        author: '@wanderlens',        topics: ['travel & adventure','photography','cultural tourism'], content: 'Santorini at golden hour. Worth the hype? Absolutely. Overrated? Also yes. Here is my honest guide. 🌅', time: ago(10*H), likes: 67400, comments: 4230, mediaUrl: 'https://picsum.photos/seed/ig-santorini/600/600',  mediaType: 'image' },
+    { id: 'ig9',  platform: 'instagram', source: '@sneakercollector',  author: '@sneakercollector',  topics: ['streetwear','fashion & style','sneakers'], content: 'The grail arrived. 5 years of hunting. Every story has a W eventually. 👟🔥', time: ago(2*H), likes: 89300, comments: 5610, mediaUrl: 'https://picsum.photos/seed/ig-sneakers/600/600',   mediaType: 'image' },
+    { id: 'ig10', platform: 'instagram', source: '@gamingsetups',      author: '@gamingsetups',      topics: ['video games','game streaming & content','esports & competitive gaming'], content: 'Setup upgrade complete. RGB optional, performance mandatory. 🖥️🎮 Full build specs in bio.', time: ago(5*H), likes: 52800, comments: 3140, mediaUrl: 'https://picsum.photos/seed/ig-setup/600/600',     mediaType: 'image' },
   ],
   linkedin: [
-    { id: 'li1', platform: 'linkedin', source: 'LinkedIn Feed', author: 'Sarah Okonkwo', avatar: 'SO', content: 'I interviewed 200 engineering managers this year. The #1 trait that separated great from good? They gave credit loudly and took blame quietly. Underrated leadership skill.', time: ago(2*H), likes: 14200, comments: 987 },
-    { id: 'li2', platform: 'linkedin', source: 'LinkedIn Feed', author: 'David Park', avatar: 'DP', content: 'Unpopular opinion: "We move fast and break things" is not a culture — it is a warning sign. The best teams I have worked on moved thoughtfully and built things that lasted.', time: ago(11*H), likes: 8760, comments: 1240 },
-    { id: 'li3', platform: 'linkedin', source: 'AI & ML in Business', author: 'Amara Diallo', avatar: 'AD', content: 'The companies winning with AI are not the ones with the most models. They are the ones who identified the exact three decisions in their workflow where AI removes the most friction.', time: ago(1.5*D), likes: 21300, comments: 2100 },
+    { id: 'li1',  platform: 'linkedin', source: 'LinkedIn', author: 'Sarah Okonkwo',  topics: ['leadership','hr / people ops','career growth'], content: 'I interviewed 200 engineering managers this year. The #1 trait separating great from good: they gave credit loudly and took blame quietly. Underrated leadership skill.', time: ago(2*H), likes: 14200, comments: 987 },
+    { id: 'li2',  platform: 'linkedin', source: 'LinkedIn', author: 'David Park',     topics: ['leadership','engineer / developer','career growth'], content: 'Unpopular opinion: "We move fast and break things" is not a culture — it is a warning sign. The best teams I\'ve worked on moved thoughtfully and built things that lasted.', time: ago(11*H), likes: 8760, comments: 1240 },
+    { id: 'li3',  platform: 'linkedin', source: 'AI & ML in Business', author: 'Amara Diallo', topics: ['ai & machine learning','generative ai','saas'], content: 'The companies winning with AI are not the ones with the most models. They\'re the ones who identified the exact three decisions in their workflow where AI removes the most friction.', time: ago(1.5*D), likes: 21300, comments: 2100, mediaUrl: 'https://picsum.photos/seed/li-ai/800/420', mediaType: 'image' },
+    { id: 'li4',  platform: 'linkedin', source: 'LinkedIn', author: 'Ravi Shankar',   topics: ['career growth','recruiting & hiring','sales / business dev'], content: 'I got laid off in January. By March I had 4 offers, including one paying 40% more. Here\'s the exact playbook — and it doesn\'t involve mass applying.', time: ago(4*H), likes: 42800, comments: 3210 },
+    { id: 'li5',  platform: 'linkedin', source: 'Founders & Operators', author: 'Claire Mendes', topics: ['founder / entrepreneur','saas','bootstrapping'], content: 'We just crossed $1M ARR with a 3-person team. No office. No investors. No ads. AMA.', time: ago(18*H), likes: 35600, comments: 4890, mediaUrl: 'https://picsum.photos/seed/li-milestone/800/420', mediaType: 'image' },
+    { id: 'li6',  platform: 'linkedin', source: 'LinkedIn', author: 'Tom Eriksson',   topics: ['career growth','hr / people ops','productivity'], content: 'Stop putting "passionate" in your CV. Show me the project you stayed up until 3am finishing because you couldn\'t stop. That\'s passion. This is just a word.', time: ago(6*H), likes: 18900, comments: 1540 },
+    { id: 'li7',  platform: 'linkedin', source: 'Healthcare Leaders Network', author: 'Dr. Nina Patel', topics: ['healthcare professional','health tech','mental health & wellness'], content: 'Physician burnout is at an all-time high. It is not a personal weakness — it is a systems failure. Sharing what my hospital system changed and what actually helped.', time: ago(3*H), likes: 28400, comments: 3120, mediaUrl: 'https://picsum.photos/seed/li-health/800/420', mediaType: 'image' },
+    { id: 'li8',  platform: 'linkedin', source: 'Real Estate Investors', author: 'Marcus Webb',  topics: ['real estate pro','personal finance','real estate'], content: 'Bought my first rental property at 24 with $12k down. Now own 6 units at 31. The math and the mistakes — all of it below. 🏠', time: ago(9*H), likes: 31700, comments: 2840 },
   ],
   twitter: [
-    { id: 'tw1', platform: 'twitter', source: '#buildinpublic', author: '@shl', avatar: 'SH', content: 'The market does not care about your effort. It only cares about the value you deliver. Ship faster.', time: ago(45*60*1000), likes: 3420, comments: 287 },
-    { id: 'tw2', platform: 'twitter', source: '#devtools', author: '@t3dotgg', avatar: 'T3', content: 'Hot take: the biggest unlock for most dev teams is not a better framework. It is writing down what "done" means before you start.', time: ago(4*H), likes: 5810, comments: 634 },
-    { id: 'tw3', platform: 'twitter', source: '#startups', author: '@paulg', avatar: 'PG', content: 'The best founders are not the ones who had the clearest vision from day one. They are the ones who updated their vision the fastest when reality disagreed.', time: ago(18*H), likes: 28900, comments: 1820 },
+    { id: 'tw1',  platform: 'twitter', source: '#buildinpublic', author: '@shl',      topics: ['saas','bootstrapping','founder / entrepreneur'], content: 'The market does not care about your effort. It only cares about the value you deliver. Ship faster.', time: ago(45*60*1000), likes: 3420,  comments: 287  },
+    { id: 'tw2',  platform: 'twitter', source: '#devtools',     author: '@t3dotgg',   topics: ['developer tools','engineer / developer','productivity'], content: 'Hot take: the biggest unlock for most dev teams is not a better framework. It is writing down what "done" means before you start.', time: ago(4*H), likes: 5810, comments: 634 },
+    { id: 'tw3',  platform: 'twitter', source: '#startups',     author: '@paulg',     topics: ['founder / entrepreneur','venture capital','fundraising'], content: 'The best founders are not the ones who had the clearest vision from day one. They are the ones who updated their vision fastest when reality disagreed.', time: ago(18*H), likes: 28900, comments: 1820 },
+    { id: 'tw4',  platform: 'twitter', source: '#design',       author: '@rauchg',    topics: ['engineer / developer','saas','product manager'], content: 'Shipping is a feature. A product with 10 great features and 3 bugs beats a roadmap of 100 perfect features that never shipped.', time: ago(2*H), likes: 12400, comments: 892, mediaUrl: 'https://picsum.photos/seed/tw-ship/800/420', mediaType: 'image' },
+    { id: 'tw5',  platform: 'twitter', source: '#AI',           author: '@sama',      topics: ['ai & machine learning','generative ai','llms & chatbots'], content: 'The most important skill for the next decade: knowing which decisions to delegate to AI and which demand your full human judgement.', time: ago(9*H), likes: 48200, comments: 5100 },
+    { id: 'tw6',  platform: 'twitter', source: '#career',       author: '@naval',     topics: ['career growth','side projects','freelancing'], content: 'Specific knowledge is knowledge you cannot be trained for. If society can train you, society can also replace you. Find what only you can do.', time: ago(1.5*D), likes: 64300, comments: 7800, mediaUrl: 'https://picsum.photos/seed/tw-knowledge/800/420', mediaType: 'image' },
+    { id: 'tw7',  platform: 'twitter', source: '#fitness',      author: '@hubermanlab', topics: ['fitness & gym','nutrition & diet','mental health & wellness'], content: 'Morning sunlight for 10 minutes, within 30 minutes of waking. No sunglasses. This single habit has more documented benefits than almost any supplement. Free and effective.', time: ago(3*H), likes: 89400, comments: 6200 },
+    { id: 'tw8',  platform: 'twitter', source: '#gaming',       author: '@mrbeast',   topics: ['video games','game streaming & content','creator economy'], content: 'The gaming industry is now larger than film and music combined. Still the most underestimated creative career path.', time: ago(7*H), likes: 124000, comments: 8900, mediaUrl: 'https://picsum.photos/seed/tw-gaming/800/420', mediaType: 'image' },
+    { id: 'tw9',  platform: 'twitter', source: '#travel',       author: '@nomadlist', topics: ['travel & adventure','digital nomad','solo travel'], content: 'Places with the best value for remote workers right now: Tbilisi 🇬🇪, Chiang Mai 🇹🇭, Mexico City 🇲🇽, Medellin 🇨🇴, Split 🇭🇷. Cost of living under $2k/month, fast internet, great culture.', time: ago(5*H), likes: 43200, comments: 3410 },
+    { id: 'tw10', platform: 'twitter', source: '#music',        author: '@pitchfork', topics: ['music discovery','live events & concerts','creator economy'], content: 'Vinyl sales have now outpaced CD sales for 3 consecutive years. The format is not nostalgia. It is a preference.', time: ago(11*H), likes: 18700, comments: 2130, mediaUrl: 'https://picsum.photos/seed/tw-vinyl/800/420', mediaType: 'image' },
   ],
   reddit: [
-    { id: 're1', platform: 'reddit', source: 'r/MachineLearning', author: 'u/ml_practitioner', avatar: 'ML', content: 'We benchmarked 12 embedding models on our proprietary dataset. Results were surprising — the 7B parameter model outperformed GPT-4 on domain-specific retrieval by 23%. Full write-up with methodology in comments.', time: ago(6*H), likes: 2341, comments: 412 },
-    { id: 're2', platform: 'reddit', source: 'r/startups', author: 'u/bootstrapped_founder', avatar: 'BF', content: 'After 4 failed startups, number 5 just hit profitability. The difference? I stopped building what I thought was cool and started building what one specific person desperately needed.', time: ago(14*H), likes: 8920, comments: 1034 },
-    { id: 're3', platform: 'reddit', source: 'r/ExperiencedDevs', author: 'u/senior_dev_42', avatar: 'SD', content: 'Genuine question: at what point did your team stop shipping features and start mostly paying down tech debt? Trying to understand if our 60/40 split is normal.', time: ago(3*H), likes: 1203, comments: 289 },
+    { id: 're1',  platform: 'reddit', source: 'r/MachineLearning',    author: 'u/ml_practitioner',    topics: ['ai & machine learning','data science','llms & chatbots'], content: 'We benchmarked 12 embedding models on our proprietary dataset. The 7B model outperformed GPT-4 on domain-specific retrieval by 23%. Full write-up in comments.', time: ago(6*H), likes: 2341, comments: 412 },
+    { id: 're2',  platform: 'reddit', source: 'r/startups',           author: 'u/bootstrapped_founder', topics: ['bootstrapping','founder / entrepreneur','saas'], content: 'After 4 failed startups, #5 just hit profitability. I stopped building what I thought was cool and started building what one specific person desperately needed.', time: ago(14*H), likes: 8920, comments: 1034 },
+    { id: 're3',  platform: 'reddit', source: 'r/ExperiencedDevs',    author: 'u/senior_dev_42',      topics: ['engineer / developer','career growth','productivity'], content: 'At what point did your team stop shipping features and start mostly paying down tech debt? Trying to understand if our 60/40 split is normal.', time: ago(3*H), likes: 1203, comments: 289 },
+    { id: 're4',  platform: 'reddit', source: 'r/cscareerquestions',  author: 'u/career_change_2025', topics: ['career growth','freelancing','side projects'], content: 'Quit my $180k SWE job to start a tutoring business. 6 months in: making $22k/month, 25-hour weeks, and happier than ever. Happy to answer questions.', time: ago(5*H), likes: 31400, comments: 2890, mediaUrl: 'https://picsum.photos/seed/re-career/800/420', mediaType: 'image' },
+    { id: 're5',  platform: 'reddit', source: 'r/webdev',             author: 'u/fullstack_builder',  topics: ['saas','frontend dev','backend dev'], content: 'I built a SaaS in a weekend using only free tiers. Here is the exact stack and the limits I hit. [OC]', time: ago(1*D), likes: 7230, comments: 843, mediaUrl: 'https://picsum.photos/seed/re-saas/800/420', mediaType: 'image' },
+    { id: 're6',  platform: 'reddit', source: 'r/Fitness',            author: 'u/lifting_for_life',   topics: ['fitness & gym','nutrition & diet','running & cycling'], content: 'Lost 60 lbs in 18 months. No keto, no IF. Just calorie deficit, progressive overload, and walking. Here is everything I tracked.', time: ago(2*H), likes: 42800, comments: 3890, mediaUrl: 'https://picsum.photos/seed/re-fitness/800/420', mediaType: 'image' },
+    { id: 're7',  platform: 'reddit', source: 'r/Cooking',            author: 'u/homecook_pro',       topics: ['cooking & recipes','baking & pastry','food & cooking'], content: 'I recreated every Michelin-starred dish I could find a recipe for. Here are the top 10 that are actually achievable at home.', time: ago(4*H), likes: 19200, comments: 1240, mediaUrl: 'https://picsum.photos/seed/re-cooking/800/420', mediaType: 'image' },
+    { id: 're8',  platform: 'reddit', source: 'r/travel',             author: 'u/perpetual_nomad',    topics: ['travel & adventure','budget travel','solo travel'], content: '2 years of full-time travel on $1,500/month. Countries visited: 31. Things I wish someone had told me before I started.', time: ago(8*H), likes: 27600, comments: 2140 },
+    { id: 're9',  platform: 'reddit', source: 'r/gaming',             author: 'u/retro_gamer_85',     topics: ['video games','esports & competitive gaming','game dev'], content: 'The best game I played this year had a $12 budget, a 2-person team, and no marketing. It also had the best story I\'ve experienced in a decade. Indie gaming is thriving.', time: ago(6*H), likes: 34100, comments: 2980 },
+    { id: 're10', platform: 'reddit', source: 'r/streetwear',         author: 'u/fit_check_king',     topics: ['streetwear','fashion & style','sneakers'], content: 'Full grail collection after 8 years of copping. AMA about the hunt, resale, and which releases were worth the hype.', time: ago(3*H), likes: 8940, comments: 1120, mediaUrl: 'https://picsum.photos/seed/re-grails/800/420', mediaType: 'image' },
+  ],
+  tiktok: [
+    { id: 'tt1',  platform: 'tiktok', source: '@techexplained',      author: '@techexplained',     topics: ['ai & machine learning','developer tools','engineer / developer'], content: 'How AI actually works in 60 seconds — explained like you\'re 5 🤖 #AI #Tech #LearnOnTikTok', time: ago(2*H), likes: 84200,  comments: 3210,  mediaUrl: 'https://picsum.photos/seed/tt-ai/600/800',        mediaType: 'video' },
+    { id: 'tt2',  platform: 'tiktok', source: '@dayinmylife.dev',    author: '@dayinmylife.dev',   topics: ['engineer / developer','career growth','remote work'], content: 'Day in my life as a software engineer at a FAANG 💻 (real hours, not the highlight reel) #DayInMyLife #SoftwareEngineer', time: ago(6*H), likes: 142000, comments: 8900,  mediaUrl: 'https://picsum.photos/seed/tt-dev/600/800',       mediaType: 'video' },
+    { id: 'tt3',  platform: 'tiktok', source: '@sidehustlediary',    author: '@sidehustlediary',   topics: ['side projects','freelancing','bootstrapping'], content: 'I made $14,000 last month from my side project 💸 Every income stream broken down #SideHustle', time: ago(1*D), likes: 221000, comments: 15400, mediaUrl: 'https://picsum.photos/seed/tt-money/600/800',     mediaType: 'video' },
+    { id: 'tt4',  platform: 'tiktok', source: '@designwithme',       author: '@designwithme',      topics: ['ui/ux design','brand identity','creative director'], content: 'UI redesign in 60 seconds — boring landing page to 🔥 conversion machine #UIDesign #UX', time: ago(4*H), likes: 97800,  comments: 4320,  mediaUrl: 'https://picsum.photos/seed/tt-design/600/800',   mediaType: 'video' },
+    { id: 'tt5',  platform: 'tiktok', source: '@fitnessmotivation',  author: '@fitnessmotivation', topics: ['fitness & gym','running & cycling','sports & athletics'], content: '100-day transformation. Same gym, same diet, just showing up every single day. Results speak. 💪 #Fitness #Transformation', time: ago(3*H), likes: 389000, comments: 24100, mediaUrl: 'https://picsum.photos/seed/tt-transform/600/800', mediaType: 'video' },
+    { id: 'tt6',  platform: 'tiktok', source: '@chefsecrets',        author: '@chefsecrets',       topics: ['cooking & recipes','restaurant culture','baking & pastry'], content: 'The technique every home cook needs to know but no one teaches. Watch til the end 🍳 #ChefTips #Cooking', time: ago(5*H), likes: 241000, comments: 12400, mediaUrl: 'https://picsum.photos/seed/tt-cook/600/800',     mediaType: 'video' },
+    { id: 'tt7',  platform: 'tiktok', source: '@travelhacks',        author: '@travelhacks',       topics: ['travel & adventure','budget travel','solo travel'], content: 'Travelling Europe on €40/day. Hotels: no. Hostels: sometimes. Airbnb hacks: always. Full breakdown 🌍 #Travel #BudgetTravel', time: ago(7*H), likes: 167000, comments: 9800,  mediaUrl: 'https://picsum.photos/seed/tt-travel/600/800',   mediaType: 'video' },
+    { id: 'tt8',  platform: 'tiktok', source: '@gamingclips',        author: '@gamingclips',       topics: ['video games','esports & competitive gaming','game streaming & content'], content: 'This clip went viral in the esports community and I still don\'t know how I pulled it off 😅 #Gaming #Esports', time: ago(2*H), likes: 512000, comments: 31200, mediaUrl: 'https://picsum.photos/seed/tt-game/600/800',     mediaType: 'video' },
+    { id: 'tt9',  platform: 'tiktok', source: '@fashioninspo',       author: '@fashioninspo',      topics: ['fashion & style','streetwear','sustainable fashion'], content: 'Thrifted an entire week of outfits for under $80. Sustainable fashion does not have to be boring or expensive 👗 #ThriftFlip', time: ago(9*H), likes: 298000, comments: 18600, mediaUrl: 'https://picsum.photos/seed/tt-thrift/600/800',  mediaType: 'video' },
+    { id: 'tt10', platform: 'tiktok', source: '@musicstudio',        author: '@musicstudio',       topics: ['music discovery','songwriting','djing & remixing'], content: 'Made this beat from scratch in 30 minutes — start to finish. Every sample, every layer. 🎵 #MusicProduction #BeatMaking', time: ago(4*H), likes: 183000, comments: 11300, mediaUrl: 'https://picsum.photos/seed/tt-beat/600/800',    mediaType: 'video' },
   ],
 };
 
@@ -952,16 +1121,8 @@ const INDEED_JOBS = [
 let users = [];
 
 // ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
-// ─── ALL_GROUPS_SEED — internal UFIConnect communities + external platforms ───
-// Internal groups use the 'ufi-' prefix. External groups link to real platforms.
+// ─── ALL_GROUPS_SEED — REAL external communities only, seeded into PostgreSQL ─
 const ALL_GROUPS_SEED = [
-  // ── UFIConnect Internal Communities ──────────────────────────────────────────
-  { id: 'ufi-general',   category: 'General',     name: 'General Discussion',     description: 'The main UFIConnect feed — share anything on your mind with the whole community.', members: 0, isExternal: false },
-  { id: 'ufi-tech',      category: 'Engineering', name: 'Tech Hub',               description: 'Software, AI, DevOps, and everything tech. A space for builders and engineers.',     members: 0, isExternal: false },
-  { id: 'ufi-business',  category: 'Startups',    name: 'Business & Startups',    description: 'Founders, operators, and investors sharing wins, lessons, and opportunities.',       members: 0, isExternal: false },
-  { id: 'ufi-creative',  category: 'Design',      name: 'Creative Corner',        description: 'Design, art, video, music, and creative work of all kinds. Share your craft.',       members: 0, isExternal: false },
-  { id: 'ufi-career',    category: 'Education',   name: 'Career Growth',          description: 'Job searching, salary talk, career pivots, mentorship, and professional advice.',     members: 0, isExternal: false },
-  { id: 'ufi-wellness',  category: 'Health',      name: 'Wellness & Lifestyle',   description: 'Health, fitness, mindfulness, travel, food, and everything that makes life good.',   members: 0, isExternal: false },
   // ── AI & ML ──────────────────────────────────────────────────────────────────
   { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',              members: 3500000, isExternal: true, subreddit: 'MachineLearning',   externalUrl: 'https://reddit.com/r/MachineLearning' },
   { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                        members: 2000000, isExternal: true, subreddit: 'artificial',        externalUrl: 'https://reddit.com/r/artificial' },
@@ -1022,9 +1183,83 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_d_tph',      category: 'Engineering', name: "The Programmer's Hangout", description: 'Welcoming community for programmers at all levels — code challenges, project collabs, and career advice.',           members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/programming' },
   // ── LinkedIn groups ──────────────────────────────────────────────────────────
   { id: 'ext_li_pm',      category: 'Startups',    name: 'Product Management Professionals', description: "LinkedIn's largest PM group — product strategy, roadmapping, and career growth for product managers.", members: 500000, isExternal: true, platform: 'linkedin',            externalUrl: 'https://linkedin.com/groups/42115' },
+  // ── More Engineering ─────────────────────────────────────────────────────────
+  { id: 'ext_r_swift',    category: 'Engineering', name: 'r/swift',                  description: 'Swift programming language — iOS, macOS, server-side, and SwiftUI from Apple developers worldwide.',               members: 200000,  isExternal: true, subreddit: 'swift',             externalUrl: 'https://reddit.com/r/swift' },
+  { id: 'ext_r_android',  category: 'Engineering', name: 'r/androiddev',             description: 'Android development — Kotlin, Jetpack Compose, architecture, and Play Store strategies.',                         members: 400000,  isExternal: true, subreddit: 'androiddev',        externalUrl: 'https://reddit.com/r/androiddev' },
+  { id: 'ext_r_golang',   category: 'Engineering', name: 'r/golang',                 description: 'Go language — backend services, concurrency patterns, and the Go ecosystem.',                                      members: 250000,  isExternal: true, subreddit: 'golang',            externalUrl: 'https://reddit.com/r/golang' },
+  { id: 'ext_r_rust',     category: 'Engineering', name: 'r/rust',                   description: 'Rust programming — systems programming, WebAssembly, performance, and memory safety.',                             members: 280000,  isExternal: true, subreddit: 'rust',              externalUrl: 'https://reddit.com/r/rust' },
+  { id: 'ext_r_docker',   category: 'Engineering', name: 'r/docker',                 description: 'Docker containers, Kubernetes orchestration, and cloud-native application development.',                           members: 200000,  isExternal: true, subreddit: 'docker',            externalUrl: 'https://reddit.com/r/docker' },
+  { id: 'ext_r_aws',      category: 'Engineering', name: 'r/aws',                    description: 'Amazon Web Services — architecture, cost optimisation, certifications, and cloud services.',                       members: 450000,  isExternal: true, subreddit: 'aws',               externalUrl: 'https://reddit.com/r/aws' },
+  { id: 'ext_r_typescript',category:'Engineering', name: 'r/typescript',             description: 'TypeScript — type systems, best practices, and integrating with React, Node, and more.',                          members: 200000,  isExternal: true, subreddit: 'typescript',        externalUrl: 'https://reddit.com/r/typescript' },
+  { id: 'ext_r_linux',    category: 'Engineering', name: 'r/linux',                  description: 'Linux news, distro reviews, configuration tips, and the open-source community.',                                   members: 1200000, isExternal: true, subreddit: 'linux',             externalUrl: 'https://reddit.com/r/linux' },
+  { id: 'ext_r_cs',       category: 'Engineering', name: 'r/compsci',                description: 'Computer science theory, algorithms, data structures, and academic research.',                                     members: 800000,  isExternal: true, subreddit: 'compsci',           externalUrl: 'https://reddit.com/r/compsci' },
+  { id: 'ext_r_api',      category: 'Engineering', name: 'r/apidevelopment',         description: 'API design, REST, GraphQL, gRPC, and building developer-friendly interfaces.',                                     members: 45000,   isExternal: true, subreddit: 'apidevelopment',    externalUrl: 'https://reddit.com/r/apidevelopment' },
+  // ── More Startups ────────────────────────────────────────────────────────────
+  { id: 'ext_r_indiehack',category: 'Startups',   name: 'r/indiehackers',           description: 'Indie hackers sharing revenue numbers, growth tactics, and honest startup stories.',                               members: 150000,  isExternal: true, subreddit: 'indiehackers',      externalUrl: 'https://reddit.com/r/indiehackers' },
+  { id: 'ext_r_venturecap',category:'Finance',    name: 'r/venturecapital',          description: 'VC deals, fund dynamics, LP relations, and the business of backing early-stage startups.',                         members: 95000,   isExternal: true, subreddit: 'venturecapital',    externalUrl: 'https://reddit.com/r/venturecapital' },
+  { id: 'ext_r_angelinv', category: 'Finance',    name: 'r/angelinvesting',          description: 'Angel investing strategies, deal sourcing, term sheets, and portfolio management.',                                members: 40000,   isExternal: true, subreddit: 'angelinvesting',    externalUrl: 'https://reddit.com/r/angelinvesting' },
+  { id: 'ext_r_dropship', category: 'Startups',   name: 'r/dropship',               description: 'Dropshipping product research, supplier vetting, ad creatives, and e-commerce scaling.',                          members: 400000,  isExternal: true, subreddit: 'dropship',          externalUrl: 'https://reddit.com/r/dropship' },
+  { id: 'ext_r_amzfba',   category: 'Startups',   name: 'r/FulfillmentByAmazon',    description: 'Amazon FBA strategies, product sourcing, listing optimisation, and PPC campaigns.',                                members: 120000,  isExternal: true, subreddit: 'FulfillmentByAmazon', externalUrl: 'https://reddit.com/r/FulfillmentByAmazon' },
+  { id: 'ext_r_shopify',  category: 'Startups',   name: 'r/shopify',                description: 'Shopify store building, apps, conversion rate optimisation, and e-commerce growth.',                               members: 300000,  isExternal: true, subreddit: 'shopify',           externalUrl: 'https://reddit.com/r/shopify' },
+  // ── More Design ──────────────────────────────────────────────────────────────
+  { id: 'ext_r_figma',    category: 'Design',     name: 'r/FigmaDesign',            description: 'Figma tips, plugins, design systems, and collaborative design workflows.',                                         members: 250000,  isExternal: true, subreddit: 'FigmaDesign',       externalUrl: 'https://reddit.com/r/FigmaDesign' },
+  { id: 'ext_r_logo',     category: 'Design',     name: 'r/logodesign',             description: 'Logo design critiques, client horror stories, branding projects, and type treatments.',                            members: 350000,  isExternal: true, subreddit: 'logodesign',        externalUrl: 'https://reddit.com/r/logodesign' },
+  { id: 'ext_r_motion',   category: 'Design',     name: 'r/motiongraphics',         description: 'Motion graphics, After Effects, animation workflows, and reel critiques.',                                         members: 200000,  isExternal: true, subreddit: 'motiongraphics',    externalUrl: 'https://reddit.com/r/motiongraphics' },
+  { id: 'ext_r_typography',category:'Design',     name: 'r/typography',             description: 'Type selection, font pairing, lettering, and the craft of communicating with letterforms.',                        members: 350000,  isExternal: true, subreddit: 'typography',        externalUrl: 'https://reddit.com/r/typography' },
+  { id: 'ext_r_illustration',category:'Design',   name: 'r/Illustration',           description: 'Illustration showcases, client work, style development, and artist feedback.',                                     members: 750000,  isExternal: true, subreddit: 'Illustration',      externalUrl: 'https://reddit.com/r/Illustration' },
+  // ── Marketing / Creator ───────────────────────────────────────────────────────
+  { id: 'ext_r_podcasting',category:'Marketing',  name: 'r/podcasting',             description: 'Podcast gear, editing workflows, growing an audience, and monetisation strategies.',                               members: 170000,  isExternal: true, subreddit: 'podcasting',        externalUrl: 'https://reddit.com/r/podcasting' },
+  { id: 'ext_r_yt',       category: 'Marketing',  name: 'r/youtubers',              description: 'YouTube creators sharing growth strategies, thumbnail design, and channel monetisation.',                           members: 450000,  isExternal: true, subreddit: 'youtubers',         externalUrl: 'https://reddit.com/r/youtubers' },
+  { id: 'ext_r_blogging', category: 'Marketing',  name: 'r/Blogging',               description: 'Blog writing, SEO, building an audience, and monetising a content site.',                                         members: 180000,  isExternal: true, subreddit: 'Blogging',          externalUrl: 'https://reddit.com/r/Blogging' },
+  { id: 'ext_r_twitch',   category: 'Marketing',  name: 'r/Twitch',                 description: 'Twitch streaming tips, channel growth, emotes, and building a viewer community.',                                  members: 800000,  isExternal: true, subreddit: 'Twitch',            externalUrl: 'https://reddit.com/r/Twitch' },
+  // ── Finance ──────────────────────────────────────────────────────────────────
+  { id: 'ext_r_fire',     category: 'Finance',    name: 'r/financialindependence',  description: 'FIRE movement — financial independence, early retirement, frugality, and investment strategy.',                     members: 1900000, isExternal: true, subreddit: 'financialindependence', externalUrl: 'https://reddit.com/r/financialindependence' },
+  { id: 'ext_r_realestate',category:'Finance',    name: 'r/realestateinvesting',    description: 'Real estate investing — rentals, house hacking, REITs, and market analysis.',                                     members: 800000,  isExternal: true, subreddit: 'realestateinvesting', externalUrl: 'https://reddit.com/r/realestateinvesting' },
+  { id: 'ext_r_ethereum', category: 'Finance',    name: 'r/ethereum',               description: 'Ethereum ecosystem — DeFi, NFTs, Layer 2 scaling, and Solidity development.',                                     members: 1500000, isExternal: true, subreddit: 'ethereum',          externalUrl: 'https://reddit.com/r/ethereum' },
+  { id: 'ext_r_bitcoin',  category: 'Finance',    name: 'r/Bitcoin',                description: 'Bitcoin news, technical analysis, and long-term holder community with 5M+ members.',                              members: 5000000, isExternal: true, subreddit: 'Bitcoin',           externalUrl: 'https://reddit.com/r/Bitcoin' },
+  // ── Lifestyle & Culture ──────────────────────────────────────────────────────
+  { id: 'ext_r_fitness',  category: 'Health',     name: 'r/Fitness',                description: 'Workout routines, nutrition science, progress pictures, and form checks from 12M+ members.',                      members: 12000000,isExternal: true, subreddit: 'Fitness',           externalUrl: 'https://reddit.com/r/Fitness' },
+  { id: 'ext_r_loseit',   category: 'Health',     name: 'r/loseit',                 description: 'Weight loss journeys, calorie counting, motivation, and maintaining a healthy lifestyle.',                         members: 4000000, isExternal: true, subreddit: 'loseit',            externalUrl: 'https://reddit.com/r/loseit' },
+  { id: 'ext_r_running',  category: 'Health',     name: 'r/running',                description: 'Running training plans, race prep, gear reviews, and the global running community.',                              members: 1800000, isExternal: true, subreddit: 'running',           externalUrl: 'https://reddit.com/r/running' },
+  { id: 'ext_r_yoga',     category: 'Health',     name: 'r/yoga',                   description: 'Yoga poses, sequences, breathwork, and mindfulness from practitioners of all levels.',                             members: 500000,  isExternal: true, subreddit: 'yoga',              externalUrl: 'https://reddit.com/r/yoga' },
+  { id: 'ext_r_nutrition',category: 'Health',     name: 'r/nutrition',              description: 'Nutrition science, diet plans, supplements, and evidence-based eating strategies.',                                members: 1100000, isExternal: true, subreddit: 'nutrition',         externalUrl: 'https://reddit.com/r/nutrition' },
+  { id: 'ext_r_cooking',  category: 'Food',       name: 'r/Cooking',                description: 'Recipes, techniques, meal prep, and kitchen hacks from 3M+ home cooks worldwide.',                               members: 3000000, isExternal: true, subreddit: 'Cooking',           externalUrl: 'https://reddit.com/r/Cooking' },
+  { id: 'ext_r_food',     category: 'Food',       name: 'r/food',                   description: 'Food photography, restaurant reviews, and culinary exploration from 25M+ food lovers.',                           members: 25000000,isExternal: true, subreddit: 'food',              externalUrl: 'https://reddit.com/r/food' },
+  { id: 'ext_r_baking',   category: 'Food',       name: 'r/Baking',                 description: 'Bread, pastries, cakes, and everything baked — recipes, troubleshooting, and show-and-tell.',                    members: 1500000, isExternal: true, subreddit: 'Baking',            externalUrl: 'https://reddit.com/r/Baking' },
+  { id: 'ext_r_coffee',   category: 'Food',       name: 'r/Coffee',                 description: 'Specialty coffee, espresso equipment, brewing methods, and café culture.',                                        members: 1600000, isExternal: true, subreddit: 'Coffee',            externalUrl: 'https://reddit.com/r/Coffee' },
+  { id: 'ext_r_travel',   category: 'Travel',     name: 'r/travel',                 description: 'Travel guides, destination photography, budget itineraries, and travel hacks from 12M+ explorers.',               members: 12000000,isExternal: true, subreddit: 'travel',            externalUrl: 'https://reddit.com/r/travel' },
+  { id: 'ext_r_solotravel',category:'Travel',     name: 'r/solotravel',             description: 'Solo travel safety, finding community abroad, and the freedom of travelling alone.',                              members: 3000000, isExternal: true, subreddit: 'solotravel',        externalUrl: 'https://reddit.com/r/solotravel' },
+  { id: 'ext_r_backpacking',category:'Travel',    name: 'r/backpacking',            description: 'Budget backpacking routes, gear advice, and stories from long-term world travellers.',                            members: 1200000, isExternal: true, subreddit: 'backpacking',       externalUrl: 'https://reddit.com/r/backpacking' },
+  { id: 'ext_r_gaming',   category: 'Gaming',     name: 'r/gaming',                 description: 'Video gaming culture, memes, reviews, and news from the largest gaming community on Reddit.',                     members: 39000000,isExternal: true, subreddit: 'gaming',            externalUrl: 'https://reddit.com/r/gaming' },
+  { id: 'ext_r_pcgaming', category: 'Gaming',     name: 'r/pcgaming',               description: 'PC gaming hardware, game reviews, benchmarks, and the master race community.',                                    members: 6000000, isExternal: true, subreddit: 'pcgaming',          externalUrl: 'https://reddit.com/r/pcgaming' },
+  { id: 'ext_r_esports',  category: 'Gaming',     name: 'r/esports',                description: 'Esports news, tournament results, team rosters, and pro gaming analysis.',                                        members: 1500000, isExternal: true, subreddit: 'esports',           externalUrl: 'https://reddit.com/r/esports' },
+  { id: 'ext_r_music',    category: 'Music',      name: 'r/Music',                  description: 'Music discussion, song recommendations, artist news, and album reviews from 35M+ music fans.',                    members: 35000000,isExternal: true, subreddit: 'Music',             externalUrl: 'https://reddit.com/r/Music' },
+  { id: 'ext_r_hiphop',   category: 'Music',      name: 'r/hiphopheads',            description: 'Hip hop news, album reviews, rap battles, and emerging artists — over 5M members.',                               members: 5000000, isExternal: true, subreddit: 'hiphopheads',       externalUrl: 'https://reddit.com/r/hiphopheads' },
+  { id: 'ext_r_edmproduction',category:'Music',   name: 'r/edmproduction',          description: 'Electronic music production — DAWs, synthesis, mixing, mastering, and releasing music.',                          members: 450000,  isExternal: true, subreddit: 'edmproduction',     externalUrl: 'https://reddit.com/r/edmproduction' },
+  { id: 'ext_r_fashion',  category: 'Fashion',    name: 'r/malefashionadvice',      description: 'Men\'s fashion advice, outfit critique, shopping recommendations, and style guides.',                              members: 5000000, isExternal: true, subreddit: 'malefashionadvice', externalUrl: 'https://reddit.com/r/malefashionadvice' },
+  { id: 'ext_r_femalefashion',category:'Fashion', name: 'r/femalefashionadvice',    description: 'Women\'s fashion discussion, outfit feedback, and style inspiration from 1.5M+ members.',                         members: 1500000, isExternal: true, subreddit: 'femalefashionadvice', externalUrl: 'https://reddit.com/r/femalefashionadvice' },
+  { id: 'ext_r_streetwear',category:'Fashion',    name: 'r/streetwear',             description: 'Streetwear culture, sneaker releases, brand drops, and fit checks from hype enthusiasts.',                        members: 4500000, isExternal: true, subreddit: 'streetwear',        externalUrl: 'https://reddit.com/r/streetwear' },
+  { id: 'ext_r_sneakers', category: 'Fashion',    name: 'r/Sneakers',               description: 'Sneaker releases, retail vs resale, collection showcases, and sneakerhead culture.',                              members: 3000000, isExternal: true, subreddit: 'Sneakers',          externalUrl: 'https://reddit.com/r/Sneakers' },
+  { id: 'ext_r_books',    category: 'Education',  name: 'r/books',                  description: 'Book recommendations, author discussions, literary analysis, and reading challenges from 25M+ readers.',           members: 25000000,isExternal: true, subreddit: 'books',             externalUrl: 'https://reddit.com/r/books' },
+  { id: 'ext_r_writing',  category: 'Education',  name: 'r/writing',                description: 'Creative writing, fiction, poetry, screenwriting, and craft development.',                                        members: 2500000, isExternal: true, subreddit: 'writing',           externalUrl: 'https://reddit.com/r/writing' },
+  { id: 'ext_r_philosophy',category:'Education',  name: 'r/philosophy',             description: 'Philosophy, ethics, logic, and the great questions of existence from 2.5M+ thinkers.',                           members: 2500000, isExternal: true, subreddit: 'philosophy',        externalUrl: 'https://reddit.com/r/philosophy' },
+  { id: 'ext_r_sports',   category: 'Sports',     name: 'r/sports',                 description: 'Sports news, highlights, analysis, and fan discussion across all professional and amateur sports.',                members: 3000000, isExternal: true, subreddit: 'sports',            externalUrl: 'https://reddit.com/r/sports' },
+  { id: 'ext_r_nba',      category: 'Sports',     name: 'r/nba',                    description: 'NBA basketball — game threads, trade rumours, stats, and team fandom from 8M+ fans.',                            members: 8000000, isExternal: true, subreddit: 'nba',               externalUrl: 'https://reddit.com/r/nba' },
+  { id: 'ext_r_soccer',   category: 'Sports',     name: 'r/soccer',                 description: 'Football (soccer) — match threads, transfer news, tactics, and global club fandom.',                             members: 5000000, isExternal: true, subreddit: 'soccer',            externalUrl: 'https://reddit.com/r/soccer' },
+  { id: 'ext_r_nfl',      category: 'Sports',     name: 'r/nfl',                    description: 'NFL football — game threads, fantasy football, roster moves, and team fan communities.',                          members: 7000000, isExternal: true, subreddit: 'nfl',               externalUrl: 'https://reddit.com/r/nfl' },
+  { id: 'ext_r_tennis',   category: 'Sports',     name: 'r/tennis',                 description: 'Tennis news, Grand Slam coverage, player rankings, and technique discussion.',                                    members: 1000000, isExternal: true, subreddit: 'tennis',            externalUrl: 'https://reddit.com/r/tennis' },
+  { id: 'ext_r_mma',      category: 'Sports',     name: 'r/MMA',                    description: 'Mixed martial arts — UFC, Bellator, fight analysis, and fighter rankings from 2M+ fans.',                       members: 2000000, isExternal: true, subreddit: 'MMA',               externalUrl: 'https://reddit.com/r/MMA' },
+  { id: 'ext_r_gardening',category: 'Lifestyle',  name: 'r/gardening',              description: 'Home gardening, plant identification, landscaping, and growing your own food.',                                   members: 4000000, isExternal: true, subreddit: 'gardening',         externalUrl: 'https://reddit.com/r/gardening' },
+  { id: 'ext_r_pets',     category: 'Lifestyle',  name: 'r/pets',                   description: 'Pet care advice, adorable pet photos, health questions, and stories from pet owners worldwide.',                  members: 2500000, isExternal: true, subreddit: 'pets',              externalUrl: 'https://reddit.com/r/pets' },
+  { id: 'ext_r_interiordesign',category:'Lifestyle',name:'r/interiordesign',        description: 'Home décor inspiration, renovation before-and-afters, and furniture recommendations.',                           members: 3000000, isExternal: true, subreddit: 'interiordesign',    externalUrl: 'https://reddit.com/r/interiordesign' },
+  { id: 'ext_r_minimalism',category:'Lifestyle',  name: 'r/minimalism',             description: 'Minimalist living, decluttering, simple design, and intentional consumption from 500K+ members.',                members: 500000,  isExternal: true, subreddit: 'minimalism',        externalUrl: 'https://reddit.com/r/minimalism' },
+  { id: 'ext_r_meditation',category:'Health',     name: 'r/Meditation',             description: 'Meditation practices, mindfulness techniques, retreat experiences, and beginner guidance.',                       members: 700000,  isExternal: true, subreddit: 'Meditation',        externalUrl: 'https://reddit.com/r/Meditation' },
+  { id: 'ext_r_parenting',category: 'Lifestyle',  name: 'r/Parenting',              description: 'Parenting advice, developmental milestones, family life, and honest parenthood conversations.',                  members: 3200000, isExternal: true, subreddit: 'Parenting',         externalUrl: 'https://reddit.com/r/Parenting' },
+  { id: 'ext_r_climate',  category: 'Climate',    name: 'r/climate',                description: 'Climate science, policy, activism, and solutions from 260K+ members committed to a sustainable future.',         members: 260000,  isExternal: true, subreddit: 'climate',           externalUrl: 'https://reddit.com/r/climate' },
+  { id: 'ext_r_zerowaste',category: 'Climate',    name: 'r/ZeroWaste',              description: 'Zero waste living, plastic-free alternatives, sustainable swaps, and reducing your footprint.',                  members: 600000,  isExternal: true, subreddit: 'ZeroWaste',         externalUrl: 'https://reddit.com/r/ZeroWaste' },
   // ── News & DEV Community ───────────────────────────────────────────────────────
-  { id: 'ext_hn',         category: 'Engineering', name: 'News',                     description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",          members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
-  { id: 'ext_devto',      category: 'Engineering', name: 'DEV Community',            description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                             members: 1000000, isExternal: true, platform: 'devto',              externalUrl: 'https://dev.to' },
+  { id: 'ext_hn',         category: 'Engineering', name: 'Hacker News',             description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",        members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
+  { id: 'ext_devto',      category: 'Engineering', name: 'DEV Community',           description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                           members: 1000000, isExternal: true, platform: 'devto',              externalUrl: 'https://dev.to' },
 ];
 
 // Live in-memory groups list — populated from DB at startup, falls back to seed
@@ -1035,6 +1270,9 @@ let posts = [];
 
 // Real connections — user-created
 let connections = [];
+
+// Follows — unidirectional
+let follows = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1166,6 +1404,16 @@ async function migrateDB() {
       )
     `);
 
+    // Follows table
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS follows (
+        follower_id TEXT NOT NULL,
+        following_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (follower_id, following_id)
+      )
+    `);
+
     // Posts table — persists across deploys
     await db.query(`
       CREATE TABLE IF NOT EXISTS community_posts (
@@ -1192,8 +1440,8 @@ async function migrateDB() {
 async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
-    // ── Purge only OLD fake internal/platform-wrapper groups (non ufi- prefix) ──
-    await db.query(`DELETE FROM community_groups WHERE (is_external = false OR is_external IS NULL) AND id NOT LIKE 'ufi-%'`);
+    // ── Purge all fake internal groups; only real external communities are kept ──
+    await db.query(`DELETE FROM community_groups WHERE is_external = false OR is_external IS NULL`);
 
     for (const g of ALL_GROUPS_SEED) {
       await db.query(`
@@ -1552,27 +1800,37 @@ app.get('/feed', authenticate, async (req, res) => {
   const mediumPosts  = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
   const youtubePosts = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
 
-  // Connected social platform posts — real post content from SOCIAL_POSTS for matched platforms
+  // Connected social platform posts — topic-matched posts with photos/videos
+  const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
   const connectedSocialPosts = [];
+  const PLATFORM_URLS = { twitter: 'https://x.com', tiktok: 'https://tiktok.com', instagram: 'https://instagram.com', facebook: 'https://facebook.com', linkedin: 'https://linkedin.com', reddit: 'https://reddit.com' };
   for (const platform of connectedPlatforms) {
     const platformPosts = SOCIAL_POSTS[platform] || [];
-    const topicHint = (prefs.interests || [])[0] || '';
-    platformPosts.forEach(p => {
+    // Score posts by topic relevance; pick top 4 per platform
+    const scored = platformPosts.map(p => {
+      const postTopics = (p.topics || []).map(t => t.toLowerCase());
+      const matchScore = postTopics.filter(t => userInterests.has(t)).length;
+      return { p, score: matchScore };
+    }).sort((a, b) => b.score - a.score).slice(0, 4);
+
+    scored.forEach(({ p }) => {
       connectedSocialPosts.push({
         id:            `${p.id}_conn`,
         authorId:      `${platform}_user`,
         groupId:       `ext_${platform}`,
         content:       p.content,
-        title:         null,
+        title:         p.title || null,
         source:        platform,
         sourceLabel:   p.source || platform,
-        sourceUrl:     platform === 'twitter' ? 'https://x.com' : `https://${platform}.com`,
-        topic:         topicHint,
-        author:        { id: `${platform}_user`, name: null, title: p.source, organization: platform },
+        sourceUrl:     PLATFORM_URLS[platform] || `https://${platform}.com`,
+        topic:         (p.topics || [])[0] || (prefs.interests || [])[0] || '',
+        mediaUrl:      p.mediaUrl || null,
+        mediaType:     p.mediaType || null,
+        author:        { id: `${platform}_user`, name: p.author || null, title: p.source, organization: platform },
         likes:         [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
         createdAt:     p.time || new Date().toISOString(),
         isExternal:    true,
-        group:         { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: `https://${platform}.com` },
+        group:         { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
         forYou:        true, fromJoinedGroup: false, relevance: 5, connectedBoost: true,
       });
     });
@@ -1600,7 +1858,7 @@ app.get('/feed', authenticate, async (req, res) => {
     connectedBoost: connectedPlatforms.has(p.source),
   }));
 
-  // Deduplicate by id, merge all sources (joined-group posts first to preserve their metadata)
+  // Deduplicate by id across all sources
   const seen = new Set();
   const all  = [...internal, ...joinedGroupPosts, ...connectedSocialPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...youtubePosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
@@ -1608,14 +1866,31 @@ app.get('/feed', authenticate, async (req, res) => {
     return true;
   });
 
-  all.sort((a, b) =>
-    b.relevance !== a.relevance
-      ? b.relevance - a.relevance
-      : new Date(b.createdAt) - new Date(a.createdAt)
+  // True mixed sort: interleave by source so no single platform dominates.
+  // Group posts by source, then round-robin pick one from each bucket.
+  // Within each source, order by relevance desc then recency desc.
+  const bySource = {};
+  all.forEach(p => {
+    const key = p.source || 'uficonnect';
+    if (!bySource[key]) bySource[key] = [];
+    bySource[key].push(p);
+  });
+  Object.values(bySource).forEach(bucket =>
+    bucket.sort((a, b) =>
+      b.relevance !== a.relevance ? b.relevance - a.relevance : new Date(b.createdAt) - new Date(a.createdAt)
+    )
   );
+  const mixed = [];
+  const buckets = Object.values(bySource);
+  let i = 0;
+  while (buckets.some(b => b.length > 0)) {
+    const bucket = buckets[i % buckets.length];
+    if (bucket.length > 0) mixed.push(bucket.shift());
+    i++;
+  }
 
   res.json({
-    posts: all,
+    posts: mixed,
     sources: {
       reddit:       redditPosts.length,
       hackernews:   hnPosts.length,
@@ -1664,6 +1939,92 @@ app.post('/feed/:postId/like', authenticate, (req, res) => {
   if (idx > -1) { post.likes.splice(idx, 1); }
   else { post.likes.push(req.user.id); }
   res.json({ likedByMe: post.likes.includes(req.user.id), likesCount: post.likes.length });
+});
+
+// ─── People search & public profiles ─────────────────────────────────────────
+app.get('/users/search', authenticate, (req, res) => {
+  const q    = (req.query.q    || '').toLowerCase().trim();
+  const role = (req.query.role || '').toLowerCase().trim();
+  const myId = req.user.id;
+
+  let results = users.filter(u => u.id !== myId && u.onboardingComplete);
+  if (q) {
+    results = results.filter(u =>
+      (u.name || '').toLowerCase().includes(q) ||
+      (u.title || '').toLowerCase().includes(q) ||
+      (u.organization || '').toLowerCase().includes(q) ||
+      (u.bio || '').toLowerCase().includes(q) ||
+      (u.skills || []).some(s => s.toLowerCase().includes(q)) ||
+      (u.preferences?.role || '').toLowerCase().includes(q) ||
+      (u.preferences?.interests || []).some(i => i.toLowerCase().includes(q))
+    );
+  }
+  if (role) {
+    results = results.filter(u => (u.preferences?.role || '').toLowerCase().includes(role));
+  }
+
+  const myFollowing = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+  const followerCount = {};
+  follows.forEach(f => { followerCount[f.followingId] = (followerCount[f.followingId] || 0) + 1; });
+
+  res.json({
+    users: results.slice(0, 60).map(u => ({
+      id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
+      organization: u.organization || '', skills: u.skills || [],
+      role: u.preferences?.role || '',
+      interests: (u.preferences?.interests || []).slice(0, 6),
+      followersCount: followerCount[u.id] || 0,
+      isFollowing: myFollowing.has(u.id),
+    })),
+  });
+});
+
+app.get('/users/:id', authenticate, async (req, res) => {
+  const user = await getUser(req.params.id);
+  if (!user) return res.status(404).json({ message: 'User not found.' });
+  const followersCount = follows.filter(f => f.followingId === user.id).length;
+  const followingCount = follows.filter(f => f.followerId === user.id).length;
+  const isFollowing = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
+  res.json({
+    id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
+    organization: user.organization || '', skills: user.skills || [],
+    role: user.preferences?.role || '',
+    interests: user.preferences?.interests || [],
+    goals: user.preferences?.goals || [],
+    experience: user.preferences?.experience || '',
+    followersCount, followingCount, isFollowing,
+    links: user.links || {},
+  });
+});
+
+app.post('/users/:id/follow', authenticate, async (req, res) => {
+  const followingId = req.params.id;
+  const followerId  = req.user.id;
+  if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
+  if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
+    follows.push({ followerId, followingId });
+    if (db.isConnected()) {
+      db.query(
+        `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [followerId, followingId]
+      ).catch(e => console.error('follow DB:', e.message));
+    }
+  }
+  res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+});
+
+app.delete('/users/:id/follow', authenticate, async (req, res) => {
+  const followingId = req.params.id;
+  const followerId  = req.user.id;
+  const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
+  if (idx >= 0) follows.splice(idx, 1);
+  if (db.isConnected()) {
+    db.query(
+      `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
+      [followerId, followingId]
+    ).catch(e => console.error('unfollow DB:', e.message));
+  }
+  res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
 });
 
 // ─── Connections ──────────────────────────────────────────────────────────────
@@ -2184,6 +2545,13 @@ async function preloadUsersFromDB() {
   } catch (err) {
     console.warn('[startup] preloadUsersFromDB failed:', err.message);
   }
+
+  // Load follows
+  try {
+    const { rows: fRows } = await db.query('SELECT follower_id, following_id FROM follows');
+    fRows.forEach(r => follows.push({ followerId: r.follower_id, followingId: r.following_id }));
+    console.log(`[startup] Loaded ${fRows.length} follow relationships`);
+  } catch (_) {}
 }
 
 db.initDB().then(async () => {

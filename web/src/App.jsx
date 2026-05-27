@@ -13,13 +13,11 @@ import Messages         from './pages/Messages';
 import Conversation     from './pages/Conversation';
 import Profile          from './pages/Profile';
 import Post             from './pages/Post';
+import Search           from './pages/Search';
+import PublicProfile    from './pages/PublicProfile';
 import ConnectedAccounts from './pages/ConnectedAccounts';
 import Settings          from './pages/Settings';
 import AgentDashboard    from './pages/AgentDashboard';
-
-// Agents are only accessible on localhost — never exposed on the public domain
-const IS_LOCAL = typeof window !== 'undefined' &&
-  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -80,16 +78,18 @@ export default function App() {
       <Route path="/post" element={
         <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>
       }/>
+      <Route path="/search" element={
+        <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/u/:id" element={
+        <RequireAuth><RequireOnboarding><PublicProfile /></RequireOnboarding></RequireAuth>
+      }/>
       <Route path="/settings" element={
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
       }/>
 
-      {/* Agent Control Room — localhost only */}
-      <Route path="/agents" element={
-        IS_LOCAL
-          ? <RequireAuth><AgentDashboard /></RequireAuth>
-          : <Navigate to="/" replace />
-      }/>
+      {/* Agent Control Room — public, no auth required */}
+      <Route path="/agents" element={<AgentDashboard />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
