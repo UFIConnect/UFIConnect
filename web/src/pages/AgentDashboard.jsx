@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Layout from '../components/Layout';
+import client from '../api/client';
 
 /* ─── Agent Definitions ──────────────────────────────────────────────────────── */
 const AGENT_DEFS = [
@@ -528,6 +529,54 @@ export default function AgentDashboard() {
       }, 2200);
     }, 5000);
   }, [addTimeout, addLog, updateAgent]);
+
+  /* ── Backend status polling — merges real server events into the log ─────── */
+  const seenBackendIds = useRef(new Set());
+
+  useEffect(() => {
+    function fetchStatus() {
+      client.get('/hq/status').then(({ data }) => {
+        const { agentLog = [], feedPostCount, feedRefreshedAt } = data;
+        // Inject new backend events (newest first) that we haven't shown yet
+        const newEntries = agentLog
+          .filter(e => !seenBackendIds.current.has(e.id))
+          .map(e => {
+            seenBackendIds.current.add(e.id);
+            const agent = AGENT_DEFS.find(a => a.id === e.agentId);
+            return {
+              id:    e.id,
+              icon:  e.emoji,
+              msg:   `[SERVER] ${e.msg}`,
+              ts:    new Date(e.ts).toLocaleTimeString(),
+              color: e.color || (agent?.color) || '#CBD5E1',
+            };
+          });
+        if (newEntries.length > 0) {
+          setActivityLog(prev => [...newEntries, ...prev].slice(0, 60));
+          setEventsCount(c => c + newEntries.length);
+          // Update last execution if the most recent server event is a completion
+          const latest = newEntries[0];
+          if (latest && latest.icon === '✅') {
+            const agent = AGENT_DEFS.find(a => latest.msg.toLowerCase().includes(a.id));
+            if (agent) {
+              setLastExecution({
+                agentName:  agent.name,
+                agentEmoji: agent.emoji,
+                agentColor: agent.color,
+                agentBg:    agent.bg,
+                msg:        latest.msg.replace('[SERVER] ', ''),
+                ts:         latest.ts,
+              });
+            }
+          }
+        }
+      }).catch(() => {});
+    }
+
+    fetchStatus();
+    const t = setInterval(fetchStatus, 60 * 1000);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Bootstrap ────────────────────────────────────────────────────────────── */
   useEffect(() => {

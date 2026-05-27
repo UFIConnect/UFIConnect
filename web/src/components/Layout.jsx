@@ -7,7 +7,6 @@ const NAV = [
   { to: '/groups',        icon: '🌐', label: 'Groups'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
-  { to: '/hq',            icon: '🏢', label: 'HQ'           },
 ];
 
 function initials(name = '') {
