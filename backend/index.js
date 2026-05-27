@@ -2309,6 +2309,54 @@ const OPPORTUNITIES = [
   // ── Open Source (extended) ───────────────────────────────────────────────────
   { id: 'op84', type: 'opensource', title: 'First Issues — Hugging Face',org: 'Hugging Face',         location: 'Remote',                 pay: 'OSS + swag',        tags: ['Python','ML','NLP'],                 source: 'GitHub', sourceUrl: 'https://github.com/huggingface/transformers', posted: ago(2*D), remote: true },
   { id: 'op85', type: 'opensource', title: 'React Contributor Program',  org: 'Meta Open Source',     location: 'Remote',                 pay: 'Volunteer + credit', tags: ['React','TypeScript','JavaScript'],   source: 'GitHub', sourceUrl: 'https://github.com/facebook/react', posted: ago(3*D), remote: true },
+
+  // ── Healthcare Professional ───────────────────────────────────────────────────
+  { id: 'h1',  type: 'job', title: 'Nurse Practitioner',             org: 'Kaiser Permanente',    location: 'San Francisco, CA',  pay: '$130k–$160k',  tags: ['Nurse Practitioner','Healthcare','Clinical'],         source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=nurse+practitioner', posted: ago(1*D), remote: false },
+  { id: 'h2',  type: 'job', title: 'Healthcare Data Analyst',        org: 'Epic Systems',         location: 'Remote',             pay: '$90k–$120k',   tags: ['Healthcare','Data','SQL','Analytics'],                source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=healthcare+data+analyst', posted: ago(2*D), remote: true  },
+  { id: 'h3',  type: 'job', title: 'Telehealth Physician',           org: 'Teladoc Health',       location: 'Remote',             pay: '$200k–$280k',  tags: ['Physician','Telehealth','Healthcare'],                source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=telehealth+physician', posted: ago(1*D), remote: true  },
+  { id: 'h4',  type: 'job', title: 'Physical Therapist',             org: 'US Physical Therapy',  location: 'Multiple Locations', pay: '$75k–$100k',   tags: ['Physical Therapy','Healthcare','Rehabilitation'],     source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=physical+therapist', posted: ago(3*D), remote: false },
+  { id: 'h5',  type: 'learning', title: 'AI in Medicine Certification', org: 'Stanford Online',  location: 'Online',             pay: '$1,500',        tags: ['Healthcare','AI','ML','Medicine'],                    source: 'Stanford', sourceUrl: 'https://online.stanford.edu', posted: ago(7*D), remote: true  },
+  { id: 'h6',  type: 'event', title: 'HIMSS Global Health Conference', org: 'HIMSS',              location: 'Las Vegas, NV',      pay: '$1,295+',       tags: ['Healthcare','HealthTech','Innovation'],               source: 'HIMSS', sourceUrl: 'https://www.himssconference.org', posted: ago(5*D), remote: false },
+
+  // ── Athlete / Coach ───────────────────────────────────────────────────────────
+  { id: 'at1', type: 'job', title: 'Head Strength & Conditioning Coach', org: 'Denver Nuggets',  location: 'Denver, CO',         pay: '$100k–$150k',  tags: ['Strength Coach','NBA','Performance','Sports'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=strength+conditioning+coach', posted: ago(2*D), remote: false },
+  { id: 'at2', type: 'job', title: 'Elite Personal Trainer',             org: 'Equinox',         location: 'New York, NY',       pay: '$60k–$120k',   tags: ['Personal Trainer','Fitness','Strength'],              source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=elite+personal+trainer', posted: ago(1*D), remote: false },
+  { id: 'at3', type: 'gig', title: 'Online Fitness Coach',               org: 'Self-Employed',   location: 'Remote',             pay: '$80–$200/hr',  tags: ['Fitness','Online Coaching','Nutrition'],              source: 'Upwork',   sourceUrl: 'https://upwork.com/freelance-jobs/fitness', posted: ago(2*D), remote: true  },
+  { id: 'at4', type: 'job', title: 'Performance Coach — Youth Academy',  org: 'LA Galaxy',       location: 'Carson, CA',         pay: '$70k–$90k',    tags: ['Soccer','Sports Coach','Youth','Performance'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=sports+performance+coach', posted: ago(3*D), remote: false },
+  { id: 'at5', type: 'learning', title: 'NSCA-CSCS Certification Prep', org: 'NSCA',             location: 'Online',             pay: '$435',          tags: ['Certification','Strength Coach','Sports Science'],    source: 'NSCA', sourceUrl: 'https://www.nsca.com/certification/cscs', posted: ago(10*D), remote: true  },
+
+  // ── Musician / Artist ─────────────────────────────────────────────────────────
+  { id: 'mu1', type: 'job', title: 'Staff Music Producer',           org: 'Spotify',              location: 'New York, NY',       pay: '$100k–$150k',  tags: ['Music Production','Audio','Spotify','Artist'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=music+producer', posted: ago(2*D), remote: false },
+  { id: 'mu2', type: 'gig', title: 'Session Musician — Studio Work', org: 'Recording Studios',    location: 'Los Angeles, CA',    pay: '$300–$800/day',tags: ['Musician','Studio','Session','Live'],                 source: 'SoundBetter', sourceUrl: 'https://soundbetter.com', posted: ago(1*D), remote: false },
+  { id: 'mu3', type: 'job', title: 'Music Supervisor',               org: 'Netflix Music',         location: 'Los Angeles, CA',   pay: '$120k–$180k',  tags: ['Music','Film','Licensing','Sync'],                    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=music+supervisor', posted: ago(3*D), remote: false },
+  { id: 'mu4', type: 'gig', title: 'Beat Producer — Sync Licensing', org: 'Various Labels',        location: 'Remote',            pay: '$500–$5,000/track', tags: ['Beats','Producer','Licensing','Hip-Hop'],           source: 'Airbit', sourceUrl: 'https://airbit.com', posted: ago(2*D), remote: true  },
+  { id: 'mu5', type: 'event', title: 'NAMM Show 2025',               org: 'NAMM',                  location: 'Anaheim, CA',       pay: 'Free–$199',    tags: ['Music','Gear','Networking','Industry'],               source: 'NAMM', sourceUrl: 'https://www.namm.org', posted: ago(5*D), remote: false },
+  { id: 'mu6', type: 'learning', title: 'Music Production Masterclass', org: 'Berklee Online',    location: 'Online',             pay: '$1,299',        tags: ['Music Production','Mixing','DAW','Berklee'],          source: 'Berklee', sourceUrl: 'https://online.berklee.edu', posted: ago(8*D), remote: true  },
+
+  // ── Chef / Food Creator ───────────────────────────────────────────────────────
+  { id: 'cf1', type: 'job', title: 'Executive Chef',                 org: 'Nobu Restaurants',     location: 'New York, NY',       pay: '$90k–$130k',   tags: ['Executive Chef','Culinary','Fine Dining','Leadership'],source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=executive+chef', posted: ago(1*D), remote: false },
+  { id: 'cf2', type: 'job', title: 'Culinary Content Creator',       org: 'Tasty by BuzzFeed',    location: 'Remote',             pay: '$70k–$100k',   tags: ['Food Creator','Content','Video','Recipe'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=culinary+content+creator', posted: ago(2*D), remote: true  },
+  { id: 'cf3', type: 'gig', title: 'Private Chef (Event Catering)',  org: 'Self-Employed',        location: 'Major Cities',       pay: '$300–$1,000/event', tags: ['Private Chef','Catering','Events'],               source: 'Thumbtack', sourceUrl: 'https://www.thumbtack.com/k/private-chef/near-me', posted: ago(1*D), remote: false },
+  { id: 'cf4', type: 'job', title: 'Food Scientist',                 org: 'Impossible Foods',     location: 'Redwood City, CA',   pay: '$100k–$140k',  tags: ['Food Science','R&D','FoodTech','Nutrition'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=food+scientist', posted: ago(3*D), remote: false },
+  { id: 'cf5', type: 'learning', title: 'Culinary Arts Certificate', org: 'Le Cordon Bleu Online',location: 'Online',             pay: '$2,500',        tags: ['Culinary','Cooking','Certificate','Le Cordon Bleu'],  source: 'Le Cordon Bleu', sourceUrl: 'https://www.lecordonbleu.com', posted: ago(10*D), remote: true  },
+
+  // ── Real Estate Pro ───────────────────────────────────────────────────────────
+  { id: 're1', type: 'job', title: 'Real Estate Agent',              org: 'Compass',              location: 'New York, NY',       pay: 'Commission',   tags: ['Real Estate','Agent','Sales','Property'],             source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=real+estate+agent', posted: ago(1*D), remote: false },
+  { id: 're2', type: 'job', title: 'Property Manager',               org: 'CBRE',                 location: 'Remote',             pay: '$75k–$110k',   tags: ['Property Manager','Real Estate','CBRE','Operations'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=property+manager', posted: ago(2*D), remote: true  },
+  { id: 're3', type: 'job', title: 'Real Estate Investment Analyst', org: 'Blackstone',           location: 'New York, NY',       pay: '$100k–$150k',  tags: ['Real Estate','Investment','Finance','Analysis'],       source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=real+estate+analyst', posted: ago(2*D), remote: false },
+  { id: 're4', type: 'event', title: 'NAR Annual Conference 2025',   org: 'NAR',                  location: 'Boston, MA',         pay: '$700+',         tags: ['Real Estate','NAR','Networking','Conference'],         source: 'NAR', sourceUrl: 'https://www.nar.realtor/conference-and-expo', posted: ago(5*D), remote: false },
+  { id: 're5', type: 'learning', title: 'Real Estate License Prep',  org: 'Colibri Real Estate',  location: 'Online',             pay: '$199',          tags: ['Real Estate','License','Certification'],              source: 'Colibri', sourceUrl: 'https://www.colibrirealestate.com', posted: ago(7*D), remote: true  },
+
+  // ── Investor / VC ─────────────────────────────────────────────────────────────
+  { id: 'vc1', type: 'job', title: 'Investment Analyst',             org: 'Andreessen Horowitz',  location: 'Menlo Park, CA',     pay: '$130k–$170k',  tags: ['Venture Capital','Investment','Startups','Analysis'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=venture+capital+analyst', posted: ago(2*D), remote: false },
+  { id: 'vc2', type: 'job', title: 'Associate, Early Stage VC',      org: 'Sequoia Capital',      location: 'San Francisco, CA',  pay: '$140k–$180k',  tags: ['VC','Startups','Investment','Early Stage'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=venture+capital+associate', posted: ago(1*D), remote: false },
+  { id: 'vc3', type: 'event', title: 'TechCrunch Disrupt 2025',      org: 'TechCrunch',           location: 'San Francisco, CA',  pay: '$2,499+',       tags: ['Startups','Investment','VC','Networking'],             source: 'TechCrunch', sourceUrl: 'https://techcrunch.com/events/disrupt', posted: ago(4*D), remote: false },
+  { id: 'vc4', type: 'grant', title: 'First Round Angel Track',      org: 'First Round Capital',  location: 'Global',             pay: '$500k seed',    tags: ['Angel','Seed','Startup','Funding'],                    source: 'First Round', sourceUrl: 'https://firstround.com/apply', posted: ago(6*D), remote: true  },
+
+  // ── Community Manager ─────────────────────────────────────────────────────────
+  { id: 'cm1', type: 'job', title: 'Head of Community',              org: 'Notion',               location: 'Remote',             pay: '$120k–$160k',  tags: ['Community','Manager','Notion','Social'],               source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=head+of+community', posted: ago(2*D), remote: true  },
+  { id: 'cm2', type: 'job', title: 'Developer Relations Engineer',   org: 'Vercel',               location: 'Remote',             pay: '$130k–$160k',  tags: ['DevRel','Community','Developer','Next.js'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=developer+relations', posted: ago(1*D), remote: true  },
+  { id: 'cm3', type: 'event', title: 'Community-Led Summit 2025',   org: 'CMX Hub',               location: 'Virtual',            pay: 'Free–$299',     tags: ['Community','CMX','Summit','Networking'],               source: 'CMX', sourceUrl: 'https://cmxhub.com', posted: ago(5*D), remote: true  },
 ];
 
 const OP_TYPE_META = {
@@ -2321,32 +2369,67 @@ const OP_TYPE_META = {
   learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
 };
 
+// ─── Role → job search queries for external platform deep-links ───────────────
+const ROLE_JOB_QUERIES = {
+  'Engineer / Developer':    'software engineer developer',
+  'Designer / Creative':     'UX designer product designer',
+  'Product Manager':         'product manager',
+  'Marketer / Growth':       'growth marketing manager',
+  'Founder / Entrepreneur':  'startup founder entrepreneur',
+  'Investor / VC':           'venture capital analyst associate',
+  'Content Creator':         'content creator social media manager',
+  'Data / Analytics':        'data scientist analyst',
+  'Student / Learner':       'junior developer intern entry level',
+  'Operations / Finance':    'operations manager finance analyst',
+  'Community Manager':       'community manager developer advocate',
+  'Healthcare Professional': 'nurse practitioner physician healthcare',
+  'Athlete / Coach':         'personal trainer sports coach fitness',
+  'Musician / Artist':       'music producer artist audio engineer',
+  'Chef / Food Creator':     'chef culinary director recipe developer',
+  'Real Estate Pro':         'real estate agent property manager',
+};
+
+// title = user's specific saved title (e.g. "Senior Frontend Engineer") — used as primary query
+// role  = macro category fallback
+function getPlatformSearchUrls(role, title) {
+  const q   = (title && title.trim()) ? title.trim() : (ROLE_JOB_QUERIES[role] || role);
+  const enc = encodeURIComponent(q);
+  return {
+    linkedin:  `https://www.linkedin.com/jobs/search/?keywords=${enc}&f_WT=2`,
+    indeed:    `https://www.indeed.com/jobs?q=${enc}&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11`,
+    glassdoor: `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc}&remoteWorkType=1`,
+    wellfound: `https://wellfound.com/jobs?q=${enc}`,
+    google:    `https://www.google.com/search?q=${encodeURIComponent(q + ' jobs remote 2025')}`,
+  };
+}
+
 // ─── Remotive live job fetching ───────────────────────────────────────────────
 const remotiveCache = new Map(); // category → { jobs, fetchedAt }
 const REMOTIVE_TTL  = 30 * 60 * 1000; // 30 minutes
 
-// Role → Remotive job categories
+// Role → Remotive job categories (all 16 roles mapped)
 const ROLE_TO_REMOTIVE = {
-  'Engineer / Developer':   ['software-dev', 'devops-sysadmin'],
-  'Designer / Creative':    ['design'],
-  'Product Manager':        ['product'],
-  'Marketer / Growth':      ['marketing'],
-  'Founder / Entrepreneur': ['product', 'software-dev'],
-  'Investor':               ['finance-legal'],
-  'Data / Analytics':       ['data'],
-  'Student / Learner':      ['software-dev', 'data'],
-  'Sales / Business Dev':   ['sales'],
-  'Operations / Finance':   ['finance-legal', 'hr'],
-  'Content Creator':        ['writing', 'marketing'],
-  'Community Manager':      ['marketing', 'hr'],
-  'Researcher / Academic':  ['data', 'software-dev'],
-  'HR / People Ops':        ['hr'],
+  'Engineer / Developer':    ['software-dev', 'devops-sysadmin'],
+  'Designer / Creative':     ['design'],
+  'Product Manager':         ['product'],
+  'Marketer / Growth':       ['marketing'],
+  'Founder / Entrepreneur':  ['product', 'software-dev'],
+  'Investor / VC':           ['finance-legal'],
+  'Data / Analytics':        ['data'],
+  'Student / Learner':       ['software-dev', 'data'],
+  'Operations / Finance':    ['finance-legal', 'hr'],
+  'Content Creator':         ['writing', 'marketing'],
+  'Community Manager':       ['marketing', 'hr'],
+  'Healthcare Professional': ['medical-health'],
+  'Athlete / Coach':         ['all-others'],
+  'Musician / Artist':       ['all-others'],
+  'Chef / Food Creator':     ['all-others'],
+  'Real Estate Pro':         ['finance-legal'],
 };
 
 async function fetchRemotiveJobs(category) {
   const cached = remotiveCache.get(category);
   if (cached && Date.now() - cached.fetchedAt < REMOTIVE_TTL) return cached.jobs;
-
   try {
     const data = await fetchJSON(
       `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=20`
@@ -2374,56 +2457,125 @@ async function fetchRemotiveJobs(category) {
   }
 }
 
-async function getLiveJobs(role) {
-  const cats = ROLE_TO_REMOTIVE[role] || ['software-dev'];
-  // Deduplicate categories
+// ─── The Muse API live job fetching ──────────────────────────────────────────
+const museCache = new Map(); // cacheKey → { jobs, fetchedAt }
+const MUSE_TTL  = 60 * 60 * 1000; // 1 hour
+
+const ROLE_TO_MUSE = {
+  'Engineer / Developer':    'Software Engineering',
+  'Designer / Creative':     'Design and UX',
+  'Product Manager':         'Product Management',
+  'Marketer / Growth':       'Marketing and Communications',
+  'Founder / Entrepreneur':  'Business and Strategy',
+  'Investor / VC':           'Finance and Banking',
+  'Data / Analytics':        'Data Science',
+  'Student / Learner':       'Software Engineering',
+  'Operations / Finance':    'Operations',
+  'Content Creator':         'Marketing and Communications',
+  'Community Manager':       'Marketing and Communications',
+  'Healthcare Professional': 'Healthcare and Medicine',
+  'Real Estate Pro':         'Real Estate',
+};
+
+const EXP_TO_MUSE = {
+  student: 'Entry Level', junior: 'Entry Level',
+  mid: 'Mid Level', senior: 'Senior Level', exec: 'Management',
+};
+
+async function fetchMuseJobs(role, experience) {
+  const category = ROLE_TO_MUSE[role];
+  if (!category) return [];
+  const level    = EXP_TO_MUSE[experience] || 'Mid Level';
+  const cacheKey = `${category}|${level}`;
+  const cached   = museCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < MUSE_TTL) return cached.jobs;
+  try {
+    const url  = `https://www.themuse.com/api/public/jobs?category=${encodeURIComponent(category)}&level=${encodeURIComponent(level)}&page=0&descending=true`;
+    const data = await fetchJSON(url);
+    const jobs = (data?.results || []).slice(0, 15).map((j) => ({
+      id:        `muse_${j.id}`,
+      type:      'job',
+      title:     j.name || 'Open Role',
+      org:       j.company?.name || 'Company',
+      location:  (j.locations || []).map(l => l.name).join(', ') || 'Multiple Locations',
+      pay:       '',
+      tags:      (j.categories || []).map(c => c.name).slice(0, 3),
+      source:    'The Muse',
+      sourceUrl: j.refs?.landing_page || 'https://www.themuse.com/jobs',
+      posted:    j.publication_date || new Date().toISOString(),
+      remote:    (j.locations || []).some(l => l.name.toLowerCase().includes('remote')),
+      isLive:    true,
+      logo:      j.company?.refs?.landing_page ? null : null,
+    }));
+    museCache.set(cacheKey, { jobs, fetchedAt: Date.now() });
+    return jobs;
+  } catch (e) {
+    console.warn(`Muse fetch [${cacheKey}]:`, e.message);
+    return museCache.get(cacheKey)?.jobs || [];
+  }
+}
+
+async function getLiveJobs(role, experience) {
+  const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
   const uniqCats = [...new Set(cats)].slice(0, 2);
-  const results = await Promise.all(uniqCats.map(fetchRemotiveJobs));
-  // Deduplicate by id (same job can appear in multiple categories)
+  const [remotiveResults, museResults] = await Promise.all([
+    Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
+    fetchMuseJobs(role, experience),
+  ]);
   const seen = new Set();
-  return results.flat().filter((j) => {
+  return [...remotiveResults, ...museResults].filter((j) => {
     if (seen.has(j.id)) return false;
     seen.add(j.id);
     return true;
   });
 }
 
-// Role → preferred opportunity types
+// Role → preferred opportunity types (all 16 roles)
 const ROLE_OP_TYPES = {
-  'Engineer / Developer':     new Set(['job','gig','hackathon','opensource','learning']),
-  'Designer / Creative':      new Set(['job','gig','event','learning']),
-  'Product Manager':          new Set(['job','event','learning']),
-  'Marketer / Growth':        new Set(['job','gig','event','learning']),
-  'Founder / Entrepreneur':   new Set(['grant','event','learning','job']),
-  'Investor':                 new Set(['event','grant']),
-  'Data / Analytics':         new Set(['job','gig','hackathon','learning']),
-  'Student / Learner':        new Set(['learning','hackathon','opensource','grant']),
-  'Sales / Business Dev':     new Set(['job','event','gig']),
-  'Operations / Finance':     new Set(['job','event','learning']),
-  'Content Creator':          new Set(['gig','job','event','learning']),
-  'Community Manager':        new Set(['job','event','gig']),
-  'Researcher / Academic':    new Set(['grant','learning','hackathon']),
-  'HR / People Ops':          new Set(['job','event','learning']),
+  'Engineer / Developer':    new Set(['job','gig','hackathon','opensource','learning']),
+  'Designer / Creative':     new Set(['job','gig','event','learning']),
+  'Product Manager':         new Set(['job','event','learning']),
+  'Marketer / Growth':       new Set(['job','gig','event','learning']),
+  'Founder / Entrepreneur':  new Set(['grant','event','learning','job']),
+  'Investor / VC':           new Set(['event','grant','learning']),
+  'Data / Analytics':        new Set(['job','gig','hackathon','learning']),
+  'Student / Learner':       new Set(['learning','hackathon','opensource','grant']),
+  'Operations / Finance':    new Set(['job','event','learning']),
+  'Content Creator':         new Set(['gig','job','event','learning']),
+  'Community Manager':       new Set(['job','event','gig']),
+  'Healthcare Professional': new Set(['job','learning','event']),
+  'Athlete / Coach':         new Set(['job','gig','event','learning']),
+  'Musician / Artist':       new Set(['job','gig','event','learning']),
+  'Chef / Food Creator':     new Set(['job','gig','event','learning']),
+  'Real Estate Pro':         new Set(['job','event','learning']),
 };
 
 app.get('/opportunities', authenticate, async (req, res) => {
   const { type, remote, search } = req.query;
-  const user      = await getUser(req.user.id);
-  const role      = user?.preferences?.role || '';
-  const skills    = new Set((user?.skills || []).map((s) => s.toLowerCase()));
-  const interests = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
-  const roleTypes = ROLE_OP_TYPES[role] || new Set();
+  const user       = await getUser(req.user.id);
+  const role       = user?.preferences?.role || '';
+  const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
+  const experience = user?.preferences?.experience || 'mid';
+  const skills     = new Set((user?.skills || []).map((s) => s.toLowerCase()));
+  const interests  = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
+  const roleTypes  = ROLE_OP_TYPES[role] || new Set();
 
-  // Fetch live jobs from Remotive (non-blocking, 5s timeout fallback)
+  // Build keyword list from specific title first, then macro role fallback
+  // e.g. "Senior Frontend Engineer" → ['senior','frontend','engineer']
+  const titleKeywords = userTitle.toLowerCase().split(/[\s\/,]+/).filter(w => w.length > 3);
+  const roleKeywords  = (ROLE_JOB_QUERIES[role] || role).toLowerCase().split(' ').filter(w => w.length > 3);
+  const allKeywords   = [...new Set([...titleKeywords, ...roleKeywords])];
+
+  // Fetch live jobs from Remotive + Muse (non-blocking, 6s timeout)
   let liveJobs = [];
   try {
     liveJobs = await Promise.race([
-      getLiveJobs(role),
-      new Promise((resolve) => setTimeout(() => resolve([]), 5000)),
+      getLiveJobs(role, experience),
+      new Promise((resolve) => setTimeout(() => resolve([]), 6000)),
     ]);
-  } catch (e) { /* silently skip live jobs on error */ }
+  } catch (e) { /* silently skip */ }
 
-  // Combine curated list + live jobs (deduplicate by id)
+  // Combine curated list + live jobs
   const seenIds = new Set();
   const allOps = [...OPPORTUNITIES, ...liveJobs].filter((o) => {
     if (seenIds.has(o.id)) return false;
@@ -2445,19 +2597,43 @@ app.get('/opportunities', authenticate, async (req, res) => {
 
   results = results.map((o) => {
     let score = 0;
+    const reasons = [];
+
     // Skill match — highest weight
-    (o.tags || []).forEach((t) => { if (skills.has(t.toLowerCase())) score += 3; });
+    const skillMatches = (o.tags || []).filter(t => skills.has(t.toLowerCase()));
+    if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
+
+    // Title/role keyword match — uses specific title first (all 500+ roles), falls back to macro
+    const oppTitleLower = o.title.toLowerCase();
+    const tagStr        = (o.tags || []).join(' ').toLowerCase();
+    const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
+    const roleMatchCount  = roleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
+    if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
+    else if (roleMatchCount > 0) { score += roleMatchCount * 5; reasons.push('Matches your role'); }
+
     // Role-type match
     if (roleTypes.has(o.type)) score += 2;
+
     // Interest keyword match against tags
-    (o.tags || []).forEach((t) => { if (interests.has(t.toLowerCase())) score += 1; });
-    // Boost live listings slightly to surface them
+    const interestMatches = (o.tags || []).filter(t => interests.has(t.toLowerCase()));
+    if (interestMatches.length > 0) { score += interestMatches.length * 2; reasons.push('Matches your interests'); }
+
+    // Live boost
     if (o.isLive) score += 1;
-    return { ...o, matchScore: score };
+
+    return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
   });
 
   results.sort((a, b) => b.matchScore - a.matchScore || new Date(b.posted) - new Date(a.posted));
-  res.json({ opportunities: results, meta: OP_TYPE_META, liveCount: liveJobs.length });
+
+  res.json({
+    opportunities: results,
+    meta: OP_TYPE_META,
+    liveCount: liveJobs.length,
+    userRole: role,
+    userTitle: userTitle || null,
+    platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle) : null,
+  });
 });
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
