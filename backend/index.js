@@ -2362,11 +2362,16 @@ app.get('/feed', authenticate, async (req, res) => {
     return true;
   });
 
-  // True mixed sort: interleave by source so no single platform dominates.
-  // Group posts by source, then round-robin pick one from each bucket.
-  // Within each source, order by relevance desc then recency desc.
+  // Sort: connected-platform posts first (boosted to relevance 10),
+  // then interleave the rest by source round-robin (relevance desc, recency desc).
+  const CONNECTED_SOURCES = new Set([...connectedPlatforms]);
+  const connectedFirst = all
+    .filter(p => CONNECTED_SOURCES.has(p.source))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  const rest = all.filter(p => !CONNECTED_SOURCES.has(p.source));
   const bySource = {};
-  all.forEach(p => {
+  rest.forEach(p => {
     const key = p.source || 'uficonnect';
     if (!bySource[key]) bySource[key] = [];
     bySource[key].push(p);
@@ -2376,14 +2381,15 @@ app.get('/feed', authenticate, async (req, res) => {
       b.relevance !== a.relevance ? b.relevance - a.relevance : new Date(b.createdAt) - new Date(a.createdAt)
     )
   );
-  const mixed = [];
+  const roundRobin = [];
   const buckets = Object.values(bySource);
   let i = 0;
   while (buckets.some(b => b.length > 0)) {
     const bucket = buckets[i % buckets.length];
-    if (bucket.length > 0) mixed.push(bucket.shift());
+    if (bucket.length > 0) roundRobin.push(bucket.shift());
     i++;
   }
+  const mixed = [...connectedFirst, ...roundRobin];
 
   res.json({
     posts: mixed,

@@ -120,12 +120,20 @@ function YouTubeCard({ post }) {
 
       {post.content && <PostText text={post.content} />}
 
-      <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
-        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-          style={{ marginLeft: 'auto', fontSize: '.72rem', color: src.color, fontWeight: 600, textDecoration: 'none', padding: '3px 9px', background: `${src.color}14`, borderRadius: 4 }}>
-          ▶️ Watch ↗
-        </a>
-      </div>
+      {post.sourceUrl && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
+            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
+            <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {post.sourceUrl}
+            </span>
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>
+              ▶️ Watch ↗
+            </span>
+          </a>
+        </div>
+      )}
     </div>
   );
 }
@@ -227,15 +235,28 @@ function PostCard({ post }) {
         </a>
       )}
 
-      {/* Footer: source link only */}
-      {isExternal && post.sourceUrl && (
-        <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
+      {/* Footer: full post link */}
+      {post.sourceUrl && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
-            style={{ marginLeft: 'auto', fontSize: '.7rem', color: src.color, fontWeight: 600,
-              display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none',
-              padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}>
-            {src.icon} {src.label} ↗
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              textDecoration: 'none', color: src.color,
+            }}>
+            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
+            <span style={{
+              fontSize: '.7rem', color: 'var(--muted)', flex: 1,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {post.sourceUrl}
+            </span>
+            <span style={{
+              fontSize: '.65rem', fontWeight: 700, color: src.color,
+              background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0,
+            }}>
+              {src.label} ↗
+            </span>
           </a>
         </div>
       )}
