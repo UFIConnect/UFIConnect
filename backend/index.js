@@ -1950,7 +1950,12 @@ app.get('/users/search', authenticate, (req, res) => {
   const role = (req.query.role || '').toLowerCase().trim();
   const myId = req.user.id;
 
+  const myUser      = users.find(u => u.id === myId);
+  const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
+  const myRole      = (myUser?.preferences?.role || '').toLowerCase();
+
   let results = users.filter(u => u.onboardingComplete);
+
   if (q) {
     results = results.filter(u =>
       (u.name || '').toLowerCase().includes(q) ||
@@ -1970,14 +1975,52 @@ app.get('/users/search', authenticate, (req, res) => {
   const followerCount = {};
   follows.forEach(f => { followerCount[f.followingId] = (followerCount[f.followingId] || 0) + 1; });
 
+  // Score by relevance
+  const scored = results.map(u => {
+    const uName      = (u.name || '').toLowerCase();
+    const uRole      = (u.preferences?.role || '').toLowerCase();
+    const uInterests = (u.preferences?.interests || []).map(i => i.toLowerCase());
+    const shared     = uInterests.filter(i => myInterests.has(i));
+    let score = 0;
+
+    // Name match quality
+    if (q) {
+      if (uName === q)           score += 100;
+      else if (uName.startsWith(q)) score += 60;
+      else if (uName.includes(q))   score += 25;
+    }
+
+    // Shared interests (most impactful relevance signal)
+    score += shared.length * 12;
+
+    // Same role category
+    if (myRole && uRole) {
+      const myBase = myRole.split('/')[0].trim();
+      if (uRole === myRole)            score += 20;
+      else if (uRole.includes(myBase)) score += 8;
+    }
+
+    // Follower popularity (log-scaled so it doesn't dominate)
+    score += Math.log1p(followerCount[u.id] || 0) * 2;
+
+    // Self always first
+    if (u.id === myId) score += 200;
+
+    return { u, score, sharedInterests: shared.slice(0, 3) };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
   res.json({
-    users: results.slice(0, 60).map(u => ({
+    users: scored.slice(0, 60).map(({ u, sharedInterests }) => ({
       id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
       organization: u.organization || '', skills: u.skills || [],
       role: u.preferences?.role || '',
       interests: (u.preferences?.interests || []).slice(0, 6),
       followersCount: followerCount[u.id] || 0,
       isFollowing: myFollowing.has(u.id),
+      sharedInterests,
+      isSelf: u.id === myId,
     })),
   });
 });
