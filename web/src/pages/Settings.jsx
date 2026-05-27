@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -186,9 +186,13 @@ function SectionHeading({ children }) {
 }
 
 export default function Settings() {
-  const { profile, updateProfileLocally } = useAuth();
+  const { profile, updateProfileLocally, logout } = useAuth();
+  const navigate = useNavigate();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
+  const [deleteModal, setDeleteModal] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const [form, setForm] = useState({
     name:         profile?.name         || '',
@@ -408,17 +412,69 @@ export default function Settings() {
 
         {/* ── Danger zone ── */}
         <div className="card" style={{ borderColor: '#FCA5A5' }}>
-          <SectionHeading>⚠️ Account</SectionHeading>
+          <SectionHeading>⚠️ Danger Zone</SectionHeading>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete account</div>
-              <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Permanently remove your account and all data. This cannot be undone.</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
+                Permanently remove your account and all associated data. This action cannot be undone.
+              </div>
             </div>
-            <button type="button" className="btn btn-danger btn-sm" onClick={() => alert('Contact support@uficonnect.org to delete your account.')}>
-              Delete
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteModal(true)}>
+              Delete account
             </button>
           </div>
         </div>
+
+        {/* ── Delete confirmation modal ── */}
+        {deleteModal && (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}>
+            <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
+              <div style={{ fontSize: '2rem', marginBottom: 12, textAlign: 'center' }}>⚠️</div>
+              <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete your account?</h3>
+              <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
+                This will permanently delete your profile, posts, and all account data.
+                This action <strong>cannot be undone</strong>.
+              </p>
+              <div className="form-group" style={{ marginBottom: 16 }}>
+                <label className="form-label">Type <strong>DELETE</strong> to confirm</label>
+                <input
+                  className="form-input"
+                  value={deleteConfirm}
+                  onChange={e => setDeleteConfirm(e.target.value)}
+                  placeholder="Type DELETE here"
+                  autoFocus
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setDeleteModal(false); setDeleteConfirm(''); }}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-danger"
+                  style={{ flex: 1 }}
+                  disabled={deleteConfirm !== 'DELETE' || deleting}
+                  onClick={async () => {
+                    setDeleting(true);
+                    try {
+                      await client.delete('/profile');
+                      logout();
+                      navigate('/');
+                    } catch {
+                      alert('Failed to delete account. Please contact support@uficonnect.org.');
+                      setDeleting(false);
+                    }
+                  }}
+                >
+                  {deleting ? <span className="spinner" /> : 'Permanently delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Save ── */}
         <div style={{ display: 'flex', gap: 10, paddingBottom: 32 }}>

@@ -14,6 +14,7 @@ import Conversation     from './pages/Conversation';
 import Profile          from './pages/Profile';
 import ConnectedAccounts from './pages/ConnectedAccounts';
 import Settings          from './pages/Settings';
+import AgentDashboard    from './pages/AgentDashboard';
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -73,6 +74,11 @@ export default function App() {
       }/>
       <Route path="/settings" element={
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
+      }/>
+
+      {/* Agent Control Room */}
+      <Route path="/agents" element={
+        <RequireAuth><AgentDashboard /></RequireAuth>
       }/>
 
       {/* Fallback */}

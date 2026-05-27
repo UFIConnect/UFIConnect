@@ -50,7 +50,108 @@ function categoryStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
-/** Card for social search deep-links (LinkedIn/Twitter/Facebook) */
+/** YouTube embed card */
+function YouTubeCard({ post }) {
+  const [expanded, setExpanded] = useState(false);
+  const src = SOURCE_META.youtube;
+  const c   = categoryStyle(post.group?.category);
+  return (
+    <div className="card post-card" style={{ marginBottom: 12 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
+        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
+        {post.group && (
+          <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>
+            {post.group.name}
+          </span>
+        )}
+        {post.topic && (
+          <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4, marginLeft: 2 }}>
+            🏷 {post.topic}
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
+      </div>
+
+      {/* Title */}
+      <a
+        href={post.sourceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ textDecoration: 'none', color: 'inherit' }}
+      >
+        <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>
+          {post.title}
+          <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
+        </p>
+      </a>
+
+      {/* Embed or thumbnail */}
+      {post.embedId ? (
+        expanded ? (
+          <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
+            <iframe
+              width="100%"
+              height="100%"
+              src={`https://www.youtube.com/embed/${post.embedId}?autoplay=1`}
+              title={post.title}
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              style={{ display: 'block' }}
+            />
+          </div>
+        ) : (
+          <div
+            style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10 }}
+            onClick={() => setExpanded(true)}
+          >
+            {post.mediaUrl && (
+              <img
+                src={post.mediaUrl}
+                alt={post.title}
+                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
+              />
+            )}
+            <div style={{
+              position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%', background: '#FF0000',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 20px rgba(0,0,0,.4)',
+              }}>
+                <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
+              </div>
+            </div>
+          </div>
+        )
+      ) : post.mediaUrl ? (
+        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10 }}>
+          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }} />
+        </div>
+      ) : null}
+
+      {post.content && !expanded && (
+        <p style={{ fontSize: '.85rem', color: 'var(--muted)', margin: '0 0 8px', lineHeight: 1.5 }}>
+          {post.content.slice(0, 200)}{post.content.length > 200 ? '…' : ''}
+        </p>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: '.72rem', color: src.color, fontWeight: 600, textDecoration: 'none', padding: '3px 9px', background: `${src.color}14`, borderRadius: 4 }}>
+          ▶️ Watch on YouTube ↗
+        </a>
+        {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Social search card (for unconnected platforms) */
 function SocialSearchCard({ post }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   return (
@@ -62,11 +163,7 @@ function SocialSearchCard({ post }) {
     >
       <div
         className="card post-card"
-        style={{
-          borderLeft: `3px solid ${src.color}`,
-          cursor: 'pointer',
-          background: `${src.color}08`,
-        }}
+        style={{ borderLeft: `3px solid ${src.color}`, cursor: 'pointer', background: `${src.color}08` }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: '1.6rem' }}>{src.icon}</span>
@@ -75,9 +172,7 @@ function SocialSearchCard({ post }) {
               {post.title}
               <span style={{ marginLeft: 6, fontSize: '.75rem', color: src.color }}>↗</span>
             </div>
-            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 3 }}>
-              {post.content}
-            </div>
+            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 3 }}>{post.content}</div>
           </div>
         </div>
         <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -87,18 +182,21 @@ function SocialSearchCard({ post }) {
             </span>
           )}
           <span style={{ fontSize: '.7rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 10px', borderRadius: 4, marginLeft: 'auto' }}>
-            Search {src.label} →
+            See on {src.label} →
           </span>
         </div>
         {post.mediaUrl && (
-          <div style={{ marginTop: 14, borderRadius: 18, overflow: 'hidden', position: 'relative', background: '#111' }}>
+          <div style={{ marginTop: 14, borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#111' }}>
             <img
               src={post.mediaUrl}
-              alt={post.mediaLabel || 'Media preview'}
-              style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 160, filter: post.mediaType === 'video' ? 'brightness(0.92)' : 'none' }}
+              alt={post.mediaLabel || 'Preview'}
+              style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 160,
+                filter: post.mediaType === 'video' ? 'brightness(0.92)' : 'none' }}
             />
             {post.mediaType === 'video' && (
-              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 60, height: 60, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.7rem' }}>
+              <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                width: 60, height: 60, borderRadius: '50%', background: 'rgba(0,0,0,0.55)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.7rem' }}>
                 ▶
               </div>
             )}
@@ -118,65 +216,66 @@ function PostCard({ post, onLike }) {
   const c   = categoryStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  // Social search cards get their own special renderer
-  if (post.isSocialCard) return <SocialSearchCard post={post} />;
+  if (post.isSocialCard)           return <SocialSearchCard post={post} />;
+  if (post.source === 'youtube')   return <YouTubeCard post={post} />;
 
   const postUrl = post.isExternal ? post.sourceUrl : null;
 
   return (
     <div
       className="card post-card"
-      style={{ marginBottom: 12, cursor: postUrl ? 'pointer' : 'default', textDecoration: 'none', display: 'block' }}
+      style={{ marginBottom: 12, cursor: postUrl ? 'pointer' : 'default' }}
       onClick={postUrl ? () => window.open(postUrl, '_blank', 'noopener,noreferrer') : undefined}
     >
-      {/* Group tag + meta row */}
-      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+      {/* Source / community row */}
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
+        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>
+          {post.sourceLabel || src.label}
+        </span>
         {post.group && (
           post.isExternal ? (
-            <a
-              href={post.group.externalUrl || postUrl || '#'}
-              target="_blank" rel="noopener noreferrer"
-              style={{ textDecoration: 'none' }}
-              onClick={e => e.stopPropagation()}
-            >
-              <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px', background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6 }}>
+            <a href={post.group.externalUrl || postUrl || '#'} target="_blank" rel="noopener noreferrer"
+              style={{ textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
+              <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>
                 {post.group.name}
               </span>
             </a>
           ) : (
             <Link to={`/groups/${post.group.id}`} style={{ textDecoration: 'none' }} onClick={e => e.stopPropagation()}>
-              <span style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.3px', background: c.bg, color: c.text, padding: '3px 9px', borderRadius: 6 }}>
+              <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>
                 {post.group.name}
               </span>
             </Link>
           )
         )}
-        {/* Topic tag */}
         {post.topic && (
-          <span style={{ fontSize: '.68rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>
+          <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>
             🏷 {post.topic}
           </span>
         )}
-        {post.fromJoinedGroup && <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>· your group</span>}
+        {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
         {!post.fromJoinedGroup && post.forYou && <span style={{ fontSize: '.7rem', color: '#059669' }}>✦ for you</span>}
         {post.connectedBoost && <span style={{ fontSize: '.68rem', color: '#7C3AED', fontWeight: 600 }}>⚡ connected</span>}
-      </div>
-
-      {/* Author row */}
-      <div className="post-header">
-        <div className="avatar avatar-md">{initials(post.author?.name)}</div>
-        <div className="post-meta">
-          <div className="post-author">{post.author?.name || 'Anonymous'}</div>
-          <div className="post-source">
-            {post.author?.title}{post.author?.organization ? ` · ${post.author.organization}` : ''}
-          </div>
-        </div>
-        <span style={{ fontSize: '.75rem', color: 'var(--muted)', marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>
           {timeAgo(post.createdAt)}
         </span>
       </div>
 
-      {/* Title — clickable link for external posts */}
+      {/* Author (internal posts only) */}
+      {!post.isExternal && (
+        <div className="post-header" style={{ marginBottom: 8 }}>
+          <div className="avatar avatar-md">{initials(post.author?.name)}</div>
+          <div className="post-meta">
+            <div className="post-author">{post.author?.name || 'Member'}</div>
+            <div className="post-source">
+              {post.author?.title}{post.author?.organization ? ` · ${post.author.organization}` : ''}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Title for external posts */}
       {post.title && post.isExternal && (
         <a
           href={postUrl}
@@ -185,38 +284,30 @@ function PostCard({ post, onLike }) {
           onClick={e => e.stopPropagation()}
           style={{ textDecoration: 'none', color: 'inherit' }}
         >
-          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '8px 0 4px', color: 'var(--text)', lineHeight: 1.4 }}>
+          <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', color: 'var(--text)', lineHeight: 1.4 }}>
             {post.title}
             <span style={{ marginLeft: 5, fontSize: '.75rem', color: src.color, opacity: 0.8 }}>↗</span>
           </p>
         </a>
       )}
 
-      <p className="post-content" style={{ marginTop: post.title && post.isExternal ? 0 : undefined }}>
-        {post.content}
+      <p className="post-content">
+        {(post.content || '').slice(0, 380)}{(post.content || '').length > 380 ? '…' : ''}
       </p>
 
-      {post.mediaUrl && (
-        <div style={{ marginTop: 14, borderRadius: 18, overflow: 'hidden', position: 'relative', background: '#111' }}>
+      {/* Media: cover image (DEV.to, Reddit image posts, social) */}
+      {post.mediaUrl && post.mediaType === 'image' && (
+        <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden' }}>
           <img
             src={post.mediaUrl}
-            alt={post.mediaLabel || 'Media preview'}
-            style={{ width: '100%', display: 'block', objectFit: 'cover', minHeight: 180, filter: post.mediaType === 'video' ? 'brightness(0.95)' : 'none' }}
+            alt={post.title || 'Article image'}
+            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 320 }}
+            onError={e => { e.currentTarget.style.display = 'none'; }}
           />
-          {post.mediaType === 'video' && (
-            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 64, height: 64, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '1.8rem' }}>
-              ▶
-            </div>
-          )}
-          {post.mediaCaption && (
-            <div style={{ padding: '10px 14px', fontSize: '.82rem', color: 'var(--muted)', background: '#fff' }}>
-              {post.mediaCaption}
-            </div>
-          )}
         </div>
       )}
 
-      {/* Footer: actions + source */}
+      {/* Footer */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
         <div className="post-actions" style={{ marginTop: 0 }} onClick={e => e.stopPropagation()}>
           <button
@@ -229,24 +320,18 @@ function PostCard({ post, onLike }) {
           <button className="post-action-btn">💬 {post.commentsCount || 0}</button>
         </div>
 
-        {/* Source badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          {post.isExternal && post.sourceUrl ? (
-            <a
-              href={post.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              style={{ fontSize: '.7rem', color: src.color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3, textDecoration: 'none', padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}
-            >
-              {src.icon} {post.sourceLabel || src.label} · open ↗
-            </a>
-          ) : (
-            <span style={{ fontSize: '.68rem', color: 'var(--muted)', opacity: 0.7 }}>
-              {src.icon} {src.label}
-            </span>
-          )}
-        </div>
+        {post.isExternal && post.sourceUrl && (
+          <a
+            href={post.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            style={{ fontSize: '.7rem', color: src.color, fontWeight: 600, display: 'flex', alignItems: 'center',
+              gap: 3, textDecoration: 'none', padding: '2px 8px', background: `${src.color}14`, borderRadius: 4 }}
+          >
+            {src.icon} {src.label} ↗
+          </a>
+        )}
       </div>
     </div>
   );
@@ -277,78 +362,84 @@ export default function Feed() {
     try { await client.post(`/feed/${postId}/like`); } catch {}
   }
 
-  const categories    = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
-  const firstName     = profile?.name?.split(' ')[0] || '';
-  const role          = profile?.preferences?.role || '';
-  const hasPrefs      = !!(profile?.preferences?.interests?.length || role);
+  const categories  = [...new Set(posts.map(p => p.group?.category).filter(Boolean))];
+  const firstName   = profile?.name?.split(' ')[0] || '';
+  const role        = profile?.preferences?.role || '';
+  const hasPrefs    = !!(profile?.preferences?.interests?.length || role);
 
-  const redditCount   = posts.filter(p => p.source === 'reddit').length;
-  const hnCount       = posts.filter(p => p.source === 'hackernews').length;
-  const githubCount   = posts.filter(p => p.source === 'github').length;
-  const devtoCount    = posts.filter(p => p.source === 'devto').length;
-  const mediumCount   = posts.filter(p => p.source === 'medium').length;
-  const socialCount   = posts.filter(p => p.isSocialCard).length;
+  const counts = {
+    reddit:  posts.filter(p => p.source === 'reddit').length,
+    hn:      posts.filter(p => p.source === 'hackernews').length,
+    github:  posts.filter(p => p.source === 'github').length,
+    devto:   posts.filter(p => p.source === 'devto').length,
+    medium:  posts.filter(p => p.source === 'medium').length,
+    youtube: posts.filter(p => p.source === 'youtube').length,
+    social:  posts.filter(p => p.isSocialCard).length,
+  };
 
   const filtered =
     filter === 'foryou'  ? posts.filter(p => p.forYou || p.fromJoinedGroup)
     : filter === 'all'   ? posts
     : filter === 'mine'  ? posts.filter(p => p.fromJoinedGroup)
-    : filter === 'reddit' ? posts.filter(p => p.source === 'reddit')
-    : filter === 'hn'     ? posts.filter(p => p.source === 'hackernews')
-    : filter === 'github' ? posts.filter(p => p.source === 'github')
-    : filter === 'devto'  ? posts.filter(p => p.source === 'devto')
-    : filter === 'medium' ? posts.filter(p => p.source === 'medium')
-    : filter === 'social' ? posts.filter(p => p.isSocialCard)
+    : filter === 'reddit'  ? posts.filter(p => p.source === 'reddit')
+    : filter === 'hn'      ? posts.filter(p => p.source === 'hackernews')
+    : filter === 'github'  ? posts.filter(p => p.source === 'github')
+    : filter === 'devto'   ? posts.filter(p => p.source === 'devto')
+    : filter === 'medium'  ? posts.filter(p => p.source === 'medium')
+    : filter === 'youtube' ? posts.filter(p => p.source === 'youtube')
+    : filter === 'social'  ? posts.filter(p => p.isSocialCard)
     : posts.filter(p => p.group?.category === filter);
 
-  // If forYou returns nothing, fall back to showing all — never a blank feed
   const displayed = (filter === 'foryou' && filtered.length === 0) ? posts : filtered;
 
-  const sourcesSummary = [
-    redditCount  > 0 && `${redditCount} Reddit`,
-    hnCount      > 0 && `${hnCount} News`,
-    githubCount  > 0 && `${githubCount} GitHub`,
-    devtoCount   > 0 && `${devtoCount} DEV Community`,
-    mediumCount  > 0 && `${mediumCount} Medium`,
-    socialCount  > 0 && `${socialCount} social`,
+  const sourceSummary = [
+    counts.reddit  > 0 && `${counts.reddit} Reddit`,
+    counts.hn      > 0 && `${counts.hn} News`,
+    counts.github  > 0 && `${counts.github} GitHub`,
+    counts.devto   > 0 && `${counts.devto} DEV`,
+    counts.medium  > 0 && `${counts.medium} Medium`,
+    counts.youtube > 0 && `${counts.youtube} YouTube`,
   ].filter(Boolean).join(' · ');
 
   return (
     <Layout>
       <div className="page-header">
         <h1 className="page-title">
-          {firstName ? `Hey ${firstName} 👋` : 'Your Feed'}
+          {firstName ? `Welcome back, ${firstName}` : 'Your Feed'}
         </h1>
         <p className="page-subtitle">
           {hasPrefs
-            ? `Personalised for ${role ? `${role}s` : 'you'} · ${sourcesSummary || 'live updates from communities, stories, and conversations'}.`
-            : 'Live updates from communities, stories, and social conversations across the web.'}
+            ? `Curated for ${role ? `${role}s` : 'you'} — ${sourceSummary || 'live content from communities across the web'}.`
+            : 'Live content from professional communities, publications, and conversations across the web.'}
         </p>
       </div>
 
-      {/* Filters */}
+      {/* Filter bar */}
       <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
-        <button className={`filter-btn${filter === 'foryou' ? ' active' : ''}`} onClick={() => setFilter('foryou')}>✦ For You</button>
-        <button className={`filter-btn${filter === 'all'    ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
-        {redditCount > 0 && (
-          <button className={`filter-btn${filter === 'reddit' ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({redditCount})</button>
+        <button className={`filter-btn${filter === 'foryou'  ? ' active' : ''}`} onClick={() => setFilter('foryou')}>✦ For You</button>
+        <button className={`filter-btn${filter === 'all'     ? ' active' : ''}`} onClick={() => setFilter('all')}>🌍 All</button>
+        {counts.youtube > 0 && (
+          <button className={`filter-btn${filter === 'youtube' ? ' active' : ''}`} onClick={() => setFilter('youtube')}>▶️ Videos ({counts.youtube})</button>
         )}
-        {hnCount > 0 && (
-          <button className={`filter-btn${filter === 'hn' ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 News ({hnCount})</button>
+        {counts.reddit > 0 && (
+          <button className={`filter-btn${filter === 'reddit'  ? ' active' : ''}`} onClick={() => setFilter('reddit')}>🟠 Reddit ({counts.reddit})</button>
         )}
-        {githubCount > 0 && (
-          <button className={`filter-btn${filter === 'github' ? ' active' : ''}`} onClick={() => setFilter('github')}>🐙 GitHub ({githubCount})</button>
+        {counts.hn > 0 && (
+          <button className={`filter-btn${filter === 'hn'      ? ' active' : ''}`} onClick={() => setFilter('hn')}>🔶 News ({counts.hn})</button>
         )}
-        {devtoCount > 0 && (
-          <button className={`filter-btn${filter === 'devto' ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV Community ({devtoCount})</button>
+        {counts.github > 0 && (
+          <button className={`filter-btn${filter === 'github'  ? ' active' : ''}`} onClick={() => setFilter('github')}>🐙 GitHub ({counts.github})</button>
         )}
-        {mediumCount > 0 && (
-          <button className={`filter-btn${filter === 'medium' ? ' active' : ''}`} onClick={() => setFilter('medium')}>📝 Medium ({mediumCount})</button>
+        {counts.devto > 0 && (
+          <button className={`filter-btn${filter === 'devto'   ? ' active' : ''}`} onClick={() => setFilter('devto')}>👩‍💻 DEV ({counts.devto})</button>
         )}
-        {socialCount > 0 && (
-          <button className={`filter-btn${filter === 'social' ? ' active' : ''}`} onClick={() => setFilter('social')}>🔗 Social ({socialCount})</button>
+        {counts.medium > 0 && (
+          <button className={`filter-btn${filter === 'medium'  ? ' active' : ''}`} onClick={() => setFilter('medium')}>📝 Medium ({counts.medium})</button>
         )}
-        <button className={`filter-btn${filter === 'mine'   ? ' active' : ''}`} onClick={() => setFilter('mine')}>⭐ My groups</button>
+        {counts.social > 0 && (
+          <button className={`filter-btn${filter === 'social'  ? ' active' : ''}`} onClick={() => setFilter('social')}>🔗 Social ({counts.social})</button>
+        )}
+        <button className={`filter-btn${filter === 'mine'    ? ' active' : ''}`} onClick={() => setFilter('mine')}>⭐ My Groups</button>
         {categories.map(cat => (
           <button key={cat} className={`filter-btn${filter === cat ? ' active' : ''}`} onClick={() => setFilter(cat)}>
             {cat}
@@ -365,7 +456,7 @@ export default function Feed() {
           <div className="empty-icon">📭</div>
           <div className="empty-title">Nothing here yet</div>
           <div className="empty-desc">
-            <Link to="/groups">Join some groups</Link> to see their posts here, or complete your{' '}
+            <Link to="/groups">Join some communities</Link> to see their content here, or complete your{' '}
             <Link to="/onboarding">profile preferences</Link> to personalise your feed.
           </div>
         </div>

@@ -419,10 +419,12 @@ async function fetchRedditByKeyword(keyword) {
           sourceLabel:   `r/${sub}`,
           sourceUrl:     `https://www.reddit.com${p.permalink}`,
           topic:         keyword,
-          author:        { id: `reddit_${p.author}`, name: `u/${p.author}`, title: `r/${sub}`, organization: 'Reddit' },
+          author:        { id: `reddit_${p.author}`, name: null, title: `r/${sub}`, organization: 'Reddit' },
           likes: [], likesCount: p.ups || 0, commentsCount: p.num_comments || 0,
           createdAt:     new Date(p.created_utc * 1000).toISOString(),
           isExternal:    true,
+          mediaUrl:      (p.url?.match(/\.(jpe?g|png|gif|webp)(\?.*)?$/i) && p.url) || (p.thumbnail?.startsWith('http') && !['self','nsfw','default','spoiler','image'].includes(p.thumbnail) ? p.thumbnail : null),
+          mediaType:     'image',
           group:         matchedGroup
             ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
             : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
@@ -496,7 +498,8 @@ async function fetchDevToByTag(tag) {
         likes: [], likesCount: a.public_reactions_count || 0, commentsCount: a.comments_count || 0,
         createdAt:     a.published_at,
         isExternal:    true,
-        coverImage:    a.cover_image || a.social_image || null,
+        mediaUrl:      a.cover_image || a.social_image || null,
+        mediaType:     (a.cover_image || a.social_image) ? 'image' : null,
         group:         { id: 'ext_devto', name: 'DEV Community', category: 'Engineering', externalUrl: 'https://dev.to' },
       }));
     setCached(key, posts);
@@ -624,6 +627,44 @@ async function fetchMediumByTag(tag) {
   }
 }
 
+// ─── YouTube: search videos by keyword (requires YOUTUBE_API_KEY env var) ─────
+async function fetchYouTubeByKeyword(keyword) {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return [];
+  const cacheKey = `youtube_kw_${keyword}`;
+  const cached = getCached(cacheKey);
+  if (cached) return cached;
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=10&key=${encodeURIComponent(apiKey)}&order=relevance&safeSearch=strict&relevanceLanguage=en`;
+    const data = await fetchJSON(url);
+    const items = (data?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
+    const posts = items.map(v => ({
+      id:          `youtube_${v.id.videoId}`,
+      authorId:    `youtube_${v.snippet.channelId}`,
+      groupId:     'ext_youtube',
+      content:     v.snippet.description?.slice(0, 300) || v.snippet.title,
+      title:       v.snippet.title,
+      source:      'youtube',
+      sourceLabel: v.snippet.channelTitle,
+      sourceUrl:   `https://www.youtube.com/watch?v=${v.id.videoId}`,
+      embedId:     v.id.videoId,
+      topic:       keyword,
+      author:      { id: `youtube_${v.snippet.channelId}`, name: null, title: 'YouTube', organization: 'YouTube' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   v.snippet.publishedAt || new Date().toISOString(),
+      isExternal:  true,
+      mediaType:   'video',
+      mediaUrl:    v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url || null,
+      group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
+    }));
+    setCached(cacheKey, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`YouTube search "${keyword}":`, e.message);
+    return getCached(cacheKey) || [];
+  }
+}
+
 // ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
@@ -713,28 +754,31 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   const topics = [...new Set(keywords)];
 
   // For each topic: fetch Reddit, HN, DEV.to, GitHub, Medium — each owns its limits
-  const redditPromises = topics.map(kw => fetchRedditByKeyword(kw));
-  const hnPromises     = topics.map(kw => fetchHNByKeyword(kw));
-  const githubPromises = topics.map(kw => fetchGitHubByKeyword(kw));
-  const devtoTags      = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
-  const mediumTags     = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
-  const devtoPromises  = devtoTags.map(tag => fetchDevToByTag(tag));
-  const mediumPromises = mediumTags.map(tag => fetchMediumByTag(tag));
+  const redditPromises  = topics.map(kw => fetchRedditByKeyword(kw));
+  const hnPromises      = topics.map(kw => fetchHNByKeyword(kw));
+  const githubPromises  = topics.map(kw => fetchGitHubByKeyword(kw));
+  const youtubePromises = topics.map(kw => fetchYouTubeByKeyword(kw));
+  const devtoTags       = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
+  const mediumTags      = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
+  const devtoPromises   = devtoTags.map(tag => fetchDevToByTag(tag));
+  const mediumPromises  = mediumTags.map(tag => fetchMediumByTag(tag));
 
-  const [redditResults, hnResults, githubResults, devtoResults, mediumResults] = await Promise.all([
+  const [redditResults, hnResults, githubResults, devtoResults, mediumResults, youtubeResults] = await Promise.all([
     Promise.all(redditPromises).catch(() => []),
     Promise.all(hnPromises).catch(() => []),
     Promise.all(githubPromises).catch(() => []),
     Promise.all(devtoPromises).catch(() => []),
     Promise.all(mediumPromises).catch(() => []),
+    Promise.all(youtubePromises).catch(() => []),
   ]);
 
   return {
-    reddit: redditResults.flat(),
-    hn:     hnResults.flat(),
-    github: githubResults.flat(),
-    devto:  devtoResults.flat(),
-    medium: mediumResults.flat(),
+    reddit:  redditResults.flat(),
+    hn:      hnResults.flat(),
+    github:  githubResults.flat(),
+    devto:   devtoResults.flat(),
+    medium:  mediumResults.flat(),
+    youtube: youtubeResults.flat(),
   };
 }
 
@@ -1334,6 +1378,23 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   res.json({ profile: fullProfile(user), autoJoined: suggested });
 });
 
+// ─── Delete account ─────────────────────────────────────────────────────────────
+app.delete('/profile', authenticate, async (req, res) => {
+  const uid = req.user.id;
+  // Remove from in-memory store
+  const idx = users.findIndex(u => u.id === uid);
+  if (idx > -1) users.splice(idx, 1);
+  // Remove from DB (cascade: social_accounts, community_posts, then users)
+  if (db.isConnected() && isDBId(uid)) {
+    try {
+      await db.query('DELETE FROM social_accounts WHERE user_id=$1', [uid]);
+      await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
+      await db.query('DELETE FROM users WHERE id=$1', [uid]);
+    } catch (e) { console.error('delete account DB:', e.message); }
+  }
+  res.json({ deleted: true, message: 'Account permanently deleted.' });
+});
+
 // ─── Groups ───────────────────────────────────────────────────────────────────
 app.get('/groups', (req, res) => {
   const { category } = req.query;
@@ -1464,9 +1525,9 @@ app.get('/feed', authenticate, async (req, res) => {
   }
 
   // Fetch posts from all live sources for user's topics
-  const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw, medium: mediumRaw } = await fetchAllTopicPosts(
+  const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw, medium: mediumRaw, youtube: youtubeRaw } = await fetchAllTopicPosts(
     prefs.interests || [], prefs.role || ''
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], github: [], devto: [], medium: [] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit: [], hn: [], github: [], devto: [], medium: [], youtube: [] }; });
 
   // Fetch live posts from all joined Reddit groups
   const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
@@ -1481,7 +1542,34 @@ app.get('/feed', authenticate, async (req, res) => {
   const hnPosts     = (hnRaw    || []).map(p => mapExternalPost(p, 'hackernews'));
   const githubPosts = (githubRaw|| []).map(p => mapExternalPost(p, 'github'));
   const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
-  const mediumPosts = (mediumRaw|| []).map(p => mapExternalPost(p, 'medium'));
+  const mediumPosts  = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
+  const youtubePosts = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
+
+  // Connected social platform posts — real post content from SOCIAL_POSTS for matched platforms
+  const connectedSocialPosts = [];
+  for (const platform of connectedPlatforms) {
+    const platformPosts = SOCIAL_POSTS[platform] || [];
+    const topicHint = (prefs.interests || [])[0] || '';
+    platformPosts.forEach(p => {
+      connectedSocialPosts.push({
+        id:            `${p.id}_conn`,
+        authorId:      `${platform}_user`,
+        groupId:       `ext_${platform}`,
+        content:       p.content,
+        title:         null,
+        source:        platform,
+        sourceLabel:   p.source || platform,
+        sourceUrl:     platform === 'twitter' ? 'https://x.com' : `https://${platform}.com`,
+        topic:         topicHint,
+        author:        { id: `${platform}_user`, name: null, title: p.source, organization: platform },
+        likes:         [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
+        createdAt:     p.time || new Date().toISOString(),
+        isExternal:    true,
+        group:         { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: `https://${platform}.com` },
+        forYou:        true, fromJoinedGroup: false, relevance: 5, connectedBoost: true,
+      });
+    });
+  }
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
@@ -1507,7 +1595,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Deduplicate by id, merge all sources (joined-group posts first to preserve their metadata)
   const seen = new Set();
-  const all  = [...internal, ...joinedGroupPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...socialMapped].filter(p => {
+  const all  = [...internal, ...joinedGroupPosts, ...connectedSocialPosts, ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts, ...mediumPosts, ...youtubePosts, ...socialMapped].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
@@ -1527,6 +1615,7 @@ app.get('/feed', authenticate, async (req, res) => {
       github:       githubPosts.length,
       devto:        devtoPosts.length,
       medium:       mediumPosts.length,
+      youtube:      youtubePosts.length,
       social:       socialMapped.length,
       joinedGroups: joinedGroupPosts.length,
       internal:     internal.length,
@@ -1746,6 +1835,62 @@ const OPPORTUNITIES = [
   { id: 'op41', type: 'job', title: 'Backend Engineer — Infra',          org: 'Cloudflare',           location: 'Remote',                 pay: '$150k–$190k',       tags: ['Go','Rust','Infrastructure'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D), remote: true },
   { id: 'op42', type: 'job', title: 'Data Scientist',                    org: 'Airbnb',               location: 'San Francisco, CA',      pay: '$160k–$200k',       tags: ['Python','SQL','Statistics'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D), remote: false },
   { id: 'op43', type: 'job', title: 'Engineering Manager',               org: 'Shopify',              location: 'Remote',                 pay: '$180k–$230k',       tags: ['Leadership','Ruby','React'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D), remote: true },
+
+  // ── Additional Jobs ──────────────────────────────────────────────────────────
+  { id: 'op44', type: 'job', title: 'AI Research Scientist',             org: 'DeepMind',             location: 'London, UK',             pay: '£120k–£200k',       tags: ['ML','Research','Python','NLP'],      source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: false },
+  { id: 'op45', type: 'job', title: 'iOS Engineer',                      org: 'Apple',                location: 'Cupertino, CA',          pay: '$180k–$250k',       tags: ['Swift','iOS','UIKit'],               source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: false },
+  { id: 'op46', type: 'job', title: 'Android Developer',                 org: 'Google',               location: 'Mountain View, CA',      pay: '$170k–$240k',       tags: ['Kotlin','Android','Jetpack'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
+  { id: 'op47', type: 'job', title: 'Staff Frontend Engineer',           org: 'Pinterest',            location: 'Remote',                 pay: '$190k–$260k',       tags: ['React','TypeScript','Performance'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(4*D),  remote: true  },
+  { id: 'op48', type: 'job', title: 'Platform Engineer',                 org: 'Databricks',           location: 'Remote',                 pay: '$175k–$230k',       tags: ['Spark','Kubernetes','Python'],       source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: true  },
+  { id: 'op49', type: 'job', title: 'Security Engineer',                 org: 'CrowdStrike',          location: 'Remote',                 pay: '$160k–$210k',       tags: ['Security','Go','Cybersecurity'],     source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: true  },
+  { id: 'op50', type: 'job', title: 'Principal Data Engineer',           org: 'Netflix',              location: 'Los Gatos, CA',          pay: '$200k–$280k',       tags: ['Python','Spark','Airflow','Data'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: false },
+  { id: 'op51', type: 'job', title: 'AI Product Manager',                org: 'Microsoft',            location: 'Redmond, WA',            pay: '$180k–$240k',       tags: ['AI','Product','Azure','LLMs'],       source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: false },
+  { id: 'op52', type: 'job', title: 'Brand Designer',                    org: 'Canva',                location: 'Remote',                 pay: '$120k–$160k',       tags: ['Design','Figma','Branding'],         source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: true  },
+  { id: 'op53', type: 'job', title: 'Content Strategist',                org: 'HubSpot',              location: 'Remote',                 pay: '$100k–$140k',       tags: ['Content','SEO','Marketing'],         source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: true  },
+  { id: 'op54', type: 'job', title: 'Revenue Operations Manager',        org: 'Salesforce',           location: 'San Francisco, CA',      pay: '$130k–$170k',       tags: ['RevOps','Salesforce','Analytics'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(4*D),  remote: false },
+  { id: 'op55', type: 'job', title: 'DevOps Engineer',                   org: 'GitHub',               location: 'Remote',                 pay: '$150k–$200k',       tags: ['DevOps','Kubernetes','Terraform'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: true  },
+  { id: 'op56', type: 'job', title: 'UX Researcher',                     org: 'Airbnb',               location: 'San Francisco, CA',      pay: '$140k–$180k',       tags: ['UX','Research','Figma','Design'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: false },
+  { id: 'op57', type: 'job', title: 'Machine Learning Platform Lead',    org: 'Uber',                 location: 'San Francisco, CA',      pay: '$210k–$290k',       tags: ['ML','Python','Infrastructure'],      source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
+  { id: 'op58', type: 'job', title: 'Community Manager',                 org: 'Discord',              location: 'Remote',                 pay: '$90k–$120k',        tags: ['Community','Social','Discord'],      source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: true  },
+  { id: 'op59', type: 'job', title: 'Technical Writer',                  org: 'Twilio',               location: 'Remote',                 pay: '$95k–$130k',        tags: ['Writing','API','Documentation'],     source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D),  remote: true  },
+  { id: 'op60', type: 'job', title: 'Head of Design',                    org: 'Loom',                 location: 'Remote',                 pay: '$160k–$210k',       tags: ['Design','Leadership','UX'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: true  },
+  { id: 'op61', type: 'job', title: 'Product Designer',                  org: 'Intercom',             location: 'Dublin, Ireland',        pay: '€90k–€130k',        tags: ['Figma','Product','Design'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
+  { id: 'op62', type: 'job', title: 'Software Engineer — Payments',      org: 'Square',               location: 'Remote',                 pay: '$150k–$200k',       tags: ['Java','Kotlin','Payments'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: true  },
+  { id: 'op63', type: 'job', title: 'Growth Product Manager',            org: 'Duolingo',             location: 'Pittsburgh, PA',         pay: '$160k–$210k',       tags: ['Product','Growth','B2C','Data'],     source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(4*D),  remote: false },
+  { id: 'op64', type: 'job', title: 'Director of Analytics',             org: 'Robinhood',            location: 'Menlo Park, CA',         pay: '$200k–$270k',       tags: ['Analytics','SQL','Leadership'],      source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
+  { id: 'op65', type: 'job', title: 'Embedded Systems Engineer',         org: 'SpaceX',               location: 'Hawthorne, CA',          pay: '$150k–$220k',       tags: ['C++','Embedded','Hardware'],         source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: false },
+  { id: 'op66', type: 'job', title: 'Climate Data Scientist',            org: 'Pachama',              location: 'Remote',                 pay: '$130k–$170k',       tags: ['Python','Climate','ML','GIS'],       source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: true  },
+  { id: 'op67', type: 'job', title: 'Chief of Staff',                    org: 'Scale AI',             location: 'San Francisco, CA',      pay: '$170k–$220k',       tags: ['Strategy','Operations','Startup'],   source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
+  { id: 'op68', type: 'job', title: 'Founding Full-Stack Engineer',      org: 'YC W24 Startup',       location: 'Remote',                 pay: '$150k + 1–3% equity',tags: ['React','Node','TypeScript'],        source: 'YC Jobs',  sourceUrl: 'https://workatastartup.com', posted: ago(12*H), remote: true  },
+  { id: 'op69', type: 'job', title: 'Senior Product Designer',           org: 'Miro',                 location: 'Remote',                 pay: '$150k–$190k',       tags: ['Figma','UX','Collaboration'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: true  },
+  { id: 'op70', type: 'job', title: 'VP of Engineering',                 org: 'Series B HealthTech',  location: 'Remote',                 pay: '$250k–$350k',       tags: ['Leadership','Engineering','HealthTech'],source:'LinkedIn',sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D),  remote: true  },
+
+  // ── Gigs (extended) ──────────────────────────────────────────────────────────
+  { id: 'op71', type: 'gig', title: 'AI Prompt Engineer',                org: 'Marketplace Startup',  location: 'Remote',                 pay: '$80–$120/hr',       tags: ['LLMs','Prompting','Python'],         source: 'Upwork',   sourceUrl: 'https://upwork.com',  posted: ago(1*D),  remote: true  },
+  { id: 'op72', type: 'gig', title: 'Brand Identity Designer',           org: 'Series A Fintech',     location: 'Remote',                 pay: '$6k–$12k project',  tags: ['Figma','Branding','Logo'],           source: 'Contra',   sourceUrl: 'https://contra.com', posted: ago(2*D),  remote: true  },
+  { id: 'op73', type: 'gig', title: 'Technical SEO Consultant',          org: 'E-commerce Brand',     location: 'Remote',                 pay: '$150/hr',           tags: ['SEO','Analytics','Content'],         source: 'Toptal',   sourceUrl: 'https://toptal.com', posted: ago(3*D),  remote: true  },
+
+  // ── Grants (extended) ────────────────────────────────────────────────────────
+  { id: 'op74', type: 'grant', title: 'Fast Forward Accelerator',        org: 'Fast Forward',         location: 'Global',                 pay: '$25k + resources',  tags: ['Nonprofit','Tech','Social Impact'],   source: 'fastforward.us', sourceUrl: 'https://ff.org', posted: ago(7*D), remote: true  },
+  { id: 'op75', type: 'grant', title: 'Stripe Climate Fund',             org: 'Stripe',               location: 'Global',                 pay: 'Up to $250k',       tags: ['Climate','Carbon','Technology'],      source: 'stripe.com', sourceUrl: 'https://stripe.com/climate', posted: ago(10*D), remote: true },
+
+  // ── Events (extended) ────────────────────────────────────────────────────────
+  { id: 'op76', type: 'event', title: 'ProductHunt Global Hackathon',    org: 'Product Hunt',         location: 'Virtual',                pay: '$50k in prizes',    tags: ['Product','Startup','AI'],            source: 'Product Hunt', sourceUrl: 'https://producthunt.com', posted: ago(3*D), remote: true },
+  { id: 'op77', type: 'event', title: 'Web Summit 2025',                 org: 'Web Summit',           location: 'Lisbon, Portugal',       pay: '€499+',             tags: ['Tech','Networking','Startup'],        source: 'websummit.com', sourceUrl: 'https://websummit.com', posted: ago(5*D), remote: false },
+  { id: 'op78', type: 'event', title: 'Figma Config 2025',               org: 'Figma',                location: 'San Francisco, CA',      pay: 'Free',              tags: ['Design','Figma','UX'],               source: 'Figma', sourceUrl: 'https://config.figma.com', posted: ago(4*D), remote: false },
+
+  // ── Learning (extended) ──────────────────────────────────────────────────────
+  { id: 'op79', type: 'learning', title: 'LLM Fine-tuning Masterclass',  org: 'Hugging Face',         location: 'Online',                 pay: 'Free',              tags: ['LLMs','Python','NLP'],               source: 'Hugging Face', sourceUrl: 'https://huggingface.co/learn', posted: ago(7*D), remote: true },
+  { id: 'op80', type: 'learning', title: 'Product Strategy Certification',org: 'Reforge',             location: 'Online',                 pay: '$1,995',            tags: ['Product','Strategy','Growth'],        source: 'Reforge', sourceUrl: 'https://reforge.com', posted: ago(14*D), remote: true },
+  { id: 'op81', type: 'learning', title: 'Figma Advanced Course',        org: 'Figma Academy',        location: 'Online',                 pay: 'Free',              tags: ['Figma','Design','UX'],               source: 'Figma', sourceUrl: 'https://figma.com/academy', posted: ago(10*D), remote: true },
+
+  // ── Hackathons (extended) ────────────────────────────────────────────────────
+  { id: 'op82', type: 'hackathon', title: 'Google AI Hackathon 2025',    org: 'Google Cloud',         location: 'Virtual',                pay: '$100k in prizes',   tags: ['AI','Google','Python','Cloud'],       source: 'Devpost', sourceUrl: 'https://devpost.com', posted: ago(2*D), remote: true },
+  { id: 'op83', type: 'hackathon', title: 'ETHGlobal Brussels',          org: 'ETHGlobal',            location: 'Brussels, Belgium',      pay: '$500k+ in prizes',  tags: ['Ethereum','Solidity','Web3'],         source: 'ETHGlobal', sourceUrl: 'https://ethglobal.com', posted: ago(4*D), remote: false },
+
+  // ── Open Source (extended) ───────────────────────────────────────────────────
+  { id: 'op84', type: 'opensource', title: 'First Issues — Hugging Face',org: 'Hugging Face',         location: 'Remote',                 pay: 'OSS + swag',        tags: ['Python','ML','NLP'],                 source: 'GitHub', sourceUrl: 'https://github.com/huggingface/transformers', posted: ago(2*D), remote: true },
+  { id: 'op85', type: 'opensource', title: 'React Contributor Program',  org: 'Meta Open Source',     location: 'Remote',                 pay: 'Volunteer + credit', tags: ['React','TypeScript','JavaScript'],   source: 'GitHub', sourceUrl: 'https://github.com/facebook/react', posted: ago(3*D), remote: true },
 ];
 
 const OP_TYPE_META = {
