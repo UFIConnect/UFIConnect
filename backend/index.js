@@ -1123,7 +1123,89 @@ function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
   if (agentActionLog.length > 120) agentActionLog.length = 120;
 }
 
-// ─── Background feed refresh (runs every 5 minutes) ──────────────────────────
+// ─── SSE: real-time post streaming to connected browsers ─────────────────────
+const sseClients  = new Map();   // clientId → res
+const seenPostIds = new Set();   // de-dup guard so we only broadcast genuinely new posts
+
+function broadcastSSE(posts) {
+  if (!posts.length || !sseClients.size) return;
+  const msg = `data: ${JSON.stringify({ posts })}\n\n`;
+  for (const [id, res] of sseClients) {
+    try { res.write(msg); }
+    catch { sseClients.delete(id); }
+  }
+}
+
+// Call after every fetch: deduplicates, updates cache, broadcasts via SSE
+function addAndBroadcast(incoming) {
+  const fresh = (incoming || []).filter(p => p?.id && !seenPostIds.has(p.id));
+  if (!fresh.length) return 0;
+  fresh.forEach(p => seenPostIds.add(p.id));
+  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts].slice(0, 20000);
+  globalFeedCache.refreshedAt = Date.now();
+  broadcastSSE(fresh);
+  savePostsToDB(fresh).catch(() => {});
+  return fresh.length;
+}
+
+// ─── Continuous per-source workers ───────────────────────────────────────────
+const FEED_TOPICS = [
+  'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
+  'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',
+  'Cloud & DevOps', 'Frontend Dev', 'Backend Dev', 'Mobile Dev',
+  'Web3 / Crypto', 'Game Dev', 'No-Code / Low-Code',
+  'SaaS', 'Venture Capital', 'Growth Marketing', 'Design Systems',
+  'UI/UX Design', 'SEO & Content', 'Newsletter & Writing',
+  'FinTech', 'Career Growth', 'Productivity', 'Freelancing', 'Side Projects',
+  'Content Creator', 'Remote Work', 'EdTech', 'Health Tech', 'Climate Tech',
+  'Fitness & Gym', 'Travel & Adventure', 'Cooking & Recipes', 'Music Discovery',
+];
+
+function startSourceWorker(label, fetchFn, keyMapper, intervalMs, startDelayMs) {
+  let idx = 0;
+  const tick = async () => {
+    const topic = FEED_TOPICS[idx % FEED_TOPICS.length];
+    idx++;
+    try {
+      const key = keyMapper(topic);
+      if (key) {
+        const posts = await fetchFn(key);
+        const n = addAndBroadcast(posts);
+        if (n > 0) logAgentAction('feed', '📡', `${label}: +${n} new — "${topic}"`, '#60A5FA');
+      }
+    } catch { /* ignore per-tick errors */ }
+    setTimeout(tick, intervalMs);
+  };
+  setTimeout(tick, startDelayMs);
+}
+
+function startContinuousWorkers() {
+  const kw  = t => INTEREST_TO_KEYWORDS[t];
+  const dev = t => INTEREST_TO_DEVTO_TAG[t];
+  const med = t => INTEREST_TO_MEDIUM_TAG[t];
+  const so  = t => INTEREST_TO_SO_TAG[t];
+  const mas = t => INTEREST_TO_MASTODON_TAG[t];
+  const lob = t => LOBSTERS_TAGS[t];
+  const arx = t => INTEREST_TO_ARXIV[t];
+
+  // Interval controls rotation speed; actual API calls are gated by CACHE_TTL (30 min),
+  // so each topic+source is fetched from the API at most once per 30 minutes.
+  // Average actual API call rate per source = 36 topics / 30 min = 1.2/min — safe for all sources.
+  startSourceWorker('Reddit',        fetchRedditByKeyword,       kw,  2000,  0     );
+  startSourceWorker('HackerNews',    fetchHNByKeyword,           kw,  2000,  400   );
+  startSourceWorker('GitHub',        fetchGitHubByKeyword,       kw,  3000,  800   );
+  startSourceWorker('DEV.to',        fetchDevToByTag,            dev, 3000,  1200  );
+  startSourceWorker('Medium',        fetchMediumByTag,           med, 3000,  1600  );
+  startSourceWorker('YouTube',       fetchYouTubeByKeyword,      kw,  5000,  2000  );
+  startSourceWorker('StackOverflow', fetchStackOverflowByTag,    so,  4000,  2400  );
+  startSourceWorker('Mastodon',      fetchMastodonByTag,         mas, 2500,  2800  );
+  startSourceWorker('Lobsters',      fetchLobstersByTag,         lob, 3000,  3200  );
+  startSourceWorker('arXiv',         fetchArxivByKeyword,        arx, 3000,  3600  );
+
+  logAgentAction('feed', '🔄', 'Continuous feed workers started — 10 sources rolling in parallel', '#4ADE80');
+}
+
+// ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
 async function refreshGlobalFeedCache() {
@@ -1230,11 +1312,12 @@ function runOppsCheck() {
 // Seed immediately on startup (non-blocking)
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All 6 agents online — autonomous mode active', '#4ADE80');
-refreshGlobalFeedCache();
+// Warm the cache with a full initial fetch, then switch to continuous rolling workers
+refreshGlobalFeedCache().then(() => {
+  globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
+  startContinuousWorkers();
+});
 runSecurityScan();
-
-// Refresh every 2 minutes — individual API responses are cached so external rate limits stay safe
-setInterval(refreshGlobalFeedCache, 2 * 60 * 1000);
 // Security scan every 8 minutes
 setInterval(runSecurityScan,  8 * 60 * 1000);
 // Perf check every 12 minutes
@@ -2539,6 +2622,30 @@ app.get('/feed', authenticate, async (req, res) => {
   });
 });
 
+// ─── SSE endpoint — streams new posts to every connected browser in real time ──
+app.get('/feed/stream', (req, res) => {
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx/Render proxy buffering
+  res.flushHeaders();
+
+  const clientId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  sseClients.set(clientId, res);
+
+  // Send the most recent posts immediately so the client has something to show
+  const initial = globalFeedCache.posts.slice(0, 60);
+  if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
+
+  // Heartbeat every 20 s to keep the connection alive through proxies
+  const hb = setInterval(() => {
+    try { res.write(':ping\n\n'); }
+    catch { clearInterval(hb); sseClients.delete(clientId); }
+  }, 20000);
+
+  req.on('close', () => { clearInterval(hb); sseClients.delete(clientId); });
+});
+
 // ─── Manual feed refresh trigger ─────────────────────────────────────────────
 app.post('/feed/refresh', authenticate, (req, res) => {
   res.json({ ok: true, message: 'Feed refresh triggered', refreshedAt: new Date().toISOString() });
@@ -3494,6 +3601,8 @@ db.initDB().then(async () => {
   await preloadUsersFromDB();
   await seedAndLoadGroups();
   await loadPostsFromDB();
+  // Pre-populate seenPostIds so workers don't re-broadcast historical posts
+  globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
   app.listen(PORT, () =>
     console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );

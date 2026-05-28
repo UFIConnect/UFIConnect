@@ -406,34 +406,85 @@ function PostCard({ post, onVideoOpen }) {
 
 export default function Feed() {
   const { profile } = useAuth();
-  const [posts,      setPosts]      = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [search,     setSearch]     = useState('');
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [videoPost,  setVideoPost]  = useState(null);
-  const [page,       setPage]       = useState(1);
-  const [lastRefresh,setLastRefresh]= useState(null);
+  const [posts,       setPosts]      = useState([]);
+  const [loading,     setLoading]    = useState(true);
+  const [refreshing,  setRefreshing] = useState(false);
+  const [search,      setSearch]     = useState('');
+  const [filterOpen,  setFilterOpen] = useState(false);
+  const [videoPost,   setVideoPost]  = useState(null);
+  const [page,        setPage]       = useState(1);
+  const [lastRefresh, setLastRefresh]= useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
+  const [livePending, setLivePending] = useState([]);   // buffered SSE posts
+  const [liveCount,   setLiveCount]   = useState(0);    // banner count
+  const [liveActive,  setLiveActive]  = useState(false); // SSE connected
 
   const filterBtnRef = useRef(null);
   const panelRef     = useRef(null);
+  const knownIds     = useRef(new Set());
 
   const loadFeed = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     else if (!posts.length) setLoading(true);
     try {
       const { data } = await client.get('/feed');
-      setPosts(data.posts || []);
+      const incoming = data.posts || [];
+      incoming.forEach(p => knownIds.current.add(p.id));
+      setPosts(incoming);
       setPage(1);
       setLastRefresh(new Date());
+      setLivePending([]);
+      setLiveCount(0);
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
+  // Load initial feed
+  useEffect(() => { loadFeed(); }, [loadFeed]);
+
+  // SSE: stream new posts from all 10 source workers in real time
   useEffect(() => {
-    loadFeed();
-  }, [loadFeed]);
+    const base = import.meta.env.VITE_API_URL || '/api';
+    const es = new EventSource(`${base}/feed/stream`);
+    setLiveActive(false);
+
+    es.onopen = () => setLiveActive(true);
+
+    es.onmessage = (e) => {
+      try {
+        const { init, posts: incoming } = JSON.parse(e.data);
+        if (!incoming?.length) return;
+        if (init) {
+          // Initial burst: seed knownIds but don't show banner for historical posts
+          incoming.forEach(p => knownIds.current.add(p.id));
+          return;
+        }
+        // Genuinely new posts
+        const fresh = incoming.filter(p => !knownIds.current.has(p.id));
+        if (!fresh.length) return;
+        fresh.forEach(p => knownIds.current.add(p.id));
+        setLivePending(prev => [...fresh, ...prev]);
+        setLiveCount(c => c + fresh.length);
+      } catch {}
+    };
+
+    es.onerror = () => { setLiveActive(false); };
+
+    return () => { es.close(); setLiveActive(false); };
+  }, []);
+
+  function loadLivePosts() {
+    setPosts(prev => {
+      const merged = [...livePending, ...prev];
+      // de-dup by id
+      const seen = new Set();
+      return merged.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+    });
+    setLivePending([]);
+    setLiveCount(0);
+    setPage(1);
+    setLastRefresh(new Date());
+  }
 
   // Close filter panel on outside click
   useEffect(() => {
@@ -513,11 +564,40 @@ export default function Feed() {
       {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
 
       <div className="page-header">
-        <h1 className="page-title">{firstName ? `Welcome back, ${firstName}` : 'Your Feed'}</h1>
+        <h1 className="page-title">
+          {firstName ? `Welcome back, ${firstName}` : 'Your Feed'}
+          <span style={{
+            marginLeft: 10, display: 'inline-flex', alignItems: 'center', gap: 4,
+            fontSize: '.65rem', fontWeight: 700, padding: '3px 9px', borderRadius: 20,
+            background: liveActive ? '#DCFCE7' : '#F1F5F9',
+            color: liveActive ? '#15803D' : '#94A3B8',
+            verticalAlign: 'middle',
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: liveActive ? '#22C55E' : '#CBD5E1', display: 'inline-block', animation: liveActive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+            {liveActive ? 'LIVE' : 'connecting…'}
+          </span>
+        </h1>
         <p className="page-subtitle">
-          Live content from Reddit, GitHub, LinkedIn, X, Instagram, TikTok, DEV, Medium, YouTube, and more — refreshed every 2 minutes.
+          10 source workers continuously pulling from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, arXiv and more — new posts stream in automatically.
         </p>
       </div>
+
+      {/* Live new-posts banner */}
+      {liveCount > 0 && (
+        <div
+          onClick={loadLivePosts}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            background: 'var(--primary)', color: '#fff',
+            padding: '10px 20px', borderRadius: 12, marginBottom: 14,
+            cursor: 'pointer', fontWeight: 700, fontSize: '.875rem',
+            boxShadow: '0 4px 16px rgba(99,102,241,.35)',
+            animation: 'slideDown .25s ease',
+          }}
+        >
+          ↑ {liveCount} new post{liveCount !== 1 ? 's' : ''} — tap to show
+        </div>
+      )}
 
       {/* Toolbar: search + filter + refresh */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative' }}>

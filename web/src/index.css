@@ -593,7 +593,9 @@ input, textarea, select { font-family: inherit; }
   border-color: var(--primary-light);
   border-top-color: var(--primary);
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin      { to { transform: rotate(360deg); } }
+@keyframes pulse     { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 
 /* ── Empty state ──────────────────────────────────────────── */
 .empty-state {
