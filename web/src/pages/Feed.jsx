@@ -534,6 +534,53 @@ export default function Feed() {
     return () => { es.close(); setLiveActive(false); };
   }, []);
 
+  // Time range cutoff helper (used by processed and sourceTabPosts memos below)
+  function timeRangeCutoff(range) {
+    const now = Date.now();
+    if (range === '1h')    return now - 60 * 60 * 1000;
+    if (range === '6h')    return now - 6 * 60 * 60 * 1000;
+    if (range === 'today') return now - 24 * 60 * 60 * 1000;
+    if (range === 'week')  return now - 7 * 24 * 60 * 60 * 1000;
+    return 0;
+  }
+
+  // Must be declared before the IntersectionObserver useEffect that reads processed.length
+  const processed = useMemo(() => {
+    let result = [...posts];
+
+    // Search
+    const q = search.trim().toLowerCase();
+    if (q) {
+      result = result.filter(p =>
+        (p.title || '').toLowerCase().includes(q) ||
+        (p.content || '').toLowerCase().includes(q) ||
+        (p.author?.name || '').toLowerCase().includes(q) ||
+        (p.topic || '').toLowerCase().includes(q) ||
+        (p.sourceLabel || '').toLowerCase().includes(q)
+      );
+    }
+
+    // Source filter
+    if (filters.sources.length > 0) {
+      result = result.filter(p => filters.sources.includes(p.source));
+    }
+
+    // Time range
+    if (filters.timeRange && filters.timeRange !== 'all') {
+      const cutoff = timeRangeCutoff(filters.timeRange);
+      result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
+    }
+
+    // Sort
+    if (filters.sort === 'newest') {
+      result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    } else {
+      result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
+    }
+
+    return result;
+  }, [posts, search, filters]);
+
   // Infinite scroll: when sentinel is visible, advance client page or fetch remote page
   useEffect(() => {
     const el = sentinelRef.current;
@@ -588,52 +635,6 @@ export default function Feed() {
     () => [...new Set(posts.map(p => p.source).filter(s => ALL_FILTER_SOURCES.includes(s)))],
     [posts]
   );
-
-  // Time range cutoff
-  function timeRangeCutoff(range) {
-    const now = Date.now();
-    if (range === '1h')    return now - 60 * 60 * 1000;
-    if (range === '6h')    return now - 6 * 60 * 60 * 1000;
-    if (range === 'today') return now - 24 * 60 * 60 * 1000;
-    if (range === 'week')  return now - 7 * 24 * 60 * 60 * 1000;
-    return 0;
-  }
-
-  const processed = useMemo(() => {
-    let result = [...posts];
-
-    // Search
-    const q = search.trim().toLowerCase();
-    if (q) {
-      result = result.filter(p =>
-        (p.title || '').toLowerCase().includes(q) ||
-        (p.content || '').toLowerCase().includes(q) ||
-        (p.author?.name || '').toLowerCase().includes(q) ||
-        (p.topic || '').toLowerCase().includes(q) ||
-        (p.sourceLabel || '').toLowerCase().includes(q)
-      );
-    }
-
-    // Source filter
-    if (filters.sources.length > 0) {
-      result = result.filter(p => filters.sources.includes(p.source));
-    }
-
-    // Time range
-    if (filters.timeRange && filters.timeRange !== 'all') {
-      const cutoff = timeRangeCutoff(filters.timeRange);
-      result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
-    }
-
-    // Sort
-    if (filters.sort === 'newest') {
-      result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    } else {
-      result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
-    }
-
-    return result;
-  }, [posts, search, filters]);
 
   const displayed   = processed.slice(0, clientPage * PAGE_SIZE);
   const clientHasMore = displayed.length < processed.length;
