@@ -3073,7 +3073,7 @@ app.get('/auth/social/:platform/start', authenticate, (req, res) => {
 app.get('/auth/social/:platform/callback', async (req, res) => {
   const { platform } = req.params;
   const { code, state, error: oauthError } = req.query;
-  const frontendProfile = `${FRONTEND_BASE}/profile`;
+  const frontendProfile = `${FRONTEND_BASE}/settings`;
 
   if (oauthError) return res.redirect(`${frontendProfile}?social_error=${platform}&reason=${oauthError}`);
 

@@ -1,8 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+
+const SOCIAL_PLATFORMS = [
+  { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
+  { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets and threads matching your interests' },
+  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from accounts you follow' },
+  { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page and group posts matching your topics' },
+];
 
 // ── Role metadata ────────────────────────────────────────────────────────────
 const ROLE_META = {
@@ -190,9 +197,63 @@ export default function Settings() {
   const navigate = useNavigate();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
+  const [activeTab, setActiveTab] = useState('general');
   const [deleteModal, setDeleteModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
+
+  // Connect tab state
+  const [connectedSocial, setConnectedSocial] = useState({});
+  const [socialConnecting, setSocialConnecting] = useState(null);
+  const [socialDisconnecting, setSocialDisconnecting] = useState(null);
+  const [socialFlash, setSocialFlash] = useState(null);
+
+  useEffect(() => {
+    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
+    // Handle OAuth callback redirects
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('social_connected');
+    const errored   = params.get('social_error');
+    if (connected) {
+      setConnectedSocial(prev => ({ ...prev, [connected]: true }));
+      setSocialFlash({ type: 'success', platform: connected });
+      setActiveTab('connect');
+      window.history.replaceState({}, '', '/settings');
+      setTimeout(() => setSocialFlash(null), 5000);
+    } else if (errored) {
+      setSocialFlash({ type: 'error', platform: errored });
+      setActiveTab('connect');
+      window.history.replaceState({}, '', '/settings');
+      setTimeout(() => setSocialFlash(null), 6000);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function connectSocial(platform) {
+    setSocialConnecting(platform);
+    try {
+      const { data } = await client.get(`/auth/social/${platform}/start`);
+      window.location.href = data.url;
+    } catch {
+      setSocialFlash({ type: 'error', platform });
+      setTimeout(() => setSocialFlash(null), 5000);
+      setSocialConnecting(null);
+    }
+  }
+
+  async function disconnectSocial(platform) {
+    setSocialDisconnecting(platform);
+    try {
+      await client.delete(`/profile/social/${platform}`);
+      setConnectedSocial(prev => ({ ...prev, [platform]: false }));
+      setSocialFlash({ type: 'disconnected', platform });
+      setTimeout(() => setSocialFlash(null), 4000);
+    } catch {
+      setSocialFlash({ type: 'error', platform });
+      setTimeout(() => setSocialFlash(null), 5000);
+    } finally {
+      setSocialDisconnecting(null);
+    }
+  }
 
   const [form, setForm] = useState({
     name:         profile?.name         || '',
@@ -272,6 +333,11 @@ export default function Settings() {
     </Layout>
   );
 
+  const TABS = [
+    { key: 'general', label: 'General' },
+    { key: 'connect', label: '🔗 Connect', badge: Object.values(connectedSocial).filter(Boolean).length || null },
+  ];
+
   return (
     <Layout>
       <div className="page-header">
@@ -279,6 +345,118 @@ export default function Settings() {
         <p className="page-subtitle">Manage your profile, preferences, and account details.</p>
       </div>
 
+      {/* Tab bar */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+        {TABS.map(tab => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            style={{
+              padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer',
+              fontWeight: activeTab === tab.key ? 700 : 500,
+              fontSize: '.875rem',
+              color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)',
+              borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent',
+              marginBottom: -1,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            {tab.label}
+            {tab.badge ? (
+              <span style={{
+                background: 'var(--primary)', color: '#fff',
+                borderRadius: 10, fontSize: '.65rem', fontWeight: 700,
+                padding: '1px 6px', lineHeight: 1.4,
+              }}>{tab.badge}</span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Connect tab ────────────────────────────────────────────────────────── */}
+      {activeTab === 'connect' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {socialFlash && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600,
+              background: socialFlash.type === 'success' ? '#ECFDF5' : socialFlash.type === 'disconnected' ? '#F8FAFC' : '#FEF2F2',
+              color:      socialFlash.type === 'success' ? '#059669' : socialFlash.type === 'disconnected' ? '#64748B' : '#DC2626',
+            }}>
+              {socialFlash.type === 'success'      && `✓ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} connected successfully`}
+              {socialFlash.type === 'disconnected' && `${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} disconnected`}
+              {socialFlash.type === 'error'        && `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name}. Try again.`}
+            </div>
+          )}
+
+          <div className="card">
+            <SectionHeading>🔗 Connected Accounts</SectionHeading>
+            <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
+              Connect your social accounts to personalise your feed with content from your own network and follows.
+            </p>
+            {SOCIAL_PLATFORMS.map(platform => {
+              const isConnected   = !!connectedSocial[platform.id];
+              const isConnecting  = socialConnecting  === platform.id;
+              const isDisconnecting = socialDisconnecting === platform.id;
+              return (
+                <div key={platform.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 14,
+                  padding: '14px 0', borderBottom: '1px solid var(--border)',
+                }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                    background: `${platform.color}18`,
+                    border: `1.5px solid ${platform.color}33`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '1.2rem',
+                  }}>{platform.emoji}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, fontSize: '.875rem' }}>{platform.name}</div>
+                    <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{platform.desc}</div>
+                  </div>
+                  {isConnected ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: '.72rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '3px 8px', borderRadius: 6 }}>
+                        ✓ Connected
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => disconnectSocial(platform.id)}
+                        disabled={isDisconnecting}
+                        style={{
+                          padding: '5px 12px', borderRadius: 7,
+                          border: '1.5px solid var(--border)', background: 'none',
+                          color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600, cursor: 'pointer',
+                        }}
+                      >
+                        {isDisconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => connectSocial(platform.id)}
+                      disabled={isConnecting}
+                      style={{
+                        padding: '7px 16px', borderRadius: 8, border: 'none',
+                        background: platform.color, color: '#fff',
+                        fontWeight: 700, fontSize: '.82rem', cursor: 'pointer',
+                        opacity: isConnecting ? 0.7 : 1,
+                        display: 'flex', alignItems: 'center', gap: 6,
+                      }}
+                    >
+                      {isConnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : `Connect`}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── General tab ────────────────────────────────────────────────────────── */}
+      {activeTab === 'general' && (
       <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {error && <div className="auth-error">{error}</div>}
         {saved && (
@@ -483,6 +661,7 @@ export default function Settings() {
           </button>
         </div>
       </form>
+      )}
     </Layout>
   );
 }
