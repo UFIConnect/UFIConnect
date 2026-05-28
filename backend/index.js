@@ -2420,6 +2420,35 @@ app.get('/feed', authenticate, async (req, res) => {
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
 
+  // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
+  const reqPage = parseInt(req.query.page || '1', 10);
+  if (reqPage > 1) {
+    const PAGE_LIMIT = 60;
+    const offset     = (reqPage - 1) * PAGE_LIMIT;
+    const source     = req.query.source || null; // optional source filter
+    const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
+    const dbRows     = await getPostsFromDB(userTopics, PAGE_LIMIT + 1, offset);
+    const hasMore    = dbRows.length > PAGE_LIMIT;
+    const pageRows   = dbRows.slice(0, PAGE_LIMIT);
+
+    function mapDbPost(p) {
+      const grp = groups.find(g => g.id === p.groupId);
+      return {
+        ...p,
+        group:           grp ? { id: grp.id, name: grp.name, category: grp.category } : p.group,
+        likedByMe:       false,
+        fromJoinedGroup: joined.has(p.groupId),
+        forYou:          true,
+        relevance:       1,
+      };
+    }
+
+    let result = pageRows.map(mapDbPost);
+    if (source) result = result.filter(p => p.source === source);
+
+    return res.json({ posts: result, page: reqPage, hasMore });
+  }
+
   // Internal posts (user-created)
   const internal = posts.map((p) => {
     const author = users.find((u) => u.id === p.authorId);

@@ -405,22 +405,26 @@ function PostCard({ post, onVideoOpen }) {
 
 export default function Feed() {
   const { profile } = useAuth();
-  const [posts,       setPosts]      = useState([]);
-  const [loading,     setLoading]    = useState(true);
-  const [refreshing,  setRefreshing] = useState(false);
-  const [search,      setSearch]     = useState('');
-  const [filterOpen,  setFilterOpen] = useState(false);
-  const [videoPost,   setVideoPost]  = useState(null);
-  const [page,        setPage]       = useState(1);
-  const [lastRefresh, setLastRefresh]= useState(null);
+  const [posts,         setPosts]        = useState([]);
+  const [loading,       setLoading]      = useState(true);
+  const [refreshing,    setRefreshing]   = useState(false);
+  const [loadingMore,   setLoadingMore]  = useState(false);
+  const [remotePage,    setRemotePage]   = useState(2);
+  const [remoteHasMore, setRemoteHasMore]= useState(true);
+  const [search,        setSearch]       = useState('');
+  const [filterOpen,    setFilterOpen]   = useState(false);
+  const [videoPost,     setVideoPost]    = useState(null);
+  const [clientPage,    setClientPage]   = useState(1);
+  const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
-  const [livePending, setLivePending] = useState([]);   // buffered SSE posts
-  const [liveCount,   setLiveCount]   = useState(0);    // banner count
-  const [liveActive,  setLiveActive]  = useState(false); // SSE connected
+  const [livePending, setLivePending] = useState([]);
+  const [liveCount,   setLiveCount]   = useState(0);
+  const [liveActive,  setLiveActive]  = useState(false);
 
   const filterBtnRef = useRef(null);
   const panelRef     = useRef(null);
   const knownIds     = useRef(new Set());
+  const sentinelRef  = useRef(null);
 
   const loadFeed = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -431,13 +435,29 @@ export default function Feed() {
       if (manual) knownIds.current = new Set(incoming.map(p => p.id));
       else incoming.forEach(p => knownIds.current.add(p.id));
       setPosts(incoming);
-      setPage(1);
+      setClientPage(1);
+      setRemotePage(2);
+      setRemoteHasMore(true);
       setLastRefresh(new Date());
       setLivePending([]);
       setLiveCount(0);
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
+
+  const loadMoreRemote = useCallback(async () => {
+    if (loadingMore || !remoteHasMore) return;
+    setLoadingMore(true);
+    try {
+      const { data } = await client.get(`/feed?page=${remotePage}`);
+      const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
+      incoming.forEach(p => knownIds.current.add(p.id));
+      if (incoming.length > 0) setPosts(prev => [...prev, ...incoming]);
+      setRemotePage(p => p + 1);
+      setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
+    } catch {}
+    finally { setLoadingMore(false); }
+  }, [loadingMore, remoteHasMore, remotePage]);
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
@@ -473,16 +493,37 @@ export default function Feed() {
     return () => { es.close(); setLiveActive(false); };
   }, []);
 
+  // Infinite scroll: when sentinel is visible, advance client page or fetch remote page
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        // First exhaust client-side pages, then fetch from backend
+        setClientPage(prev => {
+          const nextClientEnd = (prev + 1) * PAGE_SIZE;
+          if (nextClientEnd < processed.length) return prev + 1;
+          // Client posts exhausted — fetch remote
+          loadMoreRemote();
+          return prev + 1;
+        });
+      },
+      { rootMargin: '200px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [processed.length, loadMoreRemote]);
+
   function loadLivePosts() {
     setPosts(prev => {
       const merged = [...livePending, ...prev];
-      // de-dup by id
       const seen = new Set();
       return merged.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
     });
     setLivePending([]);
     setLiveCount(0);
-    setPage(1);
+    setClientPage(1);
     setLastRefresh(new Date());
   }
 
@@ -553,8 +594,9 @@ export default function Feed() {
     return result;
   }, [posts, search, filters]);
 
-  const displayed = processed.slice(0, page * PAGE_SIZE);
-  const hasMore   = displayed.length < processed.length;
+  const displayed   = processed.slice(0, clientPage * PAGE_SIZE);
+  const clientHasMore = displayed.length < processed.length;
+  const hasMore     = clientHasMore || remoteHasMore;
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
@@ -608,11 +650,11 @@ export default function Feed() {
             className="form-input"
             placeholder="Search posts…"
             value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
+            onChange={e => { setSearch(e.target.value); setClientPage(1); }}
             style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
           />
           {search && (
-            <button type="button" onClick={() => { setSearch(''); setPage(1); }}
+            <button type="button" onClick={() => { setSearch(''); setClientPage(1); }}
               style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
           )}
         </div>
@@ -636,7 +678,7 @@ export default function Feed() {
           {filterOpen && (
             <FilterPanel
               filters={filters}
-              onChange={f => { setFilters(f); setPage(1); }}
+              onChange={f => { setFilters(f); setClientPage(1); }}
               sources={activeSources}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
@@ -665,7 +707,7 @@ export default function Feed() {
       {lastRefresh && (
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
           Last updated {timeAgo(lastRefresh.toISOString())}
-          {processed.length > 0 && ` · ${processed.length.toLocaleString()} post${processed.length !== 1 ? 's' : ''}`}
+          {posts.length > 0 && ` · ${posts.length.toLocaleString()} post${posts.length !== 1 ? 's' : ''} loaded`}
           {search && ` for "${search}"`}
         </div>
       )}
@@ -701,20 +743,17 @@ export default function Feed() {
             ))}
           </div>
 
-          {hasMore && (
-            <div style={{ textAlign: 'center', marginTop: 8, marginBottom: 24 }}>
-              <button
-                className="btn btn-ghost"
-                onClick={() => setPage(p => p + 1)}
-                style={{ borderRadius: 24, padding: '10px 32px', fontWeight: 600 }}
-              >
-                Load more posts ({processed.length - displayed.length} remaining)
-              </button>
+          {/* Infinite scroll sentinel */}
+          <div ref={sentinelRef} style={{ height: 1 }} />
+
+          {loadingMore && (
+            <div style={{ textAlign: 'center', padding: '16px 0 24px' }}>
+              <span className="spinner spinner-primary" />
             </div>
           )}
           {!hasMore && displayed.length > PAGE_SIZE && (
             <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.78rem', marginBottom: 24 }}>
-              All {processed.length} posts shown · Hit Refresh for latest content
+              All {displayed.length} posts shown · Hit Refresh for latest content
             </div>
           )}
         </>
