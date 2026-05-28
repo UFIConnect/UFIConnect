@@ -679,3 +679,23 @@ input, textarea, select { font-family: inherit; }
   /* Auth pages */
   .auth-card { padding: 24px 20px; }
 }
+
+/* ── PWA / App optimisations ──────────────────────────────── */
+/* Eliminate 300ms tap delay everywhere */
+* { touch-action: manipulation; }
+
+/* Remove tap highlight flash on mobile */
+a, button { -webkit-tap-highlight-color: transparent; }
+
+/* When installed as PWA (standalone mode) — pad for status bar */
+@media (display-mode: standalone) {
+  .shell {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  /* Slightly larger tap targets in standalone */
+  .nav-link, .bottom-nav-item { min-height: 48px; }
+}
+
+/* Prevent rubber-band overscroll from looking broken */
+html, body { overscroll-behavior: none; }
+

@@ -1,0 +1,42 @@
+{
+  "packageId": "org.uficonnect.app",
+  "host": "uficonnect.org",
+  "name": "UFIConnect",
+  "launcherName": "UFIConnect",
+  "display": "standalone",
+  "themeColor": "#6366F1",
+  "navigationColor": "#6366F1",
+  "backgroundColor": "#ffffff",
+  "startUrl": "/",
+  "iconUrl": "https://uficonnect.org/icon.svg",
+  "maskableIconUrl": "https://uficonnect.org/icon-512.png",
+  "appVersion": "1",
+  "appVersionCode": 1,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "uficonnect"
+  },
+  "appVersionName": "1.0.0",
+  "orientation": "portrait",
+  "enableNotifications": true,
+  "shortcuts": [
+    {
+      "name": "Feed",
+      "shortName": "Feed",
+      "url": "/",
+      "icons": [{ "src": "https://uficonnect.org/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Opportunities",
+      "shortName": "Jobs",
+      "url": "/opportunities",
+      "icons": [{ "src": "https://uficonnect.org/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://uficonnect.org/manifest.json",
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "splitDebugSymbols": false,
+  "fingerprints": []
+}

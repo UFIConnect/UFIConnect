@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
@@ -16,6 +17,7 @@ function initials(name = '') {
 export default function Layout({ children }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
+  const { canInstall, installed, triggerInstall } = useInstallPrompt();
 
   function handleLogout() {
     logout();
@@ -44,6 +46,33 @@ export default function Layout({ children }) {
             </NavLink>
           ))}
         </nav>
+
+        {canInstall && (
+          <button
+            onClick={triggerInstall}
+            style={{
+              margin: '0 12px 12px',
+              padding: '10px 16px',
+              borderRadius: 12,
+              border: '1.5px solid #6366F1',
+              background: 'linear-gradient(135deg,#6366F1,#818CF8)',
+              color: '#fff',
+              fontWeight: 700,
+              fontSize: '.82rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              boxShadow: '0 2px 8px rgba(99,102,241,.25)',
+              transition: 'transform .1s,box-shadow .1s',
+            }}
+            onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+            onMouseOut={e => e.currentTarget.style.transform = ''}
+          >
+            <span style={{ fontSize: '1rem' }}>⬇</span>
+            Get App
+          </button>
+        )}
 
         {profile && (
           <div className="sidebar-user">
