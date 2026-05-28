@@ -1370,6 +1370,41 @@ const PLATFORMS = {
   },
 };
 
+// ─── Per-post deep link generator for curated social posts ───────────────────
+function getSocialPostUrl(platform, post) {
+  const author = post.author || '';
+  const source = post.source || '';
+  switch (platform) {
+    case 'twitter':
+      if (author.startsWith('@')) return `https://x.com/${author.slice(1)}`;
+      if (source.startsWith('#')) return `https://x.com/hashtag/${source.slice(1)}`;
+      return 'https://x.com';
+    case 'instagram':
+      if (author.startsWith('@')) return `https://instagram.com/${author.slice(1)}`;
+      if (source.startsWith('@')) return `https://instagram.com/${source.slice(1)}`;
+      return 'https://instagram.com';
+    case 'tiktok':
+      if (author.startsWith('@')) return `https://tiktok.com/${author}`;
+      return 'https://tiktok.com';
+    case 'reddit':
+      if (source.startsWith('r/')) return `https://reddit.com/${source}`;
+      if (author.startsWith('u/')) return `https://reddit.com/${author}`;
+      return 'https://reddit.com';
+    case 'linkedin': {
+      const kw = encodeURIComponent(author);
+      return `https://www.linkedin.com/search/results/all/?keywords=${kw}`;
+    }
+    case 'facebook': {
+      const grp = source && source !== 'Facebook' ? source : '';
+      return grp
+        ? `https://www.facebook.com/search/groups/?q=${encodeURIComponent(grp)}`
+        : 'https://facebook.com';
+    }
+    default:
+      return `https://${platform}.com`;
+  }
+}
+
 // ─── Mock social posts per platform ──────────────────────────────────────────
 // Each post has `topics[]` — matched against user's selected interests.
 // Photos: picsum.photos (free, deterministic, no key). Videos: mediaType:'video'
@@ -1385,6 +1420,11 @@ const SOCIAL_POSTS = {
     { id: 'fb8',  platform: 'facebook', source: 'Foodies & Home Chefs',      author: 'Sofia Martini', topics: ['cooking & recipes','baking & pastry','restaurant culture'], content: 'Made this sourdough loaf from a starter I have been nurturing for 3 years. The crust, the crumb — worth every hour of waiting. Recipe in comments! 🍞', time: ago(6*H), likes: 12400, comments: 890, mediaUrl: 'https://picsum.photos/seed/fb-bread/800/420', mediaType: 'image' },
     { id: 'fb9',  platform: 'facebook', source: 'Travel Addicts Community',  author: 'Yuki Tanaka',   topics: ['travel & adventure','solo travel','cultural tourism'], content: 'Solo trip to Kyoto during cherry blossom season. No tour guide, no group. Just me, a JR Pass, and 2 weeks of pure exploration. Album below 👇', time: ago(12*H), likes: 34200, comments: 2180, mediaUrl: 'https://picsum.photos/seed/fb-kyoto/800/420', mediaType: 'image' },
     { id: 'fb10', platform: 'facebook', source: 'Music Makers Network',      author: 'Devon Clarke',  topics: ['music discovery','songwriting','music production'], content: 'Finally finished my EP after 14 months of writing and producing solo from my bedroom. Self-released last night — already at 2k streams. If you make music independently, you belong here.', time: ago(8*H), likes: 4100, comments: 560 },
+    { id: 'fb11', platform: 'facebook', source: 'Personal Finance Club',     author: 'Tyler McMurray', topics: ['personal finance','real estate','investing'], content: 'The math on renting vs buying in 2025 has completely changed. With current rates and prices, renting and investing the difference beats buying in 72% of major US cities. Full breakdown below.', time: ago(3*H), likes: 6820, comments: 890 },
+    { id: 'fb12', platform: 'facebook', source: 'Gamers United',             author: 'Jackson Reid',   topics: ['video games','esports & competitive gaming','game dev'], content: 'The indie game scene in 2025 is more exciting than AAA. Smaller teams, more creative risks, and direct-to-consumer models. Here are 10 indie titles that deserve your attention this quarter.', time: ago(15*H), likes: 3210, comments: 430, mediaUrl: 'https://picsum.photos/seed/fb-gaming/800/420', mediaType: 'image' },
+    { id: 'fb13', platform: 'facebook', source: 'Sustainable Living Network', author: 'Emma Thornton', topics: ['sustainability','climate tech','social impact'], content: 'Small changes, massive impact. Our community tracked 3 simple swaps — reusable bags, cloth towels, bar soap — and calculated 1.2 tonnes of plastic waste diverted per household per year.', time: ago(6*H), likes: 9400, comments: 1180, mediaUrl: 'https://picsum.photos/seed/fb-eco/800/420', mediaType: 'image' },
+    { id: 'fb14', platform: 'facebook', source: 'Teachers & Educators Hub',  author: 'Dr. Rachel Kim', topics: ['edtech','education','ai & machine learning'], content: 'My classroom experiment with AI tutoring for 3 months: comprehension scores up 34%, student confidence up 51%, and my planning time down 40%. The tool is not replacing teachers — it is giving us superpowers.', time: ago(9*H), likes: 7830, comments: 1020 },
+    { id: 'fb15', platform: 'facebook', source: 'Crypto & Blockchain Hub',   author: 'Nathan Cruz',    topics: ['web3 / crypto','personal finance','fintech'], content: 'Staking vs yield farming vs HODLing: after running the numbers for 2 years across multiple market cycles, here is the risk-adjusted return breakdown that nobody talks about honestly.', time: ago(11*H), likes: 4560, comments: 780 },
   ],
   instagram: [
     { id: 'ig1',  platform: 'instagram', source: '@ux.weekly',         author: '@ux.weekly',         topics: ['ui/ux design','design systems','brand identity'], content: 'The best interfaces are the ones users never notice. Frictionless design is invisible design. Swipe → 5 principles from 10k usability tests. 🎨', time: ago(3*H), likes: 4820,  comments: 203,  mediaUrl: 'https://picsum.photos/seed/ig-ux/600/600',        mediaType: 'image' },
@@ -1397,6 +1437,11 @@ const SOCIAL_POSTS = {
     { id: 'ig8',  platform: 'instagram', source: '@wanderlens',        author: '@wanderlens',        topics: ['travel & adventure','photography','cultural tourism'], content: 'Santorini at golden hour. Worth the hype? Absolutely. Overrated? Also yes. Here is my honest guide. 🌅', time: ago(10*H), likes: 67400, comments: 4230, mediaUrl: 'https://picsum.photos/seed/ig-santorini/600/600',  mediaType: 'image' },
     { id: 'ig9',  platform: 'instagram', source: '@sneakercollector',  author: '@sneakercollector',  topics: ['streetwear','fashion & style','sneakers'], content: 'The grail arrived. 5 years of hunting. Every story has a W eventually. 👟🔥', time: ago(2*H), likes: 89300, comments: 5610, mediaUrl: 'https://picsum.photos/seed/ig-sneakers/600/600',   mediaType: 'image' },
     { id: 'ig10', platform: 'instagram', source: '@gamingsetups',      author: '@gamingsetups',      topics: ['video games','game streaming & content','esports & competitive gaming'], content: 'Setup upgrade complete. RGB optional, performance mandatory. 🖥️🎮 Full build specs in bio.', time: ago(5*H), likes: 52800, comments: 3140, mediaUrl: 'https://picsum.photos/seed/ig-setup/600/600',     mediaType: 'image' },
+    { id: 'ig11', platform: 'instagram', source: '@sustainablestyle',   author: '@sustainablestyle',  topics: ['sustainable fashion','streetwear','fashion & style'], content: 'Zero-waste wardrobe for 30 days. Every piece thrifted, swapped, or already owned. Proof that sustainability and style are not opposites 🌿👗 #SustainableFashion', time: ago(4*H), likes: 38900, comments: 2340, mediaUrl: 'https://picsum.photos/seed/ig-sustain/600/600', mediaType: 'image' },
+    { id: 'ig12', platform: 'instagram', source: '@financefor20s',      author: '@financefor20s',     topics: ['personal finance','side projects','career growth'], content: 'Saved $40k in 3 years on a $58k salary 💰 No inheritance, no side hustle (at first). Just a system. Breaking it all down in stories ➡️ #PersonalFinance #Savings', time: ago(7*H), likes: 56200, comments: 4120, mediaUrl: 'https://picsum.photos/seed/ig-finance/600/600', mediaType: 'image' },
+    { id: 'ig13', platform: 'instagram', source: '@mentalwellness',     author: '@mentalwellness',    topics: ['mental health & wellness','productivity','yoga & meditation'], content: 'Signs your nervous system is dysregulated and what I do about it 🧠 Posting this because I wish someone had told me this at 22. Save for when you need it 💙 #MentalHealth', time: ago(5*H), likes: 71400, comments: 5890, mediaUrl: 'https://picsum.photos/seed/ig-mental/600/600', mediaType: 'image' },
+    { id: 'ig14', platform: 'instagram', source: '@cryptoportfolio',    author: '@cryptoportfolio',   topics: ['web3 / crypto','personal finance','investing'], content: 'My portfolio breakdown after 4 years in crypto 📊 Current allocation, biggest learnings, what I would tell 2021 me. DCA wins. Story time 👆 #Crypto #Bitcoin', time: ago(3*H), likes: 29800, comments: 2100, mediaUrl: 'https://picsum.photos/seed/ig-crypto/600/600', mediaType: 'image' },
+    { id: 'ig15', platform: 'instagram', source: '@artiststudio',       author: '@artiststudio',      topics: ['photography','brand identity','creative director'], content: 'How I turned my art practice into a $12k/month business without selling out 🎨 Thread on my process, pricing, and the galleries I turned down. Full transparency. #ArtBusiness', time: ago(8*H), likes: 43600, comments: 3270, mediaUrl: 'https://picsum.photos/seed/ig-art/600/600', mediaType: 'image' },
   ],
   linkedin: [
     { id: 'li1',  platform: 'linkedin', source: 'LinkedIn', author: 'Sarah Okonkwo',  topics: ['leadership','hr / people ops','career growth'], content: 'I interviewed 200 engineering managers this year. The #1 trait separating great from good: they gave credit loudly and took blame quietly. Underrated leadership skill.', time: ago(2*H), likes: 14200, comments: 987 },
@@ -1406,7 +1451,12 @@ const SOCIAL_POSTS = {
     { id: 'li5',  platform: 'linkedin', source: 'Founders & Operators', author: 'Claire Mendes', topics: ['founder / entrepreneur','saas','bootstrapping'], content: 'We just crossed $1M ARR with a 3-person team. No office. No investors. No ads. AMA.', time: ago(18*H), likes: 35600, comments: 4890, mediaUrl: 'https://picsum.photos/seed/li-milestone/800/420', mediaType: 'image' },
     { id: 'li6',  platform: 'linkedin', source: 'LinkedIn', author: 'Tom Eriksson',   topics: ['career growth','hr / people ops','productivity'], content: 'Stop putting "passionate" in your CV. Show me the project you stayed up until 3am finishing because you couldn\'t stop. That\'s passion. This is just a word.', time: ago(6*H), likes: 18900, comments: 1540 },
     { id: 'li7',  platform: 'linkedin', source: 'Healthcare Leaders Network', author: 'Dr. Nina Patel', topics: ['healthcare professional','health tech','mental health & wellness'], content: 'Physician burnout is at an all-time high. It is not a personal weakness — it is a systems failure. Sharing what my hospital system changed and what actually helped.', time: ago(3*H), likes: 28400, comments: 3120, mediaUrl: 'https://picsum.photos/seed/li-health/800/420', mediaType: 'image' },
-    { id: 'li8',  platform: 'linkedin', source: 'Real Estate Investors', author: 'Marcus Webb',  topics: ['real estate pro','personal finance','real estate'], content: 'Bought my first rental property at 24 with $12k down. Now own 6 units at 31. The math and the mistakes — all of it below. 🏠', time: ago(9*H), likes: 31700, comments: 2840 },
+    { id: 'li8',  platform: 'linkedin', source: 'Real Estate Investors',           author: 'Marcus Webb',    topics: ['real estate pro','personal finance','real estate'], content: 'Bought my first rental property at 24 with $12k down. Now own 6 units at 31. The math and the mistakes — all of it below. 🏠', time: ago(9*H), likes: 31700, comments: 2840 },
+    { id: 'li9',  platform: 'linkedin', source: 'Engineering Leaders Network',    author: 'Emily Chen',     topics: ['engineer / developer','ai & machine learning','product manager'], content: 'My engineering team shipped 3x faster after we stopped having daily standups. We replaced them with async video updates. 6 months of data and everything I learned.', time: ago(4*H), likes: 19400, comments: 1870 },
+    { id: 'li10', platform: 'linkedin', source: 'Design Thinking Community',      author: 'Lucas Ferreira', topics: ['ui/ux design','product manager','brand identity'], content: 'The UX mistake that cost my company $2M: we shipped without testing on real users. A 2-hour usability session would have caught it. Never again. Full breakdown below.', time: ago(16*H), likes: 24700, comments: 2890, mediaUrl: 'https://picsum.photos/seed/li-ux/800/420', mediaType: 'image' },
+    { id: 'li11', platform: 'linkedin', source: 'Sales & Revenue Leaders',        author: 'Olivia Braun',   topics: ['sales / business dev','b2b / enterprise','career growth'], content: 'Closed $1.8M in new ARR last quarter. The secret? I stopped selling and started teaching. When you make your prospect smarter, they buy from you. Here are the 5 frameworks I use.', time: ago(7*H), likes: 31200, comments: 2140 },
+    { id: 'li12', platform: 'linkedin', source: 'Marketing Professionals',        author: 'Ahmed Hassan',   topics: ['growth marketing','seo & content','saas'], content: 'Our content went from 2k to 180k monthly organic visitors in 12 months. Zero paid ads. Here is the exact strategy, keyword architecture, and content calendar we used. Copy it.', time: ago(5*H), likes: 28900, comments: 3400, mediaUrl: 'https://picsum.photos/seed/li-seo/800/420', mediaType: 'image' },
+    { id: 'li13', platform: 'linkedin', source: 'Climate & Impact Professionals', author: 'Sophia Wright', topics: ['climate tech','social impact','venture capital'], content: 'I left Goldman to join a climate startup at 1/3 the salary. Best professional decision of my life. The mission alignment, the urgency of the work, the calibre of teammates — it changes everything.', time: ago(20*H), likes: 22100, comments: 1980 },
   ],
   twitter: [
     { id: 'tw1',  platform: 'twitter', source: '#buildinpublic', author: '@shl',      topics: ['saas','bootstrapping','founder / entrepreneur'], content: 'The market does not care about your effort. It only cares about the value you deliver. Ship faster.', time: ago(45*60*1000), likes: 3420,  comments: 287  },
@@ -1418,7 +1468,12 @@ const SOCIAL_POSTS = {
     { id: 'tw7',  platform: 'twitter', source: '#fitness',      author: '@hubermanlab', topics: ['fitness & gym','nutrition & diet','mental health & wellness'], content: 'Morning sunlight for 10 minutes, within 30 minutes of waking. No sunglasses. This single habit has more documented benefits than almost any supplement. Free and effective.', time: ago(3*H), likes: 89400, comments: 6200 },
     { id: 'tw8',  platform: 'twitter', source: '#gaming',       author: '@mrbeast',   topics: ['video games','game streaming & content','creator economy'], content: 'The gaming industry is now larger than film and music combined. Still the most underestimated creative career path.', time: ago(7*H), likes: 124000, comments: 8900, mediaUrl: 'https://picsum.photos/seed/tw-gaming/800/420', mediaType: 'image' },
     { id: 'tw9',  platform: 'twitter', source: '#travel',       author: '@nomadlist', topics: ['travel & adventure','digital nomad','solo travel'], content: 'Places with the best value for remote workers right now: Tbilisi 🇬🇪, Chiang Mai 🇹🇭, Mexico City 🇲🇽, Medellin 🇨🇴, Split 🇭🇷. Cost of living under $2k/month, fast internet, great culture.', time: ago(5*H), likes: 43200, comments: 3410 },
-    { id: 'tw10', platform: 'twitter', source: '#music',        author: '@pitchfork', topics: ['music discovery','live events & concerts','creator economy'], content: 'Vinyl sales have now outpaced CD sales for 3 consecutive years. The format is not nostalgia. It is a preference.', time: ago(11*H), likes: 18700, comments: 2130, mediaUrl: 'https://picsum.photos/seed/tw-vinyl/800/420', mediaType: 'image' },
+    { id: 'tw10', platform: 'twitter', source: '#music',        author: '@pitchfork',    topics: ['music discovery','live events & concerts','creator economy'], content: 'Vinyl sales have now outpaced CD sales for 3 consecutive years. The format is not nostalgia. It is a preference.', time: ago(11*H), likes: 18700, comments: 2130, mediaUrl: 'https://picsum.photos/seed/tw-vinyl/800/420', mediaType: 'image' },
+    { id: 'tw11', platform: 'twitter', source: '#web3',         author: '@VitalikButerin', topics: ['web3 / crypto','ai & machine learning','open source'], content: 'The future is not crypto vs AI. The future is crypto + AI: verifiable computation, decentralised ownership of models, and trustless coordination at scale.', time: ago(4*H), likes: 78200, comments: 6100 },
+    { id: 'tw12', platform: 'twitter', source: '#mentalhealth', author: '@simonsinek',    topics: ['mental health & wellness','leadership','productivity'], content: 'Burnout is not about working too many hours. It is about working without purpose. Find the why and the hours stop mattering. Lose the why and even 4 hours feels exhausting.', time: ago(13*H), likes: 93400, comments: 7200, mediaUrl: 'https://picsum.photos/seed/tw-burnout/800/420', mediaType: 'image' },
+    { id: 'tw13', platform: 'twitter', source: '#climatetech',  author: '@BillGates',     topics: ['climate tech','sustainability','social impact'], content: 'The breakthrough we need in climate is not just clean energy — it is clean everything: cement, steel, shipping, and fertiliser. Those four account for 30% of global emissions. Hard problems. Let\'s fund them.', time: ago(8*H), likes: 143000, comments: 9800 },
+    { id: 'tw14', platform: 'twitter', source: '#ux',           author: '@rsms',          topics: ['ui/ux design','brand identity','product manager'], content: 'Design is not making things look beautiful. Design is making things work — beautifully. When form follows function perfectly, beauty is the result, not the goal.', time: ago(3*H), likes: 57800, comments: 4200, mediaUrl: 'https://picsum.photos/seed/tw-design2/800/420', mediaType: 'image' },
+    { id: 'tw15', platform: 'twitter', source: '#buildinpublic', author: '@levelsio',     topics: ['bootstrapping','side projects','saas'], content: 'Built my first profitable app in a weekend with just HTML and SQLite. No frameworks. No cloud. Just a problem people had and a simple solution. $0 to $8k MRR in 6 weeks. Build simple things.', time: ago(6*H), likes: 84600, comments: 6700 },
   ],
   reddit: [
     { id: 're1',  platform: 'reddit', source: 'r/MachineLearning',    author: 'u/ml_practitioner',    topics: ['ai & machine learning','data science','llms & chatbots'], content: 'We benchmarked 12 embedding models on our proprietary dataset. The 7B model outperformed GPT-4 on domain-specific retrieval by 23%. Full write-up in comments.', time: ago(6*H), likes: 2341, comments: 412 },
@@ -1430,7 +1485,12 @@ const SOCIAL_POSTS = {
     { id: 're7',  platform: 'reddit', source: 'r/Cooking',            author: 'u/homecook_pro',       topics: ['cooking & recipes','baking & pastry','food & cooking'], content: 'I recreated every Michelin-starred dish I could find a recipe for. Here are the top 10 that are actually achievable at home.', time: ago(4*H), likes: 19200, comments: 1240, mediaUrl: 'https://picsum.photos/seed/re-cooking/800/420', mediaType: 'image' },
     { id: 're8',  platform: 'reddit', source: 'r/travel',             author: 'u/perpetual_nomad',    topics: ['travel & adventure','budget travel','solo travel'], content: '2 years of full-time travel on $1,500/month. Countries visited: 31. Things I wish someone had told me before I started.', time: ago(8*H), likes: 27600, comments: 2140 },
     { id: 're9',  platform: 'reddit', source: 'r/gaming',             author: 'u/retro_gamer_85',     topics: ['video games','esports & competitive gaming','game dev'], content: 'The best game I played this year had a $12 budget, a 2-person team, and no marketing. It also had the best story I\'ve experienced in a decade. Indie gaming is thriving.', time: ago(6*H), likes: 34100, comments: 2980 },
-    { id: 're10', platform: 'reddit', source: 'r/streetwear',         author: 'u/fit_check_king',     topics: ['streetwear','fashion & style','sneakers'], content: 'Full grail collection after 8 years of copping. AMA about the hunt, resale, and which releases were worth the hype.', time: ago(3*H), likes: 8940, comments: 1120, mediaUrl: 'https://picsum.photos/seed/re-grails/800/420', mediaType: 'image' },
+    { id: 're10', platform: 'reddit', source: 'r/streetwear',          author: 'u/fit_check_king',      topics: ['streetwear','fashion & style','sneakers'], content: 'Full grail collection after 8 years of copping. AMA about the hunt, resale, and which releases were worth the hype.', time: ago(3*H), likes: 8940, comments: 1120, mediaUrl: 'https://picsum.photos/seed/re-grails/800/420', mediaType: 'image' },
+    { id: 're11', platform: 'reddit', source: 'r/personalfinance',    author: 'u/debt_free_at_30',     topics: ['personal finance','career growth','side projects'], content: 'Paid off $67k of student loans in 4 years on a teacher\'s salary. Here is every sacrifice I made, every mistake I made, and the exact payoff order I used. AMA.', time: ago(3*H), likes: 48200, comments: 4310, mediaUrl: 'https://picsum.photos/seed/re-debt/800/420', mediaType: 'image' },
+    { id: 're12', platform: 'reddit', source: 'r/MachineLearning',    author: 'u/ai_researcher_99',   topics: ['ai & machine learning','llms & chatbots','data science'], content: 'We trained a 1B parameter model on synthetic data only and it matched a 7B model trained on real data on 4 out of 5 benchmarks. The implications for data privacy and model efficiency are huge.', time: ago(9*H), likes: 6780, comments: 890 },
+    { id: 're13', platform: 'reddit', source: 'r/sustainability',     author: 'u/zero_waste_engineer', topics: ['sustainability','climate tech','social impact'], content: 'Civil engineer here. Just finished a project that reduced a city block\'s water usage by 61% with zero new infrastructure — just smart fixture choices and habit interventions. The playbook is replicable anywhere.', time: ago(5*H), likes: 22400, comments: 1890 },
+    { id: 're14', platform: 'reddit', source: 'r/WeAreTheMusicMakers', author: 'u/indie_album_release', topics: ['music discovery','songwriting','music production'], content: 'Released my album independently last month. 0 label, 0 marketing budget. Just good music and Reddit posts. 200k streams. Here is everything I did in chronological order.', time: ago(7*H), likes: 15600, comments: 1340, mediaUrl: 'https://picsum.photos/seed/re-music/800/420', mediaType: 'image' },
+    { id: 're15', platform: 'reddit', source: 'r/datascience',        author: 'u/sql_wizard_ds',      topics: ['data science','career growth','ai & machine learning'], content: 'After 5 years as a data scientist, here is what I actually spend my time on: 60% data cleaning, 20% stakeholder management, 15% feature engineering, 5% actual modelling. Learn to love the 60%.', time: ago(4*H), likes: 19300, comments: 2010 },
   ],
   tiktok: [
     { id: 'tt1',  platform: 'tiktok', source: '@techexplained',      author: '@techexplained',     topics: ['ai & machine learning','developer tools','engineer / developer'], content: 'How AI actually works in 60 seconds — explained like you\'re 5 🤖 #AI #Tech #LearnOnTikTok', time: ago(2*H), likes: 84200,  comments: 3210,  mediaUrl: 'https://picsum.photos/seed/tt-ai/600/800',        mediaType: 'video' },
@@ -1442,7 +1502,12 @@ const SOCIAL_POSTS = {
     { id: 'tt7',  platform: 'tiktok', source: '@travelhacks',        author: '@travelhacks',       topics: ['travel & adventure','budget travel','solo travel'], content: 'Travelling Europe on €40/day. Hotels: no. Hostels: sometimes. Airbnb hacks: always. Full breakdown 🌍 #Travel #BudgetTravel', time: ago(7*H), likes: 167000, comments: 9800,  mediaUrl: 'https://picsum.photos/seed/tt-travel/600/800',   mediaType: 'video' },
     { id: 'tt8',  platform: 'tiktok', source: '@gamingclips',        author: '@gamingclips',       topics: ['video games','esports & competitive gaming','game streaming & content'], content: 'This clip went viral in the esports community and I still don\'t know how I pulled it off 😅 #Gaming #Esports', time: ago(2*H), likes: 512000, comments: 31200, mediaUrl: 'https://picsum.photos/seed/tt-game/600/800',     mediaType: 'video' },
     { id: 'tt9',  platform: 'tiktok', source: '@fashioninspo',       author: '@fashioninspo',      topics: ['fashion & style','streetwear','sustainable fashion'], content: 'Thrifted an entire week of outfits for under $80. Sustainable fashion does not have to be boring or expensive 👗 #ThriftFlip', time: ago(9*H), likes: 298000, comments: 18600, mediaUrl: 'https://picsum.photos/seed/tt-thrift/600/800',  mediaType: 'video' },
-    { id: 'tt10', platform: 'tiktok', source: '@musicstudio',        author: '@musicstudio',       topics: ['music discovery','songwriting','djing & remixing'], content: 'Made this beat from scratch in 30 minutes — start to finish. Every sample, every layer. 🎵 #MusicProduction #BeatMaking', time: ago(4*H), likes: 183000, comments: 11300, mediaUrl: 'https://picsum.photos/seed/tt-beat/600/800',    mediaType: 'video' },
+    { id: 'tt10', platform: 'tiktok', source: '@musicstudio',          author: '@musicstudio',          topics: ['music discovery','songwriting','djing & remixing'], content: 'Made this beat from scratch in 30 minutes — start to finish. Every sample, every layer. 🎵 #MusicProduction #BeatMaking', time: ago(4*H), likes: 183000, comments: 11300, mediaUrl: 'https://picsum.photos/seed/tt-beat/600/800', mediaType: 'video' },
+    { id: 'tt11', platform: 'tiktok', source: '@personalfinancetok',   author: '@personalfinancetok',   topics: ['personal finance','investing','career growth'], content: 'How I paid off $45k in debt in 18 months working a $55k job 💸 The exact budget and sacrifices, no gatekeeping #PersonalFinance #DebtFree', time: ago(3*H), likes: 291000, comments: 18400, mediaUrl: 'https://picsum.photos/seed/tt-debt/600/800', mediaType: 'video' },
+    { id: 'tt12', platform: 'tiktok', source: '@sustainabletok',       author: '@sustainabletok',       topics: ['sustainability','cooking & recipes','social impact'], content: 'Zero waste kitchen in 2025 — everything I replaced, what actually worked, what was greenwashing 🌿 #ZeroWaste #Sustainable', time: ago(5*H), likes: 184000, comments: 11200, mediaUrl: 'https://picsum.photos/seed/tt-zerowaste/600/800', mediaType: 'video' },
+    { id: 'tt13', platform: 'tiktok', source: '@studywithme_tok',      author: '@studywithme_tok',      topics: ['productivity','career growth','edtech'], content: '4 hours of studying done in 90 minutes using science-backed methods 📚 The Feynman Technique changed everything for me #StudyTok #Productivity', time: ago(2*H), likes: 412000, comments: 28700, mediaUrl: 'https://picsum.photos/seed/tt-study/600/800', mediaType: 'video' },
+    { id: 'tt14', platform: 'tiktok', source: '@cryptotok_real',       author: '@cryptotok_real',       topics: ['web3 / crypto','personal finance','investing'], content: 'My $1,000 crypto experiment: I put $100 into 10 different coins 12 months ago. Real results, no cherry picking 📊 #Crypto #Investment', time: ago(6*H), likes: 328000, comments: 24100, mediaUrl: 'https://picsum.photos/seed/tt-crypto/600/800', mediaType: 'video' },
+    { id: 'tt15', platform: 'tiktok', source: '@artprocesstok',        author: '@artprocesstok',        topics: ['photography','brand identity','music discovery'], content: 'This painting took 40 hours. This video is 60 seconds. The gap between what art looks like and how it feels to make it 🎨 #ArtTok #ProcessVideo', time: ago(4*H), likes: 763000, comments: 52400, mediaUrl: 'https://picsum.photos/seed/tt-art/600/800', mediaType: 'video' },
   ],
 };
 
@@ -2293,7 +2358,7 @@ app.get('/feed', authenticate, async (req, res) => {
         title:       p.title || null,
         source:      platform,
         sourceLabel: p.source || platform,
-        sourceUrl:   PLATFORM_URLS[platform] || `https://${platform}.com`,
+        sourceUrl:   getSocialPostUrl(platform, p),
         topic:       (p.topics || [])[0] || '',
         mediaUrl:    p.mediaUrl || null,
         mediaType:   p.mediaType || null,
@@ -2353,7 +2418,7 @@ app.get('/feed', authenticate, async (req, res) => {
   const all  = [
     ...internal, ...joinedGroupPosts,
     ...connectedSocialPosts, ...indeedPosts,
-    ...redditPosts, ...hnPosts, ...githubPosts, ...devtoPosts,
+    ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts, ...cachedMapped, ...dbPosts,
   ].filter(p => {
@@ -2362,16 +2427,9 @@ app.get('/feed', authenticate, async (req, res) => {
     return true;
   });
 
-  // Sort: connected-platform posts first (boosted to relevance 10),
-  // then interleave the rest by source round-robin (relevance desc, recency desc).
-  const CONNECTED_SOURCES = new Set([...connectedPlatforms]);
-  const connectedFirst = all
-    .filter(p => CONNECTED_SOURCES.has(p.source))
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-  const rest = all.filter(p => !CONNECTED_SOURCES.has(p.source));
+  // Round-robin interleave by source (relevance desc, recency desc within each bucket)
   const bySource = {};
-  rest.forEach(p => {
+  all.forEach(p => {
     const key = p.source || 'uficonnect';
     if (!bySource[key]) bySource[key] = [];
     bySource[key].push(p);
@@ -2381,21 +2439,19 @@ app.get('/feed', authenticate, async (req, res) => {
       b.relevance !== a.relevance ? b.relevance - a.relevance : new Date(b.createdAt) - new Date(a.createdAt)
     )
   );
-  const roundRobin = [];
+  const mixed = [];
   const buckets = Object.values(bySource);
   let i = 0;
   while (buckets.some(b => b.length > 0)) {
     const bucket = buckets[i % buckets.length];
-    if (bucket.length > 0) roundRobin.push(bucket.shift());
+    if (bucket.length > 0) mixed.push(bucket.shift());
     i++;
   }
-  const mixed = [...connectedFirst, ...roundRobin];
 
   res.json({
     posts: mixed,
     sources: {
       reddit:        redditPosts.length,
-      hackernews:    hnPosts.length,
       github:        githubPosts.length,
       devto:         devtoPosts.length,
       medium:        mediumPosts.length,

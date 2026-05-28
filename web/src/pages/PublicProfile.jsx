@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -98,7 +98,7 @@ export default function PublicProfile() {
         </div>
 
         {!isOwn && (
-          <div className="profile-actions" style={{ marginTop: 14 }}>
+          <div className="profile-actions" style={{ marginTop: 14, display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               className={user.isFollowing ? 'btn btn-ghost' : 'btn btn-primary'}
               onClick={toggleFollow}
@@ -110,6 +110,9 @@ export default function PublicProfile() {
                 : user.isFollowing ? '✓ Following' : '+ Follow'
               }
             </button>
+            <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
+              💬 Message
+            </Link>
           </div>
         )}
 

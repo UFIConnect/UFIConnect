@@ -46,6 +46,7 @@ function GroupsContent() {
   const [joined,     setJoined]     = useState(new Set());
   const [categories, setCategories] = useState([]);
   const [filter,     setFilter]     = useState('all');
+  const [search,     setSearch]     = useState('');
   const [loading,    setLoading]    = useState(true);
 
   useEffect(() => {
@@ -76,7 +77,15 @@ function GroupsContent() {
     } catch (err) { console.error(err); }
   }
 
-  const displayed = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  const q = search.trim().toLowerCase();
+  const byFilter = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  const displayed = q
+    ? byFilter.filter(g =>
+        (g.name || '').toLowerCase().includes(q) ||
+        (g.description || '').toLowerCase().includes(q) ||
+        (g.category || '').toLowerCase().includes(q)
+      )
+    : byFilter;
 
   return (
     <Layout>
@@ -85,6 +94,25 @@ function GroupsContent() {
         <p className="page-subtitle">
           Real public communities from Reddit, Discord, LinkedIn, News, and more — follow any to personalise your feed with business, creative, and industry conversations.
         </p>
+      </div>
+
+      {/* Search bar */}
+      <div style={{ marginBottom: 14, position: 'relative', maxWidth: 480 }}>
+        <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: '.9rem', opacity: 0.45, pointerEvents: 'none' }}>🔍</span>
+        <input
+          className="form-input"
+          placeholder="Search groups by name, category, or keyword…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ paddingLeft: 38, borderRadius: 22, padding: '9px 16px 9px 38px', fontSize: '.875rem' }}
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}
+          >×</button>
+        )}
       </div>
 
       {/* Category filter */}
