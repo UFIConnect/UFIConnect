@@ -984,7 +984,7 @@ async function fetchArxivByKeyword(keyword) {
 // ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
-function generateSocialSearchCards(interests = [], connectedPlatforms = new Set()) {
+function generateSocialSearchCards(interests = []) {
   // All supported platforms + their public search URLs
   const SOCIAL_SEARCH = {
     linkedin:  { label: 'LinkedIn',      icon: '💼', color: '#0A66C2',
@@ -1019,12 +1019,8 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
   };
 
   const cards = [];
-  // Show all platforms — connected ones get a boost, unconnected still appear
-  const allPlatforms = Object.keys(SOCIAL_SEARCH);
-
-  for (const platform of allPlatforms) {
+  for (const platform of Object.keys(SOCIAL_SEARCH)) {
     const meta = SOCIAL_SEARCH[platform];
-    const isConnected = connectedPlatforms.has(platform);
     for (const interest of interests) {
       const preview = SOCIAL_MEDIA_PREVIEW[platform] || { mediaType: 'image', mediaLabel: 'Preview', caption: 'Explore related media for this topic.' };
       const seed = `${platform}_${interest.replace(/\s+/g,'_').toLowerCase()}`;
@@ -1043,9 +1039,8 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
         group:        { name: meta.label, category: 'Social' },
         likes: [], likesCount: 0, commentsCount: 0,
         createdAt:    new Date().toISOString(),
-        relevance:    isConnected ? 5 : 3,
+        relevance:    3,
         forYou:       true,
-        connectedBoost: isConnected,
         mediaType:    preview.mediaType,
         mediaUrl:     `https://picsum.photos/seed/${encodeURIComponent(seed)}/800/450`,
         mediaLabel:   preview.mediaLabel,
@@ -1901,7 +1896,6 @@ function fullProfile(user) {
     preferences: user.preferences,
     links: user.links || {},
     roleSettings: user.roleSettings || {},
-    connectedPlatforms: Object.keys(user.socialAccounts || {}),
     connectedGroupsByPlatform,
   };
 }
@@ -1927,7 +1921,6 @@ function dbRowToMemUser(row) {
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
-    socialAccounts: {},
   };
 }
 
@@ -1940,16 +1933,9 @@ function syncToMemory(memUser) {
 async function fetchAndSyncUser(id) {
   if (!db.isConnected()) return null;
   try {
-    const [uRes, saRes] = await Promise.all([
-      db.query('SELECT * FROM users WHERE id = $1', [id]),
-      db.query('SELECT platform, platform_user_id, connected_at FROM social_accounts WHERE user_id = $1', [id]),
-    ]);
-    if (!uRes.rows[0]) return null;
-    const mem = dbRowToMemUser(uRes.rows[0]);
-    saRes.rows.forEach(sa => {
-      mem.socialAccounts[sa.platform] = { connected: true, username: sa.platform_user_id, connectedAt: sa.connected_at };
-    });
-    return syncToMemory(mem);
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+    if (!rows[0]) return null;
+    return syncToMemory(dbRowToMemUser(rows[0]));
   } catch (err) { console.error('fetchAndSyncUser:', err.message); return null; }
 }
 
@@ -2436,13 +2422,6 @@ app.get('/feed', authenticate, async (req, res) => {
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
 
-  // Connected social platforms → boost their posts
-  const connectedPlatforms = new Set(
-    Object.entries(user?.socialAccounts || {})
-      .filter(([, v]) => v?.connected)
-      .map(([k]) => k)
-  );
-
   // Categories relevant to this user
   const relevantCategories = new Set([
     ...(prefs.interests || []).map(i => INTEREST_TO_CATEGORY[i]).filter(Boolean),
@@ -2453,7 +2432,6 @@ app.get('/feed', authenticate, async (req, res) => {
     let s = 1; // baseline
     if (joined.has(groupId))                s += 3; // from a group they follow
     if (cat && relevantCategories.has(cat)) s += 2; // matches their interests/role
-    if (source && connectedPlatforms.has(source)) s += 2; // from a connected social
     return s;
   }
 
@@ -2490,7 +2468,6 @@ app.get('/feed', authenticate, async (req, res) => {
       fromJoinedGroup: joined.has(p.groupId),
       forYou:          relevance >= 2,
       relevance,
-      connectedBoost:  connectedPlatforms.has(source),
     };
   }
 
@@ -2524,7 +2501,7 @@ app.get('/feed', authenticate, async (req, res) => {
   const lobPosts    = lobRaw.map(p => mapExternalPost(p, 'lobsters'));
   const arxivPosts  = arxivRaw.map(p => mapExternalPost(p, 'arxiv'));
 
-  // Connected social platform posts — rendered as regular native posts (no connectedBoost/isSocialCard)
+  // Social platform posts — shown for all users, topic-matched
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
   // ── Social platform posts — shown for ALL users, topic-matched, top 5 per platform ──
   const PLATFORM_URLS = {
@@ -2570,7 +2547,7 @@ app.get('/feed', authenticate, async (req, res) => {
         isExternal:  false,
         group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
         forYou:      true, fromJoinedGroup: false, relevance: 5,
-        connectedBoost: connectedPlatforms.has(platform), isSocialCard: false,
+        isSocialCard: false,
       });
     });
   }
@@ -2958,6 +2935,41 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
     ).catch(e => console.error('unfollow DB:', e.message));
   }
   res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+});
+
+// ─── Followers / Following lists ──────────────────────────────────────────────
+app.get('/users/:id/followers', authenticate, async (req, res) => {
+  const userId  = req.params.id;
+  const myId    = req.user.id;
+  const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+  const followerIds    = follows.filter(f => f.followingId === userId).map(f => f.followerId);
+  const followerUsers  = (await Promise.all(followerIds.map(id => getUser(id)))).filter(Boolean);
+  res.json({
+    users: followerUsers.map(u => ({
+      id: u.id, name: u.name, title: u.title || '',
+      organization: u.organization || '', role: u.preferences?.role || '',
+      followersCount: follows.filter(f => f.followingId === u.id).length,
+      isFollowing: myFollowingSet.has(u.id),
+      isSelf: u.id === myId,
+    })),
+  });
+});
+
+app.get('/users/:id/following', authenticate, async (req, res) => {
+  const userId       = req.params.id;
+  const myId         = req.user.id;
+  const myFollowingSet  = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+  const followingIds    = follows.filter(f => f.followerId === userId).map(f => f.followingId);
+  const followingUsers  = (await Promise.all(followingIds.map(id => getUser(id)))).filter(Boolean);
+  res.json({
+    users: followingUsers.map(u => ({
+      id: u.id, name: u.name, title: u.title || '',
+      organization: u.organization || '', role: u.preferences?.role || '',
+      followersCount: follows.filter(f => f.followingId === u.id).length,
+      isFollowing: myFollowingSet.has(u.id),
+      isSelf: u.id === myId,
+    })),
+  });
 });
 
 // ─── Connections ──────────────────────────────────────────────────────────────
@@ -3637,18 +3649,7 @@ async function preloadUsersFromDB() {
     const { rows } = await db.query('SELECT * FROM users');
     let loaded = 0;
     for (const row of rows) {
-      const mem = dbRowToMemUser(row);
-      // Attach social accounts
-      try {
-        const { rows: saRows } = await db.query(
-          'SELECT platform, platform_user_id, connected_at FROM social_accounts WHERE user_id = $1',
-          [row.id]
-        );
-        saRows.forEach(sa => {
-          mem.socialAccounts[sa.platform] = { connected: true, username: sa.platform_user_id, connectedAt: sa.connected_at };
-        });
-      } catch (_) {}
-      syncToMemory(mem);
+      syncToMemory(dbRowToMemUser(row));
       loaded++;
     }
     console.log(`[startup] Preloaded ${loaded} users from DB into memory`);

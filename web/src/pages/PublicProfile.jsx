@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import FollowListModal from '../components/FollowListModal';
 import client from '../api/client';
 
 function initials(name = '') {
@@ -17,6 +18,7 @@ export default function PublicProfile() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
   const [toggling,setToggling]= useState(false);
+  const [modal,   setModal]   = useState(null); // 'followers' | 'following' | null
 
   useEffect(() => {
     setLoading(true);
@@ -85,16 +87,23 @@ export default function PublicProfile() {
         {user.title && <div className="profile-title">{user.title}</div>}
         {user.organization && <div className="profile-org">🏢 {user.organization}</div>}
 
-        {/* Follower counts */}
+        {/* Follower counts — clickable */}
         <div style={{ display: 'flex', gap: 20, marginTop: 12, justifyContent: 'center' }}>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{user.followersCount}</div>
-            <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>Followers</div>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{user.followingCount}</div>
-            <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>Following</div>
-          </div>
+          {[
+            { type: 'followers', count: user.followersCount, label: 'Followers' },
+            { type: 'following', count: user.followingCount, label: 'Following' },
+          ].map(({ type, count, label }) => (
+            <button
+              key={type}
+              onClick={() => setModal(type)}
+              style={{ textAlign: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 10px', borderRadius: 8, transition: 'background .15s' }}
+              onMouseOver={e => e.currentTarget.style.background = 'var(--hover)'}
+              onMouseOut={e => e.currentTarget.style.background = 'none'}
+            >
+              <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{count}</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>{label}</div>
+            </button>
+          ))}
         </div>
 
         {!isOwn && (
@@ -176,6 +185,15 @@ export default function PublicProfile() {
             )}
           </div>
         </div>
+      )}
+
+      {modal && (
+        <FollowListModal
+          userId={user.id}
+          type={modal}
+          title={modal === 'followers' ? `Followers · ${user.followersCount}` : `Following · ${user.followingCount}`}
+          onClose={() => setModal(null)}
+        />
       )}
 
       {/* Links */}

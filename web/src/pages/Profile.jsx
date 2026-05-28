@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import FollowListModal from '../components/FollowListModal';
 import client from '../api/client';
 
 function initials(name = '') {
@@ -51,6 +52,9 @@ export default function Profile() {
   const [skillSaving,   setSkillSaving]   = useState(false);
   // Privacy
   const [hiddenSaving,  setHiddenSaving]  = useState(false);
+  // Follow stats
+  const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
+  const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
 
   useEffect(() => {
     client.get('/social/platforms')
@@ -69,6 +73,14 @@ export default function Profile() {
   useEffect(() => {
     if (profile?.skills) setSkills(profile.skills);
   }, [profile, tab]);
+
+  // Load follow counts
+  useEffect(() => {
+    if (!profile?.id) return;
+    client.get(`/users/${profile.id}`)
+      .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
+      .catch(() => {});
+  }, [profile?.id]);
 
   function addSkill() {
     const trimmed = skillInput.trim();
@@ -182,6 +194,25 @@ export default function Profile() {
         <div className="profile-title">{profile.title || 'UFIConnect Member'}</div>
         {profile.organization && <div className="profile-org">🏢 {profile.organization}</div>}
 
+        {/* Follow stats */}
+        <div style={{ display: 'flex', gap: 20, marginTop: 14, justifyContent: 'center' }}>
+          {[
+            { type: 'followers', count: followStats.followersCount, label: 'Followers' },
+            { type: 'following', count: followStats.followingCount, label: 'Following' },
+          ].map(({ type, count, label }) => (
+            <button
+              key={type}
+              onClick={() => setFollowModal(type)}
+              style={{ textAlign: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 10px', borderRadius: 8, transition: 'background .15s' }}
+              onMouseOver={e => e.currentTarget.style.background = 'var(--hover)'}
+              onMouseOut={e => e.currentTarget.style.background = 'none'}
+            >
+              <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{count}</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>{label}</div>
+            </button>
+          ))}
+        </div>
+
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
           <Link to={`/u/${profile.id}`}>
@@ -192,6 +223,17 @@ export default function Profile() {
           </Link>
         </div>
       </div>
+
+      {followModal && (
+        <FollowListModal
+          userId={profile.id}
+          type={followModal}
+          title={followModal === 'followers'
+            ? `Followers · ${followStats.followersCount}`
+            : `Following · ${followStats.followingCount}`}
+          onClose={() => setFollowModal(null)}
+        />
+      )}
 
       {/* Tabs */}
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
