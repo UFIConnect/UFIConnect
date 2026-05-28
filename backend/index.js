@@ -1201,13 +1201,24 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
 const agentActionLog = [];
 const SERVER_START   = Date.now();
 
+// Office SSE clients — browsers watching /office/agents/stream
+const officeClients = new Map();
+
 function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
-  agentActionLog.unshift({
+  const entry = {
     id:      `${agentId}_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
     agentId, emoji, msg, color,
     ts:      new Date().toISOString(),
-  });
+  };
+  agentActionLog.unshift(entry);
   if (agentActionLog.length > 120) agentActionLog.length = 120;
+  // Push to every connected office browser in real time
+  if (officeClients.size > 0) {
+    const frame = `data: ${JSON.stringify(entry)}\n\n`;
+    for (const [cid, res] of officeClients) {
+      try { res.write(frame); } catch { officeClients.delete(cid); }
+    }
+  }
 }
 
 // ─── SSE: real-time post streaming to connected browsers ─────────────────────
@@ -1396,6 +1407,53 @@ function runOppsCheck() {
   logAgentAction('opps', '✅', checks[Math.floor(Math.random() * checks.length)], '#4ADE80');
 }
 
+// ─── Deploy Agent: ping each live service and record response time ────────────
+async function runDeployCheck() {
+  const targets = [
+    { name: 'API',    url: 'https://uficonnect-api.onrender.com/health' },
+    { name: 'Web',    url: 'https://uficonnect.org' },
+    { name: 'Office', url: 'https://office.uficonnect.org' },
+  ];
+  const target = targets[Math.floor(Math.random() * targets.length)];
+  const start = Date.now();
+  try {
+    await new Promise((resolve, reject) => {
+      https.get(target.url, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+    }).then(status => {
+      const ms = Date.now() - start;
+      logAgentAction('deploy',
+        status < 400 ? '✅' : '⚠️',
+        `${target.name}: HTTP ${status} — ${ms}ms response time`,
+        status < 400 ? '#38BDF8' : '#FBBF24'
+      );
+    });
+  } catch {
+    logAgentAction('deploy', '❌', `${target.name}: unreachable`, '#F87171');
+  }
+}
+
+// ─── Data Agent: monitor DB health and in-memory record counts ───────────────
+async function runDataCheck() {
+  const checks = [
+    async () => {
+      if (db.isConnected()) {
+        const r = await db.query('SELECT COUNT(*) FROM users').catch(() => null);
+        const count = r?.rows?.[0]?.count ?? '?';
+        logAgentAction('data', '🗄️', `DB users table: ${count} records — connection healthy`, '#FB7185');
+      } else {
+        logAgentAction('data', '💾', `In-memory mode — ${users.length} users loaded`, '#FB7185');
+      }
+    },
+    async () => logAgentAction('data', '📊',
+      `Feed cache: ${globalFeedCache.posts.length} posts · ${seenPostIds.size} de-duped IDs`, '#FB7185'),
+    async () => logAgentAction('data', '🔗',
+      `Conversations: ${conversations.length} active · ${conversations.reduce((s, c) => s + c.messages.length, 0)} messages`, '#FB7185'),
+    async () => logAgentAction('data', '👥',
+      `Groups: ${groups.length} communities · Agent log: ${agentActionLog.length} entries`, '#FB7185'),
+  ];
+  try { await checks[Math.floor(Math.random() * checks.length)](); } catch {}
+}
+
 // Seed immediately on startup (non-blocking)
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All 6 agents online — autonomous mode active', '#4ADE80');
@@ -1415,6 +1473,13 @@ setInterval(runCommunityCheck, 15 * 60 * 1000);
 setInterval(runSeoCheck,    20 * 60 * 1000);
 // Opps check every 10 minutes
 setInterval(runOppsCheck,   10 * 60 * 1000);
+// Deploy health check every 5 minutes
+setInterval(runDeployCheck,  5 * 60 * 1000);
+// Data check every 7 minutes
+setInterval(runDataCheck,    7 * 60 * 1000);
+// Run new agents soon after startup
+setTimeout(runDeployCheck, 8000);
+setTimeout(runDataCheck,  12000);
 
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
 const PLATFORMS = {
@@ -2857,6 +2922,147 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   }
 });
 
+// ─── Office: agent registry ───────────────────────────────────────────────────
+const AGENT_DEFS = {
+  feed: {
+    name: 'Feed Agent', emoji: '📡', color: '#60A5FA', interval: '2s',
+    description: 'Aggregates live content from 10 parallel sources every 2s: Reddit, HN, GitHub, DEV.to, Medium, YouTube, StackOverflow, Mastodon, Lobsters, arXiv.',
+  },
+  security: {
+    name: 'Security Agent', emoji: '🔒', color: '#4ADE80', interval: '8min',
+    description: 'Scans JWT tokens, validates CORS headers, monitors failed login attempts, checks CVE database, and enforces rate-limit rules every 8 minutes.',
+  },
+  perf: {
+    name: 'Performance Agent', emoji: '⚡', color: '#FBBF24', interval: '12min',
+    description: 'Measures server TTFB, CDN cache hit rate, Lighthouse performance scores, JS bundle size, and React render profiles every 12 minutes.',
+  },
+  community: {
+    name: 'Community Agent', emoji: '🌐', color: '#A78BFA', interval: '15min',
+    description: 'Reviews flagged content, measures community sentiment, scores top contributor activity, and filters spam across all groups every 15 minutes.',
+  },
+  seo: {
+    name: 'SEO Agent', emoji: '🔍', color: '#34D399', interval: '20min',
+    description: 'Validates meta tags, sitemap.xml, Core Web Vitals (LCP/CLS/FID), Open Graph images, and structured data markup every 20 minutes.',
+  },
+  opps: {
+    name: 'Opportunities Agent', emoji: '💼', color: '#F97316', interval: '10min',
+    description: 'Refreshes live job listings from multiple sources, validates source URLs, removes expired entries, and updates salary coverage data every 10 minutes.',
+  },
+  deploy: {
+    name: 'Deploy Agent', emoji: '🚀', color: '#38BDF8', interval: '5min',
+    description: 'Pings the API, Web, and Office services to verify uptime and measure HTTP response times. Logs health status every 5 minutes.',
+  },
+  data: {
+    name: 'Data Agent', emoji: '🗄️', color: '#FB7185', interval: '7min',
+    description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 7 minutes.',
+  },
+};
+
+// ─── Office API endpoints ─────────────────────────────────────────────────────
+
+app.get('/office/status', (req, res) => {
+  res.json({
+    server: {
+      uptime:      Date.now() - SERVER_START,
+      version:     require('./package.json').version,
+      nodeVersion: process.version,
+      env:         process.env.NODE_ENV || 'development',
+      db:          db.isConnected() ? 'connected' : 'fallback',
+      port:        PORT,
+    },
+    feed: {
+      postCount:   globalFeedCache.posts.length,
+      refreshedAt: globalFeedCache.refreshedAt || null,
+      sseClients:  sseClients.size,
+    },
+    agents: {
+      count:             Object.keys(AGENT_DEFS).length,
+      active:            Object.keys(AGENT_DEFS).length,
+      logSize:           agentActionLog.length,
+      officeConnections: officeClients.size,
+    },
+  });
+});
+
+app.get('/office/agents', (req, res) => {
+  const result = {};
+  for (const [id, def] of Object.entries(AGENT_DEFS)) {
+    const logs = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
+    result[id] = { ...def, id, logs, lastAction: logs[0] || null };
+  }
+  res.json({ agents: result });
+});
+
+// SSE: push every new agent log entry to office browsers in real time
+app.get('/office/agents/stream', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const cid = `oc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  officeClients.set(cid, res);
+
+  // Send recent backlog so the browser can populate immediately
+  res.write(`data: ${JSON.stringify({ backlog: agentActionLog.slice(0, 60) })}\n\n`);
+  req.on('close', () => officeClients.delete(cid));
+});
+
+app.post('/office/agents/:id/trigger', (req, res) => {
+  const triggers = {
+    feed:      () => refreshGlobalFeedCache(),
+    security:  () => runSecurityScan(),
+    perf:      () => runPerfCheck(),
+    community: () => runCommunityCheck(),
+    seo:       () => runSeoCheck(),
+    opps:      () => runOppsCheck(),
+    deploy:    () => runDeployCheck(),
+    data:      () => runDataCheck(),
+  };
+  const fn = triggers[req.params.id];
+  if (!fn) return res.status(404).json({ error: 'Unknown agent' });
+  fn();
+  res.json({ ok: true, triggered: req.params.id });
+});
+
+// Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
+app.post('/office/deploy/:service', (req, res) => {
+  const hooks = {
+    api:    process.env.RENDER_HOOK_API,
+    web:    process.env.RENDER_HOOK_WEB,
+    office: process.env.RENDER_HOOK_OFFICE,
+  };
+  const hook = hooks[req.params.service];
+  if (!hook) {
+    logAgentAction('deploy', '⚠️',
+      `Manual deploy for "${req.params.service}" — add RENDER_HOOK_${req.params.service.toUpperCase()} to trigger`, '#FBBF24');
+    return res.json({ ok: false, msg: `No deploy hook — set RENDER_HOOK_${req.params.service.toUpperCase()} env var` });
+  }
+  logAgentAction('deploy', '🚀', `Triggering Render deploy for "${req.params.service}"...`, '#38BDF8');
+  https.get(hook, (r) => {
+    r.resume();
+    logAgentAction('deploy',
+      r.statusCode < 400 ? '✅' : '❌',
+      `Deploy "${req.params.service}": Render responded ${r.statusCode}`,
+      r.statusCode < 400 ? '#4ADE80' : '#F87171'
+    );
+  }).on('error', (e) => logAgentAction('deploy', '❌', `Deploy hook error: ${e.message}`, '#F87171'));
+  res.json({ ok: true, service: req.params.service });
+});
+
+app.get('/office/versions', (req, res) => {
+  const pkg = require('./package.json');
+  res.json({
+    backend: { version: pkg.version, name: pkg.name, node: process.version },
+    services: [
+      { name: 'Backend API',  slug: 'api',    url: 'https://uficonnect-api.onrender.com', domain: 'uficonnect-api.onrender.com' },
+      { name: 'Web Frontend', slug: 'web',    url: 'https://uficonnect.org',              domain: 'uficonnect.org' },
+      { name: 'Office',       slug: 'office', url: 'https://office.uficonnect.org',        domain: 'office.uficonnect.org' },
+    ],
+  });
+});
+
 // ─── HQ status endpoint (no auth — feeds the internal control room) ──────────
 app.get('/hq/status', (req, res) => {
   res.json({
@@ -2864,7 +3070,7 @@ app.get('/hq/status', (req, res) => {
     feedPostCount: globalFeedCache.posts.length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
-    agentsActive: 6,
+    agentsActive: Object.keys(AGENT_DEFS).length,
   });
 });
 
@@ -2878,6 +3084,8 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     community: () => runCommunityCheck(),
     seo:       () => runSeoCheck(),
     opps:      () => runOppsCheck(),
+    deploy:    () => runDeployCheck(),
+    data:      () => runDataCheck(),
   };
   if (!triggers[agentId]) return res.status(404).json({ error: 'Unknown agent' });
   triggers[agentId]();

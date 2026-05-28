@@ -24,7 +24,7 @@ services:
           name: uficonnect-db
           property: connectionString
       - key: ALLOWED_ORIGINS
-        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com
+        value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
 
   # ── Web Frontend (React static site) ───────────────────────
   - type: web
@@ -34,6 +34,27 @@ services:
       - uficonnect.org
       - www.uficonnect.org
     rootDir: web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      - key: VITE_API_URL
+        value: https://uficonnect-api.onrender.com
+
+  # ── Office Dashboard (React static site) ────────────────────
+  - type: web
+    name: uficonnect-office
+    runtime: static
+    domains:
+      - office.uficonnect.org
+    rootDir: office
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     routes:
