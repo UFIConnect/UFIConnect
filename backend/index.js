@@ -1057,10 +1057,10 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
 }
 
 // ─── Master feed fetcher: all topics × all 10 sources (100 posts each) ───────
-// Per-source cap: 100 posts returned per fetch call.
+// Per-source cap: max posts returned per source per fetch cycle.
 // Sources: Reddit, HackerNews, DEV.to, GitHub, Medium, YouTube,
 //          Stack Overflow, Mastodon, Lobsters, arXiv
-const PER_SOURCE_CAP = 75;
+const PER_SOURCE_CAP = 200;
 
 async function fetchAllTopicPosts(interests = [], role = '') {
   const keywords = interests.map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
@@ -1233,8 +1233,8 @@ logAgentAction('security',  '✅', 'All 6 agents online — autonomous mode acti
 refreshGlobalFeedCache();
 runSecurityScan();
 
-// Refresh every 5 minutes
-setInterval(refreshGlobalFeedCache, 5 * 60 * 1000);
+// Refresh every 2 minutes — individual API responses are cached so external rate limits stay safe
+setInterval(refreshGlobalFeedCache, 2 * 60 * 1000);
 // Security scan every 8 minutes
 setInterval(runSecurityScan,  8 * 60 * 1000);
 // Perf check every 12 minutes
@@ -2466,6 +2466,33 @@ app.get('/feed', authenticate, async (req, res) => {
       internal:     internal.length,
     },
   });
+});
+
+// ─── Manual feed refresh trigger ─────────────────────────────────────────────
+app.post('/feed/refresh', authenticate, (req, res) => {
+  res.json({ ok: true, message: 'Feed refresh triggered', refreshedAt: new Date().toISOString() });
+  setImmediate(() => refreshGlobalFeedCache());
+});
+
+// ─── Feed source stats (posts per source in DB) ───────────────────────────────
+app.get('/feed/stats', authenticate, async (req, res) => {
+  try {
+    const stats = {};
+    if (db.isConnected()) {
+      const { rows } = await db.query(
+        `SELECT source, COUNT(*) as count FROM feed_posts_cache GROUP BY source ORDER BY count DESC`
+      );
+      rows.forEach(r => { stats[r.source] = parseInt(r.count, 10); });
+    }
+    res.json({
+      stats,
+      total: Object.values(stats).reduce((a, b) => a + b, 0),
+      cachedInMemory: globalFeedCache.posts.length,
+      refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
+    });
+  } catch (e) {
+    res.json({ stats: {}, total: 0, cachedInMemory: globalFeedCache.posts.length });
+  }
 });
 
 // ─── Reddit post comments ─────────────────────────────────────────────────────
