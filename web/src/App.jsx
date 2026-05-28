@@ -17,6 +17,7 @@ import Search           from './pages/Search';
 import PublicProfile    from './pages/PublicProfile';
 import Settings          from './pages/Settings';
 import AgentDashboard    from './pages/AgentDashboard';
+import PrivacyPolicy     from './pages/PrivacyPolicy';
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -87,6 +88,9 @@ export default function App() {
       {/* Agent Control Room — live on public domain */}
       <Route path="/hq"     element={<AgentDashboard />} />
       <Route path="/agents" element={<Navigate to="/hq" replace />} />
+
+      {/* Legal */}
+      <Route path="/privacy" element={<PrivacyPolicy />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
