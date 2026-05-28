@@ -1039,8 +1039,6 @@ function generateSocialSearchCards(interests = []) {
         group:        { name: meta.label, category: 'Social' },
         likes: [], likesCount: 0, commentsCount: 0,
         createdAt:    new Date().toISOString(),
-        relevance:    3,
-        forYou:       true,
         mediaType:    preview.mediaType,
         mediaUrl:     `https://picsum.photos/seed/${encodeURIComponent(seed)}/800/450`,
         mediaLabel:   preview.mediaLabel,
@@ -2083,7 +2081,7 @@ async function savePostsToDB(posts) {
 }
 
 // ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
-async function getPostsFromDB(topics = [], limit = 5000) {
+async function getPostsFromDB(topics = [], limit = 5000, offset = 0) {
   if (!db.isConnected()) return [];
   try {
     const { rows } = topics.length
@@ -2091,14 +2089,14 @@ async function getPostsFromDB(topics = [], limit = 5000) {
           `SELECT * FROM feed_posts_cache
            WHERE topic = ANY($1::text[])
            ORDER BY post_created_at DESC, likes_count DESC
-           LIMIT $2`,
-          [topics, limit]
+           LIMIT $2 OFFSET $3`,
+          [topics, limit, offset]
         )
       : await db.query(
           `SELECT * FROM feed_posts_cache
            ORDER BY post_created_at DESC, likes_count DESC
-           LIMIT $1`,
-          [limit]
+           LIMIT $1 OFFSET $2`,
+          [limit, offset]
         );
     return rows.map(r => ({
       id:          r.id,
@@ -2422,25 +2420,11 @@ app.get('/feed', authenticate, async (req, res) => {
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
 
-  // Categories relevant to this user
-  const relevantCategories = new Set([
-    ...(prefs.interests || []).map(i => INTEREST_TO_CATEGORY[i]).filter(Boolean),
-    ...(ROLE_CATEGORIES[prefs.role] || []),
-  ]);
-
-  function scorePost(groupId, cat, source) {
-    let s = 1; // baseline
-    if (joined.has(groupId))                s += 3; // from a group they follow
-    if (cat && relevantCategories.has(cat)) s += 2; // matches their interests/role
-    return s;
-  }
-
   // Internal posts (user-created)
   const internal = posts.map((p) => {
     const author = users.find((u) => u.id === p.authorId);
     const group  = groups.find((g) => g.id === p.groupId);
     const cat    = group?.category;
-    const relevance = scorePost(p.groupId, cat, 'uficonnect');
     return {
       ...p,
       author:          author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
@@ -2448,8 +2432,6 @@ app.get('/feed', authenticate, async (req, res) => {
       likedByMe:       (p.likes || []).includes(req.user.id),
       likesCount:      (p.likes || []).length,
       fromJoinedGroup: joined.has(p.groupId),
-      forYou:          relevance >= 2,
-      relevance,
       source:          'uficonnect',
       sourceLabel:     'UFIConnect',
       sourceUrl:       null,
@@ -2458,16 +2440,13 @@ app.get('/feed', authenticate, async (req, res) => {
   });
 
   function mapExternalPost(p, source) {
-    const group     = groups.find((g) => g.id === p.groupId);
-    const cat       = group?.category || p.group?.category;
-    const relevance = scorePost(p.groupId, cat, source);
+    const group = groups.find((g) => g.id === p.groupId);
+    const cat   = group?.category || p.group?.category;
     return {
       ...p,
       group:           group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
       likedByMe:       false,
       fromJoinedGroup: joined.has(p.groupId),
-      forYou:          relevance >= 2,
-      relevance,
     };
   }
 
@@ -2546,7 +2525,7 @@ app.get('/feed', authenticate, async (req, res) => {
         createdAt:   p.time || new Date().toISOString(),
         isExternal:  false,
         group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
-        forYou:      true, fromJoinedGroup: false, relevance: 5,
+        fromJoinedGroup: false,
         isSocialCard: false,
       });
     });
@@ -2568,7 +2547,7 @@ app.get('/feed', authenticate, async (req, res) => {
     createdAt:   j.posted || new Date().toISOString(),
     isExternal:  true,
     group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
-    forYou:      true, fromJoinedGroup: false, relevance: 3,
+    fromJoinedGroup: false,
   }));
 
   // ── Government job posts in feed ──────────────────────────────────────────
@@ -2587,7 +2566,7 @@ app.get('/feed', authenticate, async (req, res) => {
     createdAt:   j.posted || new Date().toISOString(),
     isExternal:  true,
     group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
-    forYou:      true, fromJoinedGroup: false, relevance: 3,
+    fromJoinedGroup: false,
   }));
 
   // Include background-cached global posts (already fetched, mapped by source)
@@ -2604,7 +2583,6 @@ app.get('/feed', authenticate, async (req, res) => {
     return {
       ...mapExternalPost(p, 'reddit'),
       fromJoinedGroup: true,
-      relevance: 4,
       group: matchedGroup
         ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
         : p.group,
@@ -2633,9 +2611,7 @@ app.get('/feed', authenticate, async (req, res) => {
     bySource[key].push(p);
   });
   Object.values(bySource).forEach(bucket =>
-    bucket.sort((a, b) =>
-      b.relevance !== a.relevance ? b.relevance - a.relevance : new Date(b.createdAt) - new Date(a.createdAt)
-    )
+    bucket.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
   );
   const mixed = [];
   const buckets = Object.values(bySource);
