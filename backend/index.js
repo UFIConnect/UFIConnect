@@ -509,6 +509,85 @@ const ROLE_TO_KEYWORDS = {
   'HR / People Ops':        'HR recruiting people operations',
 };
 
+// Goal value → search keyword (goal values come from Onboarding.jsx GOALS[].value)
+const GOAL_TO_KEYWORDS = {
+  'networking':  'professional networking community career',
+  'jobs':        'job search hiring remote career opportunities',
+  'learning':    'tutorials courses learning skills certification',
+  'build':       'build in public indie maker side project launch',
+  'hiring':      'recruiting talent hiring engineers developers',
+  'funding':     'startup funding venture capital seed round pitch',
+  'mentorship':  'mentorship career advice coaching growth',
+  'events':      'tech conference meetup summit workshop',
+  'expertise':   'thought leadership expert writing speaking',
+  'sideproject': 'side project MVP indie build launch early users',
+};
+
+// Extra keyword phrases per interest — appended on top of INTEREST_TO_KEYWORDS
+const INTEREST_EXTRA_KEYWORDS = {
+  'AI & Machine Learning':    ['neural network deep learning', 'AI tools 2024 2025'],
+  'Generative AI':            ['ChatGPT Claude Gemini', 'text to image diffusion model'],
+  'LLMs & Chatbots':          ['GPT-4 Claude Llama fine-tuning', 'RAG prompt engineering'],
+  'Data Science':             ['pandas numpy data pipeline', 'data visualization insights'],
+  'Developer Tools':          ['VS Code productivity CLI tools', 'developer workflow automation'],
+  'Cloud & DevOps':           ['AWS GCP Azure cloud architecture', 'CI/CD pipeline Kubernetes Docker'],
+  'Frontend Dev':             ['React Vue Next.js web performance', 'CSS Tailwind component design'],
+  'Backend Dev':              ['Node.js Python FastAPI microservices', 'REST GraphQL API design'],
+  'Mobile Dev':               ['React Native Flutter Swift Kotlin', 'app store mobile UX'],
+  'Cybersecurity':            ['vulnerability zero-day exploit patch', 'penetration testing SIEM'],
+  'SaaS':                     ['SaaS metrics ARR churn MRR', 'product-led growth PLG onboarding'],
+  'Venture Capital':          ['startup funding Series A term sheet', 'VC portfolio valuation cap table'],
+  'UI/UX Design':             ['Figma design token accessibility WCAG', 'user research wireframe prototype'],
+  'Growth Marketing':         ['conversion rate A/B testing funnel', 'acquisition retention growth loop'],
+  'FinTech':                  ['payments API banking-as-a-service', 'fintech regulation compliance'],
+  'Career Growth':            ['software engineer promotion salary', 'interview system design negotiation'],
+  'Productivity':             ['focus deep work async remote habits', 'tools workflow automation'],
+  'Web3 / Crypto':            ['Ethereum Solana NFT DeFi protocol', 'web3 smart contract wallet'],
+  'Health Tech':              ['digital health wearables EHR FDA', 'telehealth patient outcome AI'],
+  'Climate Tech':             ['renewable energy solar carbon capture', 'EV battery grid sustainability'],
+  'Remote Work':              ['async distributed team tools culture', 'remote work setup home office'],
+  'Side Projects':            ['indie hacker build in public launch', 'micro SaaS solo founder bootstrapped'],
+  'Freelancing':              ['freelance rate contract client remote', 'upwork toptal contra freelancer'],
+  'Content Creator':          ['YouTube algorithm thumbnail SEO', 'newsletter subscriber monetization'],
+};
+
+// Skill → Stack Overflow tag
+const SKILL_TO_SO_TAG = {
+  'javascript': 'javascript', 'typescript': 'typescript', 'python': 'python',
+  'react': 'reactjs', 'vue': 'vue.js', 'angular': 'angular', 'node': 'node.js',
+  'nodejs': 'node.js', 'java': 'java', 'kotlin': 'kotlin', 'swift': 'swift',
+  'flutter': 'flutter', 'dart': 'dart', 'go': 'go', 'rust': 'rust',
+  'c++': 'c++', 'c#': 'c%23', 'php': 'php', 'ruby': 'ruby', 'rails': 'ruby-on-rails',
+  'sql': 'sql', 'postgresql': 'postgresql', 'mongodb': 'mongodb', 'mysql': 'mysql',
+  'redis': 'redis', 'graphql': 'graphql', 'docker': 'docker', 'kubernetes': 'kubernetes',
+  'aws': 'amazon-web-services', 'azure': 'azure', 'gcp': 'google-cloud-platform',
+  'terraform': 'terraform', 'git': 'git', 'linux': 'linux', 'bash': 'bash',
+  'nextjs': 'next.js', 'tailwind': 'tailwindcss', 'figma': 'figma',
+  'machine learning': 'machine-learning', 'tensorflow': 'tensorflow', 'pytorch': 'pytorch',
+  'data science': 'data-science', 'pandas': 'pandas', 'r': 'r',
+};
+
+// Common skill strings → DEV Community tag (lowercase, no spaces)
+const SKILL_TO_DEVTO_TAG = {
+  'javascript': 'javascript', 'typescript': 'typescript', 'react': 'react',
+  'vue': 'vue', 'angular': 'angular', 'node': 'node', 'nodejs': 'node',
+  'python': 'python', 'rust': 'rust', 'go': 'go', 'java': 'java',
+  'kotlin': 'kotlin', 'swift': 'swift', 'flutter': 'flutter',
+  'docker': 'docker', 'kubernetes': 'kubernetes', 'aws': 'aws',
+  'graphql': 'graphql', 'sql': 'sql', 'postgresql': 'postgres',
+  'mongodb': 'mongodb', 'redis': 'redis', 'tensorflow': 'ai',
+  'pytorch': 'ai', 'llm': 'ai', 'openai': 'ai', 'figma': 'ux',
+  'css': 'css', 'html': 'html', 'tailwind': 'css', 'nextjs': 'nextjs',
+  'firebase': 'firebase', 'supabase': 'webdev', 'terraform': 'devops',
+  'github': 'github', 'git': 'git', 'linux': 'linux', 'vim': 'linux',
+  'c++': 'cpp', 'c#': 'csharp', '.net': 'dotnet', 'ruby': 'ruby',
+  'rails': 'rails', 'php': 'php', 'laravel': 'php',
+  'machine learning': 'machinelearning', 'deep learning': 'machinelearning',
+  'data science': 'datascience', 'devops': 'devops', 'ci/cd': 'devops',
+  'product management': 'productivity', 'agile': 'agile', 'scrum': 'agile',
+  'seo': 'seo', 'copywriting': 'writing', 'content marketing': 'marketing',
+};
+
 // ─── Post fetch cache (all sources share one Map) ────────────────────────────
 const postCache = new Map();
 const CACHE_TTL = 30 * 60 * 1000; // 30 min (background workers); busted on manual user refresh
@@ -1049,19 +1128,42 @@ function generateSocialSearchCards(interests = []) {
   return cards;
 }
 
-async function fetchAllTopicPosts(interests = [], role = '') {
-  const keywords = interests.map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
-  const roleKeyword = ROLE_TO_KEYWORDS[role];
-  if (keywords.length === 0 && roleKeyword) keywords.push(roleKeyword);
-  if (keywords.length === 0) keywords.push('technology startup programming');
-  const topics = [...new Set(keywords)];
+async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals = [], title = '', org = '') {
+  // Base: interest → primary keyword
+  const keywords = interests.flatMap(i => {
+    const primary = INTEREST_TO_KEYWORDS[i];
+    const extras  = INTEREST_EXTRA_KEYWORDS[i] || [];
+    return [primary, ...extras].filter(Boolean);
+  });
 
-  // Tag mappings per new source
-  const soTags      = [...new Set(interests.map(i => INTEREST_TO_SO_TAG[i]).filter(Boolean))];
+  // Role keyword
+  const roleKeyword = ROLE_TO_KEYWORDS[role];
+  if (roleKeyword) keywords.push(roleKeyword);
+
+  // Skills as direct search terms
+  const skillKeywords = (skills || [])
+    .map(s => s.trim()).filter(s => s.length > 1).slice(0, 6);
+
+  // Goals → search phrases
+  const goalKeywords = (goals || []).map(g => GOAL_TO_KEYWORDS[g]).filter(Boolean);
+
+  // Title and org add industry context
+  if (title && title.trim().length > 3) keywords.push(title.trim());
+  if (org   && org.trim().length > 2)   keywords.push(`${org.trim()} news`);
+
+  const allKeywords = [...keywords, ...skillKeywords, ...goalKeywords];
+  if (allKeywords.length === 0) allKeywords.push('technology startup programming');
+  const topics = [...new Set(allKeywords)].slice(0, 16);
+
+  // Tag-based sources — interests + skill-derived tags
+  const skillDevtoTags = (skills || []).map(s => SKILL_TO_DEVTO_TAG[s.toLowerCase().trim()]).filter(Boolean);
+  const skillSoTags    = (skills || []).map(s => SKILL_TO_SO_TAG[s.toLowerCase().trim()]).filter(Boolean);
+
+  const soTags      = [...new Set([...interests.map(i => INTEREST_TO_SO_TAG[i]).filter(Boolean), ...skillSoTags])];
   const mastoTags   = [...new Set(interests.map(i => INTEREST_TO_MASTODON_TAG[i]).filter(Boolean))];
   const lobTags     = [...new Set(interests.map(i => LOBSTERS_TAGS[i]).filter(Boolean))];
   const arxivKws    = [...new Set(interests.map(i => INTEREST_TO_ARXIV[i]).filter(Boolean))];
-  const devtoTags   = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
+  const devtoTags   = [...new Set([...interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean), ...skillDevtoTags])];
   const mediumTags  = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
 
   const [
@@ -2479,9 +2581,11 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   }
 
-  // Fetch posts from all 10 live sources for user's topics
+  // Fetch posts personalised to interests + role + skills + goals + title + org
   const liveResult = await fetchAllTopicPosts(
-    prefs.interests || [], prefs.role || ''
+    prefs.interests || [], prefs.role || '',
+    user?.skills || [], prefs.goals || [],
+    user?.title || '', user?.organization || ''
   ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[] }; });
 
   const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw,
@@ -2602,8 +2706,11 @@ app.get('/feed', authenticate, async (req, res) => {
   // Background-cached posts (global refresh + DB)
   const cachedMapped = globalFeedCache.posts.map(p => mapExternalPost(p, p.source || 'reddit'));
 
-  // DB-persisted posts (topic-filtered, sorted by recency + engagement)
-  const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
+  // DB-persisted posts — topic-filtered using interests + skills
+  const userTopics = [
+    ...(prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean),
+    ...(user?.skills || []).map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+  ];
   const dbPosts = (await getPostsFromDB(userTopics)).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
