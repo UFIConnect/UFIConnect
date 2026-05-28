@@ -1207,6 +1207,9 @@ const SERVER_START   = Date.now();
 // Office SSE clients — browsers watching /office/agents/stream
 const officeClients = new Map();
 
+// One-shot fetchers registered by startSourceWorker — used for manual triggers
+const SOURCE_FETCHERS = {};
+
 function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
   const entry = {
     id:      `${agentId}_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
@@ -1262,7 +1265,7 @@ const FEED_TOPICS = [
   'Fitness & Gym', 'Travel & Adventure', 'Cooking & Recipes', 'Music Discovery',
 ];
 
-function startSourceWorker(label, fetchFn, keyMapper, intervalMs, startDelayMs) {
+function startSourceWorker(agentId, label, emoji, color, fetchFn, keyMapper, intervalMs, startDelayMs) {
   let idx = 0;
   const tick = async () => {
     const topic = FEED_TOPICS[idx % FEED_TOPICS.length];
@@ -1272,10 +1275,23 @@ function startSourceWorker(label, fetchFn, keyMapper, intervalMs, startDelayMs) 
       if (key) {
         const posts = await fetchFn(key);
         const n = addAndBroadcast(posts);
-        if (n > 0) logAgentAction('feed', '📡', `${label}: +${n} new — "${topic}"`, '#60A5FA');
+        if (n > 0) logAgentAction(agentId, emoji, `+${n} new — "${topic}"`, color);
       }
     } catch { /* ignore per-tick errors */ }
     setTimeout(tick, intervalMs);
+  };
+  // Register a one-shot fetcher so this agent can be manually triggered
+  SOURCE_FETCHERS[agentId] = async () => {
+    const topic = FEED_TOPICS[Math.floor(Math.random() * FEED_TOPICS.length)];
+    try {
+      const key = keyMapper(topic);
+      if (!key) return;
+      const posts = await fetchFn(key);
+      const n = addAndBroadcast(posts);
+      logAgentAction(agentId, emoji, n > 0 ? `Manual: +${n} new — "${topic}"` : `Manual: no new content for "${topic}"`, color);
+    } catch (e) {
+      logAgentAction(agentId, '⚠️', `Manual fetch error: ${e.message}`, '#F87171');
+    }
   };
   setTimeout(tick, startDelayMs);
 }
@@ -1289,21 +1305,20 @@ function startContinuousWorkers() {
   const lob = t => LOBSTERS_TAGS[t];
   const arx = t => INTEREST_TO_ARXIV[t];
 
-  // Interval controls rotation speed; actual API calls are gated by CACHE_TTL (30 min),
-  // so each topic+source is fetched from the API at most once per 30 minutes.
-  // Average actual API call rate per source = 36 topics / 30 min = 1.2/min — safe for all sources.
-  startSourceWorker('Reddit',        fetchRedditByKeyword,       kw,  2000,  0     );
-  startSourceWorker('HackerNews',    fetchHNByKeyword,           kw,  2000,  400   );
-  startSourceWorker('GitHub',        fetchGitHubByKeyword,       kw,  3000,  800   );
-  startSourceWorker('DEV.to',        fetchDevToByTag,            dev, 3000,  1200  );
-  startSourceWorker('Medium',        fetchMediumByTag,           med, 3000,  1600  );
-  startSourceWorker('YouTube',       fetchYouTubeByKeyword,      kw,  5000,  2000  );
-  startSourceWorker('StackOverflow', fetchStackOverflowByTag,    so,  4000,  2400  );
-  startSourceWorker('Mastodon',      fetchMastodonByTag,         mas, 2500,  2800  );
-  startSourceWorker('Lobsters',      fetchLobstersByTag,         lob, 3000,  3200  );
-  startSourceWorker('arXiv',         fetchArxivByKeyword,        arx, 3000,  3600  );
+  // Each source has its own agent ID, emoji, and color — visible independently in the office.
+  // Interval controls rotation speed; actual API calls are gated by CACHE_TTL (30 min).
+  startSourceWorker('reddit',        'Reddit',        '🟠', '#FF6347', fetchRedditByKeyword,       kw,  2000,  0     );
+  startSourceWorker('hn',            'HackerNews',    '🔶', '#FF6600', fetchHNByKeyword,           kw,  2000,  400   );
+  startSourceWorker('github',        'GitHub',        '🐙', '#94A3B8', fetchGitHubByKeyword,       kw,  3000,  800   );
+  startSourceWorker('devto',         'DEV.to',        '💻', '#8B5CF6', fetchDevToByTag,            dev, 3000,  1200  );
+  startSourceWorker('medium',        'Medium',        '📝', '#10B981', fetchMediumByTag,           med, 3000,  1600  );
+  startSourceWorker('youtube',       'YouTube',       '▶️', '#EF4444', fetchYouTubeByKeyword,      kw,  5000,  2000  );
+  startSourceWorker('stackoverflow', 'StackOverflow', '💬', '#F59E0B', fetchStackOverflowByTag,    so,  4000,  2400  );
+  startSourceWorker('mastodon',      'Mastodon',      '🐘', '#6366F1', fetchMastodonByTag,         mas, 2500,  2800  );
+  startSourceWorker('lobsters',      'Lobsters',      '🦞', '#DC2626', fetchLobstersByTag,         lob, 3000,  3200  );
+  startSourceWorker('arxiv',         'arXiv',         '📄', '#3B82F6', fetchArxivByKeyword,        arx, 3000,  3600  );
 
-  logAgentAction('feed', '🔄', 'Continuous feed workers started — 10 sources rolling in parallel', '#4ADE80');
+  logAgentAction('feed', '🔄', 'All 10 source agents launched — pulling data independently in parallel', '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
@@ -1459,7 +1474,7 @@ async function runDataCheck() {
 
 // Seed immediately on startup (non-blocking)
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-logAgentAction('security',  '✅', 'All 6 agents online — autonomous mode active', '#4ADE80');
+logAgentAction('security',  '✅', 'All 17 agents online — 10 source + 7 ops agents active', '#4ADE80');
 // Warm the cache with a full initial fetch, then switch to continuous rolling workers
 refreshGlobalFeedCache().then(() => {
   globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
@@ -2927,9 +2942,51 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
 
 // ─── Office: agent registry ───────────────────────────────────────────────────
 const AGENT_DEFS = {
+  // ── Platform source agents (one per data source) ──────────────────────────
+  reddit: {
+    name: 'Reddit Agent', emoji: '🟠', color: '#FF6347', interval: '2s',
+    description: 'Polls Reddit every 2s, rotating through 36 topic keywords. Fetches top posts from relevant subreddits and streams new content to the feed.',
+  },
+  hn: {
+    name: 'HackerNews Agent', emoji: '🔶', color: '#FF6600', interval: '2s',
+    description: 'Queries HackerNews Algolia search API every 2s across 36 topics. Surfaces top-scored technical discussions and Show HN posts.',
+  },
+  github: {
+    name: 'GitHub Agent', emoji: '🐙', color: '#94A3B8', interval: '3s',
+    description: 'Searches GitHub trending repos every 3s by keyword. Discovers open-source projects matching each of 36 topic areas.',
+  },
+  devto: {
+    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '3s',
+    description: 'Fetches articles from DEV.to by tag every 3s. Covers developer tutorials, opinions, and project showcases across 36 mapped tags.',
+  },
+  medium: {
+    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '3s',
+    description: 'Scrapes Medium RSS feeds by topic tag every 3s. Pulls long-form articles and case studies from the broader developer and startup community.',
+  },
+  youtube: {
+    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '5s',
+    description: 'Queries YouTube Data API for relevant video content every 5s. Surfaces talks, tutorials, and demos across 36 topic areas.',
+  },
+  stackoverflow: {
+    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '4s',
+    description: 'Fetches hot and recent questions from StackOverflow by tag every 4s. Captures real developer pain points and solutions across the stack.',
+  },
+  mastodon: {
+    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '2.5s',
+    description: 'Pulls public posts from Mastodon.social by hashtag every 2.5s. Covers the open-source and indie tech community with decentralized content.',
+  },
+  lobsters: {
+    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '3s',
+    description: 'Fetches curated technical links from Lobste.rs by tag every 3s. High signal-to-noise content from a vetted engineering community.',
+  },
+  arxiv: {
+    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '3s',
+    description: 'Queries arXiv preprint API for research papers every 3s. Covers AI/ML, CS, and adjacent scientific topics across 36 mapped subjects.',
+  },
+  // ── Operational agents ────────────────────────────────────────────────────
   feed: {
-    name: 'Feed Agent', emoji: '📡', color: '#60A5FA', interval: '2s',
-    description: 'Aggregates live content from 10 parallel sources every 2s: Reddit, HN, GitHub, DEV.to, Medium, YouTube, StackOverflow, Mastodon, Lobsters, arXiv.',
+    name: 'Feed Cache Agent', emoji: '🗂️', color: '#60A5FA', interval: 'on-demand',
+    description: 'Manages the global feed cache. Aggregates all source agent output, deduplicates posts, persists to DB, and triggers the initial warm-up on startup.',
   },
   security: {
     name: 'Security Agent', emoji: '🔒', color: '#4ADE80', interval: '8min',
@@ -3013,7 +3070,9 @@ app.get('/office/agents/stream', (req, res) => {
 });
 
 app.post('/office/agents/:id/trigger', (req, res) => {
+  const sourceFn = SOURCE_FETCHERS[req.params.id];
   const triggers = {
+    // Operational agents
     feed:      () => refreshGlobalFeedCache(),
     security:  () => runSecurityScan(),
     perf:      () => runPerfCheck(),
@@ -3022,6 +3081,8 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     opps:      () => runOppsCheck(),
     deploy:    () => runDeployCheck(),
     data:      () => runDataCheck(),
+    // Source agents — resolved from SOURCE_FETCHERS map registered at startup
+    ...(sourceFn ? { [req.params.id]: sourceFn } : {}),
   };
   const fn = triggers[req.params.id];
   if (!fn) return res.status(404).json({ error: 'Unknown agent' });
@@ -3080,6 +3141,7 @@ app.get('/hq/status', (req, res) => {
 // ─── HQ manual agent trigger (internal use) ──────────────────────────────────
 app.post('/hq/trigger/:agentId', (req, res) => {
   const { agentId } = req.params;
+  const sourceFn = SOURCE_FETCHERS[agentId];
   const triggers = {
     feed:      () => refreshGlobalFeedCache(),
     security:  () => runSecurityScan(),
@@ -3089,6 +3151,7 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     opps:      () => runOppsCheck(),
     deploy:    () => runDeployCheck(),
     data:      () => runDataCheck(),
+    ...(sourceFn ? { [agentId]: sourceFn } : {}),
   };
   if (!triggers[agentId]) return res.status(404).json({ error: 'Unknown agent' });
   triggers[agentId]();
