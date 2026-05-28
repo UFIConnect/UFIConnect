@@ -511,7 +511,7 @@ const ROLE_TO_KEYWORDS = {
 
 // ─── Post fetch cache (all sources share one Map) ────────────────────────────
 const postCache = new Map();
-const CACHE_TTL = 30 * 60 * 1000; // 30 min
+const CACHE_TTL = 30 * 60 * 1000; // 30 min (background workers); busted on manual user refresh
 
 function getCached(key)       { const c = postCache.get(key); return (c && Date.now() - c.t < CACHE_TTL) ? c.v : null; }
 function setCached(key, val)  { postCache.set(key, { v: val, t: Date.now() }); }
@@ -1056,12 +1056,6 @@ function generateSocialSearchCards(interests = [], connectedPlatforms = new Set(
   return cards;
 }
 
-// ─── Master feed fetcher: all topics × all 10 sources (100 posts each) ───────
-// Per-source cap: max posts returned per source per fetch cycle.
-// Sources: Reddit, HackerNews, DEV.to, GitHub, Medium, YouTube,
-//          Stack Overflow, Mastodon, Lobsters, arXiv
-const PER_SOURCE_CAP = 200;
-
 async function fetchAllTopicPosts(interests = [], role = '') {
   const keywords = interests.map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
   const roleKeyword = ROLE_TO_KEYWORDS[role];
@@ -1076,8 +1070,6 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   const arxivKws    = [...new Set(interests.map(i => INTEREST_TO_ARXIV[i]).filter(Boolean))];
   const devtoTags   = [...new Set(interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean))];
   const mediumTags  = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
-
-  const cap = arr => arr.slice(0, PER_SOURCE_CAP);
 
   const [
     redditResults, hnResults, githubResults, youtubeResults,
@@ -1097,16 +1089,16 @@ async function fetchAllTopicPosts(interests = [], role = '') {
   ]);
 
   return {
-    reddit:       cap(redditResults.flat()),
-    hn:           cap(hnResults.flat()),
-    github:       cap(githubResults.flat()),
-    devto:        cap(devtoResults.flat()),
-    medium:       cap(mediumResults.flat()),
-    youtube:      cap(youtubeResults.flat()),
-    stackoverflow: cap(soResults.flat()),
-    mastodon:     cap(mastoResults.flat()),
-    lobsters:     cap(lobResults.flat()),
-    arxiv:        cap(arxivResults.flat()),
+    reddit:        redditResults.flat(),
+    hn:            hnResults.flat(),
+    github:        githubResults.flat(),
+    devto:         devtoResults.flat(),
+    medium:        mediumResults.flat(),
+    youtube:       youtubeResults.flat(),
+    stackoverflow: soResults.flat(),
+    mastodon:      mastoResults.flat(),
+    lobsters:      lobResults.flat(),
+    arxiv:         arxivResults.flat(),
   };
 }
 
@@ -1141,7 +1133,7 @@ function addAndBroadcast(incoming) {
   const fresh = (incoming || []).filter(p => p?.id && !seenPostIds.has(p.id));
   if (!fresh.length) return 0;
   fresh.forEach(p => seenPostIds.add(p.id));
-  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts].slice(0, 20000);
+  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts];
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -1606,6 +1598,43 @@ const INDEED_JOBS = [
   { id: 'j8', title: 'Data Scientist', company: 'Figma', location: 'San Francisco, CA', type: 'Full-time', salary: '$160k–$200k', tags: ['Python', 'SQL', 'Experimentation'], posted: ago(4*H) },
 ];
 
+// ─── Government / Federal job listings ───────────────────────────────────────
+const GOVT_JOBS = [
+  // Software & Tech
+  { id: 'g1',  title: 'Software Engineer', agency: 'U.S. Digital Service', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Python','React','Cloud','Civic Tech'], posted: ago(1*H) },
+  { id: 'g2',  title: 'Data Scientist', agency: 'Census Bureau', location: 'Suitland, MD / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Python','R','Statistics','Big Data'], posted: ago(3*H) },
+  { id: 'g3',  title: 'Cybersecurity Analyst', agency: 'CISA', location: 'Arlington, VA / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['SIEM','Incident Response','NIST','Cloud Security'], posted: ago(5*H) },
+  { id: 'g4',  title: 'AI/ML Engineer', agency: 'Department of Defense (JAIC)', location: 'Arlington, VA', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['PyTorch','TensorFlow','LLMs','Cloud'], posted: ago(6*H) },
+  { id: 'g5',  title: 'Cloud Infrastructure Engineer', agency: 'NASA', location: 'Houston, TX / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['AWS','Kubernetes','Terraform','DevOps'], posted: ago(8*H) },
+  { id: 'g6',  title: 'Full Stack Developer', agency: 'VA Digital Experience', location: 'Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['React','Node.js','PostgreSQL','Accessibility'], posted: ago(10*H) },
+  { id: 'g7',  title: 'Product Manager (Digital Services)', agency: '18F / GSA', location: 'Remote', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Agile','UX','Government Tech','Stakeholder Mgmt'], posted: ago(12*H) },
+  { id: 'g8',  title: 'IT Security Specialist', agency: 'NSA', location: 'Fort Meade, MD', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Cryptography','Network Security','Clearance Required'], posted: ago(1*D) },
+  // Policy & Analysis
+  { id: 'g9',  title: 'Policy Analyst', agency: 'White House OSTP', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Tech Policy','AI Governance','Research','Writing'], posted: ago(2*H) },
+  { id: 'g10', title: 'Foreign Affairs Officer', agency: 'U.S. State Department', location: 'Washington, DC', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Diplomacy','International Relations','Languages'], posted: ago(4*H) },
+  { id: 'g11', title: 'Intelligence Analyst', agency: 'DIA', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Research','National Security','Clearance Required','Analysis'], posted: ago(7*H) },
+  { id: 'g12', title: 'Budget Analyst', agency: 'Office of Management & Budget', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Finance','Budgeting','Policy','Excel'], posted: ago(9*H) },
+  // Healthcare & Science
+  { id: 'g13', title: 'Epidemiologist', agency: 'CDC', location: 'Atlanta, GA / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Public Health','Statistics','R','Surveillance'], posted: ago(3*H) },
+  { id: 'g14', title: 'Biomedical Research Scientist', agency: 'NIH', location: 'Bethesda, MD', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Genomics','Bioinformatics','Research','Publications'], posted: ago(6*H) },
+  { id: 'g15', title: 'Public Health Advisor', agency: 'HHS', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Public Health','Grant Management','Healthcare Policy'], posted: ago(1*D) },
+  { id: 'g16', title: 'Nurse Practitioner', agency: 'Veterans Affairs (VA)', location: 'Multiple Locations', type: 'Full-time', salary: '$95k–$130k', tags: ['NP','Primary Care','VA Benefits','Patient Care'], posted: ago(5*H) },
+  // Engineering & Infrastructure
+  { id: 'g17', title: 'Civil Engineer', agency: 'Army Corps of Engineers', location: 'Various Locations', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Civil Engineering','Infrastructure','Project Mgmt','PE'], posted: ago(2*D) },
+  { id: 'g18', title: 'Environmental Scientist', agency: 'EPA', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Environmental Science','GIS','Policy','Climate'], posted: ago(1*D) },
+  { id: 'g19', title: 'Aerospace Engineer', agency: 'NASA (Jet Propulsion Lab)', location: 'Pasadena, CA', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Aerospace','MATLAB','Systems Engineering','Space'], posted: ago(3*D) },
+  { id: 'g20', title: 'Transportation Planner', agency: 'Department of Transportation', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Urban Planning','GIS','Infrastructure','Policy'], posted: ago(2*D) },
+  // Law & Finance
+  { id: 'g21', title: 'Special Agent', agency: 'FBI', location: 'Various Field Offices', type: 'Full-time', salary: 'GL-10 ($56k–$73k)', tags: ['Law Enforcement','Investigation','Clearance Required','Fitness'], posted: ago(4*H) },
+  { id: 'g22', title: 'Revenue Agent (Compliance)', agency: 'IRS', location: 'Remote / Various', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Accounting','CPA','Tax Law','Auditing'], posted: ago(8*H) },
+  { id: 'g23', title: 'Economist', agency: 'Bureau of Labor Statistics', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Economics','Statistics','R','Labor Market'], posted: ago(1*D) },
+  { id: 'g24', title: 'Attorney Advisor', agency: 'Department of Justice', location: 'Washington, DC', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Law','JD Required','Federal Litigation','Policy'], posted: ago(2*D) },
+  // Emergency & Operations
+  { id: 'g25', title: 'Emergency Management Specialist', agency: 'FEMA', location: 'Remote / Disaster Response', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Emergency Mgmt','Logistics','Crisis Response','NIMS'], posted: ago(5*H) },
+  { id: 'g26', title: 'Border Patrol Agent', agency: 'CBP', location: 'Southwest Border', type: 'Full-time', salary: 'GL-7 ($49k–$63k)', tags: ['Law Enforcement','Fitness Test','Clearance Required'], posted: ago(1*D) },
+  { id: 'g27', title: 'Air Traffic Controller', agency: 'FAA', location: 'Various Facilities', type: 'Full-time', salary: '$80k–$140k', tags: ['ATC','Aviation','Safety','Shift Work'], posted: ago(3*D) },
+];
+
 // ─── Registered users ─────────────────────────────────────────────────────────
 // Live users — populated from PostgreSQL at login/register, no hardcoded demos
 let users = [];
@@ -2064,7 +2093,7 @@ async function savePostsToDB(posts) {
 }
 
 // ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
-async function getPostsFromDB(topics = [], limit = 500) {
+async function getPostsFromDB(topics = [], limit = 5000) {
   if (!db.isConnected()) return [];
   try {
     const { rows } = topics.length
@@ -2385,6 +2414,9 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
+  // Manual refresh: bust the API cache so fresh data is fetched from all sources
+  if (req.query.bust === '1') postCache.clear();
+
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
@@ -2485,6 +2517,7 @@ app.get('/feed', authenticate, async (req, res) => {
     instagram: 'https://instagram.com', facebook: 'https://facebook.com',
     linkedin: 'https://linkedin.com', reddit: 'https://reddit.com',
     indeed: 'https://indeed.com',
+    usajobs: 'https://www.usajobs.gov',
   };
   const ALL_SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter', 'tiktok', 'reddit'];
   const connectedSocialPosts = [];
@@ -2546,13 +2579,32 @@ app.get('/feed', authenticate, async (req, res) => {
     forYou:      true, fromJoinedGroup: false, relevance: 3,
   }));
 
+  // ── Government job posts in feed ──────────────────────────────────────────
+  const govtPosts = GOVT_JOBS.map(j => ({
+    id:          `govt_${j.id}`,
+    authorId:    'usajobs',
+    groupId:     'ext_usajobs',
+    content:     `${j.type} · ${j.location}${j.salary ? ' · ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
+    title:       `${j.title} — ${j.agency}`,
+    source:      'usajobs',
+    sourceLabel: 'USAJobs',
+    sourceUrl:   `https://www.usajobs.gov/search/results/?k=${encodeURIComponent(j.title)}&p=1`,
+    topic:       'career growth',
+    author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
+    likes: [], likesCount: 0, commentsCount: 0,
+    createdAt:   j.posted || new Date().toISOString(),
+    isExternal:  true,
+    group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
+    forYou:      true, fromJoinedGroup: false, relevance: 3,
+  }));
+
   // Include background-cached global posts (already fetched, mapped by source)
   // Background-cached posts (global refresh + DB)
   const cachedMapped = globalFeedCache.posts.map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // DB-persisted posts (topic-filtered, sorted by recency + engagement)
   const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
-  const dbPosts = (await getPostsFromDB(userTopics, 300)).map(p => mapExternalPost(p, p.source || 'reddit'));
+  const dbPosts = (await getPostsFromDB(userTopics)).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
@@ -2571,7 +2623,7 @@ app.get('/feed', authenticate, async (req, res) => {
   const seen = new Set();
   const all  = [
     ...internal, ...joinedGroupPosts,
-    ...connectedSocialPosts, ...indeedPosts,
+    ...connectedSocialPosts, ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts, ...cachedMapped, ...dbPosts,

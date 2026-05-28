@@ -427,9 +427,10 @@ export default function Feed() {
     if (manual) setRefreshing(true);
     else if (!posts.length) setLoading(true);
     try {
-      const { data } = await client.get('/feed');
+      const { data } = await client.get(manual ? '/feed?bust=1' : '/feed');
       const incoming = data.posts || [];
-      incoming.forEach(p => knownIds.current.add(p.id));
+      if (manual) knownIds.current = new Set(incoming.map(p => p.id));
+      else incoming.forEach(p => knownIds.current.add(p.id));
       setPosts(incoming);
       setPage(1);
       setLastRefresh(new Date());
