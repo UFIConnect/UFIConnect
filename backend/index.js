@@ -2354,7 +2354,8 @@ app.delete('/profile', authenticate, async (req, res) => {
 });
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
-app.get('/groups', (req, res) => {
+app.get('/groups', async (req, res) => {
+  if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
   const { category } = req.query;
   const result = category ? groups.filter((g) => g.category === category) : groups;
   res.json({ groups: result });
@@ -2692,7 +2693,7 @@ app.get('/feed/stream', (req, res) => {
   sseClients.set(clientId, res);
 
   // Send the most recent posts immediately so the client has something to show
-  const initial = globalFeedCache.posts.slice(0, 60);
+  const initial = globalFeedCache.posts.slice(0, 200);
   if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
 
   // Heartbeat every 20 s to keep the connection alive through proxies
@@ -2762,7 +2763,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
 // ─── HQ status endpoint (no auth — feeds the internal control room) ──────────
 app.get('/hq/status', (req, res) => {
   res.json({
-    agentLog:     agentActionLog.slice(0, 60),
+    agentLog:     agentActionLog,
     feedPostCount: globalFeedCache.posts.length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
@@ -2890,7 +2891,7 @@ app.get('/users/search', authenticate, (req, res) => {
   scored.sort((a, b) => b.score - a.score);
 
   res.json({
-    users: scored.slice(0, 60).map(({ u, sharedInterests }) => ({
+    users: scored.map(({ u, sharedInterests }) => ({
       id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
       organization: u.organization || '', skills: u.skills || [],
       role: u.preferences?.role || '',
@@ -3398,7 +3399,7 @@ async function fetchMuseJobs(role, experience) {
   try {
     const url  = `https://www.themuse.com/api/public/jobs?category=${encodeURIComponent(category)}&level=${encodeURIComponent(level)}&page=0&descending=true`;
     const data = await fetchJSON(url);
-    const jobs = (data?.results || []).slice(0, 15).map((j) => ({
+    const jobs = (data?.results || []).map((j) => ({
       id:        `muse_${j.id}`,
       type:      'job',
       title:     j.name || 'Open Role',
@@ -3423,7 +3424,7 @@ async function fetchMuseJobs(role, experience) {
 
 async function getLiveJobs(role, experience) {
   const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
-  const uniqCats = [...new Set(cats)].slice(0, 2);
+  const uniqCats = [...new Set(cats)];
   const [remotiveResults, museResults] = await Promise.all([
     Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
     fetchMuseJobs(role, experience),
@@ -3457,6 +3458,7 @@ const ROLE_OP_TYPES = {
 };
 
 app.get('/opportunities', authenticate, async (req, res) => {
+  if (req.query.bust === '1') { remotiveCache.clear(); museCache.clear(); }
   const { type, remote, search } = req.query;
   const user       = await getUser(req.user.id);
   const role       = user?.preferences?.role || '';
@@ -3693,6 +3695,21 @@ db.initDB().then(async () => {
   await loadPostsFromDB();
   // Pre-populate seenPostIds so workers don't re-broadcast historical posts
   globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
+
+  // Weekly: clear opportunity caches so Remotive + Muse re-fetch fresh live jobs
+  setInterval(() => {
+    remotiveCache.clear();
+    museCache.clear();
+    logAgentAction('feed', '🔄', 'Weekly opportunity cache reset — live jobs will re-fetch on next visit', '#60A5FA');
+  }, 7 * 24 * 60 * 60 * 1000);
+
+  // Monthly: re-seed groups from ALL_GROUPS_SEED to pick up any new communities added to the list
+  setInterval(() => {
+    seedAndLoadGroups()
+      .then(() => logAgentAction('feed', '🔄', `Monthly groups refresh — ${groups.length} communities loaded`, '#4ADE80'))
+      .catch(e => console.warn('Monthly group refresh:', e.message));
+  }, 30 * 24 * 60 * 60 * 1000);
+
   app.listen(PORT, () =>
     console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
   );

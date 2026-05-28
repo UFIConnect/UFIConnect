@@ -52,24 +52,31 @@ export default function Groups() {
 
 function GroupsContent() {
   const navigate = useNavigate();
-  const [groups,     setGroups]     = useState([]);
-  const [joined,     setJoined]     = useState(new Set());
-  const [categories, setCategories] = useState([]);
-  const [filter,     setFilter]     = useState('all');
-  const [search,     setSearch]     = useState('');
-  const [loading,    setLoading]    = useState(true);
+  const [groups,      setGroups]      = useState([]);
+  const [joined,      setJoined]      = useState(new Set());
+  const [categories,  setCategories]  = useState([]);
+  const [filter,      setFilter]      = useState('all');
+  const [search,      setSearch]      = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(null);
 
-  useEffect(() => {
+  function loadGroups(bust = false) {
+    if (bust) setRefreshing(true); else setLoading(true);
+    const groupUrl = bust ? '/groups?bust=1' : '/groups';
     Promise.all([
-      client.get('/groups'),
+      client.get(groupUrl),
       client.get('/groups/categories'),
       client.get('/profile'),
     ]).then(([gRes, cRes, pRes]) => {
       setGroups(gRes.data.groups || []);
       setCategories(cRes.data.categories || []);
       setJoined(new Set(pRes.data.joinedGroups || []));
-    }).catch(console.error).finally(() => setLoading(false));
-  }, []);
+      setLastRefresh(new Date());
+    }).catch(console.error).finally(() => { setLoading(false); setRefreshing(false); });
+  }
+
+  useEffect(() => { loadGroups(); }, []);
 
   async function handleJoin(e, groupId) {
     e.stopPropagation();
@@ -99,11 +106,27 @@ function GroupsContent() {
 
   return (
     <Layout>
-      <div className="page-header">
-        <h1 className="page-title">Discover Groups</h1>
-        <p className="page-subtitle">
-          Real public communities from Reddit, Discord, LinkedIn, News, and more — follow any to personalise your feed with business, creative, and industry conversations.
-        </p>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <h1 className="page-title">Discover Groups</h1>
+          <p className="page-subtitle">
+            Real public communities from Reddit, Discord, LinkedIn, News, and more — follow any to personalise your feed with business, creative, and industry conversations.
+            {lastRefresh && (
+              <span style={{ marginLeft: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
+                Updated {lastRefresh.toLocaleTimeString()}
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => loadGroups(true)}
+          disabled={refreshing}
+          style={{ marginTop: 4, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
       {/* Search bar */}

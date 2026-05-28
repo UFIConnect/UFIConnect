@@ -552,7 +552,7 @@ export default function AgentDashboard() {
             };
           });
         if (newEntries.length > 0) {
-          setActivityLog(prev => [...newEntries, ...prev].slice(0, 60));
+          setActivityLog(prev => [...newEntries, ...prev]);
           setEventsCount(c => c + newEntries.length);
           // Update last execution if the most recent server event is a completion
           const latest = newEntries[0];

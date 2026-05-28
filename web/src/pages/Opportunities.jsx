@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+
+const PAGE_SIZE = 30;
 
 const TYPE_META = {
   job:        { label: 'Job',         emoji: '💼', color: '#2563EB', bg: '#EFF6FF' },
@@ -55,33 +57,39 @@ function SourceBadge({ opp }) {
 
 export default function Opportunities() {
   const { profile } = useAuth();
-  const [opps,       setOpps]       = useState([]);
-  const [liveCount,  setLiveCount]  = useState(0);
-  const [filter,     setFilter]     = useState('all');
-  const [remote,     setRemote]     = useState(false);
-  const [liveOnly,   setLiveOnly]   = useState(false);
-  const [search,     setSearch]     = useState('');
-  const [loading,    setLoading]    = useState(true);
-  const [searchUrls, setSearchUrls] = useState(null);
-  const [userRole,   setUserRole]   = useState('');
-  const [userTitle,  setUserTitle]  = useState('');
+  const [opps,        setOpps]        = useState([]);
+  const [liveCount,   setLiveCount]   = useState(0);
+  const [filter,      setFilter]      = useState('all');
+  const [remote,      setRemote]      = useState(false);
+  const [liveOnly,    setLiveOnly]    = useState(false);
+  const [search,      setSearch]      = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [page,        setPage]        = useState(1);
+  const [searchUrls,  setSearchUrls]  = useState(null);
+  const [userRole,    setUserRole]    = useState('');
+  const [userTitle,   setUserTitle]   = useState('');
+  const [lastRefresh, setLastRefresh] = useState(null);
   const debounceRef = useRef(null);
 
-  function fetchOpps(params = {}) {
-    setLoading(true);
-    client.get('/opportunities', { params })
+  const fetchOpps = useCallback((params = {}, bust = false) => {
+    if (bust) setRefreshing(true); else setLoading(true);
+    const finalParams = bust ? { ...params, bust: '1' } : params;
+    client.get('/opportunities', { params: finalParams })
       .then(({ data }) => {
         let list = data.opportunities || [];
         if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive' || o.source === 'The Muse');
         setOpps(list);
+        setPage(1);
+        setLastRefresh(new Date());
         setLiveCount(data.liveCount || 0);
         if (data.platformSearchUrls) setSearchUrls(data.platformSearchUrls);
         if (data.userTitle) setUserTitle(data.userTitle);
         if (data.userRole) setUserRole(data.userRole);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
-  }
+      .finally(() => { setLoading(false); setRefreshing(false); });
+  }, [liveOnly]); // eslint-disable-line
 
   useEffect(() => {
     const params = {};
@@ -89,7 +97,7 @@ export default function Opportunities() {
     if (remote)           params.remote = 'true';
     if (search)           params.search = search;
     fetchOpps(params);
-  }, [filter, remote, liveOnly]);
+  }, [filter, remote, liveOnly]); // eslint-disable-line
 
   function handleSearchChange(e) {
     const val = e.target.value;
@@ -102,6 +110,14 @@ export default function Opportunities() {
       if (val)              params.search = val;
       fetchOpps(params);
     }, 300);
+  }
+
+  function handleRefresh() {
+    const params = {};
+    if (filter !== 'all') params.type   = filter;
+    if (remote)           params.remote = 'true';
+    if (search)           params.search = search;
+    fetchOpps(params, true);
   }
 
   // Prefer specific title (e.g. "Senior Frontend Engineer") over macro label
@@ -118,18 +134,34 @@ export default function Opportunities() {
         <meta name="description" content="Personalized jobs, gigs, grants, events, and learning opportunities matched to your role and interests." />
       </Helmet>
       <Layout>
-        <div className="page-header">
-          <h1 className="page-title">Opportunities</h1>
-          <p className="page-subtitle">
-            {searchLabel
-              ? <><strong>{searchLabel}</strong> roles ranked first · jobs, gigs, grants, events — matched to your profile.</>
-              : 'Jobs, gigs, grants, events — personalised to your role and skills.'}
-            {liveCount > 0 && (
-              <span style={{ marginLeft: 8, fontSize: '.78rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
-                🔴 {liveCount} live
-              </span>
-            )}
-          </p>
+        <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <h1 className="page-title">Opportunities</h1>
+            <p className="page-subtitle">
+              {searchLabel
+                ? <><strong>{searchLabel}</strong> roles ranked first · jobs, gigs, grants, events — matched to your profile.</>
+                : 'Jobs, gigs, grants, events — personalised to your role and skills.'}
+              {liveCount > 0 && (
+                <span style={{ marginLeft: 8, fontSize: '.78rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
+                  🔴 {liveCount} live
+                </span>
+              )}
+              {lastRefresh && (
+                <span style={{ marginLeft: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
+                  Updated {lastRefresh.toLocaleTimeString()}
+                </span>
+              )}
+            </p>
+          </div>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            style={{ marginTop: 4, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+          >
+            <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
         </div>
 
         {/* ── Platform search strip ── */}
@@ -205,7 +237,10 @@ export default function Opportunities() {
           </div>
         ) : (
           <div>
-            {opps.map((opp) => {
+            <p style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 10 }}>
+              {opps.length} opportunit{opps.length !== 1 ? 'ies' : 'y'} · showing {Math.min(page * PAGE_SIZE, opps.length)}
+            </p>
+            {opps.slice(0, page * PAGE_SIZE).map((opp) => {
               const meta = TYPE_META[opp.type] || TYPE_META.job;
               return (
                 <div key={opp.id} className="card opp-card" style={{ marginBottom: 12 }}>
@@ -271,6 +306,13 @@ export default function Opportunities() {
                 </div>
               );
             })}
+            {opps.length > page * PAGE_SIZE && (
+              <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                <button className="btn btn-ghost" onClick={() => setPage(p => p + 1)}>
+                  Load more opportunities ({opps.length - page * PAGE_SIZE} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Layout>
