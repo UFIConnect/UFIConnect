@@ -1903,6 +1903,8 @@ function fullProfile(user) {
     roleSettings: user.roleSettings || {},
     connectedPlatforms: Object.keys(user.socialAccounts || {}),
     connectedGroupsByPlatform,
+    subscriptionStatus: user.subscriptionStatus || 'free',
+    subscriptionStartedAt: user.subscriptionStartedAt || null,
   };
 }
 
@@ -1927,6 +1929,8 @@ function dbRowToMemUser(row) {
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
+    subscriptionStatus: row.subscription_status || 'free',
+    subscriptionStartedAt: row.subscription_started_at || null,
     socialAccounts: {},
   };
 }
@@ -1977,6 +1981,8 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) DEFAULT 'free'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_started_at TIMESTAMPTZ`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -3009,11 +3015,43 @@ app.get('/social/platforms', authenticate, async (req, res) => {
 });
 
 // Connect a platform (mock OAuth exchange — swap for real token exchange in production)
+// ─── Subscribe (mock $5.99/mo — no real payment processor) ───────────────────
+app.post('/subscribe', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  user.subscriptionStatus = 'pro';
+  user.subscriptionStartedAt = new Date().toISOString();
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query(
+      `UPDATE users SET subscription_status='pro', subscription_started_at=NOW() WHERE id=$1`,
+      [user.id]
+    ).catch(e => console.error('subscribe DB:', e.message));
+  }
+  res.json({ subscriptionStatus: 'pro', subscriptionStartedAt: user.subscriptionStartedAt });
+});
+
+app.post('/unsubscribe', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  user.subscriptionStatus = 'free';
+  user.subscriptionStartedAt = null;
+  if (db.isConnected() && isDBId(user.id)) {
+    db.query(
+      `UPDATE users SET subscription_status='free', subscription_started_at=NULL WHERE id=$1`,
+      [user.id]
+    ).catch(e => console.error('unsubscribe DB:', e.message));
+  }
+  res.json({ subscriptionStatus: 'free' });
+});
+
 app.post('/social/connect', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const { platform, mockUsername } = req.body;
   if (!PLATFORMS[platform]) return res.status(400).json({ message: 'Unknown platform.' });
+  if ((user.subscriptionStatus || 'free') !== 'pro') {
+    return res.status(402).json({ message: 'Pro subscription required to connect social accounts.', requiresSubscription: true });
+  }
   if (!user.socialAccounts) user.socialAccounts = {};
   const username = mockUsername || `user_${Math.random().toString(36).slice(2, 8)}`;
   user.socialAccounts[platform] = { connected: true, username, accessToken: `mock_token_${Date.now()}`, connectedAt: new Date().toISOString() };

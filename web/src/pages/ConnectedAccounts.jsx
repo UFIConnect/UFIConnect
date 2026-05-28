@@ -19,10 +19,14 @@ const PLATFORM_BENEFITS = {
 };
 
 export default function ConnectedAccounts() {
-  const [platforms, setPlatforms] = useState([]);
-  const [connected, setConnected] = useState({});
-  const [loading,   setLoading]   = useState(true);
-  const [expanded,  setExpanded]  = useState(null);
+  const [platforms,           setPlatforms]           = useState([]);
+  const [connected,           setConnected]           = useState({});
+  const [loading,             setLoading]             = useState(true);
+  const [expanded,            setExpanded]            = useState(null);
+  const [subscriptionStatus,  setSubscriptionStatus]  = useState('free');
+  const [showPaywall,         setShowPaywall]         = useState(false);
+  const [subscribing,         setSubscribing]         = useState(false);
+  const [pendingPlatform,     setPendingPlatform]     = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -30,23 +34,28 @@ export default function ConnectedAccounts() {
       client.get('/profile'),
     ]).then(([pRes, uRes]) => {
       setPlatforms(Object.entries(pRes.data.platforms || {}));
-      // connectedPlatforms is an array of keys
       const keys = uRes.data.connectedPlatforms || [];
       const map = {};
       keys.forEach(k => { map[k] = true; });
       setConnected(map);
+      setSubscriptionStatus(uRes.data.subscriptionStatus || 'free');
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
 
   async function handleConnect(platform) {
+    if (subscriptionStatus !== 'pro') {
+      setPendingPlatform(platform);
+      setShowPaywall(true);
+      return;
+    }
+    doConnect(platform);
+  }
+
+  async function doConnect(platform) {
     const p = platforms.find(([key]) => key === platform)?.[1];
     if (p?.loginUrl) window.open(p.loginUrl, '_blank', 'noopener,noreferrer');
     try {
-      await client.post('/social/connect', {
-        platform,
-        platformUserId: `demo_${platform}_user`,
-        accessToken: 'mock_token',
-      });
+      await client.post('/social/connect', { platform, mockUsername: `demo_${platform}_user` });
       setConnected((prev) => ({ ...prev, [platform]: true }));
     } catch (err) { console.error(err); }
   }
@@ -58,11 +67,91 @@ export default function ConnectedAccounts() {
     } catch (err) { console.error(err); }
   }
 
-  const connectedList   = platforms.filter(([k]) => connected[k]);
-  const availableList   = platforms.filter(([k]) => !connected[k]);
+  async function handleSubscribe() {
+    setSubscribing(true);
+    try {
+      await client.post('/subscribe');
+      setSubscriptionStatus('pro');
+      setShowPaywall(false);
+      if (pendingPlatform) {
+        doConnect(pendingPlatform);
+        setPendingPlatform(null);
+      }
+    } catch (err) { console.error(err); }
+    finally { setSubscribing(false); }
+  }
+
+  async function handleUnsubscribe() {
+    try {
+      await client.post('/unsubscribe');
+      setSubscriptionStatus('free');
+    } catch (err) { console.error(err); }
+  }
+
+  const connectedList = platforms.filter(([k]) => connected[k]);
+  const availableList = platforms.filter(([k]) => !connected[k]);
+  const isPro = subscriptionStatus === 'pro';
 
   return (
     <Layout>
+      {/* Paywall modal */}
+      {showPaywall && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+        }}>
+          <div className="card" style={{ maxWidth: 420, width: '100%', padding: 32, position: 'relative' }}>
+            <button
+              onClick={() => setShowPaywall(false)}
+              style={{ position: 'absolute', top: 14, right: 16, background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)' }}
+            >✕</button>
+
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: 8 }}>🔓</div>
+              <h2 style={{ margin: '0 0 6px', fontSize: '1.3rem' }}>Unlock All Social Accounts</h2>
+              <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.88rem' }}>
+                Connect LinkedIn, GitHub, Twitter, Instagram, Facebook, and more to personalise your feed and expand your reach.
+              </p>
+            </div>
+
+            {/* Price */}
+            <div style={{
+              background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', borderRadius: 14,
+              padding: '20px 24px', textAlign: 'center', marginBottom: 20, color: '#fff',
+            }}>
+              <div style={{ fontSize: '2.4rem', fontWeight: 800, lineHeight: 1 }}>$5.99</div>
+              <div style={{ fontSize: '.85rem', opacity: .85, marginTop: 4 }}>per month · cancel any time</div>
+            </div>
+
+            {/* Feature list */}
+            <ul style={{ margin: '0 0 20px', paddingLeft: 0, listStyle: 'none' }}>
+              {[
+                'Connect all 12 social platforms',
+                'Personalised feed from your accounts',
+                'Import posts, repos & portfolios',
+                'Priority access to new features',
+              ].map((f, i) => (
+                <li key={i} style={{ display: 'flex', gap: 8, fontSize: '.85rem', marginBottom: 8 }}>
+                  <span style={{ color: '#7C3AED', fontWeight: 700 }}>✓</span> {f}
+                </li>
+              ))}
+            </ul>
+
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', padding: '12px', fontSize: '1rem', background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', border: 'none' }}
+              onClick={handleSubscribe}
+              disabled={subscribing}
+            >
+              {subscribing ? 'Processing…' : 'Subscribe for $5.99 / mo'}
+            </button>
+            <div style={{ textAlign: 'center', fontSize: '.72rem', color: 'var(--muted)', marginTop: 10 }}>
+              No hidden fees. Cancel any time from your settings.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 20 }}>
         <Link to="/profile">
           <button className="btn btn-ghost btn-sm">← Back to Profile</button>
@@ -74,6 +163,43 @@ export default function ConnectedAccounts() {
         <p className="page-subtitle">
           Link your social profiles to personalise your feed, import content, and expand your reach.
         </p>
+      </div>
+
+      {/* Subscription status banner */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20,
+        background: isPro ? 'linear-gradient(135deg,#4F46E5,#7C3AED)' : 'var(--bg-secondary)',
+        borderRadius: 12, padding: '14px 18px', color: isPro ? '#fff' : 'inherit',
+      }}>
+        <div style={{ fontSize: '1.4rem' }}>{isPro ? '⭐' : '🔒'}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
+            {isPro ? 'Pro Plan — All socials unlocked' : 'Free Plan'}
+          </div>
+          <div style={{ fontSize: '.78rem', opacity: isPro ? .85 : 1, color: isPro ? 'inherit' : 'var(--muted)' }}>
+            {isPro
+              ? 'You can connect all social accounts.'
+              : 'Upgrade to Pro for $5.99/mo to connect social accounts.'}
+          </div>
+        </div>
+        {!isPro && (
+          <button
+            className="btn btn-sm"
+            style={{ background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', color: '#fff', border: 'none', flexShrink: 0 }}
+            onClick={() => setShowPaywall(true)}
+          >
+            Upgrade — $5.99/mo
+          </button>
+        )}
+        {isPro && (
+          <button
+            className="btn btn-ghost btn-sm"
+            style={{ color: 'rgba(255,255,255,.7)', flexShrink: 0, fontSize: '.72rem' }}
+            onClick={handleUnsubscribe}
+          >
+            Cancel plan
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -125,6 +251,7 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected
+                  isPro={isPro}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
@@ -146,6 +273,7 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected={false}
+                  isPro={isPro}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
@@ -160,7 +288,7 @@ export default function ConnectedAccounts() {
   );
 }
 
-function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect }) {
+function PlatformCard({ platformKey, p, isConnected, isPro, expanded, onToggle, onDisconnect, onConnect }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
@@ -171,6 +299,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           width: 40, height: 40, borderRadius: 10,
           background: p.color, display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexShrink: 0,
+          opacity: !isConnected && !isPro ? .55 : 1,
         }}>
           <span style={{ color: '#fff', fontWeight: 700, fontSize: '.85rem' }}>
             {p.name.slice(0, 2).toUpperCase()}
@@ -186,6 +315,14 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                 background: '#ECFDF5', padding: '1px 6px', borderRadius: 4,
               }}>
                 ✓ Connected
+              </span>
+            )}
+            {!isConnected && !isPro && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 700, color: '#7C3AED',
+                background: '#F5F3FF', padding: '1px 6px', borderRadius: 4,
+              }}>
+                Pro
               </span>
             )}
           </div>
@@ -204,13 +341,21 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           </button>
           {isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect}>Disconnect</button>
-          ) : (
+          ) : isPro ? (
             <button
               className="btn btn-sm btn-outline"
               onClick={onConnect}
               style={{ borderColor: p.color, color: p.color }}
             >
               Connect
+            </button>
+          ) : (
+            <button
+              className="btn btn-sm"
+              onClick={onConnect}
+              style={{ background: 'linear-gradient(135deg,#4F46E5,#7C3AED)', color: '#fff', border: 'none', fontSize: '.75rem' }}
+            >
+              🔒 Unlock
             </button>
           )}
         </div>
