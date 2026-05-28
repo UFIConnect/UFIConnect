@@ -15,7 +15,6 @@ import Profile          from './pages/Profile';
 import Post             from './pages/Post';
 import Search           from './pages/Search';
 import PublicProfile    from './pages/PublicProfile';
-import ConnectedAccounts from './pages/ConnectedAccounts';
 import Settings          from './pages/Settings';
 import AgentDashboard    from './pages/AgentDashboard';
 
@@ -71,9 +70,6 @@ export default function App() {
       }/>
       <Route path="/profile" element={
         <RequireAuth><RequireOnboarding><Profile /></RequireOnboarding></RequireAuth>
-      }/>
-      <Route path="/profile/connected-accounts" element={
-        <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/post" element={
         <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>

@@ -18,23 +18,7 @@ const LINK_FIELDS = [
   { key: 'other',     label: 'Other link',     icon: '🔗', placeholder: 'https://...' },
 ];
 
-const SOCIALS = [
-  { key: 'linkedin',  label: 'LinkedIn',   icon: '🔷', color: '#0A66C2', loginUrl: 'https://www.linkedin.com/login' },
-  { key: 'github',    label: 'GitHub',     icon: '🐙', color: '#24292F', loginUrl: 'https://github.com/login' },
-  { key: 'twitter',   label: 'X / Twitter',icon: '🐦', color: '#000000', loginUrl: 'https://twitter.com/i/flow/login' },
-  { key: 'instagram', label: 'Instagram',  icon: '📸', color: '#E1306C', loginUrl: 'https://www.instagram.com/accounts/login/' },
-  { key: 'tiktok',    label: 'TikTok',     icon: '🎵', color: '#010101', loginUrl: 'https://www.tiktok.com/login' },
-  { key: 'discord',   label: 'Discord',    icon: '💬', color: '#5865F2', loginUrl: 'https://discord.com/login' },
-  { key: 'youtube',   label: 'YouTube',    icon: '▶️', color: '#FF0000', loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube' },
-  { key: 'reddit',    label: 'Reddit',     icon: '🟠', color: '#FF4500', loginUrl: 'https://www.reddit.com/login' },
-  { key: 'medium',    label: 'Medium',     icon: '📝', color: '#000000', loginUrl: 'https://medium.com/m/signin' },
-  { key: 'dribbble',  label: 'Dribbble',   icon: '🎨', color: '#EA4C89', loginUrl: 'https://dribbble.com/session/new' },
-  { key: 'behance',   label: 'Behance',    icon: '🖼️', color: '#1769FF', loginUrl: 'https://www.behance.net/signin' },
-  { key: 'facebook',  label: 'Facebook',   icon: '🔵', color: '#1877F2', loginUrl: 'https://www.facebook.com/login' },
-  { key: 'indeed',    label: 'Indeed',     icon: '💼', color: '#003A9B', loginUrl: 'https://secure.indeed.com/account/login' },
-];
-
-const TABS = ['Overview', 'Skills', 'Socials', 'Attachments'];
+const TABS = ['Overview', 'Skills', 'Attachments'];
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
@@ -44,8 +28,6 @@ export default function Profile() {
   const [links,       setLinks]       = useState(null);
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState('');
-  const [connected,   setConnected]   = useState({});
-  const [platforms,   setPlatforms]   = useState([]);
   // Skills tab state
   const [skillInput,    setSkillInput]    = useState('');
   const [skills,        setSkills]        = useState([]);
@@ -55,19 +37,6 @@ export default function Profile() {
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
-
-  useEffect(() => {
-    client.get('/social/platforms')
-      .then(({ data }) => {
-        const map = {};
-        (data.platforms || []).forEach(p => { map[p.id] = p; });
-        setPlatforms(data.platforms || []);
-        const conn = {};
-        (data.platforms || []).filter(p => p.connected).forEach(p => { conn[p.id] = true; });
-        setConnected(conn);
-      })
-      .catch(() => {});
-  }, []);
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -132,22 +101,6 @@ export default function Profile() {
 
   function handleLinkChange(e) {
     setLinks((l) => ({ ...l, [e.target.name]: e.target.value }));
-  }
-
-  async function handleConnect(key) {
-    const s = SOCIALS.find(s => s.key === key);
-    if (s?.loginUrl) window.open(s.loginUrl, '_blank', 'noopener,noreferrer');
-    try {
-      await client.post('/social/connect', { platform: key, platformUserId: `demo_${key}_user`, accessToken: 'mock_token' });
-      setConnected(prev => ({ ...prev, [key]: true }));
-    } catch {}
-  }
-
-  async function handleDisconnect(key) {
-    try {
-      await client.delete(`/social/connect/${key}`);
-      setConnected(prev => { const n = { ...prev }; delete n[key]; return n; });
-    } catch {}
   }
 
   async function handleSave(e) {
@@ -218,9 +171,6 @@ export default function Profile() {
           <Link to={`/u/${profile.id}`}>
             <button className="btn btn-ghost btn-sm">👁 Public view</button>
           </Link>
-          <Link to="/profile/connected-accounts">
-            <button className="btn btn-ghost btn-sm">🔗 Connected accounts</button>
-          </Link>
         </div>
       </div>
 
@@ -238,7 +188,7 @@ export default function Profile() {
       {/* Tabs */}
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
-          const icons = { Overview: '👤', Skills: '🛠', Socials: '🔗', Attachments: '📎' };
+          const icons = { Overview: '👤', Skills: '🛠', Attachments: '📎' };
           return (
             <button key={t} onClick={() => { setTab(t); setEditing(false); }}
               style={{
@@ -427,41 +377,6 @@ export default function Profile() {
               <button className="btn btn-primary btn-sm" onClick={saveSkills} disabled={skillSaving}>
                 {skillSaving ? <span className="spinner" /> : 'Save skills'}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── SOCIALS TAB ──────────────────────────────────────── */}
-      {tab === 'Socials' && (
-        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <div className="card">
-            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
-            <p style={{ fontSize:'.8rem', color:'var(--muted)', marginBottom:16 }}>Connect your social profiles. Clicking Connect opens the platform's login page.</p>
-            <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
-              {SOCIALS.map(({ key, label, icon, color, loginUrl }) => {
-                const isConnected = !!connected[key];
-                return (
-                  <div key={key} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 4px', borderBottom:'1px solid var(--border)' }}>
-                    <span style={{ fontSize:'1.3rem', width:32, textAlign:'center' }}>{icon}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:600, fontSize:'.875rem' }}>{label}</div>
-                      {isConnected && <div style={{ fontSize:'.72rem', color:'var(--success)', fontWeight:600 }}>✓ Connected</div>}
-                    </div>
-                    {isConnected ? (
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDisconnect(key)}>Disconnect</button>
-                    ) : (
-                      <button
-                        className="btn btn-sm"
-                        style={{ borderColor: color, color, border:`1.5px solid ${color}`, background:'transparent' }}
-                        onClick={() => handleConnect(key)}
-                      >
-                        Connect
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
             </div>
           </div>
         </div>
