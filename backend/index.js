@@ -1140,24 +1140,27 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
   const roleKeyword = ROLE_TO_KEYWORDS[role];
   if (roleKeyword) keywords.push(roleKeyword);
 
+  // Safe skill strings (filter nulls/non-strings before any .trim()/.toLowerCase())
+  const safeSkills = (skills || []).filter(s => s && typeof s === 'string');
+
   // Skills as direct search terms
-  const skillKeywords = (skills || [])
-    .map(s => s.trim()).filter(s => s.length > 1).slice(0, 6);
+  const skillKeywords = safeSkills.map(s => s.trim()).filter(s => s.length > 1).slice(0, 5);
 
   // Goals → search phrases
   const goalKeywords = (goals || []).map(g => GOAL_TO_KEYWORDS[g]).filter(Boolean);
 
   // Title and org add industry context
-  if (title && title.trim().length > 3) keywords.push(title.trim());
-  if (org   && org.trim().length > 2)   keywords.push(`${org.trim()} news`);
+  if (title && typeof title === 'string' && title.trim().length > 3) keywords.push(title.trim());
+  if (org   && typeof org   === 'string' && org.trim().length > 2)   keywords.push(`${org.trim()} tech`);
 
   const allKeywords = [...keywords, ...skillKeywords, ...goalKeywords];
   if (allKeywords.length === 0) allKeywords.push('technology startup programming');
-  const topics = [...new Set(allKeywords)].slice(0, 16);
+  // Cap at 12 to avoid overwhelming external APIs (was 12 before, keep same ceiling)
+  const topics = [...new Set(allKeywords)].slice(0, 12);
 
   // Tag-based sources — interests + skill-derived tags
-  const skillDevtoTags = (skills || []).map(s => SKILL_TO_DEVTO_TAG[s.toLowerCase().trim()]).filter(Boolean);
-  const skillSoTags    = (skills || []).map(s => SKILL_TO_SO_TAG[s.toLowerCase().trim()]).filter(Boolean);
+  const skillDevtoTags = safeSkills.map(s => SKILL_TO_DEVTO_TAG[s.toLowerCase().trim()]).filter(Boolean);
+  const skillSoTags    = safeSkills.map(s => SKILL_TO_SO_TAG[s.toLowerCase().trim()]).filter(Boolean);
 
   const soTags      = [...new Set([...interests.map(i => INTEREST_TO_SO_TAG[i]).filter(Boolean), ...skillSoTags])];
   const mastoTags   = [...new Set(interests.map(i => INTEREST_TO_MASTODON_TAG[i]).filter(Boolean))];
