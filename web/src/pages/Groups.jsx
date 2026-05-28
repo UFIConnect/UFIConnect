@@ -14,6 +14,16 @@ const CATEGORY_META = {
   'Remote Work': { icon: '🌍', bg: '#EEF2FF', text: '#4338CA' },
   'Education':   { icon: '🎓', bg: '#FFF7ED', text: '#EA580C' },
   'Social':      { icon: '🔗', bg: '#F9FAFB', text: '#6B7280' },
+  'Health':      { icon: '🏃', bg: '#F0FDF4', text: '#16A34A' },
+  'Climate':     { icon: '🌱', bg: '#ECFDF5', text: '#065F46' },
+  'Food':        { icon: '🍳', bg: '#FFF7ED', text: '#C2410C' },
+  'Travel':      { icon: '✈️', bg: '#F0F9FF', text: '#0369A1' },
+  'Gaming':      { icon: '🎮', bg: '#F5F3FF', text: '#6D28D9' },
+  'Music':       { icon: '🎵', bg: '#FDF4FF', text: '#A21CAF' },
+  'Fashion':     { icon: '👗', bg: '#FFF1F2', text: '#BE123C' },
+  'Lifestyle':   { icon: '🌟', bg: '#FFFFF0', text: '#92400E' },
+  'Sports':      { icon: '⚽', bg: '#ECFDF5', text: '#047857' },
+  'Space':       { icon: '🚀', bg: '#EEF2FF', text: '#3730A3' },
 };
 
 const PLATFORM_META = {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -203,13 +203,22 @@ export default function Search() {
                       Edit profile
                     </button>
                   ) : (
-                    <button
-                      className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
-                      style={{ borderRadius: 20, flexShrink: 0, minWidth: 84 }}
-                      onClick={e => toggleFollow(user, e)}
-                    >
-                      {user.isFollowing ? '✓ Following' : '+ Follow'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <button
+                        className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
+                        style={{ borderRadius: 20, minWidth: 84 }}
+                        onClick={e => toggleFollow(user, e)}
+                      >
+                        {user.isFollowing ? '✓ Following' : '+ Follow'}
+                      </button>
+                      <Link
+                        to={`/messages/${user.id}`}
+                        className="btn btn-ghost btn-sm"
+                        style={{ borderRadius: 20, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
+                      >
+                        💬
+                      </Link>
+                    </div>
                   )}
                 </div>
 
