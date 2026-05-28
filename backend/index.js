@@ -1996,11 +1996,15 @@ async function migrateDB() {
         platform_url TEXT,
         external_url TEXT,
         subreddit TEXT,
-        is_external BOOLEAN DEFAULT false,
+        is_external BOOLEAN DEFAULT true,
         related_groups TEXT[] DEFAULT '{}',
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Ensure is_external exists on pre-existing tables; default true so existing rows are kept
+    await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT true`);
+    // Backfill any NULL values to true (all seeded groups are external)
+    await db.query(`UPDATE community_groups SET is_external = true WHERE is_external IS NULL`);
 
     // Follows table
     await db.query(`
@@ -2138,9 +2142,7 @@ async function getPostsFromDB(topics = [], limit = 5000) {
 async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
-    // ── Purge all fake internal groups; only real external communities are kept ──
-    await db.query(`DELETE FROM community_groups WHERE is_external = false OR is_external IS NULL`);
-
+    // Upsert all seeded groups — never DELETE so existing data is never wiped
     for (const g of ALL_GROUPS_SEED) {
       await db.query(`
         INSERT INTO community_groups
@@ -2154,28 +2156,40 @@ async function seedAndLoadGroups() {
           platform_url=EXCLUDED.platform_url,
           external_url=EXCLUDED.external_url,
           subreddit=EXCLUDED.subreddit,
-          is_external=EXCLUDED.is_external
+          is_external=true
       `, [
         g.id, g.name, g.category, g.description || '',
         g.members || g.member_count || 0,
         g.platform || null, g.platformUrl || null,
         g.externalUrl || null, g.subreddit || null,
-        g.isExternal || false,
+        true,
         g.relatedGroups || [],
       ]);
     }
     const { rows } = await db.query('SELECT * FROM community_groups ORDER BY member_count DESC');
-    groups.length = 0;
-    rows.forEach((r) => groups.push({
-      id: r.id, name: r.name, category: r.category,
-      description: r.description, members: r.member_count,
-      platform: r.platform || (r.subreddit ? 'reddit' : null),
-      platformUrl: r.platform_url,
-      externalUrl: r.external_url, subreddit: r.subreddit,
-      isExternal: r.is_external, relatedGroups: r.related_groups || [],
-    }));
-    console.log(`✅ Loaded ${groups.length} groups from DB`);
-  } catch (err) { console.warn('seedAndLoadGroups:', err.message); }
+    // Only replace in-memory list if DB returned real data
+    if (rows.length > 0) {
+      groups.length = 0;
+      rows.forEach((r) => groups.push({
+        id: r.id, name: r.name, category: r.category,
+        description: r.description, members: r.member_count,
+        platform: r.platform || (r.subreddit ? 'reddit' : null),
+        platformUrl: r.platform_url,
+        externalUrl: r.external_url, subreddit: r.subreddit,
+        isExternal: r.is_external, relatedGroups: r.related_groups || [],
+      }));
+      console.log(`✅ Loaded ${groups.length} groups from DB`);
+    } else {
+      console.warn('seedAndLoadGroups: DB returned 0 rows — keeping in-memory seed');
+    }
+  } catch (err) {
+    console.warn('seedAndLoadGroups:', err.message);
+    // If groups is somehow empty, restore from seed
+    if (groups.length === 0) {
+      ALL_GROUPS_SEED.forEach(g => groups.push({ ...g, platform: g.platform || (g.subreddit ? 'reddit' : null) }));
+      console.log(`⚠️  Restored ${groups.length} groups from seed (DB unavailable)`);
+    }
+  }
 }
 
 function recommendGroups(userId, triggerGroupId, count = 3) {
