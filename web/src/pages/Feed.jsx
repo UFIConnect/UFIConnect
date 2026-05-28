@@ -418,7 +418,6 @@ export default function Feed() {
 
   const filterBtnRef = useRef(null);
   const panelRef     = useRef(null);
-  const intervalRef  = useRef(null);
 
   const loadFeed = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -434,8 +433,6 @@ export default function Feed() {
 
   useEffect(() => {
     loadFeed();
-    intervalRef.current = setInterval(() => loadFeed(), 2 * 60 * 1000);
-    return () => clearInterval(intervalRef.current);
   }, [loadFeed]);
 
   // Close filter panel on outside click
