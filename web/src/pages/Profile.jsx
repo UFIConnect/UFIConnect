@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
@@ -8,6 +8,13 @@ import client from '../api/client';
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
+
+const SOCIAL_PLATFORMS = [
+  { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your network' },
+  { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets matching your interests' },
+  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from accounts you follow' },
+  { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page posts matching your topics' },
+];
 
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
@@ -37,6 +44,11 @@ export default function Profile() {
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
+  // Social connections
+  const [connectedSocial, setConnectedSocial] = useState({});
+  const [socialFlash,     setSocialFlash]     = useState(null); // { type: 'success'|'error', platform }
+  const [socialConnecting, setSocialConnecting] = useState(null);
+  const location = useLocation();
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -51,6 +63,28 @@ export default function Profile() {
       .catch(() => {});
   }, [profile?.id]);
 
+  // Load social connection status
+  useEffect(() => {
+    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
+  }, []);
+
+  // Handle OAuth callback params (?social_connected=linkedin or ?social_error=linkedin)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const connected = params.get('social_connected');
+    const errored   = params.get('social_error');
+    if (connected) {
+      setSocialFlash({ type: 'success', platform: connected });
+      setConnectedSocial(prev => ({ ...prev, [connected]: true }));
+      window.history.replaceState({}, '', '/profile');
+      setTimeout(() => setSocialFlash(null), 5000);
+    } else if (errored) {
+      setSocialFlash({ type: 'error', platform: errored });
+      window.history.replaceState({}, '', '/profile');
+      setTimeout(() => setSocialFlash(null), 6000);
+    }
+  }, [location.search]);
+
   function addSkill() {
     const trimmed = skillInput.trim();
     if (!trimmed || skills.includes(trimmed)) { setSkillInput(''); return; }
@@ -60,6 +94,25 @@ export default function Profile() {
 
   function removeSkill(s) {
     setSkills(prev => prev.filter(x => x !== s));
+  }
+
+  async function connectSocial(platform) {
+    setSocialConnecting(platform);
+    try {
+      const { data } = await client.get(`/auth/social/${platform}/start`);
+      window.location.href = data.url;
+    } catch (e) {
+      setSocialFlash({ type: 'error', platform });
+      setTimeout(() => setSocialFlash(null), 5000);
+      setSocialConnecting(null);
+    }
+  }
+
+  async function disconnectSocial(platform) {
+    try {
+      await client.delete(`/profile/social/${platform}`);
+      setConnectedSocial(prev => ({ ...prev, [platform]: false }));
+    } catch {}
   }
 
   async function toggleProfileHidden() {
@@ -259,6 +312,78 @@ export default function Profile() {
                   display:'block',
                 }} />
               </button>
+            </div>
+          </div>
+
+          {/* Connected Accounts */}
+          <div className="card" id="social">
+            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
+            <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
+              Connect social platforms to pull personalised posts into your feed.
+            </p>
+
+            {socialFlash && (
+              <div style={{
+                padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:'.82rem', fontWeight:600,
+                background: socialFlash.type === 'success' ? '#ECFDF5' : '#FEF2F2',
+                color:      socialFlash.type === 'success' ? '#059669'  : '#DC2626',
+                border:     `1px solid ${socialFlash.type === 'success' ? '#6EE7B7' : '#FECACA'}`,
+              }}>
+                {socialFlash.type === 'success'
+                  ? `✅ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name || socialFlash.platform} connected successfully`
+                  : `❌ Failed to connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name || socialFlash.platform} — try again`}
+              </div>
+            )}
+
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {SOCIAL_PLATFORMS.map(platform => {
+                const isConnected = !!connectedSocial[platform.id];
+                const isConnecting = socialConnecting === platform.id;
+                return (
+                  <div key={platform.id} style={{
+                    display:'flex', alignItems:'center', gap:12,
+                    padding:'10px 14px', borderRadius:10,
+                    border:`1.5px solid ${isConnected ? platform.color + '44' : 'var(--border)'}`,
+                    background: isConnected ? platform.color + '08' : 'var(--surface)',
+                    transition:'all .2s',
+                  }}>
+                    <span style={{
+                      width:36, height:36, borderRadius:9, flexShrink:0,
+                      background: platform.color + '18',
+                      border:`1.5px solid ${platform.color}33`,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:'1.1rem',
+                    }}>{platform.emoji}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</div>
+                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>
+                        {isConnected ? '● Connected — posts appear in your feed' : platform.desc}
+                      </div>
+                    </div>
+                    {isConnected ? (
+                      <button
+                        onClick={() => disconnectSocial(platform.id)}
+                        style={{
+                          padding:'5px 12px', borderRadius:7, border:'1px solid #E2E8F0',
+                          background:'#fff', color:'#64748B', fontSize:'.75rem', fontWeight:600, cursor:'pointer',
+                        }}
+                      >Disconnect</button>
+                    ) : (
+                      <button
+                        onClick={() => connectSocial(platform.id)}
+                        disabled={!!isConnecting}
+                        style={{
+                          padding:'5px 14px', borderRadius:7, border:'none',
+                          background: platform.color, color:'#fff',
+                          fontSize:'.75rem', fontWeight:700, cursor:'pointer',
+                          opacity: isConnecting ? 0.7 : 1,
+                          whiteSpace: 'nowrap',
+                        }}
+                      >{isConnecting ? 'Opening…' : 'Connect'}</button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 

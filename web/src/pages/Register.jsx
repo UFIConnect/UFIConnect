@@ -307,7 +307,13 @@ export default function Register() {
       }
       navigate('/onboarding', { replace: true });
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      if (!err.response) {
+        setError('Server is starting up — wait 30 seconds and try again.');
+      } else if (err.response.status === 409) {
+        setError('That email is already registered. Sign in instead.');
+      } else {
+        setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      }
       setStep(0);
     } finally {
       setLoading(false);

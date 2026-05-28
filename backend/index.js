@@ -4,7 +4,8 @@ const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
-const https = require('https');
+const https  = require('https');
+const crypto = require('crypto');
 const db = require('./db');
 
 dotenv.config();
@@ -310,6 +311,85 @@ function fetchJSON(url) {
   });
 }
 
+// ─── Social OAuth config ─────────────────────────────────────────────────────
+const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
+const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
+
+const SOCIAL_CFG = {
+  linkedin:  {
+    authUrl:  'https://www.linkedin.com/oauth/v2/authorization',
+    tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
+    clientId:     () => process.env.LINKEDIN_CLIENT_ID,
+    clientSecret: () => process.env.LINKEDIN_CLIENT_SECRET,
+    scope: 'r_liteprofile r_emailaddress',
+    pkce: false,
+  },
+  twitter: {
+    authUrl:  'https://twitter.com/i/oauth2/authorize',
+    tokenUrl: 'https://api.twitter.com/2/oauth2/token',
+    clientId:     () => process.env.TWITTER_CLIENT_ID,
+    clientSecret: () => process.env.TWITTER_CLIENT_SECRET,
+    scope: 'tweet.read users.read offline.access',
+    pkce: true,
+  },
+  instagram: {
+    authUrl:  'https://api.instagram.com/oauth/authorize',
+    tokenUrl: 'https://api.instagram.com/oauth/access_token',
+    clientId:     () => process.env.INSTAGRAM_APP_ID,
+    clientSecret: () => process.env.INSTAGRAM_APP_SECRET,
+    scope: 'user_profile,user_media',
+    pkce: false,
+  },
+  facebook: {
+    authUrl:  'https://www.facebook.com/v18.0/dialog/oauth',
+    tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    clientId:     () => process.env.FACEBOOK_APP_ID,
+    clientSecret: () => process.env.FACEBOOK_APP_SECRET,
+    scope: 'public_profile,user_posts',
+    pkce: false,
+  },
+};
+
+// Short-lived state store for ongoing OAuth flows (expires in 10 min)
+const oauthStates = new Map();
+
+function oauthCallbackUrl(platform) {
+  return `${API_BASE}/auth/social/${platform}/callback`;
+}
+
+function pkceVerifier() { return crypto.randomBytes(32).toString('base64url'); }
+function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
+
+// POST application/x-www-form-urlencoded and return parsed JSON
+function postForm(url, params, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(params).toString();
+    const u = new URL(url);
+    const opts = {
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, method: 'POST',
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+        'Accept': 'application/json',
+        ...headers,
+      },
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { reject(new Error(`postForm parse error: ${data.slice(0, 120)}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => req.destroy(new Error('postForm timeout')));
+    req.write(body);
+    req.end();
+  });
+}
+
 // ─── Search keyword per interest (used by Reddit, News, DEV Community) ─────────────
 // Keys match EXACTLY the Onboarding.jsx INTERESTS[] array
 const INTEREST_TO_KEYWORDS = {
@@ -588,12 +668,38 @@ const SKILL_TO_DEVTO_TAG = {
   'seo': 'seo', 'copywriting': 'writing', 'content marketing': 'marketing',
 };
 
-// ─── Post fetch cache (all sources share one Map) ────────────────────────────
+// ─── Post fetch cache ─────────────────────────────────────────────────────────
 const postCache = new Map();
-const CACHE_TTL = 30 * 60 * 1000; // 30 min (background workers); busted on manual user refresh
+const CACHE_TTL = 30 * 60 * 1000; // default 30 min — individual entries can override
 
-function getCached(key)       { const c = postCache.get(key); return (c && Date.now() - c.t < CACHE_TTL) ? c.v : null; }
-function setCached(key, val)  { postCache.set(key, { v: val, t: Date.now() }); }
+// Each entry stores its own TTL so active sources expire faster than slow ones
+function getCached(key)            { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
+function setCached(key, val, ttl)  { postCache.set(key, { v: val, t: Date.now(), ttl: ttl ?? CACHE_TTL }); }
+function bustCache(key)            { postCache.delete(key); }
+
+// ─── Per-source freshness config ──────────────────────────────────────────────
+// TTL:   how long a topic fetch stays cached before being re-fetched (real API call)
+// DELAY: ms between fetching successive topics in the continuous cycler
+// These are tuned to each API's rate limits and content velocity.
+const SOURCE_CONFIG = {
+  //            TTL (ms)          DELAY/topic (ms)    daily API calls (calc)
+  reddit:        { ttl:  3*60000, delay:  2500 },  //  3min TTL × 36 topics ÷ 2.5s = ~34k req/day capped by TTL → ~720/day
+  hn:            { ttl:  3*60000, delay:  3000 },  //  720/day
+  github:        { ttl: 20*60000, delay: 35000 },  //  rate-limited: 60/hr unauthed → safe at 1/35s per topic
+  devto:         { ttl:  5*60000, delay:  6000 },  //  ~4,300/day (RSS, generous)
+  medium:        { ttl: 10*60000, delay: 12000 },  //  ~2,200/day (CDN-cached RSS)
+  youtube:       { ttl: 60*60000, delay: 90000 },  //  quota-critical: ~350/day
+  stackoverflow: { ttl: 20*60000, delay: 35000 },  //  300/day unauthed limit
+  mastodon:      { ttl:  5*60000, delay:  5000 },  //  ~4,300/day
+  lobsters:      { ttl: 15*60000, delay: 25000 },  //  ~1,440/day (small site — be respectful)
+  arxiv:         { ttl: 20*60000, delay: 22000 },  //  OAI-PMH 20s recommendation
+  indeed:        { ttl: 10*60000, delay: 10000 },  //  RSS, ~2,600/day
+  producthunt:   { ttl: 20*60000, delay: 35000 },  //  RSS, ~1,000/day
+  techcrunch:    { ttl: 10*60000, delay: 12000 },  //  RSS feed
+  theverge:      { ttl: 10*60000, delay: 12000 },  //  RSS feed
+  indiehackers:  { ttl: 15*60000, delay: 20000 },  //  RSS feed
+  hashnode:      { ttl:  5*60000, delay:  8000 },  //  GraphQL, ~3,200/day
+};
 
 // ─── Reddit: search by keyword across all of Reddit ──────────────────────────
 async function fetchRedditByKeyword(keyword) {
@@ -1241,9 +1347,9 @@ async function fetchHashnode(keyword) {
   }
 }
 
-// ─── LinkedIn: requires LINKEDIN_TOKEN env var (OAuth 2.0 access token) ──────
-async function fetchLinkedIn(keyword) {
-  const token = process.env.LINKEDIN_TOKEN;
+// ─── LinkedIn: uses env token (app-level) or per-user OAuth token ─────────────
+async function fetchLinkedIn(keyword, userToken = null) {
+  const token = userToken || process.env.LINKEDIN_TOKEN;
   if (!token) return [];
   const key = `linkedin_kw_${keyword}`;
   const cached = getCached(key);
@@ -1281,8 +1387,8 @@ async function fetchLinkedIn(keyword) {
 }
 
 // ─── Twitter/X: requires TWITTER_BEARER_TOKEN env var ────────────────────────
-async function fetchTwitter(keyword) {
-  const token = process.env.TWITTER_BEARER_TOKEN;
+async function fetchTwitter(keyword, userToken = null) {
+  const token = userToken || process.env.TWITTER_BEARER_TOKEN;
   if (!token) return [];
   const key = `twitter_kw_${keyword}`;
   const cached = getCached(key);
@@ -1320,8 +1426,8 @@ async function fetchTwitter(keyword) {
 }
 
 // ─── Instagram: requires INSTAGRAM_TOKEN env var (Graph API access token) ─────
-async function fetchInstagram(keyword) {
-  const token = process.env.INSTAGRAM_TOKEN;
+async function fetchInstagram(keyword, userToken = null) {
+  const token = userToken || process.env.INSTAGRAM_TOKEN;
   if (!token) return [];
   const key = `instagram_kw_${keyword}`;
   const cached = getCached(key);
@@ -1358,8 +1464,8 @@ async function fetchInstagram(keyword) {
 }
 
 // ─── Facebook: requires FACEBOOK_TOKEN env var (Graph API access token) ──────
-async function fetchFacebook(keyword) {
-  const token = process.env.FACEBOOK_TOKEN;
+async function fetchFacebook(keyword, userToken = null) {
+  const token = userToken || process.env.FACEBOOK_TOKEN;
   if (!token) return [];
   const key = `facebook_kw_${keyword}`;
   const cached = getCached(key);
@@ -1570,8 +1676,14 @@ function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
 const sseClients  = new Map();   // clientId → res
 const seenPostIds = new Set();   // de-dup guard so we only broadcast genuinely new posts
 
-function broadcastSSE(posts) {
-  if (!posts.length || !sseClients.size) return;
+// SSE batch buffer: collect posts for 1s before broadcasting to reduce write overhead
+let sseBatchBuffer = [];
+let sseBatchTimer  = null;
+
+function flushSSEBatch() {
+  sseBatchTimer = null;
+  if (!sseBatchBuffer.length || !sseClients.size) { sseBatchBuffer = []; return; }
+  const posts = sseBatchBuffer.splice(0);
   const msg = `data: ${JSON.stringify({ posts })}\n\n`;
   for (const [id, res] of sseClients) {
     try { res.write(msg); }
@@ -1579,12 +1691,18 @@ function broadcastSSE(posts) {
   }
 }
 
+function broadcastSSE(posts) {
+  if (!posts.length || !sseClients.size) return;
+  sseBatchBuffer.push(...posts);
+  if (!sseBatchTimer) sseBatchTimer = setTimeout(flushSSEBatch, 1000);
+}
+
 // Call after every fetch: deduplicates, updates cache, broadcasts via SSE
 function addAndBroadcast(incoming) {
   const fresh = (incoming || []).filter(p => p?.id && !seenPostIds.has(p.id));
   if (!fresh.length) return 0;
   fresh.forEach(p => seenPostIds.add(p.id));
-  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts];
+  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts].slice(0, 10000);
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -1604,32 +1722,99 @@ const FEED_TOPICS = [
   'Fitness & Gym', 'Travel & Adventure', 'Cooking & Recipes', 'Music Discovery',
 ];
 
-// Each agent scans ALL 36 topics in parallel for its source — mirrors refreshGlobalFeedCache
-function makeSourceRefresher(agentId, emoji, color, fetchFn, keyMapper) {
-  async function refresh() {
-    const start = Date.now();
+// Each source agent continuously cycles through FEED_TOPICS one at a time.
+// After finishing the last topic it immediately wraps back to the first.
+// Topics with a cache hit (TTL still valid) are skipped silently to avoid wasted calls.
+// SOURCE_CONFIG[agentId].delay controls the pause between consecutive topic fetches.
+function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
+  let topicIdx = 0;
+
+  async function fetchNextTopic() {
+    const topic = FEED_TOPICS[topicIdx];
+    topicIdx = (topicIdx + 1) % FEED_TOPICS.length;
+
+    const mappedKey = keyMapper(topic);
+    if (!mappedKey) return scheduleNext(); // topic not mapped for this source — skip
+
     try {
-      const results = await Promise.all(
-        FEED_TOPICS.map(topic => {
-          const key = keyMapper(topic);
-          return key ? fetchFn(key).catch(() => []) : Promise.resolve([]);
-        })
-      );
-      const all = results.flat();
-      const n = addAndBroadcast(all);
-      const ms = Date.now() - start;
-      logAgentAction(agentId, emoji,
-        n > 0
-          ? `+${n} new posts across ${FEED_TOPICS.length} topics — ${ms}ms`
-          : `All ${FEED_TOPICS.length} topics scanned — cache up to date (${ms}ms)`,
-        color);
-      if (n > 0) savePostsToDB(all).catch(() => {});
-    } catch (e) {
-      logAgentAction(agentId, '⚠️', `Scan error: ${e.message}`, '#F87171');
-    }
+      const posts = await fetchFn(mappedKey).catch(() => []);
+      const fresh = posts.filter(p => p?.id);
+      if (fresh.length) {
+        const n = addAndBroadcast(fresh);
+        const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+        agentSourceCache.set(agentId, {
+          posts: [...fresh, ...prev.posts].slice(0, 500),
+          lastFetch: Date.now(),
+          totalSeen: prev.totalSeen + fresh.length,
+          emoji, color,
+        });
+        if (n > 0) {
+          logAgentAction(agentId, emoji, `+${n} new — topic: ${topic}`, color);
+        }
+      }
+    } catch { /* individual fetch errors are already handled inside each fetcher */ }
+
+    scheduleNext();
   }
-  SOURCE_FETCHERS[agentId] = refresh;
-  return refresh;
+
+  function scheduleNext() {
+    const delay = SOURCE_CONFIG[agentId]?.delay ?? 10000;
+    setTimeout(fetchNextTopic, delay);
+  }
+
+  // Register a one-shot manual trigger that runs one full pass of all topics
+  SOURCE_FETCHERS[agentId] = async () => {
+    for (const topic of FEED_TOPICS) {
+      const key = keyMapper(topic);
+      if (!key) continue;
+      const posts = await fetchFn(key).catch(() => []);
+      if (posts.length) {
+        addAndBroadcast(posts);
+        const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+        agentSourceCache.set(agentId, {
+          posts: [...posts, ...prev.posts].slice(0, 500),
+          lastFetch: Date.now(),
+          totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
+          emoji, color,
+        });
+      }
+    }
+  };
+
+  return fetchNextTopic;
+}
+
+function calculateExpectedLoad() {
+  let totalDailyApiCalls = 0;
+  const lines = [];
+  for (const [src, cfg] of Object.entries(SOURCE_CONFIG)) {
+    // How many topics does this source have a mapping for?
+    const kw  = t => INTEREST_TO_KEYWORDS[t];
+    const dev = t => INTEREST_TO_DEVTO_TAG[t];
+    const med = t => INTEREST_TO_MEDIUM_TAG[t];
+    const so  = t => INTEREST_TO_SO_TAG[t];
+    const mas = t => INTEREST_TO_MASTODON_TAG[t];
+    const lob = t => LOBSTERS_TAGS[t];
+    const arx = t => INTEREST_TO_ARXIV[t];
+    const mappers = { reddit: kw, hn: kw, github: kw, devto: dev, medium: med,
+      youtube: kw, stackoverflow: so, mastodon: mas, lobsters: lob, arxiv: arx,
+      indeed: kw, producthunt: kw, techcrunch: kw, theverge: kw, indiehackers: kw, hashnode: kw };
+    const mapper = mappers[src] || kw;
+    const mappedTopics = FEED_TOPICS.filter(t => mapper(t));
+    // Time to complete one full topic cycle = delay * all topics
+    const cycleMs   = cfg.delay * FEED_TOPICS.length;
+    const cyclesDay = (24 * 60 * 60 * 1000) / cycleMs;
+    // But each topic only re-fetches once per TTL window
+    const ttlCycles = cfg.ttl / cfg.delay;
+    const effectiveCallsPerCycle = Math.ceil(mappedTopics.length / ttlCycles);
+    const dailyCalls = Math.round(effectiveCallsPerCycle * cyclesDay);
+    totalDailyApiCalls += dailyCalls;
+    const risk = dailyCalls > 2000 ? '⚠️ HIGH' : dailyCalls > 500 ? '🟡 MED' : '✅ LOW';
+    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s ttl=${cfg.ttl/60000}min → ~${dailyCalls}/day ${risk}`);
+  }
+  lines.push(`  TOTAL estimated daily API calls: ~${totalDailyApiCalls}`);
+  if (totalDailyApiCalls > 50000) lines.push('  ⛔ WARNING: total may exceed free-tier limits — increase TTLs or reduce topics');
+  console.log('[Load Calculator]\n' + lines.join('\n'));
 }
 
 function startContinuousWorkers() {
@@ -1641,45 +1826,42 @@ function startContinuousWorkers() {
   const lob = t => LOBSTERS_TAGS[t];
   const arx = t => INTEREST_TO_ARXIV[t];
 
-  // 20 platform agents — each scans all 36 topics in parallel every 30 minutes.
-  // Staggered starts spread the initial load; CACHE_TTL prevents redundant API calls.
+  // 16 independent topic-cycler agents — each fetches one topic at a time, continuously.
+  // Start times are staggered so the initial burst is spread across 16 seconds.
   const SOURCES = [
-    //  id               emoji   color       fetchFn                  keyMapper  intervalMs  delayMs
-    ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     kw,   30*60000,       0],
-    ['hn',            '🔶', '#FF6600', fetchHNByKeyword,         kw,   30*60000,   10000],
-    ['github',        '🐙', '#94A3B8', fetchGitHubByKeyword,     kw,   30*60000,   20000],
-    ['devto',         '💻', '#8B5CF6', fetchDevToByTag,          dev,  30*60000,   30000],
-    ['medium',        '📝', '#10B981', fetchMediumByTag,         med,  30*60000,   40000],
-    ['youtube',       '▶️', '#EF4444', fetchYouTubeByKeyword,    kw,   30*60000,   50000],
-    ['stackoverflow', '💬', '#F59E0B', fetchStackOverflowByTag,  so,   30*60000,   60000],
-    ['mastodon',      '🐘', '#6366F1', fetchMastodonByTag,       mas,  30*60000,   70000],
-    ['lobsters',      '🦞', '#DC2626', fetchLobstersByTag,       lob,  30*60000,   80000],
-    ['arxiv',         '📄', '#3B82F6', fetchArxivByKeyword,      arx,  30*60000,   90000],
-    ['indeed',        '💼', '#2557A7', fetchIndeedJobs,          kw,   30*60000,  100000],
-    ['producthunt',   '🚀', '#DA552F', fetchProductHunt,         kw,   30*60000,  110000],
-    ['techcrunch',    '📰', '#0D9F3F', fetchTechCrunch,          kw,   30*60000,  120000],
-    ['theverge',      '⬛', '#FF3333', fetchTheVerge,            kw,   30*60000,  130000],
-    ['indiehackers',  '💡', '#0E2150', fetchIndieHackers,        kw,   30*60000,  140000],
-    ['hashnode',      '✍️', '#2962FF', fetchHashnode,            kw,   30*60000,  150000],
-    ['linkedin',      '🔷', '#0A66C2', fetchLinkedIn,            kw,   30*60000,  160000],
-    ['twitter',       '🐦', '#1DA1F2', fetchTwitter,             kw,   30*60000,  170000],
-    ['instagram',     '📸', '#E1306C', fetchInstagram,           kw,   30*60000,  180000],
-    ['facebook',      '📘', '#1877F2', fetchFacebook,            kw,   30*60000,  190000],
+    //  id               emoji   color       fetchFn                  keyMapper  startDelay
+    ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     kw,      0],
+    ['hn',            '🔶', '#FF6600', fetchHNByKeyword,         kw,   1000],
+    ['github',        '🐙', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
+    ['devto',         '💻', '#8B5CF6', fetchDevToByTag,          dev,  3000],
+    ['medium',        '📝', '#10B981', fetchMediumByTag,         med,  4000],
+    ['youtube',       '▶️', '#EF4444', fetchYouTubeByKeyword,    kw,   5000],
+    ['stackoverflow', '💬', '#F59E0B', fetchStackOverflowByTag,  so,   6000],
+    ['mastodon',      '🐘', '#6366F1', fetchMastodonByTag,       mas,  7000],
+    ['lobsters',      '🦞', '#DC2626', fetchLobstersByTag,       lob,  8000],
+    ['arxiv',         '📄', '#3B82F6', fetchArxivByKeyword,      arx,  9000],
+    ['indeed',        '💼', '#2557A7', fetchIndeedJobs,          kw,  10000],
+    ['producthunt',   '🚀', '#DA552F', fetchProductHunt,         kw,  11000],
+    ['techcrunch',    '📰', '#0D9F3F', fetchTechCrunch,          kw,  12000],
+    ['theverge',      '⬛', '#FF3333', fetchTheVerge,            kw,  13000],
+    ['indiehackers',  '💡', '#0E2150', fetchIndieHackers,        kw,  14000],
+    ['hashnode',      '✍️', '#2962FF', fetchHashnode,            kw,  15000],
   ];
 
-  for (const [id, emoji, color, fetchFn, keyMapper, intervalMs, delayMs] of SOURCES) {
-    const refresh = makeSourceRefresher(id, emoji, color, fetchFn, keyMapper);
-    setTimeout(() => {
-      refresh();
-      setInterval(refresh, intervalMs);
-    }, delayMs);
+  for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
+    const start = makeTopicCycler(id, emoji, color, fetchFn, keyMapper);
+    setTimeout(start, startDelay);
   }
 
-  logAgentAction('feed', '🔄', 'All 20 source agents launched — each scanning all 36 topics per platform', '#4ADE80');
+  calculateExpectedLoad();
+  logAgentAction('feed', '🔄', 'All 16 source agents started — continuous per-source topic cycling active', '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
 const globalFeedCache = { posts: [], refreshedAt: 0 };
+
+// Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
+const agentSourceCache = new Map();
 
 async function refreshGlobalFeedCache() {
   // 36 topics × 10 source types = 360 live endpoint calls per refresh cycle
@@ -1782,6 +1964,21 @@ function runOppsCheck() {
   logAgentAction('opps', '✅', checks[Math.floor(Math.random() * checks.length)], '#4ADE80');
 }
 
+// ─── Cache Helper Agent: merge per-source caches into global feed ─────────────
+function runCacheHelperCheck() {
+  if (agentSourceCache.size === 0) return;
+  const total = [...agentSourceCache.values()].reduce((s, v) => s + v.posts.length, 0);
+  const allSourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts);
+  const n = addAndBroadcast(allSourcePosts);
+  if (n > 0) {
+    logAgentAction('cache_helper', '✅',
+      `Merged ${n} new posts from ${agentSourceCache.size} source agents — global feed: ${globalFeedCache.posts.length}`, '#6366F1');
+  } else {
+    logAgentAction('cache_helper', '🗄️',
+      `Cache sync: ${total} posts across ${agentSourceCache.size} agents — all up to date`, '#6366F1');
+  }
+}
+
 // ─── Deploy Agent: ping each live service and record response time ────────────
 async function runDeployCheck() {
   const targets = [
@@ -1831,7 +2028,7 @@ async function runDataCheck() {
 
 // Seed immediately on startup (non-blocking)
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-logAgentAction('security',  '✅', 'All 27 agents online — 20 source + 7 ops agents active', '#4ADE80');
+logAgentAction('security',  '✅', 'All 23 agents online — 16 source + 7 ops agents active', '#4ADE80');
 // Warm the cache with a full initial fetch, then switch to continuous rolling workers
 refreshGlobalFeedCache().then(() => {
   globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
@@ -1848,6 +2045,8 @@ setInterval(runCommunityCheck, 15 * 60 * 1000);
 setInterval(runSeoCheck,    20 * 60 * 1000);
 // Opps check every 10 minutes
 setInterval(runOppsCheck,   10 * 60 * 1000);
+// Cache helper merges source caches every 5 minutes
+setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
 // Deploy health check every 5 minutes
 setInterval(runDeployCheck,  5 * 60 * 1000);
 // Data check every 7 minutes
@@ -2461,6 +2660,7 @@ function dbRowToMemUser(row) {
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
+    socialTokens: row.social_tokens || {},
   };
 }
 
@@ -2503,6 +2703,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_tokens JSONB DEFAULT '{}'`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -2785,7 +2986,7 @@ app.post('/auth/register', async (req, res) => {
 
   // In-memory fallback
   if (users.find((u) => u.email === emailLc)) return res.status(409).json({ message: 'Email already registered.' });
-  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {} };
+  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {} };
   users.push(newUser);
   const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
   res.status(201).json({ token, profile: fullProfile(newUser) });
@@ -2809,6 +3010,139 @@ app.post('/auth/login', async (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, profile: fullProfile(user) });
+});
+
+// ─── Social token helpers ─────────────────────────────────────────────────────
+async function saveSocialToken(userId, platform, token) {
+  const user = await getUser(userId);
+  if (!user) throw new Error('User not found');
+  if (!user.socialTokens) user.socialTokens = {};
+  user.socialTokens[platform] = token;
+  if (db.isConnected() && isDBId(userId)) {
+    db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
+      [JSON.stringify(user.socialTokens), userId]).catch(e => console.error('saveSocialToken:', e.message));
+  }
+}
+
+async function removeSocialToken(userId, platform) {
+  const user = await getUser(userId);
+  if (!user) return;
+  if (user.socialTokens) delete user.socialTokens[platform];
+  if (db.isConnected() && isDBId(userId)) {
+    db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
+      [JSON.stringify(user.socialTokens || {}), userId]).catch(e => console.error('removeSocialToken:', e.message));
+  }
+}
+
+// ─── Social OAuth: initiate (returns URL so the SPA can navigate) ────────────
+app.get('/auth/social/:platform/start', authenticate, (req, res) => {
+  const { platform } = req.params;
+  const cfg = SOCIAL_CFG[platform];
+  if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
+
+  const clientId = cfg.clientId();
+  if (!clientId) return res.status(501).json({ error: `${platform} OAuth not configured — set env vars` });
+
+  const state = crypto.randomBytes(16).toString('hex');
+  const entry = { userId: req.user.id, platform };
+  const redirectUri = oauthCallbackUrl(platform);
+
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id:     clientId,
+    redirect_uri:  redirectUri,
+    scope:         cfg.scope,
+    state,
+  });
+
+  if (cfg.pkce) {
+    const verifier   = pkceVerifier();
+    const challenge  = pkceChallenge(verifier);
+    entry.codeVerifier = verifier;
+    params.set('code_challenge',        challenge);
+    params.set('code_challenge_method', 'S256');
+  }
+
+  oauthStates.set(state, entry);
+  setTimeout(() => oauthStates.delete(state), 10 * 60 * 1000);
+
+  res.json({ url: `${cfg.authUrl}?${params.toString()}` });
+});
+
+// ─── Social OAuth: callback ───────────────────────────────────────────────────
+app.get('/auth/social/:platform/callback', async (req, res) => {
+  const { platform } = req.params;
+  const { code, state, error: oauthError } = req.query;
+  const frontendProfile = `${FRONTEND_BASE}/profile`;
+
+  if (oauthError) return res.redirect(`${frontendProfile}?social_error=${platform}&reason=${oauthError}`);
+
+  const entry = oauthStates.get(state);
+  if (!entry || entry.platform !== platform) {
+    return res.redirect(`${frontendProfile}?social_error=${platform}&reason=invalid_state`);
+  }
+  oauthStates.delete(state);
+
+  const cfg         = SOCIAL_CFG[platform];
+  const clientId    = cfg.clientId();
+  const clientSecret= cfg.clientSecret();
+  const redirectUri = oauthCallbackUrl(platform);
+
+  try {
+    let accessToken;
+
+    if (platform === 'facebook') {
+      // Facebook exchanges via GET
+      const data = await fetchJSON(
+        `${cfg.tokenUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`
+      );
+      accessToken = data.access_token;
+    } else if (platform === 'twitter') {
+      // Twitter: Basic auth + PKCE verifier
+      const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+      const data = await postForm(cfg.tokenUrl, {
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  redirectUri,
+        code_verifier: entry.codeVerifier,
+      }, { Authorization: `Basic ${basicAuth}` });
+      accessToken = data.access_token;
+    } else {
+      // LinkedIn & Instagram: standard POST form
+      const data = await postForm(cfg.tokenUrl, {
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  redirectUri,
+        client_id:     clientId,
+        client_secret: clientSecret,
+      });
+      accessToken = data.access_token;
+    }
+
+    if (!accessToken) throw new Error('No access_token in response');
+
+    await saveSocialToken(entry.userId, platform, accessToken);
+    logAgentAction('cache_helper', '🔗', `User connected ${platform} — social feed now active`, '#6366F1');
+    res.redirect(`${frontendProfile}?social_connected=${platform}`);
+  } catch (e) {
+    console.error(`Social OAuth callback ${platform}:`, e.message);
+    res.redirect(`${frontendProfile}?social_error=${platform}&reason=token_exchange_failed`);
+  }
+});
+
+// ─── Profile: social connection status + disconnect ───────────────────────────
+app.get('/profile/social', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  const platforms = ['linkedin', 'twitter', 'instagram', 'facebook'];
+  const connected = Object.fromEntries(platforms.map(p => [p, !!(user?.socialTokens?.[p])]));
+  res.json({ connected });
+});
+
+app.delete('/profile/social/:platform', authenticate, async (req, res) => {
+  const { platform } = req.params;
+  if (!SOCIAL_CFG[platform]) return res.status(404).json({ error: 'Unknown platform' });
+  await removeSocialToken(req.user.id, platform);
+  res.json({ ok: true, disconnected: platform });
 });
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
@@ -3044,10 +3378,11 @@ app.get('/feed', authenticate, async (req, res) => {
       ...(user?.skills || []).map(s => (s && typeof s === 'string') ? s.trim() : '').filter(s => s.length > 1).slice(0, 4),
     ];
     const dbFiltered     = (await getPostsFromDB(userTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+    const agentCacheArr  = (agentSourceCache.get(liveKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
     const cacheFiltered  = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
 
     const seen = new Set();
-    const sourcePosts = [...liveArr, ...dbFiltered, ...cacheFiltered].filter(p => {
+    const sourcePosts = [...liveArr, ...agentCacheArr, ...dbFiltered, ...cacheFiltered].filter(p => {
       if (seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
@@ -3181,6 +3516,23 @@ app.get('/feed', authenticate, async (req, res) => {
   ];
   const dbPosts = (await getPostsFromDB(userTopics)).map(p => mapExternalPost(p, p.source || 'reddit'));
 
+  // Per-user social platform posts (only when user has connected a social account)
+  const socialKws = userTopics.slice(0, 3);
+  const socialPlatformPosts = [];
+  if (user?.socialTokens && socialKws.length > 0) {
+    const socialFetches = [];
+    const { linkedin, twitter, instagram, facebook } = user.socialTokens;
+    if (linkedin)  socialKws.forEach(kw => socialFetches.push(fetchLinkedIn(kw, linkedin).catch(() => [])));
+    if (twitter)   socialKws.forEach(kw => socialFetches.push(fetchTwitter(kw, twitter).catch(() => [])));
+    if (instagram) socialKws.forEach(kw => socialFetches.push(fetchInstagram(kw, instagram).catch(() => [])));
+    if (facebook)  socialKws.forEach(kw => socialFetches.push(fetchFacebook(kw, facebook).catch(() => [])));
+    if (socialFetches.length > 0) {
+      const results = await Promise.all(socialFetches);
+      const flat = results.flat();
+      flat.forEach(p => p?.id && socialPlatformPosts.push(mapExternalPost(p, p.source || 'social')));
+    }
+  }
+
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
     const matchedGroup = joinedRedditGroups.find(g => g.subreddit?.toLowerCase() === p.group?.name?.replace('r/','').toLowerCase());
@@ -3200,7 +3552,7 @@ app.get('/feed', authenticate, async (req, res) => {
     ...connectedSocialPosts, ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
-    ...lobPosts, ...arxivPosts, ...cachedMapped, ...dbPosts,
+    ...lobPosts, ...arxivPosts, ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
   ].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
@@ -3503,9 +3855,10 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     perf:      () => runPerfCheck(),
     community: () => runCommunityCheck(),
     seo:       () => runSeoCheck(),
-    opps:      () => runOppsCheck(),
-    deploy:    () => runDeployCheck(),
-    data:      () => runDataCheck(),
+    opps:         () => runOppsCheck(),
+    deploy:       () => runDeployCheck(),
+    data:         () => runDataCheck(),
+    cache_helper: () => runCacheHelperCheck(),
     // Source agents — resolved from SOURCE_FETCHERS map registered at startup
     ...(sourceFn ? { [req.params.id]: sourceFn } : {}),
   };
@@ -3563,6 +3916,22 @@ app.get('/hq/status', (req, res) => {
   });
 });
 
+// ─── Office: per-source cache stats ──────────────────────────────────────────
+app.get('/office/sources', (_req, res) => {
+  const sources = [];
+  for (const [id, d] of agentSourceCache) {
+    sources.push({
+      id,
+      postCount:  d.posts.length,
+      totalSeen:  d.totalSeen,
+      lastFetch:  d.lastFetch,
+      emoji:      d.emoji,
+      color:      d.color,
+    });
+  }
+  res.json({ sources, globalCount: globalFeedCache.posts.length });
+});
+
 // ─── HQ manual agent trigger (internal use) ──────────────────────────────────
 app.post('/hq/trigger/:agentId', (req, res) => {
   const { agentId } = req.params;
@@ -3573,9 +3942,10 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     perf:      () => runPerfCheck(),
     community: () => runCommunityCheck(),
     seo:       () => runSeoCheck(),
-    opps:      () => runOppsCheck(),
-    deploy:    () => runDeployCheck(),
-    data:      () => runDataCheck(),
+    opps:         () => runOppsCheck(),
+    deploy:       () => runDeployCheck(),
+    data:         () => runDataCheck(),
+    cache_helper: () => runCacheHelperCheck(),
     ...(sourceFn ? { [agentId]: sourceFn } : {}),
   };
   if (!triggers[agentId]) return res.status(404).json({ error: 'Unknown agent' });

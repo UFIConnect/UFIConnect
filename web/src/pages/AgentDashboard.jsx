@@ -101,25 +101,164 @@ const AGENT_DEFS = [
       'Relevance rankings recalculated for all users',
     ],
   },
+  {
+    id: 'cache_helper', name: 'Cache Helper', emoji: '🗄️',
+    color: '#6366F1', bg: '#EEF2FF', role: 'Feed Cache Coordinator',
+    homeX: 46, homeY: 40,
+    tasks: [
+      'Merging source caches…', 'Deduplicating feed entries…',
+      'Indexing per-source posts…', 'Syncing 20 agent stores…',
+      'Compacting stale entries…',
+    ],
+    completions: [
+      'Source caches merged — global feed updated',
+      'Deduplication complete — feed quality maintained',
+      '20 agent stores synchronised successfully',
+      'Cache compacted — 500 newest posts retained per source',
+      'Cache sync: all source agents reporting healthy',
+    ],
+  },
+];
+
+/* ─── 16 Active Source Agents (no-token platforms) ─────────────────────────── */
+const SOURCE_AGENTS = [
+  { id: 'reddit',        emoji: '🟠', name: 'Reddit',         color: '#FF6347' },
+  { id: 'hn',            emoji: '🔶', name: 'Hacker News',    color: '#FF6600' },
+  { id: 'github',        emoji: '🐙', name: 'GitHub',         color: '#475569' },
+  { id: 'devto',         emoji: '💻', name: 'DEV.to',         color: '#8B5CF6' },
+  { id: 'medium',        emoji: '📝', name: 'Medium',         color: '#10B981' },
+  { id: 'youtube',       emoji: '▶️',  name: 'YouTube',        color: '#EF4444' },
+  { id: 'stackoverflow', emoji: '💬', name: 'Stack Overflow', color: '#F59E0B' },
+  { id: 'mastodon',      emoji: '🐘', name: 'Mastodon',       color: '#6366F1' },
+  { id: 'lobsters',      emoji: '🦞', name: 'Lobsters',       color: '#DC2626' },
+  { id: 'arxiv',         emoji: '📄', name: 'arXiv',          color: '#3B82F6' },
+  { id: 'indeed',        emoji: '💼', name: 'Indeed',         color: '#2557A7' },
+  { id: 'producthunt',   emoji: '🚀', name: 'Product Hunt',   color: '#DA552F' },
+  { id: 'techcrunch',    emoji: '📰', name: 'TechCrunch',     color: '#0D9F3F' },
+  { id: 'theverge',      emoji: '⬛', name: 'The Verge',      color: '#CC2200' },
+  { id: 'indiehackers',  emoji: '💡', name: 'Indie Hackers',  color: '#0E2150' },
+  { id: 'hashnode',      emoji: '✍️',  name: 'Hashnode',       color: '#2962FF' },
+  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',   color: '#0A66C2', needsAuth: true },
+  { id: 'twitter',    emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', needsAuth: true },
+  { id: 'instagram',  emoji: '📸', name: 'Instagram',  color: '#E1306C', needsAuth: true },
+  { id: 'facebook',   emoji: '📘', name: 'Facebook',   color: '#1877F2', needsAuth: true },
+];
+
+const SCAN_TOPICS = [
+  'AI & ML', 'Open Source', 'Cybersecurity', 'DevOps', 'Frontend',
+  'Backend', 'Web3', 'SaaS', 'Design', 'FinTech', 'Career',
+  'Startups', 'Remote Work', 'Mobile Dev', 'EdTech', 'Health Tech',
 ];
 
 const CORRIDOR_Y = 42;
 const EXEC_ZONE  = { x: 50, y: CORRIDOR_Y };
 
+/* ─── Live Data Card ─────────────────────────────────────────────────────────── */
+function LiveDataCard({ agent, phaseData, stats, onTrigger, onConnect, connected }) {
+  const isAuthNeeded = agent.needsAuth && !connected;
+  const phase     = isAuthNeeded ? -1 : (phaseData?.phase ?? 0);
+  const topicIdx  = phaseData?.topic ?? 0;
+  const phaseMeta = isAuthNeeded
+    ? { label: '🔒 Needs auth', barW: '0%', color: '#94A3B8' }
+    : [
+        { label: '🔍 Scanning topics', barW: '35%', color: '#94A3B8' },
+        { label: '⚡ Fetching posts',  barW: '72%', color: '#F59E0B' },
+        { label: '✅ Cache updated',   barW: '100%', color: '#4ADE80' },
+      ][phase];
+  const lastFetchAgo = stats?.lastFetch
+    ? Math.round((Date.now() - stats.lastFetch) / 60000) : null;
+
+  return (
+    <div style={{
+      background: '#fff',
+      border: `2px solid ${phase === 2 ? agent.color + '55' : agent.color + '1A'}`,
+      borderRadius: 12,
+      padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 7,
+      transition: 'border-color 0.6s',
+      boxShadow: phase === 1 ? `0 0 0 3px ${agent.color}18` : 'none',
+    }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{
+          width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+          background: `${agent.color}15`,
+          border: `1.5px solid ${agent.color}30`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '1.05rem',
+          animation: phase === 1 ? 'srcPulse 1s ease-in-out infinite' : 'none',
+        }}>{agent.emoji}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '.78rem', fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {agent.name}
+          </div>
+          <div style={{ fontSize: '.6rem', color: phaseMeta.color, fontWeight: 600 }}>
+            {phaseMeta.label}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: '.82rem', fontWeight: 900, color: agent.color }}>
+            {(stats?.postCount ?? 0).toLocaleString()}
+          </div>
+          <div style={{ fontSize: '.56rem', color: '#94A3B8' }}>cached</div>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ height: 4, background: '#F1F5F9', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: phaseMeta.barW,
+          background: `linear-gradient(90deg, ${agent.color}88, ${agent.color})`,
+          borderRadius: 2,
+          transition: 'width 0.9s ease',
+        }} />
+      </div>
+
+      {/* Footer row */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '.6rem', color: '#94A3B8' }}>
+          {!isAuthNeeded && phase === 0 && `topic: ${SCAN_TOPICS[topicIdx % SCAN_TOPICS.length]}`}
+          {!isAuthNeeded && phase === 1 && `fetching…`}
+          {!isAuthNeeded && phase === 2 && (lastFetchAgo === 0 ? 'just now' : lastFetchAgo !== null ? `${lastFetchAgo}m ago` : '—')}
+          {isAuthNeeded && <span style={{ color: '#94A3B8' }}>connect to activate</span>}
+        </div>
+        {isAuthNeeded ? (
+          <button onClick={onConnect} style={{
+            padding: '2px 8px', border: 'none', borderRadius: 5, cursor: 'pointer',
+            background: `${agent.color}18`, color: agent.color,
+            fontSize: '.6rem', fontWeight: 700,
+          }}>+ Connect</button>
+        ) : (
+          <button onClick={onTrigger} style={{
+            padding: '2px 8px', border: 'none', borderRadius: 5,
+            background: `${agent.color}18`, color: agent.color,
+            fontSize: '.6rem', fontWeight: 700, cursor: 'pointer',
+          }}>▶</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Floor Plan Sub-components ─────────────────────────────────────────────── */
 function AgentRoom({ agent, agentState }) {
   const isHome = agentState.status === 'idle';
+  const isHub  = agent.id === 'cache_helper';
   return (
     <div style={{
       position: 'absolute',
-      left: `${agent.homeX - 11}%`, top: `${agent.homeY - 8}%`,
-      width: '22%', height: '24%',
+      left: isHub ? `${agent.homeX - 8}%`  : `${agent.homeX - 11}%`,
+      top:  isHub ? `${agent.homeY - 5}%`  : `${agent.homeY - 8}%`,
+      width:  isHub ? '16%' : '22%',
+      height: isHub ? '14%' : '24%',
       background: isHome ? agent.bg : '#fff',
       border: `1.5px solid ${isHome ? agent.color + '44' : '#E2E8F0'}`,
-      borderRadius: 10,
-      padding: '6% 8%',
+      borderRadius: isHub ? 8 : 10,
+      padding: isHub ? '3% 5%' : '6% 8%',
       transition: 'all 0.5s ease',
       boxShadow: isHome ? `0 2px 12px ${agent.color}18` : 'none',
+      zIndex: isHub ? 2 : 1,
     }}>
       <div style={{ fontSize: '.6rem', fontWeight: 800, color: agent.color, opacity: .7, marginBottom: 2, letterSpacing: '.5px' }}>
         {agent.role.toUpperCase()}
@@ -155,7 +294,7 @@ function ServerRoom({ eventsCount }) {
     { k: 'API ERR',  v: '0',                     color: '#4ADE80' },
     { k: 'FEED',     v: `${1820 + tick * 3}`,    color: '#60A5FA' },
     { k: 'EVENTS',   v: eventsCount.toString(),  color: '#A78BFA' },
-    { k: 'AGENTS',   v: '6 / 6',                 color: '#FCD34D' },
+    { k: 'AGENTS',   v: '7 / 7',                 color: '#FCD34D' },
   ];
 
   return (
@@ -383,7 +522,7 @@ function StatusHeader({ sessionTime, eventsCount }) {
       <div style={{ flex: 1, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {[
           { label: 'Mode',    value: '🟢 Fully Autonomous', color: '#4ADE80' },
-          { label: 'Agents',  value: '6 / 6 active',        color: '#60A5FA' },
+          { label: 'Agents',  value: '7 / 7 active',        color: '#60A5FA' },
           { label: 'Events',  value: eventsCount.toLocaleString(), color: '#A78BFA' },
           { label: 'Session', value: sessionTime,           color: '#34D399' },
         ].map(s => (
@@ -467,6 +606,11 @@ export default function AgentDashboard() {
   const [lastExecution,  setLastExecution]  = useState(null);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [eventsCount,    setEventsCount]    = useState(0);
+  const [sourceAgents,   setSourceAgents]   = useState([]);
+  const [connectedSocial, setConnectedSocial] = useState({});
+  const [workerPhases,   setWorkerPhases]   = useState(
+    () => Object.fromEntries(SOURCE_AGENTS.map(a => [a.id, { phase: Math.floor(Math.random() * 3), topic: Math.floor(Math.random() * 16) }]))
+  );
 
   const timeoutsRef  = useRef([]);
   const activeAgents = useRef(new Set());
@@ -581,7 +725,7 @@ export default function AgentDashboard() {
   /* ── Bootstrap ────────────────────────────────────────────────────────────── */
   useEffect(() => {
     addLog('🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-    addLog('✅', 'All 6 agents online — autonomous mode active', '#4ADE80');
+    addLog('✅', 'All 7 agents online — autonomous mode active', '#4ADE80');
     addLog('🔒', 'Security Agent: initial scan complete, 0 threats', '#4ADE80');
 
     AGENT_DEFS.forEach((agent, i) => {
@@ -597,6 +741,40 @@ export default function AgentDashboard() {
       timeoutsRef.current = [];
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Source agent cache stats polling ────────────────────────────────────── */
+  useEffect(() => {
+    function fetchSources() {
+      client.get('/office/sources').then(({ data }) => setSourceAgents(data.sources || [])).catch(() => {});
+    }
+    fetchSources();
+    const t = setInterval(fetchSources, 30000);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Social connection status ─────────────────────────────────────────────── */
+  useEffect(() => {
+    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Worker phase animation — advances 3-4 random agents every 750ms ──────── */
+  useEffect(() => {
+    const ids = SOURCE_AGENTS.map(a => a.id);
+    const t = setInterval(() => {
+      setWorkerPhases(prev => {
+        const next = { ...prev };
+        const shuffle = [...ids].sort(() => Math.random() - 0.5).slice(0, 4);
+        shuffle.forEach(id => {
+          next[id] = {
+            phase: (next[id].phase + 1) % 3,
+            topic: Math.floor(Math.random() * SCAN_TOPICS.length),
+          };
+        });
+        return next;
+      });
+    }, 750);
+    return () => clearInterval(t);
+  }, []);
 
   /* ── Task ticker (cycles display text while idle) ─────────────────────────── */
   useEffect(() => {
@@ -664,31 +842,44 @@ export default function AgentDashboard() {
           0%,100% { transform: translateX(-50%) scale(1); }
           50% { transform: translateX(-50%) scale(1.3); }
         }
+        @keyframes srcPulse {
+          0%,100% { transform: scale(1); opacity: 1; }
+          50%      { transform: scale(1.15); opacity: 0.8; }
+        }
+        @keyframes scanLine {
+          0%   { transform: translateX(-100%); }
+          100% { transform: translateX(300%); }
+        }
       `}</style>
 
       <div className="page-header">
         <h1 className="page-title">🏢 UFIConnect HQ</h1>
         <p className="page-subtitle">
-          6 AI agents autonomously monitor, maintain, and improve your platform 24/7
+          16 data agents + 7 ops agents running simultaneously 24/7
         </p>
       </div>
 
       <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 18, alignItems: 'start' }}>
-        {/* Floor plan */}
+      {/* ── PRIMARY: Ops Centre (floor plan) ──────────────────────────────────── */}
+      <div style={{
+        fontSize: '.7rem', fontWeight: 800, color: '#94A3B8',
+        letterSpacing: '1.5px', textTransform: 'uppercase',
+        marginBottom: 12,
+      }}>
+        ▸ Ops Centre — 7 platform agents
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 18, alignItems: 'start', marginBottom: 28 }}>
         <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} />
 
-        {/* Right sidebar */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-          {/* Last execution */}
           <LastExecution entry={lastExecution} />
 
           {/* Agent roster */}
           <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: '14px' }}>
             <div style={{ fontWeight: 800, fontSize: '.82rem', marginBottom: 10, color: '#0F172A' }}>
-              🤖 Agent Roster
+              🤖 Ops Roster
             </div>
             {AGENT_DEFS.map(agent => {
               const s = agentStates[agent.id];
@@ -723,17 +914,76 @@ export default function AgentDashboard() {
         </div>
       </div>
 
+      {/* ── SECONDARY: Live Data Operations ────────────────────────────────────── */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
+          padding: '10px 14px',
+          background: '#0F172A', borderRadius: 10,
+          border: '1px solid #1E293B',
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '.82rem', fontWeight: 800, color: '#F1F5F9' }}>
+              ⚡ Live Data Operations
+            </div>
+            <div style={{ fontSize: '.65rem', color: '#475569' }}>
+              16 source agents cycling topics continuously — one topic at a time per source
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%', background: '#4ADE80',
+              display: 'inline-block', animation: 'agentPulse 1.6s ease-out infinite',
+              boxShadow: '0 0 0 0 #4ADE8055',
+            }} />
+            <span style={{ fontSize: '.7rem', fontWeight: 700, color: '#4ADE80' }}>ALL ACTIVE</span>
+          </div>
+          <div style={{ fontSize: '.7rem', fontWeight: 700, color: '#60A5FA', background: '#1E3A5F', padding: '3px 10px', borderRadius: 8 }}>
+            {SOURCE_AGENTS.length} AGENTS ({SOURCE_AGENTS.filter(a => a.needsAuth).length} need auth)
+          </div>
+        </div>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+          gap: 10,
+        }}>
+          {SOURCE_AGENTS.map(agent => {
+            const stats = sourceAgents.find(s => s.id === agent.id);
+            return (
+              <LiveDataCard
+                key={agent.id}
+                agent={agent}
+                phaseData={workerPhases[agent.id]}
+                stats={stats}
+                connected={connectedSocial[agent.id]}
+                onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
+                onConnect={async () => {
+                  try {
+                    const { data } = await client.get(`/auth/social/${agent.id}/start`);
+                    window.location.href = data.url;
+                  } catch { /* ignore — server will error if platform not configured */ }
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
+
       <div style={{
-        marginTop: 18, padding: '12px 16px',
+        marginTop: 18, padding: '10px 14px',
         background: '#F8FAFC', borderRadius: 10,
         border: '1px solid #E2E8F0',
-        fontSize: '.75rem', color: '#64748B',
+        fontSize: '.72rem', color: '#64748B',
         display: 'flex', gap: 8, alignItems: 'center',
       }}>
-        <span>⚡</span>
+        <span>ℹ️</span>
         <span>
-          All 6 agents run fully autonomously — no approval needed. They continuously monitor feed quality,
-          security, performance, SEO, community health, and job listings. Completed tasks are logged in real time.
+          16 source agents continuously cycle through topics pulling from Reddit, HN, GitHub, DEV.to,
+          Medium, YouTube, Stack Overflow, Mastodon, Lobsters, arXiv, Indeed, Product Hunt, TechCrunch,
+          The Verge, Indie Hackers, and Hashnode. Connect LinkedIn, X, Instagram, or Facebook to activate
+          personalised social feeds. 7 ops agents handle curation, SEO, security, performance, community,
+          opportunities, and cache coordination.
         </span>
       </div>
     </Layout>

@@ -23,7 +23,11 @@ export default function Login() {
       const user = await login(form.email, form.password);
       navigate(user.onboardingComplete ? '/' : '/onboarding', { replace: true });
     } catch (err) {
-      setError(err.response?.data?.message || 'Invalid email or password.');
+      if (!err.response) {
+        setError('Server is starting up — wait 30 seconds and try again.');
+      } else {
+        setError(err.response?.data?.message || 'Invalid email or password.');
+      }
     } finally {
       setLoading(false);
     }

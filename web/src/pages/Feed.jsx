@@ -18,6 +18,7 @@ function initials(name = '') {
 
 const SOURCE_META = {
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
+  hackernews:    { label: 'Hacker News',   color: '#FF6600', icon: '🗞' },
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
   linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
   twitter:       { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
@@ -34,6 +35,20 @@ const SOURCE_META = {
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
   uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
+
+const SOURCE_TABS = [
+  { key: 'all',          label: 'All',          icon: '⚡' },
+  { key: 'reddit',       label: 'Reddit',       icon: '🟠' },
+  { key: 'hackernews',   label: 'HN',           icon: '🗞' },
+  { key: 'github',       label: 'GitHub',       icon: '🐙' },
+  { key: 'devto',        label: 'DEV',          icon: '👩‍💻' },
+  { key: 'youtube',      label: 'YouTube',      icon: '▶️' },
+  { key: 'medium',       label: 'Medium',       icon: '📝' },
+  { key: 'stackoverflow',label: 'Stack',        icon: '📚' },
+  { key: 'mastodon',     label: 'Mastodon',     icon: '🦣' },
+  { key: 'lobsters',     label: 'Lobsters',     icon: '🦞' },
+  { key: 'arxiv',        label: 'arXiv',        icon: '🔬' },
+];
 
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'devto', 'medium', 'youtube',
@@ -405,6 +420,7 @@ function PostCard({ post, onVideoOpen }) {
 
 export default function Feed() {
   const { profile } = useAuth();
+  const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [posts,         setPosts]        = useState([]);
   const [loading,       setLoading]      = useState(true);
   const [refreshing,    setRefreshing]   = useState(false);
@@ -420,6 +436,9 @@ export default function Feed() {
   const [livePending, setLivePending] = useState([]);
   const [liveCount,   setLiveCount]   = useState(0);
   const [liveActive,  setLiveActive]  = useState(false);
+  const [sourceTab,        setSourceTab]        = useState('all');
+  const [sourceTabLoading, setSourceTabLoading] = useState({});
+  const sourceTabCache = useRef({});
 
   const filterBtnRef = useRef(null);
   const panelRef     = useRef(null);
@@ -445,6 +464,22 @@ export default function Feed() {
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
+  const loadSourceTab = useCallback(async (key) => {
+    setSourceTab(key);
+    if (key === 'all') return;
+    if (sourceTabCache.current[key]) return; // already cached
+    setSourceTabLoading(prev => ({ ...prev, [key]: true }));
+    try {
+      const { data } = await client.get(`/feed?source=${encodeURIComponent(key)}`);
+      sourceTabCache.current[key] = data.posts || [];
+    } catch (e) {
+      console.error(e);
+      sourceTabCache.current[key] = [];
+    } finally {
+      setSourceTabLoading(prev => ({ ...prev, [key]: false }));
+    }
+  }, []);
+
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
     setLoadingMore(true);
@@ -461,6 +496,12 @@ export default function Feed() {
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
+
+  // Fetch social connection status for personalisation banners
+  useEffect(() => {
+    if (!profile) { setConnectedSocial({}); return; }
+    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
+  }, [profile]);
 
   // SSE: stream new posts from all 10 source workers in real time
   useEffect(() => {
@@ -598,6 +639,25 @@ export default function Feed() {
   const clientHasMore = displayed.length < processed.length;
   const hasMore     = clientHasMore || remoteHasMore;
 
+  // Source-tab view: apply same search/sort/time filters to the cached source posts
+  const sourceTabPosts = useMemo(() => {
+    if (sourceTab === 'all') return [];
+    let result = [...(sourceTabCache.current[sourceTab] || [])];
+    const q = search.trim().toLowerCase();
+    if (q) result = result.filter(p =>
+      (p.title || '').toLowerCase().includes(q) ||
+      (p.content || '').toLowerCase().includes(q) ||
+      (p.author?.name || '').toLowerCase().includes(q)
+    );
+    if (filters.timeRange && filters.timeRange !== 'all') {
+      const cutoff = timeRangeCutoff(filters.timeRange);
+      result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
+    }
+    if (filters.sort === 'popular') result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
+    else result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return result;
+  }, [sourceTab, search, filters, sourceTabLoading]); // sourceTabLoading triggers re-compute when load completes
+
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
 
@@ -623,6 +683,89 @@ export default function Feed() {
           10 source workers continuously pulling from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, arXiv and more — new posts stream in automatically.
         </p>
       </div>
+
+      {/* ── Content freshness notice (always visible) ──────────────────────────── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        background: '#FFFBEB', border: '1px solid #FDE68A',
+        borderRadius: 10, padding: '9px 14px', marginBottom: 12,
+        fontSize: '.78rem', color: '#92400E',
+      }}>
+        <span style={{ fontSize: '1rem', flexShrink: 0 }}>⚡</span>
+        <span>
+          Content is streamed live as our 16 source agents cycle through topics — posts from active platforms appear within seconds.
+          Slower sources (YouTube, arXiv, Stack Overflow) update every 20–60 minutes by design.
+        </span>
+      </div>
+
+      {/* ── Guest sign-in prompt ───────────────────────────────────────────────── */}
+      {!profile && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: '#EFF6FF', border: '1px solid #BFDBFE',
+          borderRadius: 10, padding: '11px 16px', marginBottom: 12,
+        }}>
+          <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>👤</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '.82rem', color: '#1D4ED8', marginBottom: 2 }}>
+              Sign in for a personalised feed
+            </div>
+            <div style={{ fontSize: '.74rem', color: '#3B82F6' }}>
+              Topics, sources, and posts are tailored to your interests, role, and skills once you sign in.
+            </div>
+          </div>
+          <Link to="/login" style={{
+            padding: '6px 14px', borderRadius: 8, textDecoration: 'none',
+            background: '#2563EB', color: '#fff', fontWeight: 700, fontSize: '.78rem', whiteSpace: 'nowrap',
+          }}>Sign in</Link>
+        </div>
+      )}
+
+      {/* ── Logged-in: no socials connected ───────────────────────────────────── */}
+      {profile && connectedSocial !== null && !Object.values(connectedSocial).some(Boolean) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: '#F0FDF4', border: '1px solid #BBF7D0',
+          borderRadius: 10, padding: '11px 16px', marginBottom: 12,
+        }}>
+          <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>🔗</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: '.82rem', color: '#15803D', marginBottom: 2 }}>
+              Make it even more personal
+            </div>
+            <div style={{ fontSize: '.74rem', color: '#16A34A' }}>
+              Connect LinkedIn, X, Instagram, or Facebook to pull in content from your own network and follows.
+            </div>
+          </div>
+          <Link to="/profile" style={{
+            padding: '6px 14px', borderRadius: 8, textDecoration: 'none',
+            background: '#16A34A', color: '#fff', fontWeight: 700, fontSize: '.78rem', whiteSpace: 'nowrap',
+          }}>Connect</Link>
+        </div>
+      )}
+
+      {/* ── Logged-in: socials connected — show which platforms are active ──────── */}
+      {profile && connectedSocial !== null && Object.values(connectedSocial).some(Boolean) && (() => {
+        const activeNames = [
+          connectedSocial.linkedin  && '🔷 LinkedIn',
+          connectedSocial.twitter   && '🐦 X',
+          connectedSocial.instagram && '📸 Instagram',
+          connectedSocial.facebook  && '📘 Facebook',
+        ].filter(Boolean);
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: '#F0FDF4', border: '1px solid #86EFAC',
+            borderRadius: 10, padding: '9px 14px', marginBottom: 12,
+            fontSize: '.78rem', color: '#15803D',
+          }}>
+            <span style={{ fontSize: '.9rem' }}>✅</span>
+            <span>
+              <strong>Personalised social feed active:</strong> {activeNames.join(' · ')} — posts from your network are mixed in.
+            </span>
+          </div>
+        );
+      })()}
 
       {/* Live new-posts banner */}
       {liveCount > 0 && (
@@ -703,8 +846,41 @@ export default function Feed() {
         </button>
       </div>
 
+      {/* Source tabs */}
+      <div style={{
+        display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
+        paddingBottom: 4, scrollbarWidth: 'none',
+      }}>
+        {SOURCE_TABS.map(tab => {
+          const meta  = SOURCE_META[tab.key];
+          const color = meta?.color || 'var(--primary)';
+          const active = sourceTab === tab.key;
+          const isLoading = sourceTabLoading[tab.key];
+          return (
+            <button
+              key={tab.key}
+              onClick={() => loadSourceTab(tab.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+                border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                background: active ? (tab.key === 'all' ? 'var(--primary)' : color) : 'var(--surface)',
+                color: active ? '#fff' : 'var(--text)',
+                fontWeight: active ? 700 : 500, fontSize: '.8rem',
+                cursor: 'pointer', opacity: isLoading ? 0.7 : 1,
+                flexShrink: 0,
+              }}
+            >
+              <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
+              {tab.label}
+              {isLoading && <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, marginLeft: 2 }} />}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Last refresh time */}
-      {lastRefresh && (
+      {lastRefresh && sourceTab === 'all' && (
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
           Last updated {timeAgo(lastRefresh.toISOString())}
           {posts.length > 0 && ` · ${posts.length.toLocaleString()} post${posts.length !== 1 ? 's' : ''} loaded`}
@@ -712,7 +888,34 @@ export default function Feed() {
         </div>
       )}
 
-      {loading ? (
+      {/* Source-tab view */}
+      {sourceTab !== 'all' ? (
+        sourceTabLoading[sourceTab] ? (
+          <div style={{ textAlign: 'center', padding: 48 }}>
+            <span className="spinner spinner-primary" />
+            <div style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>
+              Fetching {SOURCE_META[sourceTab]?.label || sourceTab} posts…
+            </div>
+          </div>
+        ) : sourceTabPosts.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">{SOURCE_META[sourceTab]?.icon || '📭'}</div>
+            <div className="empty-title">No {SOURCE_META[sourceTab]?.label || sourceTab} posts found</div>
+            <div className="empty-desc" style={{ fontSize: '.82rem', color: 'var(--muted)' }}>
+              Try a different time range or clear search filters.
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 10 }}>
+              {sourceTabPosts.length} posts from {SOURCE_META[sourceTab]?.label || sourceTab}
+            </div>
+            {sourceTabPosts.map(post => (
+              <PostCard key={post.id} post={post} onVideoOpen={setVideoPost} />
+            ))}
+          </div>
+        )
+      ) : loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
         </div>

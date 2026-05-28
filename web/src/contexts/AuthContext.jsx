@@ -12,7 +12,15 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!token) { setLoading(false); return; }
     client.get('/profile')
-      .then(({ data }) => setProfile(data))
+      .then(({ data }) => {
+        // Guard against stale service-worker offline responses that look like { error: 'offline' }
+        if (data?.error || !data?.id) {
+          localStorage.removeItem('pc_token');
+          setToken(null);
+        } else {
+          setProfile(data);
+        }
+      })
       .catch(() => { localStorage.removeItem('pc_token'); setToken(null); })
       .finally(() => setLoading(false));
   }, [token]);

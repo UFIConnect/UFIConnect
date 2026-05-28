@@ -1,4 +1,4 @@
-const CACHE_NAME = 'uficonnect-v1';
+const CACHE_NAME = 'uficonnect-v2';
 const API_ORIGIN = 'https://uficonnect-api.onrender.com';
 
 const SHELL_ASSETS = [
@@ -30,10 +30,11 @@ self.addEventListener('fetch', (e) => {
   if (request.method !== 'GET') return;
   if (url.pathname.endsWith('/feed/stream')) return;
 
-  // API calls — network-first, no cache fallback (data must be fresh)
-  if (url.origin === API_ORIGIN) {
+  // API calls — network-first, no caching; return 503 on failure so callers treat it as an error
+  if (url.origin === API_ORIGIN || url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(request).catch(() => new Response(JSON.stringify({ error: 'offline' }), {
+        status: 503,
         headers: { 'Content-Type': 'application/json' },
       }))
     );
