@@ -2018,51 +2018,58 @@ async function fetchHashnode(keyword) {
   const key = `hashnode_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  // Primary: tag RSS feed (reliable, no auth)
   const tag = HASHNODE_TAG_MAP[keyword] || keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
-  try {
-    const xml = await fetchText(`https://hashnode.com/n/${tag}/rss.xml`, { 'User-Agent': 'Mozilla/5.0 Chrome/124' });
-    const items = parseRSSItems(xml);
-    if (items.length) {
-      const posts = items.slice(0, 10).map(it => rssPost(it, 'hashnode', 'Hashnode', 'ext_hashnode', 'Hashnode', 'Engineering', keyword));
-      setCached(key, posts);
-      return posts;
-    }
-  } catch (e) { console.warn(`Hashnode RSS "${keyword}":`, e.message); }
-  // Fallback: GraphQL v2 search
+
+  const mapNode = (n) => ({
+    id:          `hashnode_${Buffer.from(n.url || keyword + n.publishedAt).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
+    authorId:    `hashnode_${n.author?.username || 'anon'}`,
+    groupId:     'ext_hashnode',
+    content:     n.brief || n.title,
+    title:       n.title,
+    source:      'hashnode', sourceLabel: 'Hashnode',
+    sourceUrl:   n.url,
+    topic:       keyword,
+    author:      { id: `hashnode_${n.author?.username}`, name: n.author?.name || 'Hashnode', title: 'Developer', organization: 'Hashnode' },
+    likes: [], likesCount: 0, commentsCount: 0,
+    createdAt:   n.publishedAt || new Date().toISOString(),
+    isExternal:  true,
+    group:       { id: 'ext_hashnode', name: 'Hashnode', category: 'Engineering', externalUrl: 'https://hashnode.com' },
+  });
+
+  // Primary: GraphQL v2 tag feed (correct query — tag(slug).posts)
   try {
     const body = JSON.stringify({
-      query: `query($q:String!){searchPostsOfPublication(input:{query:$q,first:10,publicationId:""}){edges{node{title brief url publishedAt author{name username}}}}}`,
-      variables: { q: keyword },
+      query: `query($slug:String!){tag(slug:$slug){posts(first:10){edges{node{title brief url publishedAt author{name username}}}}}}`,
+      variables: { slug: tag },
     });
     const raw = await new Promise((resolve, reject) => {
       const req = https.request(
         { hostname: 'gql.hashnode.com', path: '/', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'Mozilla/5.0' } },
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
+                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
         (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
       );
       req.on('error', reject);
       req.setTimeout(12000, () => { req.destroy(); reject(new Error('timeout')); });
       req.write(body); req.end();
     });
-    const edges = JSON.parse(raw)?.data?.searchPostsOfPublication?.edges || [];
-    const posts = edges.map(({ node: n }) => ({
-      id:          `hashnode_${Buffer.from(n.url || keyword + Date.now()).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
-      authorId:    `hashnode_${n.author?.username || 'anon'}`,
-      groupId:     'ext_hashnode',
-      content:     n.brief || n.title,
-      title:       n.title,
-      source:      'hashnode', sourceLabel: 'Hashnode',
-      sourceUrl:   n.url,
-      topic:       keyword,
-      author:      { id: `hashnode_${n.author?.username}`, name: n.author?.name || 'Hashnode', title: 'Developer', organization: 'Hashnode' },
-      likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   n.publishedAt || new Date().toISOString(),
-      isExternal:  true,
-      group:       { id: 'ext_hashnode', name: 'Hashnode', category: 'Engineering', externalUrl: 'https://hashnode.com' },
-    }));
-    if (posts.length) { setCached(key, posts); return posts; }
+    const edges = JSON.parse(raw)?.data?.tag?.posts?.edges || [];
+    if (edges.length) {
+      const posts = edges.map(({ node: n }) => mapNode(n));
+      setCached(key, posts); return posts;
+    }
   } catch (e) { console.warn(`Hashnode GQL "${keyword}":`, e.message); }
+
+  // Fallback: tag RSS feed
+  try {
+    const xml = await fetchText(`https://hashnode.com/n/${tag}/rss.xml`, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' });
+    const items = parseRSSItems(xml);
+    if (items.length) {
+      const posts = items.slice(0, 10).map(it => rssPost(it, 'hashnode', 'Hashnode', 'ext_hashnode', 'Hashnode', 'Engineering', keyword));
+      setCached(key, posts); return posts;
+    }
+  } catch (e) { console.warn(`Hashnode RSS "${keyword}":`, e.message); }
+
   return getCached(key) || [];
 }
 
@@ -2071,39 +2078,52 @@ async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
+  // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFIConnect/1.0 which bsky rate-limits)
+  const mapPost = (p) => {
+    const text   = (p.record?.text || '').slice(0, 500);
+    const handle = p.author?.handle || p.author?.did || 'unknown';
+    return {
+      id:          `bluesky_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi,'').slice(-16)}`,
+      authorId:    `bluesky_${p.author?.did || 'anon'}`,
+      groupId:     'ext_bluesky',
+      content:     text,
+      title:       text.slice(0, 120),
+      source:      'bluesky',
+      sourceLabel: `@${handle}`,
+      sourceUrl:   `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
+      topic:       keyword,
+      author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
+      likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
+      createdAt:   p.record?.createdAt || p.indexedAt || new Date().toISOString(),
+      isExternal:  true,
+      mediaUrl:    p.embed?.images?.[0]?.thumb || null,
+      mediaType:   p.embed?.images ? 'image' : null,
+      group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
+    };
+  };
+
+  const bskyFetch = (q) => new Promise((resolve, reject) => {
+    const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=25&sort=latest`;
+    https.get(
+      { hostname: 'public.api.bsky.app', path,
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        } },
+      (res) => {
+        if (res.statusCode >= 300) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+        let d = ''; res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
+      }
+    ).on('error', reject).setTimeout(12000, function() { this.destroy(new Error('timeout')); });
+  });
+
   try {
-    const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(keyword)}&limit=25&sort=latest`;
-    const data = await fetchJSON(url);
-    const posts = (data?.posts || [])
-      .filter(p => p.record?.text && p.author)
-      .map(p => {
-        const text = (p.record.text || '').slice(0, 500);
-        const handle = p.author.handle || p.author.did;
-        return {
-          id:          `bluesky_${p.cid || p.uri.replace(/[^a-z0-9]/gi, '').slice(-16)}`,
-          authorId:    `bluesky_${p.author.did}`,
-          groupId:     'ext_bluesky',
-          content:     text,
-          title:       text.slice(0, 120),
-          source:      'bluesky',
-          sourceLabel: `@${handle}`,
-          sourceUrl:   `https://bsky.app/profile/${handle}/post/${p.uri.split('/').pop()}`,
-          topic:       keyword,
-          author:      { id: `bluesky_${p.author.did}`, name: p.author.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
-          likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
-          createdAt:   p.record.createdAt || p.indexedAt || new Date().toISOString(),
-          isExternal:  true,
-          mediaUrl:    p.embed?.images?.[0]?.thumb || null,
-          mediaType:   p.embed?.images ? 'image' : null,
-          group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
-        };
-      });
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Bluesky "${keyword}":`, e.message);
-    return getCached(key) || [];
-  }
+    const data  = await bskyFetch(keyword);
+    const posts = (data?.posts || []).filter(p => p.record?.text && p.author).map(mapPost);
+    if (posts.length) { setCached(key, posts); return posts; }
+  } catch (e) { console.warn(`Bluesky "${keyword}":`, e.message); }
+  return getCached(key) || [];
 }
 
 // ─── LinkedIn: uses env token (app-level) or per-user OAuth token ─────────────
