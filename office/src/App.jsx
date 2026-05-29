@@ -502,12 +502,13 @@ function SourcesView({ status, triggerAgent, triggering }) {
     healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
     degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
+    pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
   };
 
   return (
     <>
       <h1 style={H1}>Live Sources</h1>
-      <p style={SUBTITLE}>Real-time health of all 16 data source workers. Each cycles through 36 topics continuously.</p>
+      <p style={SUBTITLE}>Real-time health of all 21 data source workers. 17 cycle through 36 topics continuously; 4 are Pro OAuth-authenticated per user.</p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
@@ -562,25 +563,32 @@ function SourcesView({ status, triggerAgent, triggering }) {
                   <span>❌ <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong> err</span>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#475569' }}>
-                  <span>{w.lastSuccess ? `Last ok: ${fmtAgo(w.lastSuccess)}` : 'No successful fetch yet'}</span>
-                  <button
-                    onClick={() => triggerAgent(w.id)}
-                    disabled={triggering[w.id]}
-                    style={{
-                      fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
-                      background: w.paused ? 'rgba(239,68,68,.15)' : 'rgba(59,130,246,.1)',
-                      color: w.paused ? '#f87171' : '#60a5fa',
-                    }}
-                  >
-                    {triggering[w.id] ? '...' : w.paused ? '↺ Reset' : '▶ Run'}
-                  </button>
-                </div>
-
-                {w.paused && (
-                  <div style={{ fontSize: 10, color: '#f87171', padding: '4px 8px', background: 'rgba(239,68,68,.06)', borderRadius: 4 }}>
-                    ⏸ Paused — {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
+                {w.isPro ? (
+                  <div style={{ fontSize: 10, color: '#f59e0b', padding: '4px 8px', background: 'rgba(245,158,11,.06)', borderRadius: 4 }}>
+                    🔒 Pro feature — feeds from connected user OAuth tokens only. No global cycler.
                   </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#475569' }}>
+                      <span>{w.lastSuccess ? `Last ok: ${fmtAgo(w.lastSuccess)}` : 'No successful fetch yet'}</span>
+                      <button
+                        onClick={() => triggerAgent(w.id)}
+                        disabled={triggering[w.id]}
+                        style={{
+                          fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                          background: w.paused ? 'rgba(239,68,68,.15)' : 'rgba(59,130,246,.1)',
+                          color: w.paused ? '#f87171' : '#60a5fa',
+                        }}
+                      >
+                        {triggering[w.id] ? '...' : w.paused ? '↺ Reset' : '▶ Run'}
+                      </button>
+                    </div>
+                    {w.paused && (
+                      <div style={{ fontSize: 10, color: '#f87171', padding: '4px 8px', background: 'rgba(239,68,68,.06)', borderRadius: 4 }}>
+                        ⏸ Paused — {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );

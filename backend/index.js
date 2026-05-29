@@ -553,6 +553,28 @@ const INTEREST_TO_DEVTO_TAG = {
   'Career Growth': 'career', 'Productivity': 'productivity',
   'Freelancing': 'career', 'Side Projects': 'showdev',
   'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
+  'TypeScript': 'typescript', 'React': 'react', 'Python': 'python',
+  'JavaScript': 'javascript', 'Rust': 'rust', 'Go': 'go',
+  'Java': 'java', 'Swift': 'swift', 'Kotlin': 'kotlin',
+  'Database': 'database', 'APIs & Integrations': 'api',
+  'Testing & QA': 'testing', 'Performance': 'performance',
+  'Architecture': 'architecture', 'Linux': 'linux',
+  'Git & Version Control': 'git', 'Networking': 'career',
+  'Leadership': 'productivity', 'Startup': 'startup',
+  'Growth Marketing': 'marketing', 'E-commerce': 'startup',
+  'Product Management': 'productivity', 'Investing': 'fintech',
+  'Personal Finance': 'fintech', 'Robotics': 'machinelearning',
+  'Quantum Computing': 'machinelearning', 'Blockchain / Web3': 'blockchain',
+  'Music Production': 'writing', 'Podcasting': 'writing',
+  'Content Creator': 'writing', 'Mental Health': 'career',
+  'Fitness & Gym': 'healthtech', 'Travel & Adventure': 'career',
+  'Cooking & Recipes': 'writing', 'Music Discovery': 'writing',
+  'Gaming': 'gamedev', 'Film & TV': 'writing',
+  'Public Speaking': 'career', 'HR / People Ops': 'career',
+  'Sales / Business Dev': 'startup', 'Agile / Scrum': 'agile',
+  'CI/CD & Automation': 'devops', 'Serverless': 'cloud',
+  'GraphQL': 'graphql', 'Docker & Containers': 'docker',
+  'Kubernetes': 'kubernetes', 'Data Engineering': 'datascience',
 };
 
 // Medium tag mapping — Medium uses hyphenated lowercase tags
@@ -572,6 +594,27 @@ const INTEREST_TO_MEDIUM_TAG = {
   'Side Projects': 'side-project', 'Freelancing': 'freelancing',
   'Leadership': 'leadership', 'Remote Work': 'remote-work',
   'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
+  'No-Code / Low-Code': 'no-code', 'TypeScript': 'typescript',
+  'React': 'reactjs', 'Python': 'python', 'JavaScript': 'javascript',
+  'Rust': 'rust', 'Go': 'golang', 'Database': 'database',
+  'APIs & Integrations': 'api', 'Architecture': 'software-architecture',
+  'Startup': 'startup', 'Growth Marketing': 'growth-hacking',
+  'E-commerce': 'ecommerce', 'Product Management': 'product-management',
+  'Investing': 'investing', 'Personal Finance': 'personal-finance',
+  'Robotics': 'robotics', 'Quantum Computing': 'quantum-computing',
+  'Blockchain / Web3': 'blockchain', 'Music Production': 'music',
+  'Podcasting': 'podcasting', 'Content Creator': 'content-marketing',
+  'Mental Health': 'mental-health', 'Fitness & Gym': 'fitness',
+  'Gaming': 'gaming', 'Public Speaking': 'public-speaking',
+  'HR / People Ops': 'human-resources', 'Agile / Scrum': 'agile',
+  'Data Engineering': 'data-engineering', 'GraphQL': 'graphql',
+  'Docker & Containers': 'docker', 'Kubernetes': 'kubernetes',
+  'Performance': 'performance', 'Testing & QA': 'software-testing',
+  'Linux': 'linux', 'Git & Version Control': 'git',
+  'CI/CD & Automation': 'continuous-integration', 'Serverless': 'serverless',
+  'Networking': 'networking', 'Sales / Business Dev': 'sales',
+  'Travel & Adventure': 'travel', 'Cooking & Recipes': 'food',
+  'Photography': 'photography', 'Film & TV': 'film',
 };
 
 const ROLE_TO_KEYWORDS = {
@@ -762,6 +805,47 @@ const TOPIC_SUBREDDITS = {
   'Travel & Adventure':     ['travel', 'backpacking', 'solotravel', 'TravelHacks'],
   'Cooking & Recipes':      ['recipes', 'Cooking', 'MealPrepSunday', 'food'],
   'Music Discovery':        ['Music', 'LetsTalkMusic', 'indieheads', 'listentothis'],
+  // — Expanded coverage —
+  'Leadership':             ['leadership', 'management', 'managers', 'ExperiencedDevs'],
+  'Networking':             ['networking', 'cscareerquestions', 'careerguidance'],
+  'Startup':                ['startups', 'Entrepreneur', 'SaaS', 'indiehackers'],
+  'Product Management':     ['ProductManagement', 'startups', 'UXDesign', 'agile'],
+  'Personal Finance':       ['personalfinance', 'financialindependence', 'investing'],
+  'Investing':              ['investing', 'stocks', 'ValueInvesting', 'algotrading'],
+  'E-commerce':             ['ecommerce', 'shopify', 'Entrepreneur', 'dropship'],
+  'Sales / Business Dev':   ['sales', 'Entrepreneur', 'smallbusiness', 'b2bmarketing'],
+  'HR / People Ops':        ['humanresources', 'recruiting', 'jobs', 'AskHR'],
+  'Public Speaking':        ['publicspeaking', 'selfimprovement', 'Toastmasters'],
+  'Mental Health':          ['mentalhealth', 'anxiety', 'psychology', 'depression'],
+  'Photography':            ['photography', 'photocritique', 'analog', 'AskPhotography'],
+  'Robotics':               ['robotics', 'Arduino', 'raspberry_pi', 'PLC'],
+  'Quantum Computing':      ['QuantumComputing', 'Physics', 'math', 'scicomm'],
+  'Blockchain / Web3':      ['ethereum', 'defi', 'web3', 'solana'],
+  'Music Production':       ['WeAreTheMusicMakers', 'edmproduction', 'audioengineering'],
+  'Podcasting':             ['podcasting', 'podcast', 'startpodcasting'],
+  'Gaming':                 ['gaming', 'pcgaming', 'PS5', 'xboxone', 'NintendoSwitch'],
+  'Film & TV':              ['movies', 'television', 'Filmmakers', 'TrueFilm'],
+  'DJing & Remixing':       ['DJs', 'edmproduction', 'beatproduction'],
+  'Python':                 ['Python', 'learnpython', 'django', 'flask'],
+  'JavaScript':             ['javascript', 'node', 'reactjs', 'typescript'],
+  'Rust':                   ['rust', 'learnrust', 'rustjerk'],
+  'Go':                     ['golang', 'golangnews'],
+  'TypeScript':             ['typescript', 'reactjs', 'javascript'],
+  'Docker & Containers':    ['docker', 'kubernetes', 'devops'],
+  'Kubernetes':             ['kubernetes', 'devops', 'aws'],
+  'GraphQL':                ['graphql', 'webdev', 'node'],
+  'Linux':                  ['linux', 'linuxquestions', 'debian', 'archlinux'],
+  'Database':               ['Database', 'PostgreSQL', 'MySQL', 'mongodb', 'redis'],
+  'Data Engineering':       ['dataengineering', 'apachespark', 'bigdata', 'apachekafka'],
+  'Testing & QA':           ['QualityAssurance', 'softwaretesting', 'selenium'],
+  'Performance':            ['javascript', 'webdev', 'programming'],
+  'Agile / Scrum':          ['agile', 'scrum', 'ProjectManagement'],
+  'CI/CD & Automation':     ['devops', 'github', 'programming'],
+  'Serverless':             ['serverless', 'aws', 'devops'],
+  'Architecture':           ['softwarearchitecture', 'programming', 'ExperiencedDevs'],
+  'Astronomy':              ['Astronomy', 'space', 'astrophysics'],
+  'Science':                ['science', 'askscience', 'Physics'],
+  'Economics':              ['economics', 'AskEconomics', 'MacroEconomics'],
 };
 
 function parseRedditRSSFeed(xml, topicKeyword) {
@@ -1176,6 +1260,136 @@ const TOPIC_YT_CHANNELS = {
     { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
   ],
+  // — Expanded topic coverage —
+  'No-Code / Low-Code':     [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCkk9aznXMGdxRgZ0vIVYBCg', name: 'Webflow' },
+  ],
+  'Growth Marketing':       [
+    { id: 'UCGy7SkBjcIAgTiwkXEtPnYg', name: 'HubSpot Marketing' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCctXZhXmG-kf3tlIXgVZUlw', name: 'GaryVee' },
+  ],
+  'SEO & Content':          [
+    { id: 'UCWjCFtBSUDE0hlsEVUvTv0Q', name: 'Ahrefs' },
+    { id: 'UCGy7SkBjcIAgTiwkXEtPnYg', name: 'HubSpot Marketing' },
+  ],
+  'Newsletter & Writing':   [
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
+  ],
+  'Leadership':             [
+    { id: 'UC0vBXGSyV14uvJ4hECDOl0Q', name: 'Simon Sinek' },
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+  ],
+  'Investing':              [
+    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
+    { id: 'UCFCEuCsyWP0YkP3CZ3Mr01Q', name: 'Patrick Boyle' },
+    { id: 'UCV6KDgJskWaEckne5aPA0aQ', name: 'Graham Stephan' },
+  ],
+  'Personal Finance':       [
+    { id: 'UCV6KDgJskWaEckne5aPA0aQ', name: 'Graham Stephan' },
+    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
+  ],
+  'Startup':                [
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCGX7nGXpz-CmO_Arg-cgJ7A', name: 'Valuetainment' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'EdTech':                 [
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
+    { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+  ],
+  'Robotics':               [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+  ],
+  'Quantum Computing':      [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+    { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+  ],
+  'Remote Work':            [
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
+  ],
+  'Content Creator':        [
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCctXZhXmG-kf3tlIXgVZUlw', name: 'GaryVee' },
+  ],
+  'Podcasting':             [
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
+  ],
+  'Gaming':                 [
+    { id: 'UCX_b3NNQN5bzExm-22-NVVg', name: 'GDC' },
+    { id: 'UCBmNB4N5Vmr2N-0-Kg2NPUA', name: 'Sebastian Lague' },
+    { id: 'UCqJ-Xo29CKyLTjn6z2XwYAw', name: 'Blackthornprod' },
+  ],
+  'Science':                [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+    { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+  ],
+  'Photography':            [
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+  ],
+  'Music Production':       [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+  ],
+  'Python':                 [
+    { id: 'UCCTVrRVMyEX5YKq4zHNU5EA', name: 'Corey Schafer' },
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  ],
+  'JavaScript':             [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  ],
+  'TypeScript':             [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+  ],
+  'Rust':                   [
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'Go':                     [
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'Linux':                  [
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
+  ],
+  'Docker & Containers':    [
+    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
+    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
+  ],
+  'Kubernetes':             [
+    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
+    { id: 'UCnUYZLuoy1rq1aVMwx4aTzw', name: 'Google Cloud Tech' },
+  ],
+  'Data Engineering':       [
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UCJHs6RO1CSM85e8jIMD9jdA', name: 'Ken Jee' },
+  ],
+  'GraphQL':                [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+  ],
+  'Testing & QA':           [
+    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+  ],
+  'E-commerce':             [
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  ],
+  'Blockchain / Web3':      [
+    { id: 'UCY0xL8V6NnkYQnrO2AWZWA', name: 'Patrick Collins' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
 };
 
 // Fallback channels used when no topic-specific list exists
@@ -1321,6 +1535,19 @@ const INTEREST_TO_SO_TAG = {
   'Web3 / Crypto': 'solidity', 'Game Dev': 'unity3d',
   'No-Code / Low-Code': 'webflow', 'Developer Tools': 'vscode',
   'Database': 'postgresql', 'APIs & Integrations': 'api',
+  'Generative AI': 'openai-api', 'TypeScript': 'typescript',
+  'React': 'reactjs', 'Python': 'python', 'JavaScript': 'javascript',
+  'Rust': 'rust', 'Go': 'go', 'Java': 'java', 'Kotlin': 'kotlin',
+  'Swift': 'swift', 'Flutter': 'flutter', 'Docker & Containers': 'docker',
+  'Kubernetes': 'kubernetes', 'GraphQL': 'graphql', 'Linux': 'linux',
+  'Git & Version Control': 'git', 'Testing & QA': 'unit-testing',
+  'Performance': 'performance', 'Architecture': 'design-patterns',
+  'Serverless': 'aws-lambda', 'CI/CD & Automation': 'continuous-integration',
+  'Data Engineering': 'apache-spark', 'Blockchain / Web3': 'ethereum',
+  'Robotics': 'ros', 'Quantum Computing': 'quantum-computing',
+  'iOS Development': 'ios', 'Android Development': 'android',
+  'SaaS': 'saas', 'FinTech': 'stripe', 'Health Tech': 'fhir',
+  'E-commerce': 'shopify', 'Agile / Scrum': 'agile',
 };
 
 async function fetchStackOverflowByTag(tag) {
@@ -1372,6 +1599,27 @@ const INTEREST_TO_MASTODON_TAG = {
   'Game Dev': 'GameDev',                 'No-Code / Low-Code': 'NoCode',
   'Remote Work': 'RemoteWork',           'Design Systems': 'DesignSystems',
   'Health Tech': 'HealthTech',           'Venture Capital': 'VentureCapital',
+  'TypeScript': 'TypeScript',            'JavaScript': 'JavaScript',
+  'Python': 'Python',                    'Rust': 'Rustlang',
+  'Go': 'Golang',                        'Linux': 'Linux',
+  'Database': 'PostgreSQL',              'GraphQL': 'GraphQL',
+  'Docker & Containers': 'Docker',       'Kubernetes': 'Kubernetes',
+  'Architecture': 'SoftwareArchitecture','Newsletter & Writing': 'Writing',
+  'SEO & Content': 'SEO',               'Growth Marketing': 'Marketing',
+  'Leadership': 'Leadership',            'Freelancing': 'Freelance',
+  'Robotics': 'Robotics',               'Quantum Computing': 'QuantumComputing',
+  'Blockchain / Web3': 'Blockchain',     'Music Production': 'MusicProduction',
+  'Photography': 'Photography',          'Fitness & Gym': 'Fitness',
+  'Mental Health': 'MentalHealth',       'Science': 'Science',
+  'Investing': 'Investing',              'Personal Finance': 'PersonalFinance',
+  'E-commerce': 'Ecommerce',             'Product Management': 'ProductManagement',
+  'Testing & QA': 'Testing',             'Performance': 'WebPerformance',
+  'Agile / Scrum': 'Agile',             'HR / People Ops': 'HR',
+  'Public Speaking': 'PublicSpeaking',   'Podcasting': 'Podcasting',
+  'Content Creator': 'ContentCreation',  'Data Engineering': 'DataEngineering',
+  'Serverless': 'Serverless',            'CI/CD & Automation': 'CICD',
+  'Gaming': 'Gaming',                    'Film & TV': 'Film',
+  'Travel & Adventure': 'Travel',        'Cooking & Recipes': 'Food',
 };
 
 const MASTODON_INSTANCES = [
@@ -1440,6 +1688,16 @@ const LOBSTERS_TAGS = {
   'Career Growth': 'programming',    'Productivity': 'tools',
   'Side Projects': 'programming',    'Web Development': 'web',
   'Performance': 'performance',      'No-Code / Low-Code': 'web',
+  'TypeScript': 'javascript',        'Python': 'python',
+  'Rust': 'rust',                    'Go': 'go',
+  'Linux': 'unix',                   'Docker & Containers': 'devops',
+  'Kubernetes': 'devops',            'Architecture': 'architecture',
+  'Testing & QA': 'programming',     'Serverless': 'cloud',
+  'Blockchain / Web3': 'crypto',     'Robotics': 'hardware',
+  'GraphQL': 'api',                  'CI/CD & Automation': 'devops',
+  'Data Engineering': 'datascience', 'Networking': 'networking',
+  'Hardware': 'hardware',            'Science': 'science',
+  'Mathematics': 'math',             'Formal Methods': 'formalmethods',
 };
 
 async function fetchLobstersByTag(tag) {
@@ -1477,15 +1735,33 @@ async function fetchLobstersByTag(tag) {
 
 // ─── arXiv: academic papers (AI, ML, Data Science, etc.) ─────────────────────
 const INTEREST_TO_ARXIV = {
-  'AI & Machine Learning': 'machine learning',  'Computer Vision': 'computer vision',
-  'Data Science': 'data science',                'LLMs & Chatbots': 'large language models',
-  'Cybersecurity': 'cybersecurity',              'Generative AI': 'generative AI',
-  'Blockchain / Web3': 'blockchain',             'Health Tech': 'healthcare AI',
-  'Climate Tech': 'climate change AI',           'Researcher / Academic': 'deep learning',
-  'Web3 / Crypto': 'blockchain cryptography',   'Game Dev': 'reinforcement learning games',
-  'Robotics': 'robotics',                        'Quantum Computing': 'quantum computing',
-  'Mobile Dev': 'mobile computing',              'Cloud & DevOps': 'distributed systems',
-  'Backend Dev': 'systems programming',          'FinTech': 'financial machine learning',
+  'AI & Machine Learning': 'machine learning',   'Computer Vision': 'computer vision',
+  'Data Science': 'data science',                 'LLMs & Chatbots': 'large language models',
+  'Cybersecurity': 'cybersecurity',               'Generative AI': 'generative AI',
+  'Blockchain / Web3': 'blockchain',              'Health Tech': 'healthcare AI',
+  'Climate Tech': 'climate change AI',            'Researcher / Academic': 'deep learning',
+  'Web3 / Crypto': 'blockchain cryptography',    'Game Dev': 'reinforcement learning games',
+  'Robotics': 'robotics',                         'Quantum Computing': 'quantum computing',
+  'Mobile Dev': 'mobile computing',               'Cloud & DevOps': 'distributed systems',
+  'Backend Dev': 'systems programming',           'FinTech': 'financial machine learning',
+  'Natural Language Processing': 'natural language processing',
+  'Data Engineering': 'data pipelines scalable systems',
+  'Performance': 'software performance optimization',
+  'Networking': 'computer networks protocol',
+  'Human-Computer Interaction': 'human computer interaction',
+  'EdTech': 'educational technology machine learning',
+  'Personal Finance': 'algorithmic trading portfolio optimization',
+  'Fitness & Gym': 'sports science biomechanics wearables',
+  'Mental Health': 'mental health NLP sentiment analysis',
+  'Drug Discovery': 'drug discovery deep learning',
+  'Astronomy': 'astronomy astrophysics machine learning',
+  'Bioinformatics': 'bioinformatics genomics deep learning',
+  'Autonomous Vehicles': 'autonomous driving deep learning',
+  'Architecture': 'software architecture microservices',
+  'Signal Processing': 'signal processing deep learning',
+  'Recommender Systems': 'recommender systems collaborative filtering',
+  'Privacy': 'differential privacy federated learning',
+  'Explainable AI': 'explainable artificial intelligence interpretability',
 };
 
 function parseArxivAtom(xml) {
@@ -4410,9 +4686,19 @@ app.get('/office/status', (req, res) => {
     fetchCount: h.fetchCount, lastSuccess: h.lastSuccess, paused: h.paused,
     postCount: agentSourceCache.get(id)?.totalSeen ?? 0,
   }));
+  // Append Pro social agents (per-user OAuth, not continuous cyclers)
+  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
+    const def = AGENT_DEFS[id];
+    if (def) sourceHealthArr.push({
+      id, emoji: def.emoji, color: def.color, name: def.name,
+      status: 'pro', consecutiveErrors: 0, totalErrors: 0,
+      fetchCount: 0, lastSuccess: null, paused: false, postCount: 0, isPro: true,
+    });
+  }
+
   const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
   const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
-  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy').length;
+  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'pro').length;
 
   res.json({
     server: {
