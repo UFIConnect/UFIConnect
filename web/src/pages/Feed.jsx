@@ -215,7 +215,7 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
                 boxShadow: `0 4px 16px ${meta.color || '#6366F1'}55`,
               }}
             >
-              Connect {meta.label}
+              🔒 Connect {meta.label}
             </button>
           </div>
         </>
