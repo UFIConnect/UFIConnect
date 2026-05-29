@@ -38,7 +38,7 @@ const SOURCE_META = {
   techcrunch:    { label: 'TechCrunch',    color: '#0D9F3F', icon: '📰' },
   theverge:      { label: 'The Verge',     color: '#FF3333', icon: '⬛' },
   indiehackers:  { label: 'Indie Hackers', color: '#0E2150', icon: '💡' },
-  hashnode:      { label: 'Hashnode',      color: '#2962FF', icon: '✍️' },
+  hashnode:      { label: 'freeCodeCamp',  color: '#006400', icon: '🔥' },
   uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -64,7 +64,7 @@ const SOURCE_TABS = [
   { key: 'techcrunch',   label: 'TechCrunch',   icon: '📰' },
   { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
   { key: 'indiehackers', label: 'Indie Hackers',icon: '💡' },
-  { key: 'hashnode',     label: 'Hashnode',     icon: '✍️' },
+  { key: 'hashnode',     label: 'freeCodeCamp', icon: '🔥' },
 ];
 
 const PRO_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);

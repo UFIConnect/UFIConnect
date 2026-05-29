@@ -741,7 +741,7 @@ const SOURCE_CONFIG = {
   techcrunch:    { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
   theverge:      { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
   indiehackers:  { ttl: 12*60000, delay: 18000 },  // RSS feed
-  hashnode:      { ttl:  5*60000, delay:  8000 },  // GraphQL, fast
+  hashnode:      { ttl:  8*60000, delay: 12000 },  // freeCodeCamp RSS
   bluesky:       { ttl:  4*60000, delay:  6000 },  // public ATP API, real-time social
 };
 
@@ -2000,75 +2000,38 @@ async function fetchIndieHackers(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Hashnode: developer articles via GraphQL (no auth required) ──────────────
-const HASHNODE_TAG_MAP = {
-  'AI & Machine Learning': 'machine-learning', 'Generative AI': 'ai', 'LLMs & Chatbots': 'ai',
-  'Data Science': 'data-science', 'Frontend Dev': 'frontend', 'Backend Dev': 'backend',
-  'Mobile Dev': 'mobile', 'Cloud & DevOps': 'devops', 'Cybersecurity': 'security',
-  'Web3 / Crypto': 'web3', 'Game Dev': 'game-development', 'No-Code / Low-Code': 'nocode',
-  'SaaS': 'saas', 'Career Growth': 'career', 'Productivity': 'productivity',
-  'Python': 'python', 'JavaScript': 'javascript', 'TypeScript': 'typescript',
-  'React': 'reactjs', 'Node': 'node', 'Rust': 'rust', 'Go': 'golang',
-  'Docker & Containers': 'docker', 'Kubernetes': 'kubernetes', 'GraphQL': 'graphql',
-  'Open Source': 'opensource', 'Side Projects': 'showdev', 'Developer Tools': 'programming',
-  'Architecture': 'software-architecture', 'Testing & QA': 'testing',
-};
-
+// ─── freeCodeCamp News: replaces Hashnode (Hashnode API fully shut down) ────────
+// Source key kept as "hashnode" so existing UI/workers need no changes.
 async function fetchHashnode(keyword) {
   const key = `hashnode_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  const tag = HASHNODE_TAG_MAP[keyword] || keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
 
-  const mapNode = (n) => ({
-    id:          `hashnode_${Buffer.from(n.url || keyword + n.publishedAt).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
-    authorId:    `hashnode_${n.author?.username || 'anon'}`,
-    groupId:     'ext_hashnode',
-    content:     n.brief || n.title,
-    title:       n.title,
-    source:      'hashnode', sourceLabel: 'Hashnode',
-    sourceUrl:   n.url,
-    topic:       keyword,
-    author:      { id: `hashnode_${n.author?.username}`, name: n.author?.name || 'Hashnode', title: 'Developer', organization: 'Hashnode' },
-    likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   n.publishedAt || new Date().toISOString(),
-    isExternal:  true,
-    group:       { id: 'ext_hashnode', name: 'Hashnode', category: 'Engineering', externalUrl: 'https://hashnode.com' },
-  });
-
-  // Primary: GraphQL v2 tag feed (correct query — tag(slug).posts)
+  // Primary: freeCodeCamp News RSS (keyword-matched)
   try {
-    const body = JSON.stringify({
-      query: `query($slug:String!){tag(slug:$slug){posts(first:10){edges{node{title brief url publishedAt author{name username}}}}}}`,
-      variables: { slug: tag },
+    const xml = await fetchText('https://www.freecodecamp.org/news/rss/', {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     });
-    const raw = await new Promise((resolve, reject) => {
-      const req = https.request(
-        { hostname: 'gql.hashnode.com', path: '/', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body),
-                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
-        (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
-      );
-      req.on('error', reject);
-      req.setTimeout(12000, () => { req.destroy(); reject(new Error('timeout')); });
-      req.write(body); req.end();
-    });
-    const edges = JSON.parse(raw)?.data?.tag?.posts?.edges || [];
-    if (edges.length) {
-      const posts = edges.map(({ node: n }) => mapNode(n));
-      setCached(key, posts); return posts;
-    }
-  } catch (e) { console.warn(`Hashnode GQL "${keyword}":`, e.message); }
-
-  // Fallback: tag RSS feed
-  try {
-    const xml = await fetchText(`https://hashnode.com/n/${tag}/rss.xml`, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' });
     const items = parseRSSItems(xml);
     if (items.length) {
-      const posts = items.slice(0, 10).map(it => rssPost(it, 'hashnode', 'Hashnode', 'ext_hashnode', 'Hashnode', 'Engineering', keyword));
-      setCached(key, posts); return posts;
+      const posts = filterAndSlice(items, keyword, 10)
+        .map(it => rssPost(it, 'hashnode', 'freeCodeCamp', 'ext_hashnode', 'freeCodeCamp News', 'Engineering', keyword));
+      if (posts.length) { setCached(key, posts); return posts; }
     }
-  } catch (e) { console.warn(`Hashnode RSS "${keyword}":`, e.message); }
+  } catch (e) { console.warn(`freeCodeCamp RSS "${keyword}":`, e.message); }
+
+  // Fallback: The New Stack RSS
+  try {
+    const xml = await fetchText('https://thenewstack.io/feed/', {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    });
+    const items = parseRSSItems(xml);
+    if (items.length) {
+      const posts = filterAndSlice(items, keyword, 8)
+        .map(it => rssPost(it, 'hashnode', 'The New Stack', 'ext_hashnode', 'The New Stack', 'Engineering', keyword));
+      if (posts.length) { setCached(key, posts); return posts; }
+    }
+  } catch (e) { console.warn(`TheNewStack RSS "${keyword}":`, e.message); }
 
   return getCached(key) || [];
 }
@@ -2105,7 +2068,7 @@ async function fetchBlueskyByKeyword(keyword) {
   const bskyFetch = (q) => new Promise((resolve, reject) => {
     const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=25&sort=latest`;
     https.get(
-      { hostname: 'public.api.bsky.app', path,
+      { hostname: 'api.bsky.app', path,
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -4705,8 +4668,8 @@ const AGENT_DEFS = {
     description: 'Fetches community posts from Indie Hackers RSS. Surfaces bootstrapper stories, revenue milestones, and startup advice across 36 topics.',
   },
   hashnode: {
-    name: 'Hashnode Agent', emoji: '✍️', color: '#2962FF', interval: '3min',
-    description: 'Queries Hashnode GraphQL API for developer blog posts across 36 topic keywords. Surfaces technical articles and developer stories.',
+    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '5min',
+    description: 'Fetches freeCodeCamp News RSS (Hashnode API shut down) with The New Stack as fallback. Surfaces developer tutorials and engineering articles across 36 topics.',
   },
   bluesky: {
     name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '2min',
