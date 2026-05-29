@@ -683,23 +683,23 @@ function bustCachePrefix(prefix)   { for (const k of postCache.keys()) if (k.sta
 // DELAY: ms between fetching successive topics in the continuous cycler
 const SOURCE_CONFIG = {
   //            TTL (ms)          DELAY/topic (ms)
-  reddit:        { ttl:  3*60000, delay:  3000 },  // RSS feeds — no rate limit, very fast
-  hn:            { ttl:  2*60000, delay:  2000 },  // Algolia HN, generous API
-  github:        { ttl:  8*60000, delay: 35000 },  // rate-limited 60/hr unauthed
-  devto:         { ttl:  3*60000, delay:  4000 },  // REST API, generous
-  medium:        { ttl:  5*60000, delay:  8000 },  // CDN-cached RSS
-  youtube:       { ttl:  5*60000, delay:  8000 },  // channel RSS — no quota
-  stackoverflow: { ttl: 10*60000, delay: 35000 },  // 300/day unauthed limit
-  mastodon:      { ttl:  2*60000, delay:  3000 },  // real-time social
-  lobsters:      { ttl:  8*60000, delay: 15000 },  // small site — respectful
-  arxiv:         { ttl: 15*60000, delay: 20000 },  // OAI-PMH 20s recommendation
-  indeed:        { ttl:  5*60000, delay:  6000 },  // RSS, ~2,600/day
-  producthunt:   { ttl: 10*60000, delay: 25000 },  // RSS, ~1,000/day
-  techcrunch:    { ttl:  3*60000, delay:  5000 },  // RSS — publishes constantly
-  theverge:      { ttl:  3*60000, delay:  5000 },  // RSS — publishes constantly
-  indiehackers:  { ttl:  8*60000, delay: 12000 },  // RSS feed
-  hashnode:      { ttl:  3*60000, delay:  5000 },  // GraphQL, fast
-  bluesky:       { ttl:  2*60000, delay:  3000 },  // public ATP API, real-time social
+  reddit:        { ttl:  5*60000, delay:  6000 },  // RSS feeds — no rate limit, very fast
+  hn:            { ttl:  4*60000, delay:  4000 },  // Algolia HN, generous API
+  github:        { ttl: 12*60000, delay: 45000 },  // rate-limited 60/hr unauthed
+  devto:         { ttl:  5*60000, delay:  8000 },  // REST API, generous
+  medium:        { ttl:  8*60000, delay: 12000 },  // CDN-cached RSS
+  youtube:       { ttl:  8*60000, delay: 12000 },  // channel RSS — no quota
+  stackoverflow: { ttl: 15*60000, delay: 45000 },  // 300/day unauthed limit
+  mastodon:      { ttl:  4*60000, delay:  6000 },  // real-time social
+  lobsters:      { ttl: 12*60000, delay: 20000 },  // small site — respectful
+  arxiv:         { ttl: 20*60000, delay: 30000 },  // OAI-PMH 20s recommendation
+  indeed:        { ttl:  8*60000, delay: 10000 },  // RSS, ~2,600/day
+  producthunt:   { ttl: 15*60000, delay: 35000 },  // RSS, ~1,000/day
+  techcrunch:    { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
+  theverge:      { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
+  indiehackers:  { ttl: 12*60000, delay: 18000 },  // RSS feed
+  hashnode:      { ttl:  5*60000, delay:  8000 },  // GraphQL, fast
+  bluesky:       { ttl:  4*60000, delay:  6000 },  // public ATP API, real-time social
 };
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
