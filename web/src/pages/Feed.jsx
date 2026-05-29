@@ -92,7 +92,7 @@ function catStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 200;
 
 function PostText({ text }) {
   if (!text) return null;
@@ -540,6 +540,7 @@ export default function Feed() {
       setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
+      if (manual) window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line

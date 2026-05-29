@@ -1469,7 +1469,7 @@ async function fetchYouTubeByKeyword(keyword) {
     // Official YouTube Data API v3 — used when key is available
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (apiKey) {
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=15&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=50&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
       const data = await fetchJSON(url);
       const posts = (data?.items || [])
         .filter(v => v.id?.videoId && v.snippet?.title)
@@ -1484,7 +1484,7 @@ async function fetchYouTubeByKeyword(keyword) {
     // Primary: YouTube channel RSS feeds — no API key, served by YouTube, always works
     const channels = TOPIC_YT_CHANNELS[keyword] || DEFAULT_YT_CHANNELS;
     const allPosts = [];
-    await Promise.allSettled(channels.slice(0, 6).map(async ch => {
+    await Promise.allSettled(channels.map(async ch => {
       try {
         const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.id}`);
         allPosts.push(...parseYouTubeChannelRSS(xml, keyword, ch.name));
@@ -1506,7 +1506,7 @@ async function fetchYouTubeByKeyword(keyword) {
         const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
         const data = await fetchJSON(url);
         if (!Array.isArray(data) || !data.length) continue;
-        const posts = data.filter(v => v.videoId && v.title).slice(0, 10).map(v => {
+        const posts = data.filter(v => v.videoId && v.title).map(v => {
           const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
           return mapYouTubePost(
             v.videoId, v.title, v.description, v.author, v.authorId,
@@ -1872,7 +1872,7 @@ async function fetchIndeedJobs(keyword) {
   if (cached) return cached;
   // Primary: Remotive.com public API (free JSON, no auth)
   try {
-    const data = await fetchJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keyword)}&limit=15`);
+    const data = await fetchJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keyword)}&limit=100`);
     const jobs = data?.jobs || [];
     if (jobs.length) {
       const posts = jobs.map(j => ({
@@ -4175,9 +4175,12 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
-  // Manual refresh: bust caches so fresh data is fetched
+  // Manual refresh: bust all caches so fresh data is fetched
   if (req.query.bust === '1') {
     postCache.clear();
+    // Clear the global merged feed so stale posts aren't returned
+    globalFeedCache.posts = [];
+    globalFeedCache.refreshedAt = 0;
     // For source-tab refresh, also bust per-fetcher caches and clear agentSourceCache entry
     const bustSource = req.query.source;
     if (bustSource) {
@@ -4186,6 +4189,9 @@ app.get('/feed', authenticate, async (req, res) => {
       const prefix = CACHE_KEY_PREFIX[agentKey];
       if (prefix) bustCachePrefix(prefix);
       agentSourceCache.delete(agentKey);
+    } else {
+      // Full refresh: clear all agent source caches so workers re-fetch immediately
+      agentSourceCache.clear();
     }
   }
 
