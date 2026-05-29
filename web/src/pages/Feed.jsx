@@ -44,6 +44,10 @@ const SOURCE_META = {
 
 const SOURCE_TABS = [
   { key: 'all',          label: 'All',          icon: '⚡' },
+  { key: 'twitter',      label: 'X (Twitter)',  icon: '𝕏',  pro: true },
+  { key: 'linkedin',     label: 'LinkedIn',     icon: '💼',  pro: true },
+  { key: 'instagram',    label: 'Instagram',    icon: '📸',  pro: true },
+  { key: 'facebook',     label: 'Facebook',     icon: '🔵',  pro: true },
   { key: 'reddit',       label: 'Reddit',       icon: '🟠' },
   { key: 'hackernews',   label: 'HN',           icon: '🗞' },
   { key: 'github',       label: 'GitHub',       icon: '🐙' },
@@ -61,10 +65,6 @@ const SOURCE_TABS = [
   { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
   { key: 'indiehackers', label: 'Indie Hackers',icon: '💡' },
   { key: 'hashnode',     label: 'Hashnode',     icon: '✍️' },
-  { key: 'twitter',      label: 'X (Twitter)',  icon: '𝕏',  pro: true },
-  { key: 'linkedin',     label: 'LinkedIn',     icon: '💼',  pro: true },
-  { key: 'instagram',    label: 'Instagram',    icon: '📸',  pro: true },
-  { key: 'facebook',     label: 'Facebook',     icon: '🔵',  pro: true },
 ];
 
 const PRO_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
