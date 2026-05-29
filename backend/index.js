@@ -896,7 +896,7 @@ async function fetchRedditByKeyword(keyword) {
   const looksLikeSubreddit = /^[A-Za-z0-9_]+$/.test(keyword) && keyword.length < 30 && !TOPIC_SUBREDDITS[keyword];
   if (looksLikeSubreddit) {
     try {
-      const xml = await fetchText(`https://www.reddit.com/r/${keyword}/new.rss?limit=50`, REDDIT_HEADERS);
+      const xml = await fetchText(`https://www.reddit.com/r/${keyword}/new.rss?limit=100`, REDDIT_HEADERS);
       const posts = parseRedditRSSFeed(xml, keyword);
       if (posts.length) {
         posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -912,10 +912,10 @@ async function fetchRedditByKeyword(keyword) {
     || ['programming', 'technology', 'webdev'];
 
   const allPosts = [];
-  // Fetch new.rss from up to 3 subreddits in parallel using browser UA (required by Reddit)
-  await Promise.allSettled(subs.slice(0, 5).map(async sub => {
+  // Fetch new.rss from all mapped subreddits in parallel
+  await Promise.allSettled(subs.map(async sub => {
     try {
-      const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=50`, REDDIT_HEADERS);
+      const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
       allPosts.push(...parseRedditRSSFeed(xml, keyword));
     } catch { /* 403/hang — skip this subreddit */ }
   }));
@@ -938,7 +938,7 @@ async function fetchHNByKeyword(keyword) {
   if (cached) return cached;
   try {
     // search_by_date gives most recent stories; points filter avoids spam
-    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=100&numericFilters=points>1`;
+    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=1000&numericFilters=points>1`;
     const data = await fetchJSON(url);
     const posts = (data?.hits || [])
       .filter(h => h.title && (h.url || h.objectID))
@@ -973,7 +973,7 @@ async function fetchDevToByTag(tag) {
   if (cached) return cached;
   try {
     // dev.to API — sort by latest so we always get the freshest posts
-    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=30&state=fresh`;
+    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=1000&state=fresh`;
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(a => a.title && a.url)
@@ -1011,7 +1011,7 @@ async function fetchGitHubByKeyword(keyword) {
   try {
     // GitHub public search — recent pushes (last 7 days), sorted by freshness
     const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} pushed:>${since}`)}&sort=updated&order=desc&per_page=30`;
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} pushed:>${since}`)}&sort=updated&order=desc&per_page=100`;
     const data = await fetchJSON(url);
     const posts = (data?.items || [])
       .filter(r => r.description)
@@ -1555,7 +1555,7 @@ async function fetchStackOverflowByTag(tag) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=creation&site=stackoverflow&pagesize=30&filter=default`;
+    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=creation&site=stackoverflow&pagesize=100&filter=default`;
     const data = await fetchJSON(url);
     const posts = (data?.items || [])
       .filter(q => q.title && q.link && !q.closed_date)
@@ -1661,7 +1661,7 @@ async function fetchMastodonByTag(tag) {
   if (cached) return cached;
   for (const instance of MASTODON_INSTANCES) {
     try {
-      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=80`;
+      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=200`;
       const data = await fetchJSON(url);
       const posts = mapMastodonPosts(data, tag);
       if (posts.length) {
@@ -1785,7 +1785,7 @@ async function fetchArxivByKeyword(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&max_results=50&sortBy=submittedDate&sortOrder=descending`;
+    const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&max_results=200&sortBy=submittedDate&sortOrder=descending`;
     const xml  = await fetchText(url);
     const entries = parseArxivAtom(xml);
     const posts = entries.map(e => ({
@@ -1859,7 +1859,7 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
   };
 }
 
-function filterAndSlice(items, keyword, max = 15) {
+function filterAndSlice(items, keyword, max = 1000) {
   const kw = keyword.toLowerCase();
   const matched = items.filter(it => it.title.toLowerCase().includes(kw) || it.desc.toLowerCase().includes(kw));
   return (matched.length > 0 ? matched : items).slice(0, max);
@@ -1900,7 +1900,7 @@ async function fetchIndeedJobs(keyword) {
   try {
     const xml = await fetchText('https://weworkremotely.com/remote-jobs.rss');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 15).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
+    const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
     if (posts.length) { setCached(key, posts); return posts; }
   } catch (e) { console.warn(`WWR "${keyword}":`, e.message); }
   return getCached(key) || [];
@@ -1914,7 +1914,7 @@ async function fetchProductHunt(keyword) {
   try {
     const xml   = await fetchText('https://www.producthunt.com/feed');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 15).map(it => rssPost(it, 'producthunt', 'Product Hunt', 'ext_producthunt', 'Product Hunt', 'Startups', keyword));
+    const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'producthunt', 'Product Hunt', 'ext_producthunt', 'Product Hunt', 'Startups', keyword));
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -1931,7 +1931,7 @@ async function fetchTechCrunch(keyword) {
   try {
     const xml   = await fetchText('https://techcrunch.com/feed/');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 15).map(it => rssPost(it, 'techcrunch', 'TechCrunch', 'ext_techcrunch', 'TechCrunch', 'Engineering', keyword));
+    const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'techcrunch', 'TechCrunch', 'ext_techcrunch', 'TechCrunch', 'Engineering', keyword));
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -1948,7 +1948,7 @@ async function fetchTheVerge(keyword) {
   try {
     const xml   = await fetchText('https://www.theverge.com/rss/index.xml');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 15).map(it => rssPost(it, 'theverge', 'The Verge', 'ext_theverge', 'The Verge', 'Engineering', keyword));
+    const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'theverge', 'The Verge', 'ext_theverge', 'The Verge', 'Engineering', keyword));
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -1971,7 +1971,7 @@ async function fetchIndieHackers(keyword) {
       const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
-      const posts = filterAndSlice(items, keyword, 15).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
+      const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
       setCached(key, posts);
       return posts;
     } catch { /* try next */ }
@@ -2014,7 +2014,7 @@ async function fetchHashnode(keyword) {
     });
     const items = parseRSSItems(xml);
     if (items.length) {
-      const posts = filterAndSlice(items, keyword, 20)
+      const posts = filterAndSlice(items, keyword, 1000)
         .map(it => rssPost(it, 'hashnode', 'freeCodeCamp', 'ext_hashnode', 'freeCodeCamp News', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
     }
@@ -2027,7 +2027,7 @@ async function fetchHashnode(keyword) {
     });
     const items = parseRSSItems(xml);
     if (items.length) {
-      const posts = filterAndSlice(items, keyword, 15)
+      const posts = filterAndSlice(items, keyword, 1000)
         .map(it => rssPost(it, 'hashnode', 'The New Stack', 'ext_hashnode', 'The New Stack', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
     }
@@ -2066,7 +2066,7 @@ async function fetchBlueskyByKeyword(keyword) {
   };
 
   const bskyFetch = (q) => new Promise((resolve, reject) => {
-    const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=50&sort=latest`;
+    const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=100&sort=latest`;
     https.get(
       { hostname: 'api.bsky.app', path,
         headers: {
@@ -2338,9 +2338,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
 
   const allKeywords = [...keywords, ...skillKeywords, ...goalKeywords];
   if (allKeywords.length === 0) allKeywords.push('technology startup programming');
-  // Focused source tab: 6 topics; "all" feed: 4 topics (cuts peak concurrency from 120 → 40 or 6)
-  const maxTopics = sourceFilter ? 10 : 8;
-  const topics = [...new Set(allKeywords)].slice(0, maxTopics);
+  const topics = [...new Set(allKeywords)];
 
   // Tag-based sources — interests + skill-derived tags
   const skillDevtoTags = safeSkills.map(s => SKILL_TO_DEVTO_TAG[s.toLowerCase().trim()]).filter(Boolean);
@@ -2374,19 +2372,19 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
     run('github')        ? Promise.all(topics.map(kw => fetchGitHubByKeyword(kw))).catch(() => []) : [],
     run('youtube')       ? Promise.all(topics.map(kw => fetchYouTubeByKeyword(kw))).catch(() => []) : [],
-    run('devto')         ? Promise.all(effectiveDevtoTags.slice(0,8).map(t => fetchDevToByTag(t))).catch(() => [])        : [],
-    run('medium')        ? Promise.all(effectiveMediumTags.slice(0,8).map(t => fetchMediumByTag(t))).catch(() => [])      : [],
-    run('stackoverflow') ? Promise.all(effectiveSoTags.slice(0,8).map(t => fetchStackOverflowByTag(t))).catch(() => [])   : [],
-    run('mastodon')      ? Promise.all(effectiveMastoTags.slice(0,6).map(t => fetchMastodonByTag(t))).catch(() => [])     : [],
-    run('lobsters')      ? Promise.all(effectiveLobTags.slice(0,6).map(t => fetchLobstersByTag(t))).catch(() => [])       : [],
-    run('arxiv')         ? Promise.all(effectiveArxivKws.slice(0,6).map(k => fetchArxivByKeyword(k))).catch(() => [])     : [],
-    run('indeed')        ? Promise.all(topics.slice(0,6).map(kw => fetchIndeedJobs(kw))).catch(() => [])           : [],
-    run('producthunt')   ? Promise.all(topics.slice(0,6).map(kw => fetchProductHunt(kw))).catch(() => [])          : [],
-    run('techcrunch')    ? Promise.all(topics.slice(0,6).map(kw => fetchTechCrunch(kw))).catch(() => [])           : [],
-    run('theverge')      ? Promise.all(topics.slice(0,6).map(kw => fetchTheVerge(kw))).catch(() => [])             : [],
-    run('indiehackers')  ? Promise.all(topics.slice(0,6).map(kw => fetchIndieHackers(kw))).catch(() => [])         : [],
-    run('hashnode')      ? Promise.all(topics.slice(0,6).map(kw => fetchHashnode(kw))).catch(() => [])             : [],
-    run('bluesky')       ? Promise.all(topics.slice(0,6).map(kw => fetchBlueskyByKeyword(kw))).catch(() => [])     : [],
+    run('devto')         ? Promise.all(effectiveDevtoTags.map(t => fetchDevToByTag(t))).catch(() => [])        : [],
+    run('medium')        ? Promise.all(effectiveMediumTags.map(t => fetchMediumByTag(t))).catch(() => [])      : [],
+    run('stackoverflow') ? Promise.all(effectiveSoTags.map(t => fetchStackOverflowByTag(t))).catch(() => [])   : [],
+    run('mastodon')      ? Promise.all(effectiveMastoTags.map(t => fetchMastodonByTag(t))).catch(() => [])     : [],
+    run('lobsters')      ? Promise.all(effectiveLobTags.map(t => fetchLobstersByTag(t))).catch(() => [])       : [],
+    run('arxiv')         ? Promise.all(effectiveArxivKws.map(k => fetchArxivByKeyword(k))).catch(() => [])     : [],
+    run('indeed')        ? Promise.all(topics.map(kw => fetchIndeedJobs(kw))).catch(() => [])           : [],
+    run('producthunt')   ? Promise.all(topics.map(kw => fetchProductHunt(kw))).catch(() => [])          : [],
+    run('techcrunch')    ? Promise.all(topics.map(kw => fetchTechCrunch(kw))).catch(() => [])           : [],
+    run('theverge')      ? Promise.all(topics.map(kw => fetchTheVerge(kw))).catch(() => [])             : [],
+    run('indiehackers')  ? Promise.all(topics.map(kw => fetchIndieHackers(kw))).catch(() => [])         : [],
+    run('hashnode')      ? Promise.all(topics.map(kw => fetchHashnode(kw))).catch(() => [])             : [],
+    run('bluesky')       ? Promise.all(topics.map(kw => fetchBlueskyByKeyword(kw))).catch(() => [])     : [],
   ]);
 
   return {
@@ -2469,7 +2467,7 @@ function addAndBroadcast(incoming) {
   fresh.forEach(p => seenPostIds.add(p.id));
   const merged = [...fresh, ...globalFeedCache.posts];
   merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  globalFeedCache.posts = merged.slice(0, 10000);
+  globalFeedCache.posts = merged.slice(0, 500000);
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -2558,7 +2556,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           const merged = [...fresh, ...prev.posts];
           merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
           agentSourceCache.set(agentId, {
-            posts: merged.slice(0, 1500),
+            posts: merged.slice(0, 10000),
             lastFetch: Date.now(),
             totalSeen: prev.totalSeen + fresh.length,
             emoji, color,
@@ -2619,7 +2617,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         const merged2 = [...posts, ...prev.posts];
         merged2.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         agentSourceCache.set(agentId, {
-          posts: merged2.slice(0, 1500),
+          posts: merged2.slice(0, 10000),
           lastFetch: Date.now(),
           totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
           emoji, color,
