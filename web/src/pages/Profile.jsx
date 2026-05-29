@@ -9,6 +9,8 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+const SOCIAL_LOCKED = true; // flip to false when real OAuth credentials are ready
+
 const SOCIAL_PLATFORMS = [
   { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your network' },
   { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets matching your interests' },
@@ -317,7 +319,17 @@ export default function Profile() {
 
           {/* Connected Accounts */}
           <div className="card" id="social">
-            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
+              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Connected Accounts</h3>
+              {SOCIAL_LOCKED && (
+                <span style={{
+                  display:'inline-flex', alignItems:'center', gap:4,
+                  fontSize:'.7rem', fontWeight:700, color:'#94A3B8',
+                  background:'#F1F5F9', padding:'3px 8px', borderRadius:6,
+                  border:'1px solid var(--border)',
+                }}>🔒 Coming Soon</span>
+              )}
+            </div>
             <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
               Connect social platforms to pull personalised posts into your feed.
             </p>
@@ -360,7 +372,14 @@ export default function Profile() {
                         {isConnected ? '● Connected — posts appear in your feed' : platform.desc}
                       </div>
                     </div>
-                    {isConnected ? (
+                    {SOCIAL_LOCKED ? (
+                      <span style={{
+                        display:'flex', alignItems:'center', gap:4,
+                        fontSize:'.72rem', fontWeight:600, color:'#94A3B8',
+                        background:'#F1F5F9', padding:'4px 10px', borderRadius:6,
+                        border:'1px solid var(--border)',
+                      }}>🔒 Coming Soon</span>
+                    ) : isConnected ? (
                       <button
                         onClick={() => disconnectSocial(platform.id)}
                         style={{
