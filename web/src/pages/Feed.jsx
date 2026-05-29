@@ -61,7 +61,13 @@ const SOURCE_TABS = [
   { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
   { key: 'indiehackers', label: 'Indie Hackers',icon: '💡' },
   { key: 'hashnode',     label: 'Hashnode',     icon: '✍️' },
+  { key: 'twitter',      label: 'X (Twitter)',  icon: '𝕏',  pro: true },
+  { key: 'linkedin',     label: 'LinkedIn',     icon: '💼',  pro: true },
+  { key: 'instagram',    label: 'Instagram',    icon: '📸',  pro: true },
+  { key: 'facebook',     label: 'Facebook',     icon: '🔵',  pro: true },
 ];
+
+const PRO_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'devto', 'medium', 'youtube',
@@ -159,6 +165,61 @@ function VideoModal({ post, onClose }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Gate shown when a Pro social tab (Twitter, LinkedIn, etc.) is selected */
+function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
+  const meta = SOURCE_META[platform] || {};
+  return (
+    <div style={{ textAlign: 'center', padding: '60px 24px' }}>
+      <div style={{ fontSize: '3rem', marginBottom: 16 }}>{meta.icon || '🔒'}</div>
+      <div style={{ fontWeight: 800, fontSize: '1.25rem', marginBottom: 8 }}>
+        {meta.label} Live Feed
+      </div>
+      {!isPro ? (
+        <>
+          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 340, margin: '0 auto 24px' }}>
+            Stream your personalized {meta.label} feed in real time. This is a Pro feature — upgrade to unlock all social platforms.
+          </p>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#FEF3C7', color: '#92400E', fontSize: '.72rem', fontWeight: 700, padding: '4px 12px', borderRadius: 20, marginBottom: 20 }}>
+            🔒 PRO FEATURE
+          </div>
+          <div>
+            <button
+              onClick={onUpgrade}
+              style={{
+                padding: '12px 32px', borderRadius: 24, border: 'none',
+                background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff',
+                fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
+                boxShadow: '0 4px 16px #6366F155',
+              }}
+            >
+              Upgrade to Pro
+            </button>
+          </div>
+        </>
+      ) : !isConnected ? (
+        <>
+          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 340, margin: '0 auto 24px' }}>
+            Connect your {meta.label} account to stream your personalized live feed.
+          </p>
+          <div>
+            <button
+              onClick={onConnect}
+              style={{
+                padding: '12px 32px', borderRadius: 24, border: 'none',
+                background: meta.color || 'var(--primary)', color: '#fff',
+                fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
+                boxShadow: `0 4px 16px ${meta.color || '#6366F1'}55`,
+              }}
+            >
+              Connect {meta.label}
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -482,8 +543,13 @@ export default function Feed() {
     setSourceTab(key);
     setSearch('');
     setClientPage(1);
-    loadFeed(false, key === 'all' ? null : key);
-  }, [loadFeed]); // eslint-disable-line
+    const isPro = profile?.isPro;
+    const isConnected = !!connectedSocial?.[key];
+    // Pro social tabs only load if both Pro and connected; otherwise show the gate UI
+    if (!PRO_SOCIAL_TABS.has(key) || (isPro && isConnected)) {
+      loadFeed(false, key === 'all' ? null : key);
+    }
+  }, [loadFeed, profile, connectedSocial]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
@@ -759,6 +825,9 @@ export default function Feed() {
             >
               <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
               {tab.label}
+              {tab.pro && !profile?.isPro && (
+                <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#FEF3C7', color: '#92400E', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>PRO</span>
+              )}
             </button>
           );
         })}
@@ -778,8 +847,24 @@ export default function Feed() {
         </div>
       )}
 
-      {/* Unified feed view — same setup for All tab and every source tab */}
-      {loading ? (
+      {/* Pro social gate — shown when tab is Twitter/LinkedIn/Instagram/Facebook and not unlocked */}
+      {PRO_SOCIAL_TABS.has(sourceTab) && !(profile?.isPro && connectedSocial?.[sourceTab]) ? (
+        <SocialProGate
+          platform={sourceTab}
+          isPro={!!profile?.isPro}
+          isConnected={!!connectedSocial?.[sourceTab]}
+          onUpgrade={async () => {
+            try {
+              await client.post('/user/plan/upgrade');
+              window.location.reload();
+            } catch {}
+          }}
+          onConnect={() => {
+            const base = import.meta.env.VITE_API_URL || '/api';
+            window.location.href = `${base}/auth/social/${sourceTab}/start`;
+          }}
+        />
+      ) : loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
           {sourceTab !== 'all' && (

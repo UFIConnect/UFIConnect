@@ -3155,6 +3155,8 @@ function fullProfile(user) {
     links: user.links || {},
     roleSettings: user.roleSettings || {},
     connectedGroupsByPlatform,
+    plan: user.plan || 'free',
+    isPro: (user.plan || 'free') === 'pro',
   };
 }
 
@@ -3180,6 +3182,7 @@ function dbRowToMemUser(row) {
     links: row.links || {},
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
+    plan: row.plan || 'free',
   };
 }
 
@@ -3223,6 +3226,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_tokens JSONB DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -3505,7 +3509,7 @@ app.post('/auth/register', async (req, res) => {
 
   // In-memory fallback
   if (users.find((u) => u.email === emailLc)) return res.status(409).json({ message: 'Email already registered.' });
-  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {} };
+  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {}, plan: 'free' };
   users.push(newUser);
   const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
   res.status(201).json({ token, profile: fullProfile(newUser) });
@@ -3737,6 +3741,17 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   res.json({ profile: fullProfile(user), autoJoined: suggested });
 });
 
+// ─── Plan upgrade (stub — wire real payment before going live) ───────────────────
+app.post('/user/plan/upgrade', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  user.plan = 'pro';
+  if (db.isConnected() && isDBId(user.id)) {
+    await db.query('UPDATE users SET plan=$1 WHERE id=$2', ['pro', user.id]).catch(e => console.error('upgrade plan:', e.message));
+  }
+  res.json({ plan: 'pro', isPro: true });
+});
+
 // ─── Delete account ─────────────────────────────────────────────────────────────
 app.delete('/profile', authenticate, async (req, res) => {
   const uid = req.user.id;
@@ -3932,6 +3947,27 @@ app.get('/feed', authenticate, async (req, res) => {
     user?.title || '', user?.organization || '',
     sourceFilter
   ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[], indeed:[], producthunt:[], techcrunch:[], theverge:[], indiehackers:[], hashnode:[], bluesky:[] }; });
+
+  // ── Pro social tabs (Twitter, LinkedIn, Instagram, Facebook) ─────────────────
+  const PRO_SOCIAL_SOURCES = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+  if (sourceFilter && PRO_SOCIAL_SOURCES.has(sourceFilter)) {
+    if (!user || (user.plan || 'free') !== 'pro') {
+      return res.json({ locked: true, reason: 'pro', source: sourceFilter, posts: [] });
+    }
+    const token = user.socialTokens?.[sourceFilter];
+    if (!token) {
+      return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
+    }
+    const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
+    const socialKws = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean).slice(0, 5);
+    const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
+    const rawPosts = (await Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])))).flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    const seen = new Set();
+    const result = rawPosts
+      .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    return res.json({ posts: result, source: sourceFilter, hasMore: false });
+  }
 
   // ── Source-tab: always serve worker cache + live fetch, newest-first ────────
   if (sourceFilter) {
