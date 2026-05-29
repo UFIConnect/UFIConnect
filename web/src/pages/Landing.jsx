@@ -99,10 +99,10 @@ export default function Landing() {
               No ads. No noise. Just your career.
             </div>
             <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-              Professional networking built for every kind of ambition
+              UFIConnect — Professional Networking for Every Career
             </h1>
             <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '680px', margin: '0 auto 36px' }}>
-              Pick your role during signup and get a personalized feed, curated communities, and relevant opportunities — instantly. No algorithm gaming, no corporate ads.
+              UFI (UFIConnect) gives you a personalized feed, curated communities, and real opportunities — the moment you sign up. No algorithm gaming, no corporate ads.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
               <Link to="/register"
@@ -148,10 +148,10 @@ export default function Landing() {
           <section id="features" style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
             <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
               <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '10px' }}>
-                Everything you need to grow professionally
+                What makes UFIConnect different?
               </h2>
               <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
-                One platform. Your feed, your network, your opportunities — personalized around who you are and where you're going.
+                UFI is one platform for your feed, your network, and your opportunities — personalized around who you are and where you're going.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
                 {FEATURES.map(({ icon, title, desc }) => (
@@ -205,6 +205,42 @@ export default function Landing() {
             </div>
           </section>
 
+          {/* FAQ — visible text helps Google rank for "UFI" */}
+          <section style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ maxWidth: '760px', margin: '0 auto' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '40px' }}>
+                Frequently asked about UFI
+              </h2>
+              {[
+                {
+                  q: 'What is UFIConnect?',
+                  a: 'UFIConnect (commonly called UFI) is a free professional networking platform for engineers, designers, founders, creators, and professionals across every industry. It offers a personalised feed, 80+ communities, real job listings, and direct messaging — with no ads.',
+                },
+                {
+                  q: 'What does UFI stand for?',
+                  a: 'UFI is the short name for UFIConnect, the professional network. The platform is available at uficonnect.org and uficonnect.pro.',
+                },
+                {
+                  q: 'Is UFIConnect free?',
+                  a: 'Yes — UFI is completely free to join and use. No subscriptions, no ads, no paywalls. Register at uficonnect.org to get started.',
+                },
+                {
+                  q: 'How is UFI different from LinkedIn?',
+                  a: 'UFIConnect has zero ads and zero sponsored posts. Your feed is ranked purely by your role and interests, not by who paid the most. UFI also aggregates content from Reddit, GitHub, HackerNews, YouTube, and 15+ other sources in one place.',
+                },
+                {
+                  q: 'Who is UFI for?',
+                  a: 'UFIConnect is built for engineers, software developers, designers, founders, product managers, marketers, data scientists, healthcare professionals, educators, athletes, musicians, and anyone building a professional career.',
+                },
+              ].map(({ q, a }) => (
+                <div key={q} style={{ marginBottom: 24, padding: '20px 24px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--surface)' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: '700', marginBottom: 8 }}>{q}</h3>
+                  <p style={{ fontSize: '.9rem', color: 'var(--muted)', lineHeight: 1.7, margin: 0 }}>{a}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
           {/* Bottom CTA */}
           <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
@@ -225,7 +261,12 @@ export default function Landing() {
 
         {/* Footer */}
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-          <p>© 2025 UFIConnect. A cleaner way to network and grow.</p>
+          <p style={{ marginBottom: 8 }}>© 2025 UFIConnect (UFI). A cleaner way to network and grow.</p>
+          <p>
+            <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
+            {' · '}
+            <a href="mailto:support@uficonnect.org" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>support@uficonnect.org</a>
+          </p>
         </footer>
       </div>
     </>
