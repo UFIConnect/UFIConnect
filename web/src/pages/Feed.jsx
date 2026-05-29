@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -194,7 +195,10 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
                 background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff',
                 fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
                 boxShadow: '0 4px 16px #6366F155',
+                transition: 'opacity .15s, transform .15s',
               }}
+              onMouseOver={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+              onMouseOut={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
             >
               Upgrade to Pro
             </button>
@@ -213,7 +217,10 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
                 background: meta.color || 'var(--primary)', color: '#fff',
                 fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
                 boxShadow: `0 4px 16px ${meta.color || '#6366F1'}55`,
+                transition: 'opacity .15s, transform .15s',
               }}
+              onMouseOver={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+              onMouseOut={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
             >
               🔒 Connect {meta.label}
             </button>
@@ -253,7 +260,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       style={{
         position: 'absolute', top: '100%', right: 0, zIndex: 500, marginTop: 6,
         background: 'var(--surface)', border: '1.5px solid var(--border)',
-        borderRadius: 16, padding: '18px 20px', width: 320,
+        borderRadius: 16, padding: '18px 20px', width: 'min(320px, 92vw)',
         boxShadow: '0 8px 32px rgba(0,0,0,.12)',
       }}
     >
@@ -533,8 +540,6 @@ export default function Feed() {
       setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
-      setLivePending([]);
-      setLiveCount(0);
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
@@ -715,6 +720,10 @@ export default function Feed() {
 
   return (
     <Layout>
+      <Helmet>
+        <title>Feed | UFIConnect</title>
+        <meta name="description" content="Your live professional feed — top stories from Reddit, GitHub, HN, YouTube, DEV, and 17+ more sources, filtered to your interests." />
+      </Helmet>
       {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
 
       <div className="page-header">
@@ -738,7 +747,7 @@ export default function Feed() {
 
 
       {/* Toolbar: search + filter + refresh */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
         {/* Search */}
         <div style={{ flex: 1, position: 'relative' }}>
           <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.85rem', opacity: 0.4, pointerEvents: 'none' }}>🔍</span>
@@ -791,8 +800,10 @@ export default function Feed() {
             padding: '9px 14px', borderRadius: 22, border: '1.5px solid var(--border)',
             background: 'var(--surface)', color: 'var(--text)',
             cursor: refreshing ? 'default' : 'pointer', fontWeight: 600, fontSize: '.875rem', whiteSpace: 'nowrap',
-            opacity: refreshing ? 0.6 : 1,
+            opacity: refreshing ? 0.6 : 1, transition: 'background .15s, border-color .15s',
           }}
+          onMouseOver={e => { if (!refreshing) { e.currentTarget.style.background = 'var(--card)'; e.currentTarget.style.borderColor = 'var(--primary)'; } }}
+          onMouseOut={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
           <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↺</span>
           {refreshing ? 'Updating…' : 'Refresh'}

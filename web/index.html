@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-192.png" />
+    <meta name="application-name" content="UFIConnect" />
     <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#6366F1" />
@@ -17,7 +18,7 @@
     <meta name="description" content="UFIConnect is a clean, focused professional network for engineers, designers, founders and creatives. Discover communities, live job listings, and opportunities — all tailored to your role." />
     <meta name="keywords" content="professional network, remote jobs, tech community, engineers, designers, founders, job listings, networking platform, career opportunities" />
     <meta name="author" content="UFIConnect" />
-    <link rel="canonical" href="https://uficonnect.org" />
+    <link rel="canonical" href="https://uficonnect.org/" />
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
@@ -87,10 +88,13 @@
       }(window.location));
     </script>
 
+    <link rel="preload" href="/favicon.svg" as="image" type="image/svg+xml" />
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" /></noscript>
   </head>
   <body>
     <div id="root"></div>

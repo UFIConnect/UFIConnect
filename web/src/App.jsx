@@ -1,23 +1,24 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 
-import Login            from './pages/Login';
-import Register         from './pages/Register';
-import Landing          from './pages/Landing';
-import Onboarding       from './pages/Onboarding';
-import Feed             from './pages/Feed';
-import Groups           from './pages/Groups';
-import GroupDetail      from './pages/GroupDetail';
-import Opportunities    from './pages/Opportunities';
-import Messages         from './pages/Messages';
-import Conversation     from './pages/Conversation';
-import Profile          from './pages/Profile';
-import Post             from './pages/Post';
-import Search           from './pages/Search';
-import PublicProfile    from './pages/PublicProfile';
-import Settings          from './pages/Settings';
-import AgentDashboard    from './pages/AgentDashboard';
-import PrivacyPolicy     from './pages/PrivacyPolicy';
+const Login          = lazy(() => import('./pages/Login'));
+const Register       = lazy(() => import('./pages/Register'));
+const Landing        = lazy(() => import('./pages/Landing'));
+const Onboarding     = lazy(() => import('./pages/Onboarding'));
+const Feed           = lazy(() => import('./pages/Feed'));
+const Groups         = lazy(() => import('./pages/Groups'));
+const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
+const Opportunities  = lazy(() => import('./pages/Opportunities'));
+const Messages       = lazy(() => import('./pages/Messages'));
+const Conversation   = lazy(() => import('./pages/Conversation'));
+const Profile        = lazy(() => import('./pages/Profile'));
+const Post           = lazy(() => import('./pages/Post'));
+const Search         = lazy(() => import('./pages/Search'));
+const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
+const Settings       = lazy(() => import('./pages/Settings'));
+const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
+const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -42,6 +43,7 @@ function HomeRoute() {
 
 export default function App() {
   return (
+    <Suspense fallback={<div className="splash">Loading…</div>}>
     <Routes>
       {/* Public */}
       <Route path="/login"    element={<Login />} />
@@ -95,5 +97,6 @@ export default function App() {
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   );
 }

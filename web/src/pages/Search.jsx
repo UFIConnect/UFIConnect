@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -157,6 +158,10 @@ export default function Search() {
 
   return (
     <Layout>
+      <Helmet>
+        <title>Find People & Communities | UFIConnect</title>
+        <meta name="description" content="Search professionals by role, skill, or organization. Discover 160+ communities across tech, design, startups, and more." />
+      </Helmet>
       <div className="page-header">
         <h1 className="page-title">Search</h1>
         <p className="page-subtitle">
@@ -330,15 +335,15 @@ export default function Search() {
 
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {user.name}
                             {user.isSelf && (
-                              <span style={{ fontSize: '.68rem', fontWeight: 700, background: 'var(--primary-light)', color: 'var(--primary)', padding: '1px 8px', borderRadius: 10 }}>You</span>
+                              <span style={{ fontSize: '.68rem', fontWeight: 700, background: 'var(--primary-light)', color: 'var(--primary)', padding: '1px 8px', borderRadius: 10, flexShrink: 0 }}>You</span>
                             )}
                           </div>
                           {user.title && (
-                            <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>
+                            <div style={{ fontSize: '.8rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {user.title}{user.organization ? ` · ${user.organization}` : ''}
                             </div>
                           )}
@@ -462,7 +467,7 @@ export default function Search() {
                         }}>{group.emoji || catIcon}</div>
 
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: '.92rem' }}>{group.name}</div>
+                          <div style={{ fontWeight: 700, fontSize: '.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</div>
                           <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 1 }}>
                             {group.category && (
                               <span style={{ marginRight: 8 }}>{catIcon} {group.category}</span>

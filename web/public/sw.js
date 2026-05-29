@@ -1,9 +1,13 @@
-const CACHE_NAME = 'uficonnect-v2';
+const CACHE_NAME = 'uficonnect-v3';
 const API_ORIGIN = 'https://uficonnect-api.onrender.com';
 
 const SHELL_ASSETS = [
   '/',
   '/manifest.json',
+  '/favicon.svg',
+  '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
