@@ -1815,7 +1815,8 @@ async function fetchArxivByKeyword(keyword) {
 // ─── Generic RSS parser + helpers (shared by all RSS-based source agents) ────
 function parseRSSItems(xml) {
   const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/g;
+  // Handle both RSS <item> and Atom <entry>
+  const re = /<(?:item|entry)>([\s\S]*?)<\/(?:item|entry)>/g;
   let m;
   while ((m = re.exec(xml)) !== null) {
     const blk = m[1];
@@ -1823,15 +1824,16 @@ function parseRSSItems(xml) {
       const r = new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`, 'i');
       return (blk.match(r)?.[1] || '').replace(/<[^>]+>/g, '').trim();
     };
+    // Atom <link href="..."/> vs RSS <link>url</link>
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
     if (!title || !link) continue;
     items.push({
       title,
       link:    link.replace(/^<!\[CDATA\[|\]\]>$/g, '').trim(),
-      desc:    field('description').slice(0, 800),
-      pubDate: field('pubDate') || field('updated') || new Date().toISOString(),
-      author:  field('author') || field('dc:creator') || '',
+      desc:    (field('description') || field('summary') || field('content')).slice(0, 800),
+      pubDate: field('pubDate') || field('published') || field('updated') || new Date().toISOString(),
+      author:  field('author') || field('dc:creator') || field('name') || '',
     });
   }
   return items;
@@ -1868,16 +1870,40 @@ async function fetchIndeedJobs(keyword) {
   const key = `indeed_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
+  // Primary: Remotive.com public API (free JSON, no auth)
   try {
-    const xml   = await fetchText(`https://rss.indeed.com/rss?q=${encodeURIComponent(keyword)}&sort=date&limit=15`);
+    const data = await fetchJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keyword)}&limit=15`);
+    const jobs = data?.jobs || [];
+    if (jobs.length) {
+      const posts = jobs.map(j => ({
+        id:          `indeed_${Buffer.from(String(j.id || j.url || Date.now())).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
+        authorId:    'indeed_jobs',
+        groupId:     'ext_indeed',
+        content:     (j.description || j.company_name || '').replace(/<[^>]+>/g,' ').slice(0,400),
+        title:       j.title,
+        source:      'indeed', sourceLabel: 'Indeed',
+        sourceUrl:   j.url,
+        topic:       keyword,
+        author:      { id: 'indeed_jobs', name: j.company_name || 'Company', title: 'Employer', organization: j.company_name },
+        likes: [], likesCount: 0, commentsCount: 0,
+        createdAt:   j.publication_date ? new Date(j.publication_date).toISOString() : new Date().toISOString(),
+        isExternal:  true,
+        mediaUrl:    j.company_logo_url || null,
+        mediaType:   j.company_logo_url ? 'image' : null,
+        group:       { id: 'ext_indeed', name: 'Remote Jobs', category: 'Opportunities', externalUrl: 'https://remotive.com' },
+      }));
+      setCached(key, posts);
+      return posts;
+    }
+  } catch (e) { console.warn(`Remotive "${keyword}":`, e.message); }
+  // Fallback: We Work Remotely RSS
+  try {
+    const xml = await fetchText('https://weworkremotely.com/remote-jobs.rss');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Indeed Jobs', 'Opportunities', keyword));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Indeed "${keyword}":`, e.message);
-    return getCached(key) || [];
-  }
+    const posts = filterAndSlice(items, keyword, 8).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
+    if (posts.length) { setCached(key, posts); return posts; }
+  } catch (e) { console.warn(`WWR "${keyword}":`, e.message); }
+  return getCached(key) || [];
 }
 
 // ─── Product Hunt: latest launches, filtered by keyword ──────────────────────
@@ -1936,47 +1962,97 @@ async function fetchIndieHackers(keyword) {
   const key = `ih_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  try {
-    const xml   = await fetchText('https://www.indiehackers.com/feed.rss');
-    const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 6).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Indie Hackers "${keyword}":`, e.message);
-    return getCached(key) || [];
+  const IH_RSS_URLS = [
+    'https://www.indiehackers.com/feed.rss',
+    'https://www.indiehackers.com/posts.rss',
+  ];
+  for (const url of IH_RSS_URLS) {
+    try {
+      const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const items = parseRSSItems(xml);
+      if (!items.length) continue;
+      const posts = filterAndSlice(items, keyword, 8).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
+      setCached(key, posts);
+      return posts;
+    } catch { /* try next */ }
   }
+  // Fallback: HN Algolia search for IH content
+  try {
+    const q = encodeURIComponent(`indiehackers ${keyword}`);
+    const data = await fetchJSON(`https://hn.algolia.com/api/v1/search_by_date?query=${q}&hitsPerPage=10&tags=story`);
+    const posts = (data?.hits || []).filter(h => h.title && h.url).map(h => ({
+      id:          `indiehackers_hn_${h.objectID}`,
+      authorId:    `ih_${h.author}`,
+      groupId:     'ext_indiehackers',
+      content:     h.title,
+      title:       h.title,
+      source:      'indiehackers', sourceLabel: 'Indie Hackers',
+      sourceUrl:   h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+      topic:       keyword,
+      author:      { id: `ih_${h.author}`, name: h.author, title: 'Indie Hacker', organization: 'Indie Hackers' },
+      likes: [], likesCount: h.points || 0, commentsCount: h.num_comments || 0,
+      createdAt:   h.created_at || new Date().toISOString(),
+      isExternal:  true,
+      group:       { id: 'ext_indiehackers', name: 'Indie Hackers', category: 'Startups', externalUrl: 'https://www.indiehackers.com' },
+    }));
+    if (posts.length) { setCached(key, posts); return posts; }
+  } catch (e) { console.warn(`IH HN fallback "${keyword}":`, e.message); }
+  return getCached(key) || [];
 }
 
 // ─── Hashnode: developer articles via GraphQL (no auth required) ──────────────
+const HASHNODE_TAG_MAP = {
+  'AI & Machine Learning': 'machine-learning', 'Generative AI': 'ai', 'LLMs & Chatbots': 'ai',
+  'Data Science': 'data-science', 'Frontend Dev': 'frontend', 'Backend Dev': 'backend',
+  'Mobile Dev': 'mobile', 'Cloud & DevOps': 'devops', 'Cybersecurity': 'security',
+  'Web3 / Crypto': 'web3', 'Game Dev': 'game-development', 'No-Code / Low-Code': 'nocode',
+  'SaaS': 'saas', 'Career Growth': 'career', 'Productivity': 'productivity',
+  'Python': 'python', 'JavaScript': 'javascript', 'TypeScript': 'typescript',
+  'React': 'reactjs', 'Node': 'node', 'Rust': 'rust', 'Go': 'golang',
+  'Docker & Containers': 'docker', 'Kubernetes': 'kubernetes', 'GraphQL': 'graphql',
+  'Open Source': 'opensource', 'Side Projects': 'showdev', 'Developer Tools': 'programming',
+  'Architecture': 'software-architecture', 'Testing & QA': 'testing',
+};
+
 async function fetchHashnode(keyword) {
   const key = `hashnode_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
+  // Primary: tag RSS feed (reliable, no auth)
+  const tag = HASHNODE_TAG_MAP[keyword] || keyword.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-');
+  try {
+    const xml = await fetchText(`https://hashnode.com/n/${tag}/rss.xml`, { 'User-Agent': 'Mozilla/5.0 Chrome/124' });
+    const items = parseRSSItems(xml);
+    if (items.length) {
+      const posts = items.slice(0, 10).map(it => rssPost(it, 'hashnode', 'Hashnode', 'ext_hashnode', 'Hashnode', 'Engineering', keyword));
+      setCached(key, posts);
+      return posts;
+    }
+  } catch (e) { console.warn(`Hashnode RSS "${keyword}":`, e.message); }
+  // Fallback: GraphQL v2 search
   try {
     const body = JSON.stringify({
-      query: `query($q:String!){searchPostsOfPublication(input:{query:$q,first:10}){edges{node{title brief url publishedAt author{name username}}}}}`,
+      query: `query($q:String!){searchPostsOfPublication(input:{query:$q,first:10,publicationId:""}){edges{node{title brief url publishedAt author{name username}}}}}`,
       variables: { q: keyword },
     });
     const raw = await new Promise((resolve, reject) => {
       const req = https.request(
         { hostname: 'gql.hashnode.com', path: '/', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'Mozilla/5.0' } },
         (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
       );
       req.on('error', reject);
-      req.setTimeout(9000, () => { req.destroy(); reject(new Error('timeout')); });
+      req.setTimeout(12000, () => { req.destroy(); reject(new Error('timeout')); });
       req.write(body); req.end();
     });
     const edges = JSON.parse(raw)?.data?.searchPostsOfPublication?.edges || [];
     const posts = edges.map(({ node: n }) => ({
-      id:          `hashnode_${Buffer.from(n.url || keyword).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
+      id:          `hashnode_${Buffer.from(n.url || keyword + Date.now()).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
       authorId:    `hashnode_${n.author?.username || 'anon'}`,
       groupId:     'ext_hashnode',
       content:     n.brief || n.title,
       title:       n.title,
-      source:      'hashnode',
-      sourceLabel: 'Hashnode',
+      source:      'hashnode', sourceLabel: 'Hashnode',
       sourceUrl:   n.url,
       topic:       keyword,
       author:      { id: `hashnode_${n.author?.username}`, name: n.author?.name || 'Hashnode', title: 'Developer', organization: 'Hashnode' },
@@ -1985,12 +2061,9 @@ async function fetchHashnode(keyword) {
       isExternal:  true,
       group:       { id: 'ext_hashnode', name: 'Hashnode', category: 'Engineering', externalUrl: 'https://hashnode.com' },
     }));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Hashnode "${keyword}":`, e.message);
-    return getCached(key) || [];
-  }
+    if (posts.length) { setCached(key, posts); return posts; }
+  } catch (e) { console.warn(`Hashnode GQL "${keyword}":`, e.message); }
+  return getCached(key) || [];
 }
 
 // ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
