@@ -18,7 +18,7 @@ function initials(name = '') {
 
 const SOURCE_META = {
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
-  hackernews:    { label: 'Hacker News',   color: '#FF6600', icon: '🗞' },
+  hackernews:    { label: 'News',          color: '#FF6600', icon: '🗞' },
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
   linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
   twitter:       { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
@@ -454,8 +454,12 @@ export default function Feed() {
     try {
       const { data } = await client.get(manual ? '/feed?bust=1' : '/feed');
       const incoming = data.posts || [];
-      if (manual) knownIds.current = new Set(incoming.map(p => p.id));
-      else incoming.forEach(p => knownIds.current.add(p.id));
+      if (manual) {
+        knownIds.current = new Set(incoming.map(p => p.id));
+        sourceTabCache.current = {}; // bust per-source cache so next tab click re-fetches
+      } else {
+        incoming.forEach(p => knownIds.current.add(p.id));
+      }
       setPosts(incoming);
       setClientPage(1);
       setRemotePage(2);
@@ -467,19 +471,23 @@ export default function Feed() {
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
+  const SOURCE_TAB_TTL = 5 * 60 * 1000; // 5 minutes
+
   const loadSourceTab = useCallback(async (key) => {
     setSourceTab(key);
     if (key === 'all') return;
-    if (sourceTabCache.current[key]) return; // already loaded
+    const cached = sourceTabCache.current[key];
+    // Skip fetch if cached AND less than 5 minutes old
+    if (cached && (Date.now() - (cached.fetchedAt || 0)) < SOURCE_TAB_TTL) return;
     setSourceTabLoading(prev => ({ ...prev, [key]: true }));
     try {
       const { data } = await client.get(`/feed?source=${encodeURIComponent(key)}&page=1`);
-      sourceTabCache.current[key] = data.posts || [];
+      sourceTabCache.current[key] = { posts: data.posts || [], fetchedAt: Date.now() };
       sourceTabPage.current[key]  = 1;
       setSourceTabHasMore(prev => ({ ...prev, [key]: data.hasMore ?? false }));
     } catch (e) {
       console.error(e);
-      sourceTabCache.current[key] = [];
+      sourceTabCache.current[key] = { posts: [], fetchedAt: Date.now() };
     } finally {
       setSourceTabLoading(prev => ({ ...prev, [key]: false }));
     }
@@ -491,9 +499,10 @@ export default function Feed() {
     try {
       const nextPage = (sourceTabPage.current[sourceTab] || 1) + 1;
       const { data } = await client.get(`/feed?source=${encodeURIComponent(sourceTab)}&page=${nextPage}`);
-      const existing = new Set((sourceTabCache.current[sourceTab] || []).map(p => p.id));
-      const fresh    = (data.posts || []).filter(p => !existing.has(p.id));
-      sourceTabCache.current[sourceTab] = [...(sourceTabCache.current[sourceTab] || []), ...fresh];
+      const prevPosts = sourceTabCache.current[sourceTab]?.posts || [];
+      const existing  = new Set(prevPosts.map(p => p.id));
+      const fresh     = (data.posts || []).filter(p => !existing.has(p.id));
+      sourceTabCache.current[sourceTab] = { posts: [...prevPosts, ...fresh], fetchedAt: sourceTabCache.current[sourceTab]?.fetchedAt || Date.now() };
       sourceTabPage.current[sourceTab]  = nextPage;
       setSourceTabHasMore(prev => ({ ...prev, [sourceTab]: data.hasMore ?? false }));
       setSourceTabLoading(prev => ({ ...prev, _tick: Date.now() })); // trigger re-compute
@@ -667,7 +676,7 @@ export default function Feed() {
   // Source-tab view: apply same search/sort/time filters to the cached source posts
   const sourceTabPosts = useMemo(() => {
     if (sourceTab === 'all') return [];
-    let result = [...(sourceTabCache.current[sourceTab] || [])];
+    let result = [...(sourceTabCache.current[sourceTab]?.posts || [])];
     const q = search.trim().toLowerCase();
     if (q) result = result.filter(p =>
       (p.title || '').toLowerCase().includes(q) ||

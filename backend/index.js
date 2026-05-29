@@ -1659,6 +1659,14 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
   const devtoTags   = [...new Set([...interests.map(i => INTEREST_TO_DEVTO_TAG[i]).filter(Boolean), ...skillDevtoTags])];
   const mediumTags  = [...new Set(interests.map(i => INTEREST_TO_MEDIUM_TAG[i]).filter(Boolean))];
 
+  // Fallback defaults so tag-based sources always have something when user has no interests
+  const effectiveDevtoTags  = devtoTags.length  > 0 ? devtoTags  : ['javascript','webdev','programming','react','python'];
+  const effectiveSoTags     = soTags.length     > 0 ? soTags     : ['javascript','python','node.js','reactjs','git'];
+  const effectiveMastoTags  = mastoTags.length  > 0 ? mastoTags  : ['programming','webdev','javascript','foss'];
+  const effectiveLobTags    = lobTags.length    > 0 ? lobTags    : ['programming','web','javascript'];
+  const effectiveArxivKws   = arxivKws.length   > 0 ? arxivKws   : ['machine learning','neural networks','deep learning'];
+  const effectiveMediumTags = mediumTags.length > 0 ? mediumTags : ['programming','javascript','startup','technology'];
+
   // Only run the fetcher(s) matching the requested source; all others resolve immediately
   const run = (name) => !sourceFilter || sourceFilter === name;
 
@@ -1671,12 +1679,12 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
     run('github')        ? Promise.all(topics.map(kw => fetchGitHubByKeyword(kw))).catch(() => []) : [],
     run('youtube')       ? Promise.all(topics.map(kw => fetchYouTubeByKeyword(kw))).catch(() => []) : [],
-    run('devto')         ? Promise.all(devtoTags.map(t => fetchDevToByTag(t))).catch(() => [])      : [],
-    run('medium')        ? Promise.all(mediumTags.map(t => fetchMediumByTag(t))).catch(() => [])    : [],
-    run('stackoverflow') ? Promise.all(soTags.map(t => fetchStackOverflowByTag(t))).catch(() => []) : [],
-    run('mastodon')      ? Promise.all(mastoTags.map(t => fetchMastodonByTag(t))).catch(() => [])   : [],
-    run('lobsters')      ? Promise.all(lobTags.map(t => fetchLobstersByTag(t))).catch(() => [])     : [],
-    run('arxiv')         ? Promise.all(arxivKws.map(k => fetchArxivByKeyword(k))).catch(() => [])   : [],
+    run('devto')         ? Promise.all(effectiveDevtoTags.slice(0,4).map(t => fetchDevToByTag(t))).catch(() => [])        : [],
+    run('medium')        ? Promise.all(effectiveMediumTags.slice(0,4).map(t => fetchMediumByTag(t))).catch(() => [])      : [],
+    run('stackoverflow') ? Promise.all(effectiveSoTags.slice(0,4).map(t => fetchStackOverflowByTag(t))).catch(() => [])   : [],
+    run('mastodon')      ? Promise.all(effectiveMastoTags.slice(0,3).map(t => fetchMastodonByTag(t))).catch(() => [])     : [],
+    run('lobsters')      ? Promise.all(effectiveLobTags.slice(0,3).map(t => fetchLobstersByTag(t))).catch(() => [])       : [],
+    run('arxiv')         ? Promise.all(effectiveArxivKws.slice(0,3).map(k => fetchArxivByKeyword(k))).catch(() => [])     : [],
   ]);
 
   return {
@@ -3512,24 +3520,44 @@ app.get('/feed', authenticate, async (req, res) => {
     sourceFilter
   ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[] }; });
 
-  // ── Source-tab page 1: live + agent cache + global cache + DB ────────────
+  // ── Source-tab page 1: cache-first (agent cache + global cache + DB), live only if sparse ──
   if (sourceFilter) {
-    const hnKeyMap = { hackernews: 'hn' };
-    const liveKey  = hnKeyMap[sourceFilter] || sourceFilter;
-    const liveArr  = (liveResult[liveKey] || []).map(p => mapExternalPost(p, sourceFilter));
-    savePostsToDB(liveArr).catch(() => {});
+    const hnKeyMap  = { hackernews: 'hn' };
+    const agentKey  = hnKeyMap[sourceFilter] || sourceFilter;
 
+    // 1. Agent cache — continuously refreshed by background workers
+    const agentCacheArr = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
+    // 2. Global feed cache filtered by source
+    const cacheFiltered = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+    // 3. DB
     const userTopics = [
       ...(prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean),
       ...(user?.skills || []).map(s => (s && typeof s === 'string') ? s.trim() : '').filter(s => s.length > 1).slice(0, 4),
     ];
-    const dbFiltered    = (await getPostsFromDB(userTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
-    const agentCacheArr = (agentSourceCache.get(liveKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
-    const cacheFiltered = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+    const dbTopics = userTopics.length > 0 ? userTopics : ['technology', 'programming', 'startup'];
+    const dbFiltered = (await getPostsFromDB(dbTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+
+    const seenFast = new Set();
+    const fastPosts = [...agentCacheArr, ...cacheFiltered, ...dbFiltered].filter(p => {
+      if (!p.id || seenFast.has(p.id)) return false;
+      seenFast.add(p.id);
+      return true;
+    });
+    fastPosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    // If we have enough cached posts, return immediately — no live API call needed
+    if (fastPosts.length >= 8) {
+      return res.json({ posts: fastPosts, source: sourceFilter, hasMore: true, page: 1 });
+    }
+
+    // Cache is sparse (cold start or rare source) — supplement with a live fetch
+    const liveKey  = agentKey;
+    const liveArr  = (liveResult[liveKey] || []).map(p => mapExternalPost(p, sourceFilter));
+    savePostsToDB(liveArr).catch(() => {});
 
     const seen = new Set();
-    const sourcePosts = [...liveArr, ...agentCacheArr, ...dbFiltered, ...cacheFiltered].filter(p => {
-      if (seen.has(p.id)) return false;
+    const sourcePosts = [...liveArr, ...fastPosts].filter(p => {
+      if (!p.id || seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
     });
