@@ -709,7 +709,7 @@ export default function Feed() {
             <FilterPanel
               filters={filters}
               onChange={f => { setFilters(f); setClientPage(1); }}
-              sources={activeSources}
+              sources={ALL_FILTER_SOURCES}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
             />
