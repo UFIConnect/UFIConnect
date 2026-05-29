@@ -318,92 +318,60 @@ export default function Profile() {
           </div>
 
           {/* Connected Accounts */}
-          <div className="card" id="social">
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:4 }}>
-              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Connected Accounts</h3>
-              {SOCIAL_LOCKED && (
-                <span style={{
-                  display:'inline-flex', alignItems:'center', gap:4,
-                  fontSize:'.7rem', fontWeight:700, color:'#94A3B8',
-                  background:'#F1F5F9', padding:'3px 8px', borderRadius:6,
-                  border:'1px solid var(--border)',
-                }}>🔒 Coming Soon</span>
-              )}
-            </div>
+          <div className="card" id="social" style={{ position:'relative', overflow:'hidden' }}>
+            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
             <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
               Connect social platforms to pull personalised posts into your feed.
             </p>
 
-            {socialFlash && (
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {SOCIAL_PLATFORMS.map(platform => (
+                <div key={platform.id} style={{
+                  display:'flex', alignItems:'center', gap:12,
+                  padding:'10px 14px', borderRadius:10,
+                  border:'1.5px solid var(--border)',
+                  background:'var(--surface)',
+                }}>
+                  <span style={{
+                    width:36, height:36, borderRadius:9, flexShrink:0,
+                    background: platform.color + '18',
+                    border:`1.5px solid ${platform.color}33`,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:'1.1rem',
+                  }}>{platform.emoji}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</div>
+                    <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
+                  </div>
+                  <div style={{
+                    width:70, height:28, borderRadius:7,
+                    background:'var(--border)', opacity:.5,
+                  }} />
+                </div>
+              ))}
+            </div>
+
+            {/* Blur + lock overlay */}
+            {SOCIAL_LOCKED && (
               <div style={{
-                padding:'10px 14px', borderRadius:8, marginBottom:14, fontSize:'.82rem', fontWeight:600,
-                background: socialFlash.type === 'success' ? '#ECFDF5' : '#FEF2F2',
-                color:      socialFlash.type === 'success' ? '#059669'  : '#DC2626',
-                border:     `1px solid ${socialFlash.type === 'success' ? '#6EE7B7' : '#FECACA'}`,
+                position:'absolute', inset:0,
+                backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
+                background:'rgba(255,255,255,0.55)',
+                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                gap:10, borderRadius:'inherit',
               }}>
-                {socialFlash.type === 'success'
-                  ? `✅ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name || socialFlash.platform} connected successfully`
-                  : `❌ Failed to connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name || socialFlash.platform} — try again`}
+                <div style={{
+                  width:48, height:48, borderRadius:'50%',
+                  background:'var(--surface)', border:'1.5px solid var(--border)',
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:'1.4rem', boxShadow:'0 2px 12px rgba(0,0,0,.08)',
+                }}>🔒</div>
+                <div style={{ fontWeight:700, fontSize:'.9rem', color:'var(--text)' }}>Coming Soon</div>
+                <div style={{ fontSize:'.75rem', color:'var(--muted)', textAlign:'center', maxWidth:220, lineHeight:1.5 }}>
+                  Social account connections are being set up.
+                </div>
               </div>
             )}
-
-            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              {SOCIAL_PLATFORMS.map(platform => {
-                const isConnected = !!connectedSocial[platform.id];
-                const isConnecting = socialConnecting === platform.id;
-                return (
-                  <div key={platform.id} style={{
-                    display:'flex', alignItems:'center', gap:12,
-                    padding:'10px 14px', borderRadius:10,
-                    border:`1.5px solid ${isConnected ? platform.color + '44' : 'var(--border)'}`,
-                    background: isConnected ? platform.color + '08' : 'var(--surface)',
-                    transition:'all .2s',
-                  }}>
-                    <span style={{
-                      width:36, height:36, borderRadius:9, flexShrink:0,
-                      background: platform.color + '18',
-                      border:`1.5px solid ${platform.color}33`,
-                      display:'flex', alignItems:'center', justifyContent:'center',
-                      fontSize:'1.1rem',
-                    }}>{platform.emoji}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</div>
-                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>
-                        {isConnected ? '● Connected — posts appear in your feed' : platform.desc}
-                      </div>
-                    </div>
-                    {SOCIAL_LOCKED ? (
-                      <span style={{
-                        display:'flex', alignItems:'center', gap:4,
-                        fontSize:'.72rem', fontWeight:600, color:'#94A3B8',
-                        background:'#F1F5F9', padding:'4px 10px', borderRadius:6,
-                        border:'1px solid var(--border)',
-                      }}>🔒 Coming Soon</span>
-                    ) : isConnected ? (
-                      <button
-                        onClick={() => disconnectSocial(platform.id)}
-                        style={{
-                          padding:'5px 12px', borderRadius:7, border:'1px solid #E2E8F0',
-                          background:'#fff', color:'#64748B', fontSize:'.75rem', fontWeight:600, cursor:'pointer',
-                        }}
-                      >Disconnect</button>
-                    ) : (
-                      <button
-                        onClick={() => connectSocial(platform.id)}
-                        disabled={!!isConnecting}
-                        style={{
-                          padding:'5px 14px', borderRadius:7, border:'none',
-                          background: platform.color, color:'#fff',
-                          fontSize:'.75rem', fontWeight:700, cursor:'pointer',
-                          opacity: isConnecting ? 0.7 : 1,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >{isConnecting ? 'Opening…' : 'Connect'}</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
           {/* Preferences */}
