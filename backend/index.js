@@ -1723,36 +1723,90 @@ const FEED_TOPICS = [
 ];
 
 // Each source agent continuously cycles through FEED_TOPICS one at a time.
-// After finishing the last topic it immediately wraps back to the first.
-// Topics with a cache hit (TTL still valid) are skipped silently to avoid wasted calls.
-// SOURCE_CONFIG[agentId].delay controls the pause between consecutive topic fetches.
+// Circuit breaker: after 2 full empty cycles (no new posts from any topic) the worker
+// pauses for CIRCUIT_PAUSE_MS before automatically resuming.
+// Individual fetchers catch their own errors internally; we detect problems via sustained
+// absence of fresh posts across all topics rather than exception tracking.
+const CIRCUIT_EMPTY_CYCLES = 2;  // empty full-cycles before pausing
+const CIRCUIT_PAUSE_MS     = 5 * 60 * 1000; // 5 minutes
+
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   let topicIdx = 0;
+  let emptyTopicsThisCycle = 0; // topics in current cycle that contributed 0 fresh posts
+  let fullCyclesEmpty      = 0; // how many consecutive complete cycles were fully empty
+
+  // Initialise health tracking for this worker
+  workerHealth.set(agentId, {
+    consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
+    lastSuccess: null, paused: false, pauseUntil: 0,
+  });
 
   async function fetchNextTopic() {
+    const health = workerHealth.get(agentId);
+
+    // Circuit breaker: skip fetching while paused; auto-reset when pause window expires
+    if (health.paused) {
+      if (Date.now() < health.pauseUntil) { scheduleNext(); return; }
+      health.paused = false;
+      health.consecutiveErrors = 0;
+      fullCyclesEmpty = 0;
+      logAgentAction(agentId, emoji, `Circuit breaker reset — ${agentId} resumed`, color);
+    }
+
     const topic = FEED_TOPICS[topicIdx];
+    const isLastTopic = topicIdx === FEED_TOPICS.length - 1;
     topicIdx = (topicIdx + 1) % FEED_TOPICS.length;
 
     const mappedKey = keyMapper(topic);
-    if (!mappedKey) return scheduleNext(); // topic not mapped for this source — skip
-
-    try {
-      const posts = await fetchFn(mappedKey).catch(() => []);
-      const fresh = posts.filter(p => p?.id);
-      if (fresh.length) {
-        const n = addAndBroadcast(fresh);
-        const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-        agentSourceCache.set(agentId, {
-          posts: [...fresh, ...prev.posts].slice(0, 500),
-          lastFetch: Date.now(),
-          totalSeen: prev.totalSeen + fresh.length,
-          emoji, color,
-        });
-        if (n > 0) {
-          logAgentAction(agentId, emoji, `+${n} new — topic: ${topic}`, color);
+    if (!mappedKey) {
+      // Unmapped topic — counts as empty for this source
+      emptyTopicsThisCycle++;
+    } else {
+      health.fetchCount++;
+      try {
+        const posts = await fetchFn(mappedKey).catch(() => []);
+        const fresh = (posts || []).filter(p => p?.id);
+        if (fresh.length) {
+          const n = addAndBroadcast(fresh);
+          const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+          agentSourceCache.set(agentId, {
+            posts: [...fresh, ...prev.posts].slice(0, 500),
+            lastFetch: Date.now(),
+            totalSeen: prev.totalSeen + fresh.length,
+            emoji, color,
+          });
+          if (n > 0) logAgentAction(agentId, emoji, `+${n} new — topic: ${topic}`, color);
+          // Any successful contribution resets the empty-cycle counter
+          fullCyclesEmpty = 0;
+          emptyTopicsThisCycle = 0;
+          health.consecutiveErrors = 0;
+          health.lastSuccess = Date.now();
+        } else {
+          emptyTopicsThisCycle++;
         }
+      } catch {
+        // Uncaught error from a fetcher — track it directly
+        health.consecutiveErrors++;
+        health.totalErrors++;
+        emptyTopicsThisCycle++;
       }
-    } catch { /* individual fetch errors are already handled inside each fetcher */ }
+    }
+
+    // At end of each full cycle, evaluate health
+    if (isLastTopic) {
+      if (emptyTopicsThisCycle >= FEED_TOPICS.length) {
+        fullCyclesEmpty++;
+        if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
+          health.paused    = true;
+          health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
+          logAgentAction(agentId, '⚠️',
+            `Circuit breaker tripped — ${agentId} paused 5min (${fullCyclesEmpty} empty cycles)`, '#F87171');
+        }
+      } else {
+        fullCyclesEmpty = 0;
+      }
+      emptyTopicsThisCycle = 0;
+    }
 
     scheduleNext();
   }
@@ -1762,8 +1816,11 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
     setTimeout(fetchNextTopic, delay);
   }
 
-  // Register a one-shot manual trigger that runs one full pass of all topics
+  // One-shot manual trigger: runs one full pass of all topics and resets circuit breaker
   SOURCE_FETCHERS[agentId] = async () => {
+    const health = workerHealth.get(agentId);
+    if (health) { health.paused = false; health.consecutiveErrors = 0; }
+    fullCyclesEmpty = 0; emptyTopicsThisCycle = 0;
     for (const topic of FEED_TOPICS) {
       const key = keyMapper(topic);
       if (!key) continue;
@@ -1777,6 +1834,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
           emoji, color,
         });
+        if (health) { health.consecutiveErrors = 0; health.lastSuccess = Date.now(); }
       }
     }
   };
@@ -1862,6 +1920,9 @@ const globalFeedCache = { posts: [], refreshedAt: 0 };
 
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
 const agentSourceCache = new Map();
+
+// Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
+const workerHealth = new Map();
 
 async function refreshGlobalFeedCache() {
   // 36 topics × 10 source types = 360 live endpoint calls per refresh cycle
@@ -3793,11 +3854,28 @@ const AGENT_DEFS = {
     name: 'Data Agent', emoji: '🗄️', color: '#FB7185', interval: '7min',
     description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 7 minutes.',
   },
+  cache_helper: {
+    name: 'Cache Merge Agent', emoji: '🔄', color: '#6366F1', interval: '5min',
+    description: 'Merges per-source agent caches into the global feed every 5 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
+  },
 };
 
 // ─── Office API endpoints ─────────────────────────────────────────────────────
 
 app.get('/office/status', (req, res) => {
+  // Build per-source health snapshot
+  const sourceHealthArr = [...workerHealth.entries()].map(([id, h]) => ({
+    id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
+    name: AGENT_DEFS[id]?.name || id,
+    status: h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
+    consecutiveErrors: h.consecutiveErrors, totalErrors: h.totalErrors,
+    fetchCount: h.fetchCount, lastSuccess: h.lastSuccess, paused: h.paused,
+    postCount: agentSourceCache.get(id)?.totalSeen ?? 0,
+  }));
+  const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
+  const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
+  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy').length;
+
   res.json({
     server: {
       uptime:      Date.now() - SERVER_START,
@@ -3811,6 +3889,7 @@ app.get('/office/status', (req, res) => {
       postCount:   globalFeedCache.posts.length,
       refreshedAt: globalFeedCache.refreshedAt || null,
       sseClients:  sseClients.size,
+      seenIds:     seenPostIds.size,
     },
     agents: {
       count:             Object.keys(AGENT_DEFS).length,
@@ -3818,14 +3897,30 @@ app.get('/office/status', (req, res) => {
       logSize:           agentActionLog.length,
       officeConnections: officeClients.size,
     },
+    sources: {
+      total: sourceHealthArr.length, healthy: healthyCount,
+      degraded: degradedCount, paused: pausedCount,
+      workers: sourceHealthArr,
+    },
   });
 });
 
 app.get('/office/agents', (req, res) => {
   const result = {};
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
-    const logs = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
-    result[id] = { ...def, id, logs, lastAction: logs[0] || null };
+    const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
+    const health = workerHealth.get(id) || null;
+    const cache  = agentSourceCache.get(id) || null;
+    result[id] = {
+      ...def, id, logs, lastAction: logs[0] || null,
+      health: health ? {
+        status: health.paused ? 'paused' : health.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
+        consecutiveErrors: health.consecutiveErrors, totalErrors: health.totalErrors,
+        fetchCount: health.fetchCount, lastSuccess: health.lastSuccess, paused: health.paused,
+      } : null,
+      postCount: cache?.totalSeen ?? null,
+      lastFetch: cache?.lastFetch ?? null,
+    };
   }
   res.json({ agents: result });
 });

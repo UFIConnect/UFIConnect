@@ -681,7 +681,7 @@ export default function Feed() {
           </span>
         </h1>
         <p className="page-subtitle">
-          10 source workers continuously pulling from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, arXiv and more — new posts stream in automatically.
+          16 source workers pulling live from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, HN, arXiv, Mastodon, TechCrunch and more — new posts stream in automatically.
         </p>
       </div>
 

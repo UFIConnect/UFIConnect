@@ -127,19 +127,37 @@ function OverviewView({ status, log, agents }) {
   const s = status?.server;
   const f = status?.feed;
   const a = status?.agents;
+  const src = status?.sources;
+
+  const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
   return (
     <>
       <h1 style={H1}>Command Center</h1>
       <p style={SUBTITLE}>Real-time status of all services and autonomous agents</p>
 
+      {pausedWorkers.length > 0 && (
+        <div style={{
+          marginBottom: 20, padding: '10px 16px', borderRadius: 8,
+          background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontSize: 12, color: '#fca5a5' }}>
+            <strong>{pausedWorkers.length}</strong> source worker{pausedWorkers.length !== 1 ? 's' : ''} paused by circuit breaker
+            {' — '}{pausedWorkers.map(w => w.emoji + ' ' + (w.name?.replace(' Agent','') || w.id)).join(', ')}
+            {'. Will auto-resume in ~5min.'}
+          </span>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
-        <StatCard icon="⏱" label="Uptime"      value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                               color="#60a5fa" />
-        <StatCard icon="📰" label="Feed Posts"  value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
-        <StatCard icon="🤖" label="Agents"      value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                      color="#fbbf24" />
-        <StatCard icon="🗄️" label="Database"   value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                  color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
-        <StatCard icon="📡" label="SSE Clients" value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                      color="#a78bfa" />
-        <StatCard icon="🏢" label="Office"      value={a?.officeConnections ?? '—'}              sub="office connections"                                     color="#38bdf8" />
+        <StatCard icon="⏱" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
+        <StatCard icon="📰" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
+        <StatCard icon="🤖" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
+        <StatCard icon="🗄️" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                        color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
+        <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
+        <StatCard icon="🌐" label="Sources"       value={src ? `${src.healthy}/${src.total}` : '—'} sub={src?.paused ? `${src.paused} paused` : 'all healthy'}       color={src?.paused ? '#f97316' : '#4ade80'} />
       </div>
 
       <Label color="#475569">Agent Status</Label>
@@ -187,55 +205,85 @@ function OverviewView({ status, log, agents }) {
 
 // ─── Agents view ──────────────────────────────────────────────────────────────
 
+function HealthBadge({ health }) {
+  if (!health) return null;
+  const cfg = {
+    healthy:  { bg: 'rgba(34,197,94,.12)',  color: '#4ade80', label: 'Healthy' },
+    degraded: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Degraded' },
+    paused:   { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Paused' },
+  }[health.status] || { bg: 'rgba(148,163,184,.1)', color: '#94a3b8', label: '—' };
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+      background: cfg.bg, color: cfg.color, textTransform: 'uppercase', letterSpacing: 0.8,
+    }}>
+      {cfg.label}
+    </span>
+  );
+}
+
 function AgentsView({ agents, triggerAgent, triggering }) {
   return (
     <>
       <h1 style={H1}>Agent Control</h1>
       <p style={SUBTITLE}>Monitor and manually trigger each autonomous agent. All agents run continuously on their own schedules.</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 18 }}>
-        {Object.entries(agents).map(([id, ag]) => (
-          <Card key={id}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <div style={{ fontSize: 28, lineHeight: 1 }}>{ag.emoji}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: ag.color }}>{ag.name}</div>
-                <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
-                  id: <code style={{ ...CODE, padding: '1px 5px' }}>{id}</code>
-                  {' · '}runs every {ag.interval}
+        {Object.entries(agents).map(([id, ag]) => {
+          const isPaused = ag.health?.status === 'paused';
+          return (
+            <Card key={id} style={isPaused ? { borderColor: 'rgba(239,68,68,.25)' } : {}}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 28, lineHeight: 1 }}>{ag.emoji}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: ag.color }}>{ag.name}</span>
+                    <HealthBadge health={ag.health} />
+                  </div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                    id: <code style={{ ...CODE, padding: '1px 5px' }}>{id}</code>
+                    {' · '}runs every {ag.interval}
+                    {ag.postCount != null && <> · <span style={{ color: '#60a5fa' }}>{ag.postCount.toLocaleString()} posts</span></>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <Dot ok={!isPaused} pulse={!isPaused} />
+                  <Btn size="sm" variant={isPaused ? 'danger' : 'ghost'} onClick={() => triggerAgent(id)} disabled={triggering[id]}>
+                    {triggering[id] ? '...' : isPaused ? '↺ Reset' : '▶ Run'}
+                  </Btn>
                 </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Dot ok pulse />
-                <Btn
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => triggerAgent(id)}
-                  disabled={triggering[id]}
-                >
-                  {triggering[id] ? '...' : '▶ Run'}
-                </Btn>
+              <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.65, margin: '0 0 14px' }}>
+                {ag.description}
+              </p>
+              {ag.health && (
+                <div style={{
+                  display: 'flex', gap: 16, marginBottom: 12, padding: '7px 10px',
+                  background: 'rgba(255,255,255,.03)', borderRadius: 6,
+                  fontSize: 11, color: '#475569',
+                }}>
+                  <span>Fetches: <strong style={{ color: '#94a3b8' }}>{ag.health.fetchCount?.toLocaleString() ?? 0}</strong></span>
+                  <span>Errors: <strong style={{ color: ag.health.totalErrors ? '#f87171' : '#4ade80' }}>{ag.health.totalErrors ?? 0}</strong></span>
+                  {ag.lastFetch && <span>Last fetch: <strong style={{ color: '#94a3b8' }}>{fmtAgo(ag.lastFetch)}</strong></span>}
+                </div>
+              )}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+                <Label>Last 5 actions</Label>
+                <div style={{ marginTop: 8 }}>
+                  {(ag.logs || []).slice(0, 5).map(e => (
+                    <div key={e.id} style={{ display: 'flex', gap: 8, padding: '3px 0', fontSize: 11, alignItems: 'flex-start' }}>
+                      <span style={{ flexShrink: 0 }}>{e.emoji}</span>
+                      <span style={{ color: e.color, flex: 1, lineHeight: 1.5 }}>{e.msg}</span>
+                      <span style={{ color: '#475569', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtAgo(e.ts)}</span>
+                    </div>
+                  ))}
+                  {(!ag.logs || ag.logs.length === 0) && (
+                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No recent activity — click Run to trigger</div>
+                  )}
+                </div>
               </div>
-            </div>
-            <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.65, margin: '0 0 14px' }}>
-              {ag.description}
-            </p>
-            <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
-              <Label>Last 5 actions</Label>
-              <div style={{ marginTop: 8 }}>
-                {(ag.logs || []).slice(0, 5).map(e => (
-                  <div key={e.id} style={{ display: 'flex', gap: 8, padding: '3px 0', fontSize: 11, alignItems: 'flex-start' }}>
-                    <span style={{ flexShrink: 0 }}>{e.emoji}</span>
-                    <span style={{ color: e.color, flex: 1, lineHeight: 1.5 }}>{e.msg}</span>
-                    <span style={{ color: '#475569', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtAgo(e.ts)}</span>
-                  </div>
-                ))}
-                {(!ag.logs || ag.logs.length === 0) && (
-                  <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No recent activity — click Run to trigger</div>
-                )}
-              </div>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          );
+        })}
       </div>
     </>
   );
@@ -444,6 +492,105 @@ function VersionsView({ versions }) {
   );
 }
 
+// ─── Sources view ─────────────────────────────────────────────────────────────
+
+function SourcesView({ status, triggerAgent, triggering }) {
+  const src = status?.sources;
+  const workers = src?.workers || [];
+
+  const statusCfg = {
+    healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
+    degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
+    paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
+  };
+
+  return (
+    <>
+      <h1 style={H1}>Live Sources</h1>
+      <p style={SUBTITLE}>Real-time health of all 16 data source workers. Each cycles through 36 topics continuously.</p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
+        <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
+        <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching normally"         color="#4ade80" />
+        <StatCard icon="⚠️" label="Degraded"        value={src?.degraded ?? '—'} sub="≥3 consecutive errors"     color="#fbbf24" />
+        <StatCard icon="🔴" label="Paused"           value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
+        <StatCard icon="📰" label="Total Seen"
+          value={workers.reduce((s, w) => s + (w.postCount || 0), 0).toLocaleString()}
+          sub="posts across all sources" color="#a78bfa" />
+      </div>
+
+      {workers.length === 0 ? (
+        <Card style={{ textAlign: 'center', padding: 40 }}>
+          <div style={{ fontSize: 13, color: '#475569' }}>Workers starting up... check back in a few seconds.</div>
+        </Card>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+          {workers.map(w => {
+            const cfg = statusCfg[w.status] || statusCfg.healthy;
+            const errorRate = w.fetchCount > 0 ? ((w.totalErrors / w.fetchCount) * 100).toFixed(1) : '0.0';
+            return (
+              <div key={w.id} style={{
+                background: cfg.bg, border: `1px solid ${cfg.border}`,
+                borderRadius: 10, padding: '14px 16px',
+                display: 'flex', flexDirection: 'column', gap: 8,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 20, lineHeight: 1 }}>{w.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: w.color || '#e2e8f0' }}>
+                      {w.name?.replace(' Agent', '') || w.id}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>{w.id}</div>
+                  </div>
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
+                    background: cfg.border, color: cfg.dot, textTransform: 'uppercase', letterSpacing: 0.8,
+                  }}>
+                    {cfg.label}
+                  </span>
+                  <span style={{
+                    display: 'inline-block', width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: cfg.dot,
+                    boxShadow: w.status === 'healthy' ? `0 0 0 3px ${cfg.dot}33` : 'none',
+                    animation: w.status === 'healthy' ? 'pulse 2s ease-in-out infinite' : 'none',
+                  }} />
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#64748b', flexWrap: 'wrap' }}>
+                  <span>📥 <strong style={{ color: '#e2e8f0' }}>{(w.postCount || 0).toLocaleString()}</strong> posts</span>
+                  <span>🔄 <strong style={{ color: '#e2e8f0' }}>{(w.fetchCount || 0).toLocaleString()}</strong> fetches</span>
+                  <span>❌ <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong> err</span>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#475569' }}>
+                  <span>{w.lastSuccess ? `Last ok: ${fmtAgo(w.lastSuccess)}` : 'No successful fetch yet'}</span>
+                  <button
+                    onClick={() => triggerAgent(w.id)}
+                    disabled={triggering[w.id]}
+                    style={{
+                      fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                      background: w.paused ? 'rgba(239,68,68,.15)' : 'rgba(59,130,246,.1)',
+                      color: w.paused ? '#f87171' : '#60a5fa',
+                    }}
+                  >
+                    {triggering[w.id] ? '...' : w.paused ? '↺ Reset' : '▶ Run'}
+                  </button>
+                </div>
+
+                {w.paused && (
+                  <div style={{ fontSize: 10, color: '#f87171', padding: '4px 8px', background: 'rgba(239,68,68,.06)', borderRadius: 4 }}>
+                    ⏸ Paused — {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -482,8 +629,8 @@ export default function App() {
     fetchStatus();
     fetchAgents();
     fetchVersions();
-    const t1 = setInterval(fetchStatus, 10000);
-    const t2 = setInterval(fetchAgents, 20000);
+    const t1 = setInterval(fetchStatus,  8000);
+    const t2 = setInterval(fetchAgents, 15000);
     return () => { clearInterval(t1); clearInterval(t2); };
   }, [fetchStatus, fetchAgents, fetchVersions]);
 
@@ -547,6 +694,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview',     icon: '◉' },
+    { id: 'sources',  label: 'Live Sources', icon: '🌐' },
     { id: 'agents',   label: 'Agents',        icon: '⬡' },
     { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
     { id: 'versions', label: 'Versions',      icon: '≡' },
@@ -638,6 +786,7 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} />}
+          {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'versions' && <VersionsView versions={versions} />}
