@@ -307,7 +307,7 @@ function fetchJSON(url) {
         try { resolve(JSON.parse(data)); }
         catch (e) { reject(new Error(`JSON parse failed for ${url}: ${e.message}`)); }
       });
-    }).on('error', reject).setTimeout(8000, function() { this.destroy(new Error('timeout')); });
+    }).on('error', reject).setTimeout(15000, function() { this.destroy(new Error('timeout')); });
   });
 }
 
@@ -676,73 +676,175 @@ const CACHE_TTL = 30 * 60 * 1000; // default 30 min — individual entries can o
 function getCached(key)            { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
 function setCached(key, val, ttl)  { postCache.set(key, { v: val, t: Date.now(), ttl: ttl ?? CACHE_TTL }); }
 function bustCache(key)            { postCache.delete(key); }
+function bustCachePrefix(prefix)   { for (const k of postCache.keys()) if (k.startsWith(prefix)) postCache.delete(k); }
 
 // ─── Per-source freshness config ──────────────────────────────────────────────
-// TTL:   how long a topic fetch stays cached before being re-fetched (real API call)
+// TTL:   real freshness window — worker busts cache and re-fetches from API after this time
 // DELAY: ms between fetching successive topics in the continuous cycler
-// These are tuned to each API's rate limits and content velocity.
 const SOURCE_CONFIG = {
-  //            TTL (ms)          DELAY/topic (ms)    daily API calls (calc)
-  reddit:        { ttl:  3*60000, delay:  2500 },  //  3min TTL × 36 topics ÷ 2.5s = ~34k req/day capped by TTL → ~720/day
-  hn:            { ttl:  3*60000, delay:  3000 },  //  720/day
-  github:        { ttl: 20*60000, delay: 35000 },  //  rate-limited: 60/hr unauthed → safe at 1/35s per topic
-  devto:         { ttl:  5*60000, delay:  6000 },  //  ~4,300/day (RSS, generous)
-  medium:        { ttl: 10*60000, delay: 12000 },  //  ~2,200/day (CDN-cached RSS)
-  youtube:       { ttl: 15*60000, delay: 20000 },  //  15min TTL; Invidious fallback = no quota
-  stackoverflow: { ttl: 20*60000, delay: 35000 },  //  300/day unauthed limit
-  mastodon:      { ttl:  5*60000, delay:  5000 },  //  ~4,300/day
-  lobsters:      { ttl: 15*60000, delay: 25000 },  //  ~1,440/day (small site — be respectful)
-  arxiv:         { ttl: 20*60000, delay: 22000 },  //  OAI-PMH 20s recommendation
-  indeed:        { ttl: 10*60000, delay: 10000 },  //  RSS, ~2,600/day
-  producthunt:   { ttl: 20*60000, delay: 35000 },  //  RSS, ~1,000/day
-  techcrunch:    { ttl: 10*60000, delay: 12000 },  //  RSS feed
-  theverge:      { ttl: 10*60000, delay: 12000 },  //  RSS feed
-  indiehackers:  { ttl: 15*60000, delay: 20000 },  //  RSS feed
-  hashnode:      { ttl:  5*60000, delay:  8000 },  //  GraphQL, ~3,200/day
+  //            TTL (ms)          DELAY/topic (ms)
+  reddit:        { ttl:  3*60000, delay:  3000 },  // RSS feeds — no rate limit, very fast
+  hn:            { ttl:  2*60000, delay:  2000 },  // Algolia HN, generous API
+  github:        { ttl:  8*60000, delay: 35000 },  // rate-limited 60/hr unauthed
+  devto:         { ttl:  3*60000, delay:  4000 },  // REST API, generous
+  medium:        { ttl:  5*60000, delay:  8000 },  // CDN-cached RSS
+  youtube:       { ttl:  5*60000, delay:  8000 },  // channel RSS — no quota
+  stackoverflow: { ttl: 10*60000, delay: 35000 },  // 300/day unauthed limit
+  mastodon:      { ttl:  2*60000, delay:  3000 },  // real-time social
+  lobsters:      { ttl:  8*60000, delay: 15000 },  // small site — respectful
+  arxiv:         { ttl: 15*60000, delay: 20000 },  // OAI-PMH 20s recommendation
+  indeed:        { ttl:  5*60000, delay:  6000 },  // RSS, ~2,600/day
+  producthunt:   { ttl: 10*60000, delay: 25000 },  // RSS, ~1,000/day
+  techcrunch:    { ttl:  3*60000, delay:  5000 },  // RSS — publishes constantly
+  theverge:      { ttl:  3*60000, delay:  5000 },  // RSS — publishes constantly
+  indiehackers:  { ttl:  8*60000, delay: 12000 },  // RSS feed
+  hashnode:      { ttl:  3*60000, delay:  5000 },  // GraphQL, fast
+  bluesky:       { ttl:  2*60000, delay:  3000 },  // public ATP API, real-time social
 };
 
-// ─── Reddit: search by keyword across all of Reddit ──────────────────────────
+// Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
+const CACHE_KEY_PREFIX = {
+  reddit:        'reddit_kw_',
+  hn:            'hn_kw_',
+  github:        'github_kw_',
+  devto:         'devto_tag_',
+  medium:        'medium_tag_',
+  youtube:       'youtube_kw_',
+  stackoverflow: 'so_tag_',
+  mastodon:      'mastodon_tag_',
+  lobsters:      'lobsters_',
+  arxiv:         'arxiv_',
+  indeed:        'indeed_kw_',
+  producthunt:   'ph_kw_',
+  techcrunch:    'tc_kw_',
+  theverge:      'verge_kw_',
+  indiehackers:  'ih_kw_',
+  hashnode:      'hashnode_kw_',
+  bluesky:       'bluesky_kw_',
+};
+
+// ─── Reddit: subreddit RSS feeds (no API key, no auth, always works) ──────────
+// Topic → subreddits. We fetch new.rss from each and merge by date.
+const TOPIC_SUBREDDITS = {
+  'AI & Machine Learning':  ['MachineLearning', 'artificial', 'deeplearning', 'learnmachinelearning'],
+  'Generative AI':          ['StableDiffusion', 'ChatGPT', 'artificial', 'MachineLearning'],
+  'LLMs & Chatbots':        ['ChatGPT', 'LocalLLaMA', 'MachineLearning', 'Bard'],
+  'Computer Vision':        ['computervision', 'MachineLearning', 'deeplearning'],
+  'Data Science':           ['datascience', 'learnmachinelearning', 'statistics', 'datasets'],
+  'Developer Tools':        ['programming', 'devops', 'webdev', 'commandline'],
+  'Open Source':            ['opensource', 'programming', 'github', 'linux'],
+  'Cybersecurity':          ['netsec', 'cybersecurity', 'hacking', 'AskNetsec'],
+  'Cloud & DevOps':         ['devops', 'aws', 'kubernetes', 'docker', 'sysadmin'],
+  'Frontend Dev':           ['webdev', 'javascript', 'reactjs', 'Frontend', 'html5'],
+  'Backend Dev':            ['programming', 'node', 'Python', 'golang', 'java'],
+  'Mobile Dev':             ['iOSProgramming', 'androiddev', 'reactnative', 'FlutterDev'],
+  'Web3 / Crypto':          ['ethereum', 'CryptoCurrency', 'Bitcoin', 'defi', 'web3'],
+  'Game Dev':               ['gamedev', 'indiegaming', 'unity3d', 'unrealengine', 'gamedesign'],
+  'No-Code / Low-Code':     ['nocode', 'webflow', 'AppSheet', 'bubble'],
+  'SaaS':                   ['SaaS', 'startups', 'Entrepreneur', 'indiehackers'],
+  'Venture Capital':        ['venturecapital', 'startups', 'Entrepreneur'],
+  'Growth Marketing':       ['digital_marketing', 'marketing', 'SEO', 'GrowthHacking'],
+  'Design Systems':         ['web_design', 'UI_Design', 'DesignSystems', 'figma'],
+  'UI/UX Design':           ['UXDesign', 'userexperience', 'UI_Design', 'graphic_design'],
+  'SEO & Content':          ['SEO', 'content_marketing', 'blogging', 'juststart'],
+  'Newsletter & Writing':   ['blogging', 'writing', 'newsletters', 'copywriting'],
+  'FinTech':                ['fintech', 'personalfinance', 'investing', 'algotrading'],
+  'Career Growth':          ['cscareerquestions', 'jobs', 'careerguidance', 'ITCareerQuestions'],
+  'Productivity':           ['productivity', 'getdisciplined', 'selfimprovement', 'nosurf'],
+  'Freelancing':            ['freelance', 'digitalnomad', 'forhire', 'WorkOnline'],
+  'Side Projects':          ['SideProject', 'startups', 'Entrepreneur', 'indiehackers'],
+  'Content Creator':        ['NewTubers', 'juststart', 'blogging', 'twitch'],
+  'Remote Work':            ['remotework', 'digitalnomad', 'WorkOnline', 'remote'],
+  'EdTech':                 ['learnprogramming', 'education', 'EdTech', 'OnlineLearning'],
+  'Health Tech':            ['healthIT', 'medicine', 'bioinformatics', 'digitalhealth'],
+  'Climate Tech':           ['ClimateChange', 'energy', 'sustainability', 'RenewableEnergy'],
+  'Fitness & Gym':          ['fitness', 'bodybuilding', 'running', 'weightlifting'],
+  'Travel & Adventure':     ['travel', 'backpacking', 'solotravel', 'TravelHacks'],
+  'Cooking & Recipes':      ['recipes', 'Cooking', 'MealPrepSunday', 'food'],
+  'Music Discovery':        ['Music', 'LetsTalkMusic', 'indieheads', 'listentothis'],
+};
+
+function parseRedditRSSFeed(xml, topicKeyword) {
+  const posts = [];
+  // Extract subreddit name from feed <title>
+  const subMatch = xml.match(/\/r\/(\w+)/);
+  const sub = subMatch ? subMatch[1] : 'reddit';
+  for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const s = m[1];
+    const getTag  = (re) => (re.exec(s) || [])[1]?.trim() || '';
+    const title     = decodeHTMLEntities(getTag(/<title[^>]*>([\s\S]*?)<\/title>/));
+    const link      = (/<link[^>]*href="([^"]+)"/.exec(s) || [])[1] || '';
+    const published = getTag(/<published>(.*?)<\/published>/);
+    const updated   = getTag(/<updated>(.*?)<\/updated>/);
+    const author    = getTag(/<name>(.*?)<\/name>/).replace(/^\/?u\//, '');
+    const content = decodeHTMLEntities(getTag(/<content[^>]*>([\s\S]*?)<\/content>/).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400));
+    const idMatch = link.match(/comments\/([a-z0-9]+)/i);
+    if (!idMatch || !title) continue;
+    const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
+    posts.push({
+      id:          `reddit_${idMatch[1]}`,
+      authorId:    `reddit_${author}`,
+      groupId:     matchedGroup?.id || `ext_${sub.toLowerCase()}`,
+      content:     content || title,
+      title,
+      source:      'reddit',
+      sourceLabel: `r/${sub}`,
+      sourceUrl:   link.replace(/\?.*$/, ''),
+      topic:       topicKeyword,
+      author:      { id: `reddit_${author}`, name: `u/${author}`, title: `r/${sub}`, organization: 'Reddit' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   published || updated || new Date().toISOString(),
+      isExternal:  true,
+      group:       matchedGroup
+        ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
+        : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+    });
+  }
+  return posts;
+}
+
 async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  try {
-    // Reddit public search caps at 100 results per request
-    // old.reddit.com is more permissive than www for unauthenticated JSON requests
-    const url = `https://old.reddit.com/search.json?q=${encodeURIComponent(keyword)}&sort=hot&limit=100&raw_json=1&type=link`;
-    const data = await fetchJSON(url);
-    const posts = (data?.data?.children || [])
-      .filter(({ data: p }) => !p.stickied && !p.over_18 && p.title)
-      .map(({ data: p }) => {
-        const sub = p.subreddit;
-        const matchedGroup = groups.find((g) => g.subreddit?.toLowerCase() === sub?.toLowerCase());
-        return {
-          id:            `reddit_${p.id}`,
-          authorId:      `reddit_${p.author}`,
-          groupId:       matchedGroup?.id || `ext_${sub?.toLowerCase()}`,
-          content:       p.selftext?.slice(0, 400) || p.title,
-          title:         p.title,
-          source:        'reddit',
-          sourceLabel:   `r/${sub}`,
-          sourceUrl:     `https://www.reddit.com${p.permalink}`,
-          topic:         keyword,
-          author:        { id: `reddit_${p.author}`, name: null, title: `r/${sub}`, organization: 'Reddit' },
-          likes: [], likesCount: p.ups || 0, commentsCount: p.num_comments || 0,
-          createdAt:     new Date(p.created_utc * 1000).toISOString(),
-          isExternal:    true,
-          mediaUrl:      (p.url?.match(/\.(jpe?g|png|gif|webp)(\?.*)?$/i) && p.url) || (p.thumbnail?.startsWith('http') && !['self','nsfw','default','spoiler','image'].includes(p.thumbnail) ? p.thumbnail : null),
-          mediaType:     'image',
-          group:         matchedGroup
-            ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
-            : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
-        };
-      });
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Reddit search "${keyword}":`, e.message);
-    return getCached(key) || [];
+
+  // If keyword looks like a raw subreddit name (single word, no spaces), fetch it directly
+  const looksLikeSubreddit = /^[A-Za-z0-9_]+$/.test(keyword) && keyword.length < 30 && !TOPIC_SUBREDDITS[keyword];
+  if (looksLikeSubreddit) {
+    try {
+      const xml = await fetchText(`https://www.reddit.com/r/${keyword}/new.rss?limit=25`, REDDIT_HEADERS);
+      const posts = parseRedditRSSFeed(xml, keyword);
+      if (posts.length) {
+        posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        setCached(key, posts);
+        return posts;
+      }
+    } catch { /* fallthrough */ }
   }
+
+  // Get subreddits for this topic — fall back to programming/technology
+  const subs = TOPIC_SUBREDDITS[keyword]
+    || Object.entries(TOPIC_SUBREDDITS).find(([k]) => keyword.toLowerCase().includes(k.toLowerCase()))?.[1]
+    || ['programming', 'technology', 'webdev'];
+
+  const allPosts = [];
+  // Fetch new.rss from up to 3 subreddits in parallel using browser UA (required by Reddit)
+  await Promise.allSettled(subs.slice(0, 3).map(async sub => {
+    try {
+      const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=25`, REDDIT_HEADERS);
+      allPosts.push(...parseRedditRSSFeed(xml, keyword));
+    } catch { /* 403/hang — skip this subreddit */ }
+  }));
+
+  if (allPosts.length) {
+    const seen = new Set();
+    const result = allPosts
+      .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    setCached(key, result);
+    return result;
+  }
+  return getCached(key) || [];
 }
 
 // ─── News: search by keyword via Algolia ───────────────────────────────────
@@ -751,8 +853,8 @@ async function fetchHNByKeyword(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // Algolia HN API caps at 1000 hits per page
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=1000&numericFilters=points>3`;
+    // search_by_date gives most recent stories; points filter avoids spam
+    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=50&numericFilters=points>1`;
     const data = await fetchJSON(url);
     const posts = (data?.hits || [])
       .filter(h => h.title && (h.url || h.objectID))
@@ -786,8 +888,8 @@ async function fetchDevToByTag(tag) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // dev.to API caps at 1000 articles per page
-    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=1000&top=7`;
+    // dev.to API — sort by latest so we always get the freshest posts
+    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=30&state=fresh`;
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(a => a.title && a.url)
@@ -823,8 +925,9 @@ async function fetchGitHubByKeyword(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // GitHub public search API — no key needed, 10 req/min unauthenticated
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(keyword)}&sort=stars&order=desc&per_page=30`;
+    // GitHub public search — recent pushes (last 7 days), sorted by freshness
+    const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} pushed:>${since}`)}&sort=updated&order=desc&per_page=30`;
     const data = await fetchJSON(url);
     const posts = (data?.items || [])
       .filter(r => r.description)
@@ -879,18 +982,19 @@ function parseMediumRSS(xml) {
   return items;
 }
 
-function fetchText(url) {
+function fetchText(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
         'User-Agent':      'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/rss+xml, application/xml, text/xml',
         'Accept-Language': 'en-US,en;q=0.9',
+        ...extraHeaders,
       },
     };
     https.get(url, opts, (res) => {
       if ([301,302,307,308].includes(res.statusCode)) {
-        return fetchText(res.headers.location).then(resolve).catch(reject);
+        return fetchText(res.headers.location, extraHeaders).then(resolve).catch(reject);
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
@@ -899,9 +1003,16 @@ function fetchText(url) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => resolve(data));
-    }).on('error', reject).setTimeout(8000, function() { this.destroy(new Error('timeout')); });
+    }).on('error', reject).setTimeout(15000, function() { this.destroy(new Error('timeout')); });
   });
 }
+
+// Reddit blocks non-browser User-Agents — use this for all Reddit RSS fetches
+const REDDIT_HEADERS = {
+  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
 
 async function fetchMediumByTag(tag) {
   const key = `medium_tag_${tag}`;
@@ -936,10 +1047,182 @@ async function fetchMediumByTag(tag) {
 
 // ─── YouTube: official API when key is set, Invidious proxy otherwise ────────
 const INVIDIOUS_INSTANCES = [
+  'https://inv.nadeko.net',
   'https://invidious.privacyredirect.com',
+  'https://yt.artemislena.eu',
+  'https://invidious.fdn.fr',
+  'https://invidious.lunar.icu',
+  'https://iv.datura.network',
   'https://inv.tux.pizza',
-  'https://invidious.io',
+  'https://invidious.perennialte.ch',
 ];
+
+// ─── YouTube: channel RSS feeds (no API key needed, served by YouTube directly) ─
+// Organized by topic so each keyword query hits the right channels.
+const TOPIC_YT_CHANNELS = {
+  'AI & Machine Learning':  [
+    { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
+    { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
+    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
+    { id: 'UCnqRmOS4bQSHmGznAbmEFaA', name: 'Weights & Biases' },
+    { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
+  ],
+  'Generative AI':          [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
+    { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
+    { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
+  ],
+  'LLMs & Chatbots':        [
+    { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
+    { id: 'UCWX3yGbODI3HLSMJer5ZLKQ', name: 'AI Explained' },
+    { id: 'UCSHZKyawb77ixDdsGog4iWA', name: 'Lex Fridman' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'Computer Vision':        [
+    { id: 'UCbfYPyITQ-7l4upoX8nvctg', name: 'Two Minute Papers' },
+    { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+    { id: 'UCZHmQk67mSJgfCCTn7xBfew', name: 'Yannic Kilcher' },
+  ],
+  'Data Science':           [
+    { id: 'UCCTVrRVMyEX5YKq4zHNU5EA', name: 'Corey Schafer' },
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UCJHs6RO1CSM85e8jIMD9jdA', name: 'Ken Jee' },
+    { id: 'UCnqRmOS4bQSHmGznAbmEFaA', name: 'Weights & Biases' },
+  ],
+  'Frontend Dev':           [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCkK9UDm_ZNrq_rIXCz3xCGA', name: 'Web Dev Simplified' },
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Kevin Powell' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  ],
+  'Backend Dev':            [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  ],
+  'Cloud & DevOps':         [
+    { id: 'UCnUYZLuoy1rq1aVMwx4aTzw', name: 'Google Cloud Tech' },
+    { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
+    { id: 'UCA8twYpSmtpbz5YQKh_LHrg', name: 'Amazon Web Services' },
+  ],
+  'Cybersecurity':          [
+    { id: 'UC0ZTkbl5idFyYqaEwRMRL6w', name: 'NetworkChuck' },
+    { id: 'UCgTNupxATBfWmfehv21ym-g', name: 'HackerSploit' },
+    { id: 'UCW6MNdOsqv2E9AjQkv9we7A', name: 'David Bombal' },
+    { id: 'UClcE-kVhqyiHCcjYwcpfj9w', name: 'LiveOverflow' },
+  ],
+  'Game Dev':               [
+    { id: 'UCX_b3NNQN5bzExm-22-NVVg', name: 'GDC' },
+    { id: 'UCBmNB4N5Vmr2N-0-Kg2NPUA', name: 'Sebastian Lague' },
+    { id: 'UCqJ-Xo29CKyLTjn6z2XwYAw', name: 'Blackthornprod' },
+  ],
+  'Developer Tools':        [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+    { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+  ],
+  'Open Source':            [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+  ],
+  'Mobile Dev':             [
+    { id: 'UCTd08bnCrRKBIcbgMlh-MVQ', name: 'Flutter' },
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UC5T-hza4t9uGiRCRhqs3Iqg', name: 'iOS Academy' },
+  ],
+  'Web3 / Crypto':          [
+    { id: 'UCY0xL8V6NnkYQnrO2AWZWA', name: 'Patrick Collins' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'SaaS':                   [
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+    { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'UI/UX Design':           [
+    { id: 'UCeB_OpLspKJGiKv1CYkWFFw', name: 'DesignCourse' },
+    { id: 'UCFbNIlppjAuEX4znoulh0Cw', name: 'Kevin Powell' },
+    { id: 'UC-b3c7kxa5vU-bnmaROgvog', name: 'Figma' },
+  ],
+  'Productivity':           [
+    { id: 'UCG-KntY7aVnIGXYEBQvmBAQ', name: 'Thomas Frank' },
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+  ],
+  'Career Growth':          [
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+  ],
+  'Freelancing':            [
+    { id: 'UC3PD2HZJ0HUAk-kVFHMRCug', name: 'Ali Abdaal' },
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  ],
+  'Side Projects':          [
+    { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+    { id: 'UCbRP3rAt5U0S9bHNIl7cJlg', name: 'Theo' },
+  ],
+  'FinTech':                [
+    { id: 'UCFCEuCsyWP0YkP3CZ3Mr01Q', name: 'Patrick Boyle' },
+    { id: 'UCL5u3pYs-pOPp6FAijGn8VA', name: 'Ben Felix' },
+  ],
+  'Climate Tech':           [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+    { id: 'UCivA7_KLKWo43tFcCkFvydw', name: 'Real Engineering' },
+  ],
+  'Health Tech':            [
+    { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+    { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+  ],
+};
+
+// Fallback channels used when no topic-specific list exists
+const DEFAULT_YT_CHANNELS = [
+  { id: 'UCVyRiMvfUNMA1UPlDPzG5Ow', name: 'Fireship' },
+  { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
+  { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
+  { id: 'UCddiUEpeqJcYeBxX1IVBKvQ', name: 'ThePrimeagen' },
+  { id: 'UCHnyfMqiRRG1u-2MsSQLbXA', name: 'Veritasium' },
+  { id: 'UC9-y-6csu5WGm29I7JiwpnA', name: 'Computerphile' },
+];
+
+function parseYouTubeChannelRSS(xml, keyword, channelName) {
+  const posts = [];
+  for (const m of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const s = m[1];
+    const get = (re) => (re.exec(s) || [])[1]?.trim() || '';
+    const videoId   = get(/<yt:videoId>(.*?)<\/yt:videoId>/);
+    const title     = decodeHTMLEntities(get(/<title>([\s\S]*?)<\/title>/));
+    const published = get(/<published>(.*?)<\/published>/);
+    const updated   = get(/<updated>(.*?)<\/updated>/);
+    const desc      = get(/<media:description>([\s\S]*?)<\/media:description>/).slice(0, 300);
+    const thumb     = (/<media:thumbnail url="([^"]+)"/.exec(s) || [])[1] || null;
+    const author    = get(/<name>(.*?)<\/name>/) || channelName;
+    if (!videoId || !title) continue;
+    posts.push({
+      id:          `youtube_${videoId}`,
+      authorId:    `youtube_ch_${author.replace(/\s+/g, '_')}`,
+      groupId:     'ext_youtube',
+      content:     desc || title,
+      title,
+      source:      'youtube',
+      sourceLabel: author,
+      sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
+      embedId:     videoId,
+      topic:       keyword,
+      author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   published || updated || new Date().toISOString(),
+      isExternal:  true,
+      mediaType:   'video',
+      mediaUrl:    thumb,
+      group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
+    });
+  }
+  return posts;
+}
 
 function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword) {
   return {
@@ -953,7 +1236,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
     embedId:     videoId,
     topic:       keyword,
-    author:      { id: `youtube_${channelId || 'unknown'}`, name: null, title: channelTitle || 'YouTube', organization: 'YouTube' },
+    author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube' },
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   publishedAt || new Date().toISOString(),
     isExternal:  true,
@@ -969,53 +1252,61 @@ async function fetchYouTubeByKeyword(keyword) {
   if (cached) return cached;
 
   try {
+    // Official YouTube Data API v3 — used when key is available
     const apiKey = process.env.YOUTUBE_API_KEY;
-
     if (apiKey) {
-      // Official YouTube Data API v3
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=10&key=${encodeURIComponent(apiKey)}&order=relevance&safeSearch=strict&relevanceLanguage=en`;
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=15&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
       const data = await fetchJSON(url);
       const posts = (data?.items || [])
         .filter(v => v.id?.videoId && v.snippet?.title)
         .map(v => mapYouTubePost(
           v.id.videoId, v.snippet.title, v.snippet.description,
           v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-          v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url,
-          keyword
+          v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
         ));
-      setCached(cacheKey, posts);
-      return posts;
+      if (posts.length) { setCached(cacheKey, posts); return posts; }
     }
 
-    // Invidious fallback — try instances in order until one succeeds
+    // Primary: YouTube channel RSS feeds — no API key, served by YouTube, always works
+    const channels = TOPIC_YT_CHANNELS[keyword] || DEFAULT_YT_CHANNELS;
+    const allPosts = [];
+    await Promise.allSettled(channels.slice(0, 4).map(async ch => {
+      try {
+        const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.id}`);
+        allPosts.push(...parseYouTubeChannelRSS(xml, keyword, ch.name));
+      } catch { /* channel unavailable */ }
+    }));
+
+    if (allPosts.length) {
+      const seen = new Set();
+      const result = allPosts
+        .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setCached(cacheKey, result);
+      return result;
+    }
+
+    // Backup: Invidious instances
     for (const instance of INVIDIOUS_INSTANCES) {
       try {
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`;
+        const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
         const data = await fetchJSON(url);
         if (!Array.isArray(data) || !data.length) continue;
-        const posts = data
-          .filter(v => v.videoId && v.title)
-          .slice(0, 10)
-          .map(v => {
-            const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') ||
-                          (v.videoThumbnails || [])[0];
-            return mapYouTubePost(
-              v.videoId, v.title, v.description,
-              v.author, v.authorId,
-              v.published ? new Date(v.published * 1000).toISOString() : null,
-              thumb?.url,
-              keyword
-            );
-          });
-        if (posts.length) {
-          setCached(cacheKey, posts);
-          return posts;
-        }
+        const posts = data.filter(v => v.videoId && v.title).slice(0, 10).map(v => {
+          const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
+          return mapYouTubePost(
+            v.videoId, v.title, v.description, v.author, v.authorId,
+            v.published ? new Date(v.published * 1000).toISOString() : null,
+            thumb?.url, keyword
+          );
+        });
+        if (posts.length) { setCached(cacheKey, posts); return posts; }
       } catch { continue; }
     }
+
     return getCached(cacheKey) || [];
   } catch (e) {
-    console.warn(`YouTube search "${keyword}":`, e.message);
+    console.warn(`YouTube "${keyword}":`, e.message);
     return getCached(cacheKey) || [];
   }
 }
@@ -1037,7 +1328,7 @@ async function fetchStackOverflowByTag(tag) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=votes&site=stackoverflow&pagesize=100&filter=default`;
+    const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=creation&site=stackoverflow&pagesize=30&filter=default`;
     const data = await fetchJSON(url);
     const posts = (data?.items || [])
       .filter(q => q.title && q.link && !q.closed_date)
@@ -1067,61 +1358,88 @@ async function fetchStackOverflowByTag(tag) {
 
 // ─── Mastodon: public hashtag timeline ───────────────────────────────────────
 const INTEREST_TO_MASTODON_TAG = {
-  'AI & Machine Learning': 'AI', 'Open Source': 'OpenSource',
-  'Developer Tools': 'programming', 'Frontend Dev': 'WebDev',
-  'Backend Dev': 'Python', 'Cybersecurity': 'InfoSec',
-  'Cloud & DevOps': 'DevOps', 'UI/UX Design': 'UXDesign',
-  'FinTech': 'FinTech', 'Climate Tech': 'ClimateChange',
-  'EdTech': 'Education', 'Career Growth': 'Career',
-  'Side Projects': 'IndieHackers', 'Productivity': 'GTD',
-  'Data Science': 'DataScience', 'Startup': 'Startup',
+  'AI & Machine Learning': 'AI',        'Generative AI': 'GenAI',
+  'LLMs & Chatbots': 'LLM',             'Computer Vision': 'ComputerVision',
+  'Data Science': 'DataScience',         'Open Source': 'OpenSource',
+  'Developer Tools': 'programming',      'Frontend Dev': 'WebDev',
+  'Backend Dev': 'Python',               'Cybersecurity': 'InfoSec',
+  'Cloud & DevOps': 'DevOps',            'UI/UX Design': 'UXDesign',
+  'FinTech': 'FinTech',                  'Climate Tech': 'ClimateChange',
+  'EdTech': 'Education',                 'Career Growth': 'Career',
+  'Side Projects': 'IndieHackers',       'Productivity': 'GTD',
+  'Startup': 'Startup',                  'SaaS': 'SaaS',
+  'Mobile Dev': 'MobileDev',             'Web3 / Crypto': 'Web3',
+  'Game Dev': 'GameDev',                 'No-Code / Low-Code': 'NoCode',
+  'Remote Work': 'RemoteWork',           'Design Systems': 'DesignSystems',
+  'Health Tech': 'HealthTech',           'Venture Capital': 'VentureCapital',
 };
+
+const MASTODON_INSTANCES = [
+  'https://mastodon.social',
+  'https://mastodon.online',
+  'https://fosstodon.org',
+  'https://hachyderm.io',
+];
+
+function mapMastodonPosts(data, tag) {
+  return (data || [])
+    .filter(t => t.content && t.account && !t.sensitive)
+    .map(t => {
+      const text = t.content.replace(/<[^>]+>/g, '').trim().slice(0, 500);
+      return {
+        id:          `mastodon_${t.id}`,
+        authorId:    `mastodon_${t.account.id}`,
+        groupId:     'ext_mastodon',
+        content:     text,
+        title:       text.slice(0, 100),
+        source:      'mastodon',
+        sourceLabel: `@${t.account.acct}`,
+        sourceUrl:   t.url,
+        topic:       tag,
+        author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon' },
+        likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
+        createdAt:   t.created_at,
+        isExternal:  true,
+        mediaUrl:    t.media_attachments?.[0]?.preview_url || null,
+        mediaType:   t.media_attachments?.[0]?.type === 'image' ? 'image' : null,
+        group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: 'https://mastodon.social' },
+      };
+    });
+}
 
 async function fetchMastodonByTag(tag) {
   const key = `mastodon_tag_${tag}`;
   const cached = getCached(key);
   if (cached) return cached;
-  try {
-    const url = `https://mastodon.social/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`;
-    const data = await fetchJSON(url);
-    const posts = (data || [])
-      .filter(t => t.content && t.account && !t.sensitive)
-      .map(t => {
-        const text = t.content.replace(/<[^>]+>/g, '').trim().slice(0, 500);
-        return {
-          id:          `mastodon_${t.id}`,
-          authorId:    `mastodon_${t.account.id}`,
-          groupId:     'ext_mastodon',
-          content:     text,
-          title:       text.slice(0, 100),
-          source:      'mastodon',
-          sourceLabel: `@${t.account.acct}`,
-          sourceUrl:   t.url,
-          topic:       tag,
-          author:      { id: `mastodon_${t.account.id}`, name: t.account.display_name || t.account.username, title: 'Mastodon', organization: 'Mastodon' },
-          likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
-          createdAt:   t.created_at,
-          isExternal:  true,
-          mediaUrl:    t.media_attachments?.[0]?.preview_url || null,
-          mediaType:   t.media_attachments?.[0]?.type === 'image' ? 'image' : null,
-          group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: 'https://mastodon.social' },
-        };
-      });
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn(`Mastodon tag "${tag}":`, e.message);
-    return getCached(key) || [];
+  for (const instance of MASTODON_INSTANCES) {
+    try {
+      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`;
+      const data = await fetchJSON(url);
+      const posts = mapMastodonPosts(data, tag);
+      if (posts.length) {
+        setCached(key, posts);
+        return posts;
+      }
+    } catch { /* try next instance */ }
   }
+  console.warn(`Mastodon tag "${tag}": all instances failed`);
+  return getCached(key) || [];
 }
 
 // ─── Lobsters: tech link aggregator ──────────────────────────────────────────
 const LOBSTERS_TAGS = {
-  'AI & Machine Learning': 'ml', 'Frontend Dev': 'web',
-  'Backend Dev': 'programming', 'Cybersecurity': 'security',
-  'Cloud & DevOps': 'devops', 'Open Source': 'release',
-  'Developer Tools': 'tools', 'Data Science': 'datascience',
-  'Web3 / Crypto': 'crypto', 'Game Dev': 'gamedev',
+  'AI & Machine Learning': 'ml',     'Generative AI': 'ai',
+  'LLMs & Chatbots': 'ai',           'Computer Vision': 'ml',
+  'Data Science': 'datascience',     'Frontend Dev': 'frontend',
+  'Backend Dev': 'backend',          'Cybersecurity': 'security',
+  'Cloud & DevOps': 'devops',        'Open Source': 'release',
+  'Developer Tools': 'tools',        'Web3 / Crypto': 'crypto',
+  'Game Dev': 'gamedev',             'Mobile Dev': 'programming',
+  'Database': 'db',                  'APIs & Integrations': 'web',
+  'SaaS': 'programming',             'UI/UX Design': 'design',
+  'Career Growth': 'programming',    'Productivity': 'tools',
+  'Side Projects': 'programming',    'Web Development': 'web',
+  'Performance': 'performance',      'No-Code / Low-Code': 'web',
 };
 
 async function fetchLobstersByTag(tag) {
@@ -1159,11 +1477,15 @@ async function fetchLobstersByTag(tag) {
 
 // ─── arXiv: academic papers (AI, ML, Data Science, etc.) ─────────────────────
 const INTEREST_TO_ARXIV = {
-  'AI & Machine Learning': 'machine learning', 'Computer Vision': 'computer vision',
-  'Data Science': 'data science', 'LLMs & Chatbots': 'large language models',
-  'Cybersecurity': 'cybersecurity', 'Generative AI': 'generative AI',
-  'Blockchain / Web3': 'blockchain', 'Health Tech': 'healthcare AI',
-  'Climate Tech': 'climate change AI', 'Researcher / Academic': 'deep learning',
+  'AI & Machine Learning': 'machine learning',  'Computer Vision': 'computer vision',
+  'Data Science': 'data science',                'LLMs & Chatbots': 'large language models',
+  'Cybersecurity': 'cybersecurity',              'Generative AI': 'generative AI',
+  'Blockchain / Web3': 'blockchain',             'Health Tech': 'healthcare AI',
+  'Climate Tech': 'climate change AI',           'Researcher / Academic': 'deep learning',
+  'Web3 / Crypto': 'blockchain cryptography',   'Game Dev': 'reinforcement learning games',
+  'Robotics': 'robotics',                        'Quantum Computing': 'quantum computing',
+  'Mobile Dev': 'mobile computing',              'Cloud & DevOps': 'distributed systems',
+  'Backend Dev': 'systems programming',          'FinTech': 'financial machine learning',
 };
 
 function parseArxivAtom(xml) {
@@ -1391,6 +1713,46 @@ async function fetchHashnode(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Hashnode "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
+async function fetchBlueskyByKeyword(keyword) {
+  const key = `bluesky_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(keyword)}&limit=25&sort=latest`;
+    const data = await fetchJSON(url);
+    const posts = (data?.posts || [])
+      .filter(p => p.record?.text && p.author)
+      .map(p => {
+        const text = (p.record.text || '').slice(0, 500);
+        const handle = p.author.handle || p.author.did;
+        return {
+          id:          `bluesky_${p.cid || p.uri.replace(/[^a-z0-9]/gi, '').slice(-16)}`,
+          authorId:    `bluesky_${p.author.did}`,
+          groupId:     'ext_bluesky',
+          content:     text,
+          title:       text.slice(0, 120),
+          source:      'bluesky',
+          sourceLabel: `@${handle}`,
+          sourceUrl:   `https://bsky.app/profile/${handle}/post/${p.uri.split('/').pop()}`,
+          topic:       keyword,
+          author:      { id: `bluesky_${p.author.did}`, name: p.author.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
+          likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
+          createdAt:   p.record.createdAt || p.indexedAt || new Date().toISOString(),
+          isExternal:  true,
+          mediaUrl:    p.embed?.images?.[0]?.thumb || null,
+          mediaType:   p.embed?.images ? 'image' : null,
+          group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Bluesky "${keyword}":`, e.message);
     return getCached(key) || [];
   }
 }
@@ -1674,6 +2036,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     redditResults, hnResults, githubResults, youtubeResults,
     devtoResults, mediumResults,
     soResults, mastoResults, lobResults, arxivResults,
+    indeedResults, phResults, tcResults, vergeResults, ihResults, hashnodeResults, blueskyResults,
   ] = await Promise.all([
     run('reddit')        ? Promise.all(topics.map(kw => fetchRedditByKeyword(kw))).catch(() => []) : [],
     run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
@@ -1685,6 +2048,13 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('mastodon')      ? Promise.all(effectiveMastoTags.slice(0,3).map(t => fetchMastodonByTag(t))).catch(() => [])     : [],
     run('lobsters')      ? Promise.all(effectiveLobTags.slice(0,3).map(t => fetchLobstersByTag(t))).catch(() => [])       : [],
     run('arxiv')         ? Promise.all(effectiveArxivKws.slice(0,3).map(k => fetchArxivByKeyword(k))).catch(() => [])     : [],
+    run('indeed')        ? Promise.all(topics.slice(0,4).map(kw => fetchIndeedJobs(kw))).catch(() => [])           : [],
+    run('producthunt')   ? Promise.all(topics.slice(0,4).map(kw => fetchProductHunt(kw))).catch(() => [])          : [],
+    run('techcrunch')    ? Promise.all(topics.slice(0,4).map(kw => fetchTechCrunch(kw))).catch(() => [])           : [],
+    run('theverge')      ? Promise.all(topics.slice(0,4).map(kw => fetchTheVerge(kw))).catch(() => [])             : [],
+    run('indiehackers')  ? Promise.all(topics.slice(0,4).map(kw => fetchIndieHackers(kw))).catch(() => [])         : [],
+    run('hashnode')      ? Promise.all(topics.slice(0,4).map(kw => fetchHashnode(kw))).catch(() => [])             : [],
+    run('bluesky')       ? Promise.all(topics.slice(0,4).map(kw => fetchBlueskyByKeyword(kw))).catch(() => [])     : [],
   ]);
 
   return {
@@ -1698,6 +2068,13 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     mastodon:      mastoResults.flat(),
     lobsters:      lobResults.flat(),
     arxiv:         arxivResults.flat(),
+    indeed:        indeedResults.flat(),
+    producthunt:   phResults.flat(),
+    techcrunch:    tcResults.flat(),
+    theverge:      vergeResults.flat(),
+    indiehackers:  ihResults.flat(),
+    hashnode:      hashnodeResults.flat(),
+    bluesky:       blueskyResults.flat(),
   };
 }
 
@@ -1758,7 +2135,9 @@ function addAndBroadcast(incoming) {
   const fresh = (incoming || []).filter(p => p?.id && !seenPostIds.has(p.id));
   if (!fresh.length) return 0;
   fresh.forEach(p => seenPostIds.add(p.id));
-  globalFeedCache.posts = [...fresh, ...globalFeedCache.posts].slice(0, 10000);
+  const merged = [...fresh, ...globalFeedCache.posts];
+  merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  globalFeedCache.posts = merged.slice(0, 10000);
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -1787,9 +2166,13 @@ const CIRCUIT_EMPTY_CYCLES = 2;  // empty full-cycles before pausing
 const CIRCUIT_PAUSE_MS     = 5 * 60 * 1000; // 5 minutes
 
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
+  const sourceTtl    = SOURCE_CONFIG[agentId]?.ttl ?? 5 * 60 * 1000;
+  const cachePrefix  = CACHE_KEY_PREFIX[agentId];
+  const topicFetchedAt = new Map(); // mappedKey → timestamp of last real API fetch
+
   let topicIdx = 0;
-  let emptyTopicsThisCycle = 0; // topics in current cycle that contributed 0 fresh posts
-  let fullCyclesEmpty      = 0; // how many consecutive complete cycles were fully empty
+  let emptyTopicsThisCycle = 0;
+  let fullCyclesEmpty      = 0;
 
   // Initialise health tracking for this worker
   workerHealth.set(agentId, {
@@ -1815,18 +2198,27 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
 
     const mappedKey = keyMapper(topic);
     if (!mappedKey) {
-      // Unmapped topic — counts as empty for this source
       emptyTopicsThisCycle++;
     } else {
       health.fetchCount++;
+
+      // Bust the per-fetcher cache when this source's TTL has elapsed so we always get fresh API data
+      const lastFetched = topicFetchedAt.get(mappedKey) || 0;
+      if (Date.now() - lastFetched >= sourceTtl && cachePrefix) {
+        bustCache(`${cachePrefix}${mappedKey}`);
+      }
+
       try {
         const posts = await fetchFn(mappedKey).catch(() => []);
+        topicFetchedAt.set(mappedKey, Date.now()); // track actual fetch time
         const fresh = (posts || []).filter(p => p?.id);
         if (fresh.length) {
           const n = addAndBroadcast(fresh);
           const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+          const merged = [...fresh, ...prev.posts];
+          merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
           agentSourceCache.set(agentId, {
-            posts: [...fresh, ...prev.posts].slice(0, 500),
+            posts: merged.slice(0, 500),
             lastFetch: Date.now(),
             totalSeen: prev.totalSeen + fresh.length,
             emoji, color,
@@ -1884,8 +2276,10 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       if (posts.length) {
         addAndBroadcast(posts);
         const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
+        const merged2 = [...posts, ...prev.posts];
+        merged2.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         agentSourceCache.set(agentId, {
-          posts: [...posts, ...prev.posts].slice(0, 500),
+          posts: merged2.slice(0, 500),
           lastFetch: Date.now(),
           totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
           emoji, color,
@@ -1912,7 +2306,7 @@ function calculateExpectedLoad() {
     const arx = t => INTEREST_TO_ARXIV[t];
     const mappers = { reddit: kw, hn: kw, github: kw, devto: dev, medium: med,
       youtube: kw, stackoverflow: so, mastodon: mas, lobsters: lob, arxiv: arx,
-      indeed: kw, producthunt: kw, techcrunch: kw, theverge: kw, indiehackers: kw, hashnode: kw };
+      indeed: kw, producthunt: kw, techcrunch: kw, theverge: kw, indiehackers: kw, hashnode: kw, bluesky: kw };
     const mapper = mappers[src] || kw;
     const mappedTopics = FEED_TOPICS.filter(t => mapper(t));
     // Time to complete one full topic cycle = delay * all topics
@@ -1936,7 +2330,14 @@ function startContinuousWorkers() {
   const dev = t => INTEREST_TO_DEVTO_TAG[t];
   const med = t => INTEREST_TO_MEDIUM_TAG[t];
   const so  = t => INTEREST_TO_SO_TAG[t];
-  const mas = t => INTEREST_TO_MASTODON_TAG[t];
+  // Mastodon: use specific tag map; fall back to first keyword word as hashtag
+  const mas = t => {
+    if (INTEREST_TO_MASTODON_TAG[t]) return INTEREST_TO_MASTODON_TAG[t];
+    const kw = INTEREST_TO_KEYWORDS[t];
+    if (!kw) return null;
+    const firstWord = kw.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, '');
+    return firstWord.length >= 3 ? firstWord : null;
+  };
   const lob = t => LOBSTERS_TAGS[t];
   const arx = t => INTEREST_TO_ARXIV[t];
 
@@ -1960,6 +2361,7 @@ function startContinuousWorkers() {
     ['theverge',      '⬛', '#FF3333', fetchTheVerge,            kw,  13000],
     ['indiehackers',  '💡', '#0E2150', fetchIndieHackers,        kw,  14000],
     ['hashnode',      '✍️', '#2962FF', fetchHashnode,            kw,  15000],
+    ['bluesky',       '🦋', '#0085FF', fetchBlueskyByKeyword,    kw,  16000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -1968,7 +2370,7 @@ function startContinuousWorkers() {
   }
 
   calculateExpectedLoad();
-  logAgentAction('feed', '🔄', 'All 16 source agents started — continuous per-source topic cycling active', '#4ADE80');
+  logAgentAction('feed', '🔄', 'All 17 source agents started — continuous per-source topic cycling active', '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
@@ -3420,8 +3822,19 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
-  // Manual refresh: bust the API cache so fresh data is fetched from all sources
-  if (req.query.bust === '1') postCache.clear();
+  // Manual refresh: bust caches so fresh data is fetched
+  if (req.query.bust === '1') {
+    postCache.clear();
+    // For source-tab refresh, also bust per-fetcher caches and clear agentSourceCache entry
+    const bustSource = req.query.source;
+    if (bustSource) {
+      const hnKeyMap = { hackernews: 'hn' };
+      const agentKey = hnKeyMap[bustSource] || bustSource;
+      const prefix = CACHE_KEY_PREFIX[agentKey];
+      if (prefix) bustCachePrefix(prefix);
+      agentSourceCache.delete(agentKey);
+    }
+  }
 
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
@@ -3518,59 +3931,38 @@ app.get('/feed', authenticate, async (req, res) => {
     user?.skills || [], prefs.goals || [],
     user?.title || '', user?.organization || '',
     sourceFilter
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[] }; });
+  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[], indeed:[], producthunt:[], techcrunch:[], theverge:[], indiehackers:[], hashnode:[], bluesky:[] }; });
 
-  // ── Source-tab page 1: cache-first (agent cache + global cache + DB), live only if sparse ──
+  // ── Source-tab: always serve worker cache + live fetch, newest-first ────────
   if (sourceFilter) {
     const hnKeyMap  = { hackernews: 'hn' };
     const agentKey  = hnKeyMap[sourceFilter] || sourceFilter;
 
-    // 1. Agent cache — continuously refreshed by background workers
-    const agentCacheArr = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
-    // 2. Global feed cache filtered by source
-    const cacheFiltered = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
-    // 3. DB
-    const userTopics = [
-      ...(prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean),
-      ...(user?.skills || []).map(s => (s && typeof s === 'string') ? s.trim() : '').filter(s => s.length > 1).slice(0, 4),
-    ];
-    const dbTopics = userTopics.length > 0 ? userTopics : ['technology', 'programming', 'startup'];
-    const dbFiltered = (await getPostsFromDB(dbTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
-
-    const seenFast = new Set();
-    const fastPosts = [...agentCacheArr, ...cacheFiltered, ...dbFiltered].filter(p => {
-      if (!p.id || seenFast.has(p.id)) return false;
-      seenFast.add(p.id);
-      return true;
-    });
-    fastPosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-    // If we have enough cached posts, return immediately — no live API call needed
-    if (fastPosts.length >= 8) {
-      return res.json({ posts: fastPosts, source: sourceFilter, hasMore: true, page: 1 });
-    }
-
-    // Cache is sparse (cold start or rare source) — supplement with a live fetch
-    const liveKey  = agentKey;
-    const liveArr  = (liveResult[liveKey] || []).map(p => mapExternalPost(p, sourceFilter));
-    savePostsToDB(liveArr).catch(() => {});
+    const workerPosts = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
+    const livePosts   = (liveResult[agentKey] || []).map(p => mapExternalPost(p, sourceFilter));
+    savePostsToDB(livePosts).catch(() => {});
 
     const seen = new Set();
-    const sourcePosts = [...liveArr, ...fastPosts].filter(p => {
-      if (!p.id || seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
-    sourcePosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return res.json({ posts: sourcePosts, source: sourceFilter, hasMore: true, page: 1 });
+    const result = [...livePosts, ...workerPosts]
+      .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    return res.json({ posts: result, source: sourceFilter, hasMore: false });
   }
 
   const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw,
           medium: mediumRaw, youtube: youtubeRaw,
-          stackoverflow: soRaw, mastodon: mastoRaw, lobsters: lobRaw, arxiv: arxivRaw } = liveResult;
+          stackoverflow: soRaw, mastodon: mastoRaw, lobsters: lobRaw, arxiv: arxivRaw,
+          indeed: indeedRaw = [], producthunt: phRaw = [], techcrunch: tcRaw = [],
+          theverge: vergeRaw = [], indiehackers: ihRaw = [],
+          hashnode: hashnodeRaw = [], bluesky: blueskyRaw = [] } = liveResult;
 
   // Persist new posts to DB in background (non-blocking)
-  const allLive = [...redditRaw,...hnRaw,...githubRaw,...devtoRaw,...mediumRaw,...youtubeRaw,...soRaw,...mastoRaw,...lobRaw,...arxivRaw];
+  const allLive = [
+    ...redditRaw, ...hnRaw, ...githubRaw, ...devtoRaw, ...mediumRaw, ...youtubeRaw,
+    ...soRaw, ...mastoRaw, ...lobRaw, ...arxivRaw,
+    ...indeedRaw, ...phRaw, ...tcRaw, ...vergeRaw, ...ihRaw, ...hashnodeRaw, ...blueskyRaw,
+  ];
   savePostsToDB(allLive).catch(() => {});
 
   // Fetch live posts from all joined Reddit groups
@@ -3579,16 +3971,23 @@ app.get('/feed', authenticate, async (req, res) => {
     joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
   )).flat();
 
-  const redditPosts = redditRaw.map(p => mapExternalPost(p, 'reddit'));
-  const hnPosts     = (hnRaw    || []).map(p => mapExternalPost(p, 'hackernews'));
-  const githubPosts = (githubRaw|| []).map(p => mapExternalPost(p, 'github'));
-  const devtoPosts  = devtoRaw.map(p => mapExternalPost(p, 'devto'));
-  const mediumPosts  = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
-  const youtubePosts = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
-  const soPosts     = soRaw.map(p => mapExternalPost(p, 'stackoverflow'));
-  const mastoPosts  = mastoRaw.map(p => mapExternalPost(p, 'mastodon'));
-  const lobPosts    = lobRaw.map(p => mapExternalPost(p, 'lobsters'));
-  const arxivPosts  = arxivRaw.map(p => mapExternalPost(p, 'arxiv'));
+  const redditPosts    = redditRaw.map(p => mapExternalPost(p, 'reddit'));
+  const hnPosts        = (hnRaw     || []).map(p => mapExternalPost(p, 'hackernews'));
+  const githubPosts    = (githubRaw || []).map(p => mapExternalPost(p, 'github'));
+  const devtoPosts     = devtoRaw.map(p => mapExternalPost(p, 'devto'));
+  const mediumPosts    = (mediumRaw  || []).map(p => mapExternalPost(p, 'medium'));
+  const youtubePosts   = (youtubeRaw || []).map(p => mapExternalPost(p, 'youtube'));
+  const soPosts        = soRaw.map(p => mapExternalPost(p, 'stackoverflow'));
+  const mastoPosts     = mastoRaw.map(p => mapExternalPost(p, 'mastodon'));
+  const lobPosts       = lobRaw.map(p => mapExternalPost(p, 'lobsters'));
+  const arxivPosts     = arxivRaw.map(p => mapExternalPost(p, 'arxiv'));
+  const indeedPosts2   = indeedRaw.map(p => mapExternalPost(p, 'indeed'));
+  const phPosts        = phRaw.map(p => mapExternalPost(p, 'producthunt'));
+  const tcPosts        = tcRaw.map(p => mapExternalPost(p, 'techcrunch'));
+  const vergePosts     = vergeRaw.map(p => mapExternalPost(p, 'theverge'));
+  const ihPosts        = ihRaw.map(p => mapExternalPost(p, 'indiehackers'));
+  const hashnodePosts  = hashnodeRaw.map(p => mapExternalPost(p, 'hashnode'));
+  const blueskyPosts   = blueskyRaw.map(p => mapExternalPost(p, 'bluesky'));
 
   // Social platform posts — shown for all users, topic-matched
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
@@ -3726,34 +4125,20 @@ app.get('/feed', authenticate, async (req, res) => {
     ...connectedSocialPosts, ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
-    ...lobPosts, ...arxivPosts, ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
+    ...lobPosts, ...arxivPosts,
+    ...indeedPosts2, ...phPosts, ...tcPosts, ...vergePosts, ...ihPosts, ...hashnodePosts, ...blueskyPosts,
+    ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
   ].filter(p => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
   });
 
-  // Round-robin interleave by source (relevance desc, recency desc within each bucket)
-  const bySource = {};
-  all.forEach(p => {
-    const key = p.source || 'uficonnect';
-    if (!bySource[key]) bySource[key] = [];
-    bySource[key].push(p);
-  });
-  Object.values(bySource).forEach(bucket =>
-    bucket.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-  );
-  const mixed = [];
-  const buckets = Object.values(bySource);
-  let i = 0;
-  while (buckets.some(b => b.length > 0)) {
-    const bucket = buckets[i % buckets.length];
-    if (bucket.length > 0) mixed.push(bucket.shift());
-    i++;
-  }
+  // Sort everything by date descending — newest post first, like Facebook/Instagram
+  all.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
   res.json({
-    posts: mixed,
+    posts: all,
     sources: {
       reddit:        redditPosts.length,
       github:        githubPosts.length,
@@ -3895,28 +4280,32 @@ const AGENT_DEFS = {
     description: 'Queries arXiv preprint API for research papers every 3s. Covers AI/ML, CS, and adjacent scientific topics across 36 mapped subjects.',
   },
   indeed: {
-    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '30min',
+    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '5min',
     description: 'Fetches real job listings from Indeed RSS feeds across 36 topic keywords. Surfaces active job postings for professionals and job seekers.',
   },
   producthunt: {
-    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '30min',
+    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '10min',
     description: 'Pulls today\'s top product launches from Product Hunt RSS, filtered by 36 topic keywords. Discovers new tools, apps, and SaaS products.',
   },
   techcrunch: {
-    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '30min',
+    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '3min',
     description: 'Fetches startup and tech news from TechCrunch RSS, filtered by 36 topic keywords. Covers funding rounds, launches, and industry trends.',
   },
   theverge: {
-    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '30min',
+    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '3min',
     description: 'Pulls technology and culture news from The Verge RSS, filtered by topic keywords. Covers consumer tech, science, and digital culture.',
   },
   indiehackers: {
-    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '30min',
+    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '8min',
     description: 'Fetches community posts from Indie Hackers RSS. Surfaces bootstrapper stories, revenue milestones, and startup advice across 36 topics.',
   },
   hashnode: {
-    name: 'Hashnode Agent', emoji: '✍️', color: '#2962FF', interval: '30min',
+    name: 'Hashnode Agent', emoji: '✍️', color: '#2962FF', interval: '3min',
     description: 'Queries Hashnode GraphQL API for developer blog posts across 36 topic keywords. Surfaces technical articles and developer stories.',
+  },
+  bluesky: {
+    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '2min',
+    description: 'Searches Bluesky\'s public AT Protocol API for real-time posts by keyword. No auth required — streams live social content from the open web.',
   },
   linkedin: {
     name: 'LinkedIn Agent', emoji: '🔷', color: '#0A66C2', interval: '30min',

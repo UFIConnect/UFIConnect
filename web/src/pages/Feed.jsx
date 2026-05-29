@@ -22,6 +22,7 @@ const SOURCE_META = {
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
   linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
   twitter:       { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
+  bluesky:       { label: 'Bluesky',       color: '#0085FF', icon: '🦋' },
   facebook:      { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
   instagram:     { label: 'Instagram',     color: '#E1306C', icon: '📸' },
   tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
@@ -33,6 +34,11 @@ const SOURCE_META = {
   lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: '🦞' },
   arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: '🔬' },
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
+  producthunt:   { label: 'Product Hunt',  color: '#DA552F', icon: '🚀' },
+  techcrunch:    { label: 'TechCrunch',    color: '#0D9F3F', icon: '📰' },
+  theverge:      { label: 'The Verge',     color: '#FF3333', icon: '⬛' },
+  indiehackers:  { label: 'Indie Hackers', color: '#0E2150', icon: '💡' },
+  hashnode:      { label: 'Hashnode',      color: '#2962FF', icon: '✍️' },
   uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -46,14 +52,22 @@ const SOURCE_TABS = [
   { key: 'medium',       label: 'Medium',       icon: '📝' },
   { key: 'stackoverflow',label: 'Stack',        icon: '📚' },
   { key: 'mastodon',     label: 'Mastodon',     icon: '🦣' },
+  { key: 'bluesky',      label: 'Bluesky',      icon: '🦋' },
   { key: 'lobsters',     label: 'Lobsters',     icon: '🦞' },
   { key: 'arxiv',        label: 'arXiv',        icon: '🔬' },
+  { key: 'indeed',       label: 'Indeed',       icon: '💼' },
+  { key: 'producthunt',  label: 'Product Hunt', icon: '🚀' },
+  { key: 'techcrunch',   label: 'TechCrunch',   icon: '📰' },
+  { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
+  { key: 'indiehackers', label: 'Indie Hackers',icon: '💡' },
+  { key: 'hashnode',     label: 'Hashnode',     icon: '✍️' },
 ];
 
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'devto', 'medium', 'youtube',
-  'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
-  'stackoverflow', 'mastodon', 'lobsters', 'arxiv', 'indeed',
+  'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
+  'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
+  'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
 ];
 
 const CATEGORY_COLORS = {
@@ -433,37 +447,30 @@ export default function Feed() {
   const [clientPage,    setClientPage]   = useState(1);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
-  const [livePending, setLivePending] = useState([]);
-  const [liveCount,   setLiveCount]   = useState(0);
   const [liveActive,  setLiveActive]  = useState(false);
-  const [sourceTab,           setSourceTab]           = useState('all');
-  const [sourceTabLoading,    setSourceTabLoading]    = useState({});
-  const [sourceTabLoadingMore,setSourceTabLoadingMore] = useState(false);
-  const [sourceTabHasMore,    setSourceTabHasMore]    = useState({});
-  const sourceTabCache = useRef({});
-  const sourceTabPage  = useRef({});
+  const [sourceTab, setSourceTab] = useState('all');
 
-  const filterBtnRef = useRef(null);
-  const panelRef     = useRef(null);
-  const knownIds     = useRef(new Set());
-  const sentinelRef  = useRef(null);
+  const filterBtnRef  = useRef(null);
+  const panelRef      = useRef(null);
+  const knownIds      = useRef(new Set());
+  const sentinelRef   = useRef(null);
+  const sourceTabRef  = useRef('all');
 
-  const loadFeed = useCallback(async (manual = false) => {
+  const loadFeed = useCallback(async (manual = false, source = null) => {
     if (manual) setRefreshing(true);
-    else if (!posts.length) setLoading(true);
+    else setLoading(true);
     try {
-      const { data } = await client.get(manual ? '/feed?bust=1' : '/feed');
+      const src = source && source !== 'all' ? source : null;
+      const url = src
+        ? (manual ? `/feed?source=${encodeURIComponent(src)}&bust=1` : `/feed?source=${encodeURIComponent(src)}`)
+        : (manual ? '/feed?bust=1' : '/feed');
+      const { data } = await client.get(url);
       const incoming = data.posts || [];
-      if (manual) {
-        knownIds.current = new Set(incoming.map(p => p.id));
-        sourceTabCache.current = {}; // bust per-source cache so next tab click re-fetches
-      } else {
-        incoming.forEach(p => knownIds.current.add(p.id));
-      }
+      knownIds.current = new Set(incoming.map(p => p.id));
       setPosts(incoming);
       setClientPage(1);
       setRemotePage(2);
-      setRemoteHasMore(true);
+      setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
       setLivePending([]);
       setLiveCount(0);
@@ -471,53 +478,19 @@ export default function Feed() {
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
-  const SOURCE_TAB_TTL = 5 * 60 * 1000; // 5 minutes
-
-  const loadSourceTab = useCallback(async (key) => {
+  const switchTab = useCallback((key) => {
     setSourceTab(key);
-    if (key === 'all') return;
-    const cached = sourceTabCache.current[key];
-    // Skip fetch if cached AND less than 5 minutes old
-    if (cached && (Date.now() - (cached.fetchedAt || 0)) < SOURCE_TAB_TTL) return;
-    setSourceTabLoading(prev => ({ ...prev, [key]: true }));
-    try {
-      const { data } = await client.get(`/feed?source=${encodeURIComponent(key)}&page=1`);
-      sourceTabCache.current[key] = { posts: data.posts || [], fetchedAt: Date.now() };
-      sourceTabPage.current[key]  = 1;
-      setSourceTabHasMore(prev => ({ ...prev, [key]: data.hasMore ?? false }));
-    } catch (e) {
-      console.error(e);
-      sourceTabCache.current[key] = { posts: [], fetchedAt: Date.now() };
-    } finally {
-      setSourceTabLoading(prev => ({ ...prev, [key]: false }));
-    }
-  }, []);
-
-  const loadMoreSourceTab = useCallback(async () => {
-    if (sourceTabLoadingMore || !sourceTabHasMore[sourceTab]) return;
-    setSourceTabLoadingMore(true);
-    try {
-      const nextPage = (sourceTabPage.current[sourceTab] || 1) + 1;
-      const { data } = await client.get(`/feed?source=${encodeURIComponent(sourceTab)}&page=${nextPage}`);
-      const prevPosts = sourceTabCache.current[sourceTab]?.posts || [];
-      const existing  = new Set(prevPosts.map(p => p.id));
-      const fresh     = (data.posts || []).filter(p => !existing.has(p.id));
-      sourceTabCache.current[sourceTab] = { posts: [...prevPosts, ...fresh], fetchedAt: sourceTabCache.current[sourceTab]?.fetchedAt || Date.now() };
-      sourceTabPage.current[sourceTab]  = nextPage;
-      setSourceTabHasMore(prev => ({ ...prev, [sourceTab]: data.hasMore ?? false }));
-      setSourceTabLoading(prev => ({ ...prev, _tick: Date.now() })); // trigger re-compute
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSourceTabLoadingMore(false);
-    }
-  }, [sourceTab, sourceTabLoadingMore, sourceTabHasMore]);
+    setSearch('');
+    setClientPage(1);
+    loadFeed(false, key === 'all' ? null : key);
+  }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
     setLoadingMore(true);
     try {
-      const { data } = await client.get(`/feed?page=${remotePage}`);
+      const srcParam = sourceTab !== 'all' ? `&source=${encodeURIComponent(sourceTab)}` : '';
+      const { data } = await client.get(`/feed?page=${remotePage}${srcParam}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
       if (incoming.length > 0) setPosts(prev => [...prev, ...incoming]);
@@ -525,7 +498,7 @@ export default function Feed() {
       setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
     } catch {}
     finally { setLoadingMore(false); }
-  }, [loadingMore, remoteHasMore, remotePage]);
+  }, [loadingMore, remoteHasMore, remotePage, sourceTab]);
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
@@ -536,7 +509,10 @@ export default function Feed() {
     client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
   }, [profile]);
 
-  // SSE: stream new posts from all 10 source workers in real time
+  // Keep sourceTabRef in sync so the SSE closure can read the current tab
+  useEffect(() => { sourceTabRef.current = sourceTab; }, [sourceTab]);
+
+  // SSE: stream new posts from all source workers in real time
   useEffect(() => {
     const base = import.meta.env.VITE_API_URL || '/api';
     const es = new EventSource(`${base}/feed/stream`);
@@ -549,16 +525,23 @@ export default function Feed() {
         const { init, posts: incoming } = JSON.parse(e.data);
         if (!incoming?.length) return;
         if (init) {
-          // Initial burst: seed knownIds but don't show banner for historical posts
           incoming.forEach(p => knownIds.current.add(p.id));
           return;
         }
-        // Genuinely new posts
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
-        setLivePending(prev => [...fresh, ...prev]);
-        setLiveCount(c => c + fresh.length);
+        // Only inject posts that match the current source tab
+        const tab = sourceTabRef.current;
+        const tabFresh = tab === 'all' ? fresh : fresh.filter(p => p.source === tab);
+        if (!tabFresh.length) return;
+        setPosts(prev => {
+          const merged = [...tabFresh, ...prev];
+          const seen = new Set();
+          return merged
+            .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
+            .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        });
       } catch {}
     };
 
@@ -567,7 +550,7 @@ export default function Feed() {
     return () => { es.close(); setLiveActive(false); };
   }, []);
 
-  // Time range cutoff helper (used by processed and sourceTabPosts memos below)
+  // Time range cutoff helper
   function timeRangeCutoff(range) {
     const now = Date.now();
     if (range === '1h')    return now - 60 * 60 * 1000;
@@ -636,18 +619,6 @@ export default function Feed() {
     return () => obs.disconnect();
   }, [processed.length, loadMoreRemote]);
 
-  function loadLivePosts() {
-    setPosts(prev => {
-      const merged = [...livePending, ...prev];
-      const seen = new Set();
-      return merged.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
-    });
-    setLivePending([]);
-    setLiveCount(0);
-    setClientPage(1);
-    setLastRefresh(new Date());
-  }
-
   // Close filter panel on outside click
   useEffect(() => {
     function handleClick(e) {
@@ -673,25 +644,6 @@ export default function Feed() {
   const clientHasMore = displayed.length < processed.length;
   const hasMore     = clientHasMore || remoteHasMore;
 
-  // Source-tab view: apply same search/sort/time filters to the cached source posts
-  const sourceTabPosts = useMemo(() => {
-    if (sourceTab === 'all') return [];
-    let result = [...(sourceTabCache.current[sourceTab]?.posts || [])];
-    const q = search.trim().toLowerCase();
-    if (q) result = result.filter(p =>
-      (p.title || '').toLowerCase().includes(q) ||
-      (p.content || '').toLowerCase().includes(q) ||
-      (p.author?.name || '').toLowerCase().includes(q)
-    );
-    if (filters.timeRange && filters.timeRange !== 'all') {
-      const cutoff = timeRangeCutoff(filters.timeRange);
-      result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
-    }
-    if (filters.sort === 'popular') result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
-    else result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return result;
-  }, [sourceTab, search, filters, sourceTabLoading, sourceTabLoadingMore]); // deps trigger re-compute on new data
-
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
 
@@ -714,26 +666,10 @@ export default function Feed() {
           </span>
         </h1>
         <p className="page-subtitle">
-          16 source workers pulling live from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, HN, arXiv, Mastodon, TechCrunch and more — new posts stream in automatically.
+          17 source workers pulling live from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, HN, arXiv, Mastodon, Bluesky, TechCrunch, Product Hunt, Indie Hackers and more — new posts stream in automatically.
         </p>
       </div>
 
-      {/* Live new-posts banner */}
-      {liveCount > 0 && (
-        <div
-          onClick={loadLivePosts}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            background: 'var(--primary)', color: '#fff',
-            padding: '10px 20px', borderRadius: 12, marginBottom: 14,
-            cursor: 'pointer', fontWeight: 700, fontSize: '.875rem',
-            boxShadow: '0 4px 16px rgba(99,102,241,.35)',
-            animation: 'slideDown .25s ease',
-          }}
-        >
-          ↑ {liveCount} new post{liveCount !== 1 ? 's' : ''} — tap to show
-        </div>
-      )}
 
       {/* Toolbar: search + filter + refresh */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative' }}>
@@ -782,7 +718,7 @@ export default function Feed() {
 
         {/* Refresh button */}
         <button
-          onClick={() => loadFeed(true)}
+          onClick={() => loadFeed(true, sourceTab !== 'all' ? sourceTab : null)}
           disabled={refreshing}
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
@@ -806,11 +742,10 @@ export default function Feed() {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
           const active = sourceTab === tab.key;
-          const isLoading = sourceTabLoading[tab.key];
           return (
             <button
               key={tab.key}
-              onClick={() => loadSourceTab(tab.key)}
+              onClick={() => switchTab(tab.key)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
@@ -818,88 +753,47 @@ export default function Feed() {
                 background: active ? (tab.key === 'all' ? 'var(--primary)' : color) : 'var(--surface)',
                 color: active ? '#fff' : 'var(--text)',
                 fontWeight: active ? 700 : 500, fontSize: '.8rem',
-                cursor: 'pointer', opacity: isLoading ? 0.7 : 1,
+                cursor: 'pointer',
                 flexShrink: 0,
               }}
             >
               <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
               {tab.label}
-              {isLoading && <span className="spinner" style={{ width: 10, height: 10, borderWidth: 1.5, marginLeft: 2 }} />}
             </button>
           );
         })}
       </div>
 
       {/* Last refresh time */}
-      {lastRefresh && sourceTab === 'all' && (
+      {lastRefresh && (
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
+          {sourceTab !== 'all' && SOURCE_META[sourceTab] && (
+            <span style={{ fontWeight: 600, color: SOURCE_META[sourceTab].color, marginRight: 6 }}>
+              {SOURCE_META[sourceTab].icon} {SOURCE_META[sourceTab].label}
+            </span>
+          )}
           Last updated {timeAgo(lastRefresh.toISOString())}
           {posts.length > 0 && ` · ${posts.length.toLocaleString()} post${posts.length !== 1 ? 's' : ''} loaded`}
           {search && ` for "${search}"`}
         </div>
       )}
 
-      {/* Source-tab view */}
-      {sourceTab !== 'all' ? (
-        sourceTabLoading[sourceTab] ? (
-          <div style={{ textAlign: 'center', padding: 48 }}>
-            <span className="spinner spinner-primary" />
+      {/* Unified feed view — same setup for All tab and every source tab */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <span className="spinner spinner-primary" />
+          {sourceTab !== 'all' && (
             <div style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>
               Fetching {SOURCE_META[sourceTab]?.label || sourceTab} posts…
             </div>
-          </div>
-        ) : sourceTabPosts.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">{SOURCE_META[sourceTab]?.icon || '📭'}</div>
-            <div className="empty-title">No {SOURCE_META[sourceTab]?.label || sourceTab} posts found</div>
-            <div className="empty-desc" style={{ fontSize: '.82rem', color: 'var(--muted)' }}>
-              Try a different time range or clear search filters.
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 10 }}>
-              {sourceTabPosts.length} posts from {SOURCE_META[sourceTab]?.label || sourceTab}
-            </div>
-            {sourceTabPosts.map(post => (
-              <PostCard key={post.id} post={post} onVideoOpen={setVideoPost} />
-            ))}
-            {/* Load more */}
-            {sourceTabHasMore[sourceTab] && (
-              <div style={{ textAlign: 'center', padding: '20px 0 8px' }}>
-                <button
-                  onClick={loadMoreSourceTab}
-                  disabled={sourceTabLoadingMore}
-                  style={{
-                    padding: '9px 28px', borderRadius: 20,
-                    border: '1.5px solid var(--border)',
-                    background: 'var(--surface)', color: 'var(--text)',
-                    fontWeight: 600, fontSize: '.83rem', cursor: 'pointer',
-                    opacity: sourceTabLoadingMore ? 0.6 : 1,
-                    display: 'inline-flex', alignItems: 'center', gap: 8,
-                  }}
-                >
-                  {sourceTabLoadingMore
-                    ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Loading…</>
-                    : '↓ Load more'}
-                </button>
-              </div>
-            )}
-            {!sourceTabHasMore[sourceTab] && sourceTabPosts.length > 0 && (
-              <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '.75rem', color: 'var(--muted)' }}>
-                All {SOURCE_META[sourceTab]?.label || sourceTab} posts loaded
-              </div>
-            )}
-          </div>
-        )
-      ) : loading ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <span className="spinner spinner-primary" />
+          )}
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? '🔍' : '📭'}</div>
-          <div className="empty-title">{search ? `No results for "${search}"` : 'No posts found'}</div>
+          <div className="empty-icon">{search ? '🔍' : (SOURCE_META[sourceTab]?.icon || '📭')}</div>
+          <div className="empty-title">
+            {search ? `No results for "${search}"` : `No ${SOURCE_META[sourceTab]?.label || ''} posts found`.trim()}
+          </div>
           <div className="empty-desc">
             {search ? (
               <button className="btn btn-ghost btn-sm" onClick={() => setSearch('')}>Clear search</button>
@@ -907,6 +801,8 @@ export default function Feed() {
               <button className="btn btn-ghost btn-sm" onClick={() => setFilters({ sort: 'newest', sources: [], timeRange: 'all' })}>
                 Reset filters
               </button>
+            ) : sourceTab !== 'all' ? (
+              <button className="btn btn-ghost btn-sm" onClick={() => switchTab('all')}>Back to All</button>
             ) : (
               <>
                 <Link to="/groups">Join some communities</Link> or complete your{' '}
