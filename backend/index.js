@@ -4184,7 +4184,8 @@ app.get('/users/:id', authenticate, async (req, res) => {
   if (!user) return res.status(404).json({ message: 'User not found.' });
   const followersCount = follows.filter(f => f.followingId === user.id).length;
   const followingCount = follows.filter(f => f.followerId === user.id).length;
-  const isFollowing = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
+  const isFollowing    = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
+  const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
   res.json({
     id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
     organization: user.organization || '', skills: user.skills || [],
@@ -4192,7 +4193,8 @@ app.get('/users/:id', authenticate, async (req, res) => {
     interests: user.preferences?.interests || [],
     goals: user.preferences?.goals || [],
     experience: user.preferences?.experience || '',
-    followersCount, followingCount, isFollowing,
+    roleSettings: user.roleSettings || {},
+    followersCount, followingCount, isFollowing, followsYouBack,
     links: user.links || {},
   });
 });
