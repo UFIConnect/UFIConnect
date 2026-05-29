@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
+const ACCOUNTS_LOCKED = true; // flip to false when OAuth credentials are ready
+
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
@@ -75,6 +77,22 @@ export default function ConnectedAccounts() {
         </p>
       </div>
 
+      {ACCOUNTS_LOCKED && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: '#F8FAFC', border: '1px solid var(--border)',
+          borderRadius: 10, padding: '14px 18px', marginBottom: 20,
+        }}>
+          <span style={{ fontSize: '1.4rem' }}>🔒</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '.9rem' }}>Coming Soon</div>
+            <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
+              Social account integrations are being set up. Check back soon — connecting your accounts will unlock a personalised feed, cross-platform sharing, and more.
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
@@ -124,6 +142,7 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected
+                  locked={ACCOUNTS_LOCKED}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
@@ -145,6 +164,7 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected={false}
+                  locked={ACCOUNTS_LOCKED}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
@@ -159,7 +179,7 @@ export default function ConnectedAccounts() {
   );
 }
 
-function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect }) {
+function PlatformCard({ platformKey, p, isConnected, locked, expanded, onToggle, onDisconnect, onConnect }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
@@ -200,7 +220,16 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           >
             {expanded ? '▲' : '▼'} Details
           </button>
-          {isConnected ? (
+          {locked ? (
+            <span style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              fontSize: '.72rem', fontWeight: 600, color: '#94A3B8',
+              background: '#F1F5F9', padding: '4px 10px', borderRadius: 6,
+              border: '1px solid var(--border)',
+            }}>
+              🔒 Coming Soon
+            </span>
+          ) : isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect}>Disconnect</button>
           ) : (
             <button

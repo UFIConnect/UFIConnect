@@ -503,9 +503,20 @@ export default function Settings() {
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{profile.email}</div>
             </div>
             <div style={{ marginLeft: 'auto' }}>
-              <Link to="/profile/connected-accounts">
-                <button type="button" className="btn btn-ghost btn-sm">Manage connected accounts →</button>
-              </Link>
+              {SOCIAL_LOCKED ? (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  fontSize: '.75rem', fontWeight: 600, color: '#94A3B8',
+                  background: '#F1F5F9', padding: '5px 10px', borderRadius: 6,
+                  border: '1px solid var(--border)',
+                }}>
+                  🔒 Coming Soon
+                </span>
+              ) : (
+                <Link to="/profile/connected-accounts">
+                  <button type="button" className="btn btn-ghost btn-sm">Manage connected accounts →</button>
+                </Link>
+              )}
             </div>
           </div>
           <div className="form-group" style={{ marginBottom: 4 }}>
