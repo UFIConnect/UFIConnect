@@ -37,17 +37,24 @@
   </url>
 
   <url>
-    <loc>https://uficonnect.org/signup</loc>
+    <loc>https://uficonnect.org/register</loc>
     <lastmod>2026-05-29</lastmod>
     <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <url>
+    <loc>https://uficonnect.org/hq</loc>
+    <lastmod>2026-05-29</lastmod>
+    <changefreq>weekly</changefreq>
     <priority>0.5</priority>
   </url>
 
   <url>
-    <loc>https://uficonnect.org/register</loc>
+    <loc>https://uficonnect.org/privacy</loc>
     <lastmod>2026-05-29</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
   </url>
 
 </urlset>

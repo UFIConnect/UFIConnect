@@ -57,9 +57,9 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFIConnect — Professional Networking, No Ads</title>
-        <meta name="description" content="UFIConnect is a clean, focused professional network for business, creative, educator, and operations talent. Discover communities, opportunities, and connections that move your career forward." />
-        <meta name="keywords" content="professional network, career growth, creative community, business network, healthcare professionals, education, operations, jobs, gigs, opportunities" />
+        <title>UFIConnect | UFI — Free Professional Network for Engineers, Creators & Founders</title>
+        <meta name="description" content="UFIConnect (UFI) is a free professional networking platform for engineers, designers, founders, creators, and every career path. Join UFI communities, find real jobs, and get a personalised content feed — no ads, no noise." />
+        <meta name="keywords" content="UFI, UFIConnect, UFI Connect, UFI network, UFI professional, professional network, engineering community, tech jobs, remote work, founders, designers, creators, career growth, job listings, no ads, developer network, startup community" />
       </Helmet>
 
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>
