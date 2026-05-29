@@ -688,7 +688,7 @@ const SOURCE_CONFIG = {
   github:        { ttl: 20*60000, delay: 35000 },  //  rate-limited: 60/hr unauthed → safe at 1/35s per topic
   devto:         { ttl:  5*60000, delay:  6000 },  //  ~4,300/day (RSS, generous)
   medium:        { ttl: 10*60000, delay: 12000 },  //  ~2,200/day (CDN-cached RSS)
-  youtube:       { ttl: 60*60000, delay: 90000 },  //  quota-critical: ~350/day
+  youtube:       { ttl: 15*60000, delay: 20000 },  //  15min TTL; Invidious fallback = no quota
   stackoverflow: { ttl: 20*60000, delay: 35000 },  //  300/day unauthed limit
   mastodon:      { ttl:  5*60000, delay:  5000 },  //  ~4,300/day
   lobsters:      { ttl: 15*60000, delay: 25000 },  //  ~1,440/day (small site — be respectful)
@@ -934,38 +934,86 @@ async function fetchMediumByTag(tag) {
   }
 }
 
-// ─── YouTube: search videos by keyword (requires YOUTUBE_API_KEY env var) ─────
+// ─── YouTube: official API when key is set, Invidious proxy otherwise ────────
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.privacyredirect.com',
+  'https://inv.tux.pizza',
+  'https://invidious.io',
+];
+
+function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword) {
+  return {
+    id:          `youtube_${videoId}`,
+    authorId:    `youtube_${channelId || 'unknown'}`,
+    groupId:     'ext_youtube',
+    content:     (description || title).slice(0, 300),
+    title,
+    source:      'youtube',
+    sourceLabel: channelTitle || 'YouTube',
+    sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
+    embedId:     videoId,
+    topic:       keyword,
+    author:      { id: `youtube_${channelId || 'unknown'}`, name: null, title: channelTitle || 'YouTube', organization: 'YouTube' },
+    likes: [], likesCount: 0, commentsCount: 0,
+    createdAt:   publishedAt || new Date().toISOString(),
+    isExternal:  true,
+    mediaType:   'video',
+    mediaUrl:    thumbnailUrl || null,
+    group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
+  };
+}
+
 async function fetchYouTubeByKeyword(keyword) {
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return [];
   const cacheKey = `youtube_kw_${keyword}`;
   const cached = getCached(cacheKey);
   if (cached) return cached;
+
   try {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=10&key=${encodeURIComponent(apiKey)}&order=relevance&safeSearch=strict&relevanceLanguage=en`;
-    const data = await fetchJSON(url);
-    const items = (data?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
-    const posts = items.map(v => ({
-      id:          `youtube_${v.id.videoId}`,
-      authorId:    `youtube_${v.snippet.channelId}`,
-      groupId:     'ext_youtube',
-      content:     v.snippet.description?.slice(0, 300) || v.snippet.title,
-      title:       v.snippet.title,
-      source:      'youtube',
-      sourceLabel: v.snippet.channelTitle,
-      sourceUrl:   `https://www.youtube.com/watch?v=${v.id.videoId}`,
-      embedId:     v.id.videoId,
-      topic:       keyword,
-      author:      { id: `youtube_${v.snippet.channelId}`, name: null, title: 'YouTube', organization: 'YouTube' },
-      likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   v.snippet.publishedAt || new Date().toISOString(),
-      isExternal:  true,
-      mediaType:   'video',
-      mediaUrl:    v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url || null,
-      group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
-    }));
-    setCached(cacheKey, posts);
-    return posts;
+    const apiKey = process.env.YOUTUBE_API_KEY;
+
+    if (apiKey) {
+      // Official YouTube Data API v3
+      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=10&key=${encodeURIComponent(apiKey)}&order=relevance&safeSearch=strict&relevanceLanguage=en`;
+      const data = await fetchJSON(url);
+      const posts = (data?.items || [])
+        .filter(v => v.id?.videoId && v.snippet?.title)
+        .map(v => mapYouTubePost(
+          v.id.videoId, v.snippet.title, v.snippet.description,
+          v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
+          v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url,
+          keyword
+        ));
+      setCached(cacheKey, posts);
+      return posts;
+    }
+
+    // Invidious fallback — try instances in order until one succeeds
+    for (const instance of INVIDIOUS_INSTANCES) {
+      try {
+        const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=relevance`;
+        const data = await fetchJSON(url);
+        if (!Array.isArray(data) || !data.length) continue;
+        const posts = data
+          .filter(v => v.videoId && v.title)
+          .slice(0, 10)
+          .map(v => {
+            const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') ||
+                          (v.videoThumbnails || [])[0];
+            return mapYouTubePost(
+              v.videoId, v.title, v.description,
+              v.author, v.authorId,
+              v.published ? new Date(v.published * 1000).toISOString() : null,
+              thumb?.url,
+              keyword
+            );
+          });
+        if (posts.length) {
+          setCached(cacheKey, posts);
+          return posts;
+        }
+      } catch { continue; }
+    }
+    return getCached(cacheKey) || [];
   } catch (e) {
     console.warn(`YouTube search "${keyword}":`, e.message);
     return getCached(cacheKey) || [];
@@ -3432,6 +3480,29 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Source tab: only fetch from the requested source; null = all sources (reduced topics)
   const sourceFilter = req.query.source || null;
+  const sourcePage   = parseInt(req.query.page || '1', 10);
+  const SOURCE_PAGE_LIMIT = 60;
+
+  // ── Source-tab page 2+: DB-only with offset (no live API calls) ───────────
+  if (sourceFilter && sourcePage > 1) {
+    if (!db.isConnected()) return res.json({ posts: [], source: sourceFilter, hasMore: false });
+    const offset = (sourcePage - 1) * SOURCE_PAGE_LIMIT;
+    const { rows } = await db.query(
+      `SELECT * FROM feed_posts_cache WHERE source = $1
+       ORDER BY post_created_at DESC, likes_count DESC
+       LIMIT $2 OFFSET $3`,
+      [sourceFilter, SOURCE_PAGE_LIMIT + 1, offset]
+    ).catch(() => ({ rows: [] }));
+    const hasMore = rows.length > SOURCE_PAGE_LIMIT;
+    const page    = rows.slice(0, SOURCE_PAGE_LIMIT).map(r => mapExternalPost({
+      id: r.id, source: r.source, title: r.title, content: r.content,
+      sourceUrl: r.source_url, mediaUrl: r.media_url, mediaType: r.media_type,
+      topic: r.topic, likesCount: r.likes_count, commentsCount: r.comments_count,
+      createdAt: r.post_created_at, isExternal: true,
+      author: { name: r.author_name }, groupId: null, group: null,
+    }, sourceFilter));
+    return res.json({ posts: page, source: sourceFilter, hasMore, page: sourcePage });
+  }
 
   // Fetch posts personalised to interests + role + skills + goals + title + org
   const liveResult = await fetchAllTopicPosts(
@@ -3441,7 +3512,7 @@ app.get('/feed', authenticate, async (req, res) => {
     sourceFilter
   ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[] }; });
 
-  // ── Source-tab fast path: return just that source's posts + DB/cache filtered ─
+  // ── Source-tab page 1: live + agent cache + global cache + DB ────────────
   if (sourceFilter) {
     const hnKeyMap = { hackernews: 'hn' };
     const liveKey  = hnKeyMap[sourceFilter] || sourceFilter;
@@ -3452,9 +3523,9 @@ app.get('/feed', authenticate, async (req, res) => {
       ...(prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean),
       ...(user?.skills || []).map(s => (s && typeof s === 'string') ? s.trim() : '').filter(s => s.length > 1).slice(0, 4),
     ];
-    const dbFiltered     = (await getPostsFromDB(userTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
-    const agentCacheArr  = (agentSourceCache.get(liveKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
-    const cacheFiltered  = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+    const dbFiltered    = (await getPostsFromDB(userTopics)).filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
+    const agentCacheArr = (agentSourceCache.get(liveKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
+    const cacheFiltered = globalFeedCache.posts.filter(p => p.source === sourceFilter).map(p => mapExternalPost(p, sourceFilter));
 
     const seen = new Set();
     const sourcePosts = [...liveArr, ...agentCacheArr, ...dbFiltered, ...cacheFiltered].filter(p => {
@@ -3463,7 +3534,7 @@ app.get('/feed', authenticate, async (req, res) => {
       return true;
     });
     sourcePosts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    return res.json({ posts: sourcePosts, source: sourceFilter });
+    return res.json({ posts: sourcePosts, source: sourceFilter, hasMore: true, page: 1 });
   }
 
   const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw,

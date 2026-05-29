@@ -436,9 +436,12 @@ export default function Feed() {
   const [livePending, setLivePending] = useState([]);
   const [liveCount,   setLiveCount]   = useState(0);
   const [liveActive,  setLiveActive]  = useState(false);
-  const [sourceTab,        setSourceTab]        = useState('all');
-  const [sourceTabLoading, setSourceTabLoading] = useState({});
+  const [sourceTab,           setSourceTab]           = useState('all');
+  const [sourceTabLoading,    setSourceTabLoading]    = useState({});
+  const [sourceTabLoadingMore,setSourceTabLoadingMore] = useState(false);
+  const [sourceTabHasMore,    setSourceTabHasMore]    = useState({});
   const sourceTabCache = useRef({});
+  const sourceTabPage  = useRef({});
 
   const filterBtnRef = useRef(null);
   const panelRef     = useRef(null);
@@ -467,11 +470,13 @@ export default function Feed() {
   const loadSourceTab = useCallback(async (key) => {
     setSourceTab(key);
     if (key === 'all') return;
-    if (sourceTabCache.current[key]) return; // already cached
+    if (sourceTabCache.current[key]) return; // already loaded
     setSourceTabLoading(prev => ({ ...prev, [key]: true }));
     try {
-      const { data } = await client.get(`/feed?source=${encodeURIComponent(key)}`);
+      const { data } = await client.get(`/feed?source=${encodeURIComponent(key)}&page=1`);
       sourceTabCache.current[key] = data.posts || [];
+      sourceTabPage.current[key]  = 1;
+      setSourceTabHasMore(prev => ({ ...prev, [key]: data.hasMore ?? false }));
     } catch (e) {
       console.error(e);
       sourceTabCache.current[key] = [];
@@ -479,6 +484,25 @@ export default function Feed() {
       setSourceTabLoading(prev => ({ ...prev, [key]: false }));
     }
   }, []);
+
+  const loadMoreSourceTab = useCallback(async () => {
+    if (sourceTabLoadingMore || !sourceTabHasMore[sourceTab]) return;
+    setSourceTabLoadingMore(true);
+    try {
+      const nextPage = (sourceTabPage.current[sourceTab] || 1) + 1;
+      const { data } = await client.get(`/feed?source=${encodeURIComponent(sourceTab)}&page=${nextPage}`);
+      const existing = new Set((sourceTabCache.current[sourceTab] || []).map(p => p.id));
+      const fresh    = (data.posts || []).filter(p => !existing.has(p.id));
+      sourceTabCache.current[sourceTab] = [...(sourceTabCache.current[sourceTab] || []), ...fresh];
+      sourceTabPage.current[sourceTab]  = nextPage;
+      setSourceTabHasMore(prev => ({ ...prev, [sourceTab]: data.hasMore ?? false }));
+      setSourceTabLoading(prev => ({ ...prev, _tick: Date.now() })); // trigger re-compute
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSourceTabLoadingMore(false);
+    }
+  }, [sourceTab, sourceTabLoadingMore, sourceTabHasMore]);
 
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
@@ -657,7 +681,7 @@ export default function Feed() {
     if (filters.sort === 'popular') result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
     else result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     return result;
-  }, [sourceTab, search, filters, sourceTabLoading]); // sourceTabLoading triggers re-compute when load completes
+  }, [sourceTab, search, filters, sourceTabLoading, sourceTabLoadingMore]); // deps trigger re-compute on new data
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
@@ -831,6 +855,32 @@ export default function Feed() {
             {sourceTabPosts.map(post => (
               <PostCard key={post.id} post={post} onVideoOpen={setVideoPost} />
             ))}
+            {/* Load more */}
+            {sourceTabHasMore[sourceTab] && (
+              <div style={{ textAlign: 'center', padding: '20px 0 8px' }}>
+                <button
+                  onClick={loadMoreSourceTab}
+                  disabled={sourceTabLoadingMore}
+                  style={{
+                    padding: '9px 28px', borderRadius: 20,
+                    border: '1.5px solid var(--border)',
+                    background: 'var(--surface)', color: 'var(--text)',
+                    fontWeight: 600, fontSize: '.83rem', cursor: 'pointer',
+                    opacity: sourceTabLoadingMore ? 0.6 : 1,
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                  }}
+                >
+                  {sourceTabLoadingMore
+                    ? <><span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} /> Loading…</>
+                    : '↓ Load more'}
+                </button>
+              </div>
+            )}
+            {!sourceTabHasMore[sourceTab] && sourceTabPosts.length > 0 && (
+              <div style={{ textAlign: 'center', padding: '16px 0', fontSize: '.75rem', color: 'var(--muted)' }}>
+                All {SOURCE_META[sourceTab]?.label || sourceTab} posts loaded
+              </div>
+            )}
           </div>
         )
       ) : loading ? (
