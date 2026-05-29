@@ -221,10 +221,19 @@ export default function Settings() {
       window.history.replaceState({}, '', '/settings');
       setTimeout(() => setSocialFlash(null), 5000);
     } else if (errored) {
-      setSocialFlash({ type: 'error', platform: errored });
+      const reason = params.get('reason');
+      const name   = ['linkedin','twitter','instagram','facebook'].includes(errored)
+        ? SOCIAL_PLATFORMS.find(p => p.id === errored)?.name || errored
+        : errored;
+      const msg = reason === 'invalid_state'
+        ? `OAuth session expired — please try connecting ${name} again.`
+        : reason
+          ? `Could not connect ${name}: ${reason.replace(/_/g, ' ')}.`
+          : `Could not connect ${name}. Please try again.`;
+      setSocialFlash({ type: 'error', platform: errored, msg });
       setActiveTab('connect');
       window.history.replaceState({}, '', '/settings');
-      setTimeout(() => setSocialFlash(null), 6000);
+      setTimeout(() => setSocialFlash(null), 7000);
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -233,9 +242,19 @@ export default function Settings() {
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);
       window.location.href = data.url;
-    } catch {
-      setSocialFlash({ type: 'error', platform });
-      setTimeout(() => setSocialFlash(null), 5000);
+    } catch (err) {
+      const serverMsg = err?.response?.data?.error || null;
+      const status    = err?.response?.status;
+      let msg;
+      if (status === 501 || (serverMsg && serverMsg.includes('not configured'))) {
+        msg = `${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name} OAuth isn't configured yet — credentials need to be added to the server.`;
+      } else if (status === 401) {
+        msg = 'Please sign in again and try connecting.';
+      } else {
+        msg = serverMsg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name}. Try again.`;
+      }
+      setSocialFlash({ type: 'error', platform, msg });
+      setTimeout(() => setSocialFlash(null), 7000);
       setSocialConnecting(null);
     }
   }
@@ -379,13 +398,15 @@ export default function Settings() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {socialFlash && (
             <div style={{
-              padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600,
+              padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 500,
+              lineHeight: 1.5,
               background: socialFlash.type === 'success' ? '#ECFDF5' : socialFlash.type === 'disconnected' ? '#F8FAFC' : '#FEF2F2',
               color:      socialFlash.type === 'success' ? '#059669' : socialFlash.type === 'disconnected' ? '#64748B' : '#DC2626',
+              border:     socialFlash.type === 'error' ? '1px solid #FECACA' : 'none',
             }}>
               {socialFlash.type === 'success'      && `✓ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} connected successfully`}
               {socialFlash.type === 'disconnected' && `${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} disconnected`}
-              {socialFlash.type === 'error'        && `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name}. Try again.`}
+              {socialFlash.type === 'error'        && (socialFlash.msg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name}. Try again.`)}
             </div>
           )}
 

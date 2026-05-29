@@ -3102,7 +3102,10 @@ app.get('/auth/social/:platform/start', authenticate, (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
 
   const clientId = cfg.clientId();
-  if (!clientId) return res.status(501).json({ error: `${platform} OAuth not configured — set env vars` });
+  if (!clientId) return res.status(501).json({
+    error: `${platform} OAuth not configured`,
+    detail: `Set ${platform.toUpperCase()}_CLIENT_ID and ${platform.toUpperCase()}_CLIENT_SECRET in your server environment variables.`,
+  });
 
   const state = crypto.randomBytes(16).toString('hex');
   const entry = { userId: req.user.id, platform };
