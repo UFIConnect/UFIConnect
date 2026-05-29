@@ -11,6 +11,8 @@ const SOCIAL_PLATFORMS = [
   { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page and group posts matching your topics' },
 ];
 
+const SOCIAL_LOCKED = true; // flip to false when real OAuth credentials are ready
+
 // ── Role metadata ────────────────────────────────────────────────────────────
 const ROLE_META = {
   'Engineer / Developer': {
@@ -240,21 +242,15 @@ export default function Settings() {
   async function connectSocial(platform) {
     setSocialConnecting(platform);
     try {
-      const { data } = await client.get(`/auth/social/${platform}/start`);
-      window.location.href = data.url;
+      await client.post('/social/connect', { platform });
+      setConnectedSocial(prev => ({ ...prev, [platform]: true }));
+      setSocialFlash({ type: 'success', platform });
+      setTimeout(() => setSocialFlash(null), 5000);
     } catch (err) {
       const serverMsg = err?.response?.data?.error || null;
-      const status    = err?.response?.status;
-      let msg;
-      if (status === 501 || (serverMsg && serverMsg.includes('not configured'))) {
-        msg = `${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name} OAuth isn't configured yet — credentials need to be added to the server.`;
-      } else if (status === 401) {
-        msg = 'Please sign in again and try connecting.';
-      } else {
-        msg = serverMsg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name}. Try again.`;
-      }
-      setSocialFlash({ type: 'error', platform, msg });
+      setSocialFlash({ type: 'error', platform, msg: serverMsg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name}. Try again.` });
       setTimeout(() => setSocialFlash(null), 7000);
+    } finally {
       setSocialConnecting(null);
     }
   }
@@ -435,7 +431,16 @@ export default function Settings() {
                     <div style={{ fontWeight: 700, fontSize: '.875rem' }}>{platform.name}</div>
                     <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{platform.desc}</div>
                   </div>
-                  {isConnected ? (
+                  {SOCIAL_LOCKED ? (
+                    <span style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      fontSize: '.72rem', fontWeight: 600, color: '#94A3B8',
+                      background: '#F1F5F9', padding: '4px 10px', borderRadius: 6,
+                      border: '1px solid var(--border)',
+                    }}>
+                      🔒 Coming Soon
+                    </span>
+                  ) : isConnected ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <span style={{ fontSize: '.72rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '3px 8px', borderRadius: 6 }}>
                         ✓ Connected
@@ -466,7 +471,7 @@ export default function Settings() {
                         display: 'flex', alignItems: 'center', gap: 6,
                       }}
                     >
-                      {isConnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : `Connect`}
+                      {isConnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
                     </button>
                   )}
                 </div>

@@ -3202,6 +3202,17 @@ app.get('/profile/social', authenticate, async (req, res) => {
   res.json({ connected });
 });
 
+// One-button mock connect — instantly marks a platform as connected without real OAuth.
+// Replace mock_token with a real OAuth exchange when you have API credentials.
+app.post('/social/connect', authenticate, async (req, res) => {
+  const { platform } = req.body;
+  const validPlatforms = ['linkedin', 'twitter', 'instagram', 'facebook'];
+  if (!validPlatforms.includes(platform)) return res.status(400).json({ error: 'Unknown platform' });
+  await saveSocialToken(req.user.id, platform, `mock_token_${platform}_${Date.now()}`);
+  logAgentAction('cache_helper', '🔗', `User connected ${platform}`, '#6366F1');
+  res.json({ ok: true, platform, connected: true });
+});
+
 app.delete('/profile/social/:platform', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!SOCIAL_CFG[platform]) return res.status(404).json({ error: 'Unknown platform' });
