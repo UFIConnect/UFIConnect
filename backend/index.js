@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 const https  = require('https');
 const crypto = require('crypto');
+const v8 = require('v8');
 const db = require('./db');
 
 dotenv.config();
@@ -2591,10 +2592,18 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   workerHealth.set(agentId, {
     consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
     lastSuccess: null, paused: false, pauseUntil: 0,
+    skippedForStability: 0, lastError: null,
   });
 
   async function fetchNextTopic() {
     const health = workerHealth.get(agentId);
+
+    if (isStabilityCritical()) {
+      health.skippedForStability = (health.skippedForStability || 0) + 1;
+      refreshControl.skippedFetches += 1;
+      scheduleNext();
+      return;
+    }
 
     // Circuit breaker: skip fetching while paused; auto-reset when pause window expires
     if (health.paused) {
@@ -2645,10 +2654,11 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         } else {
           emptyTopicsThisCycle++;
         }
-      } catch {
+      } catch (err) {
         // Uncaught error from a fetcher — track it directly
         health.consecutiveErrors++;
         health.totalErrors++;
+        health.lastError = err?.message || String(err);
         emptyTopicsThisCycle++;
       }
     }
@@ -2673,18 +2683,31 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   }
 
   function scheduleNext() {
-    const delay = SOURCE_CONFIG[agentId]?.delay ?? 10000;
+    const delay = adaptiveDelay(SOURCE_CONFIG[agentId]?.delay ?? 10000);
     setTimeout(fetchNextTopic, delay);
   }
 
   // One-shot manual trigger: runs one full pass of all topics and resets circuit breaker
   SOURCE_FETCHERS[agentId] = async () => {
     const health = workerHealth.get(agentId);
+    if (isStabilityCritical()) {
+      if (health) health.skippedForStability = (health.skippedForStability || 0) + 1;
+      refreshControl.skippedFetches += 1;
+      logAgentAction('stability', '⏸️', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
+      return;
+    }
     if (health) { health.paused = false; health.consecutiveErrors = 0; }
     fullCyclesEmpty = 0; emptyTopicsThisCycle = 0;
+    let scannedTopics = 0;
+    const topicLimit = refreshControl.mode === 'pressure'
+      ? Math.min(FEED_TOPICS.length, PRESSURE_MANUAL_TOPIC_LIMIT)
+      : FEED_TOPICS.length;
     for (const topic of FEED_TOPICS) {
+      if (isStabilityCritical() || scannedTopics >= topicLimit) break;
+      scannedTopics++;
       const key = keyMapper(topic);
       if (!key) continue;
+      if (health) health.fetchCount++;
       const posts = await fetchFn(key).catch(() => []);
       if (posts.length) {
         addAndBroadcast(posts);
@@ -2699,6 +2722,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         });
         if (health) { health.consecutiveErrors = 0; health.lastSuccess = Date.now(); }
       }
+      if (refreshControl.mode !== 'normal') await waitMs(150);
     }
   };
 
@@ -2723,15 +2747,16 @@ function calculateExpectedLoad() {
     const mapper = mappers[src] || kw;
     const mappedTopics = FEED_TOPICS.filter(t => mapper(t));
     // Time to complete one full topic cycle = delay * all topics
-    const cycleMs   = cfg.delay * FEED_TOPICS.length;
+    const effectiveDelay = cfg.delay * currentRefreshMultiplier();
+    const cycleMs   = effectiveDelay * FEED_TOPICS.length;
     const cyclesDay = (24 * 60 * 60 * 1000) / cycleMs;
     // But each topic only re-fetches once per TTL window
-    const ttlCycles = cfg.ttl / cfg.delay;
+    const ttlCycles = Math.max(1, cfg.ttl / effectiveDelay);
     const effectiveCallsPerCycle = Math.ceil(mappedTopics.length / ttlCycles);
     const dailyCalls = Math.round(effectiveCallsPerCycle * cyclesDay);
     totalDailyApiCalls += dailyCalls;
     const risk = dailyCalls > 2000 ? '⚠️ HIGH' : dailyCalls > 500 ? '🟡 MED' : '✅ LOW';
-    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s ttl=${cfg.ttl/60000}min → ~${dailyCalls}/day ${risk}`);
+    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s x${currentRefreshMultiplier()} ttl=${cfg.ttl/60000}min → ~${dailyCalls}/day ${risk}`);
   }
   lines.push(`  TOTAL estimated daily API calls: ~${totalDailyApiCalls}`);
   if (totalDailyApiCalls > 50000) lines.push('  ⛔ WARNING: total may exceed free-tier limits — increase TTLs or reduce topics');
@@ -2783,7 +2808,7 @@ function startContinuousWorkers() {
   }
 
   calculateExpectedLoad();
-  logAgentAction('feed', '🔄', 'All 17 source agents started — continuous per-source topic cycling active', '#4ADE80');
+  logAgentAction('feed', '🔄', 'All 17 source agents started - adaptive per-source topic cycling active', '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
@@ -2813,6 +2838,269 @@ const agentSourceCache = new Map();
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
 
+const MB = 1024 * 1024;
+
+function envNumber(name, fallback, min = -Infinity, max = Infinity) {
+  const parsed = Number(process.env[name]);
+  const value = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(Math.max(value, min), max);
+}
+
+const BASE_REFRESH_MULTIPLIER = envNumber('FEED_REFRESH_MULTIPLIER', 1, 1, 20);
+const PRESSURE_REFRESH_MULTIPLIER = envNumber('FEED_PRESSURE_REFRESH_MULTIPLIER', 3, BASE_REFRESH_MULTIPLIER, 30);
+const CRITICAL_REFRESH_MULTIPLIER = envNumber('FEED_CRITICAL_REFRESH_MULTIPLIER', 6, PRESSURE_REFRESH_MULTIPLIER, 60);
+const STABILITY_CHECK_MS = envNumber('STABILITY_CHECK_MS', 90 * 1000, 30 * 1000, 15 * 60 * 1000);
+const HEAP_PRESSURE_RATIO = envNumber('HEAP_PRESSURE_RATIO', 0.78, 0.5, 0.95);
+const HEAP_CRITICAL_RATIO = envNumber('HEAP_CRITICAL_RATIO', 0.9, HEAP_PRESSURE_RATIO + 0.01, 0.98);
+const RSS_PRESSURE_MB = envNumber('RSS_PRESSURE_MB', 512, 128, 32768);
+const RSS_CRITICAL_MB = envNumber('RSS_CRITICAL_MB', 768, RSS_PRESSURE_MB, 32768);
+const LAG_PRESSURE_MS = envNumber('LAG_PRESSURE_MS', 1200, 100, 30000);
+const LAG_CRITICAL_MS = envNumber('LAG_CRITICAL_MS', 2500, LAG_PRESSURE_MS, 60000);
+const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12, 1, 60);
+
+const refreshControl = {
+  mode: 'normal',
+  multiplier: BASE_REFRESH_MULTIPLIER,
+  lastCheck: 0,
+  lastModeChange: 0,
+  lastReason: 'startup',
+  heapUsedMB: 0,
+  heapLimitMB: 0,
+  heapRatio: 0,
+  rssMB: 0,
+  externalMB: 0,
+  eventLoopLagMs: 0,
+  skippedFetches: 0,
+  trimCount: 0,
+  trimmedAt: 0,
+  crashEvents: 0,
+  unhandledRejections: 0,
+};
+
+function waitMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function currentRefreshMultiplier() {
+  return refreshControl.multiplier || BASE_REFRESH_MULTIPLIER;
+}
+
+function isStabilityCritical() {
+  return refreshControl.mode === 'critical';
+}
+
+function adaptiveDelay(baseDelay) {
+  const jitter = 0.9 + (Math.random() * 0.25);
+  return Math.min(MAX_TIMER_DELAY, Math.max(1000, Math.round(baseDelay * currentRefreshMultiplier() * jitter)));
+}
+
+function trimOldestMapEntries(map, maxSize) {
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function trimOldestSetEntries(set, maxSize) {
+  while (set.size > maxSize) {
+    const oldestValue = set.values().next().value;
+    if (oldestValue === undefined) break;
+    set.delete(oldestValue);
+  }
+}
+
+function trimRuntimeCaches(level = 'pressure') {
+  const critical = level === 'critical';
+  const globalLimit = critical ? 5000 : 7500;
+  const sourceLimit = critical ? 700 : 1200;
+  const postCacheLimit = critical ? 600 : 1200;
+  const seenLimit = critical ? 50000 : 80000;
+
+  if (globalFeedCache.posts.length > globalLimit) {
+    globalFeedCache.posts = globalFeedCache.posts.slice(0, globalLimit);
+  }
+  for (const cache of agentSourceCache.values()) {
+    if (Array.isArray(cache.posts) && cache.posts.length > sourceLimit) {
+      cache.posts = cache.posts.slice(0, sourceLimit);
+    }
+  }
+  trimOldestMapEntries(postCache, postCacheLimit);
+  trimOldestSetEntries(seenPostIds, seenLimit);
+
+  refreshControl.trimCount += 1;
+  refreshControl.trimmedAt = Date.now();
+}
+
+function readRuntimeSnapshot(eventLoopLagMs = 0) {
+  const mem = process.memoryUsage();
+  const heapStats = v8.getHeapStatistics();
+  const heapLimit = heapStats.heap_size_limit || mem.heapTotal || 1;
+  return {
+    heapUsedMB: Math.round(mem.heapUsed / MB),
+    heapLimitMB: Math.round(heapLimit / MB),
+    heapRatio: Number((mem.heapUsed / heapLimit).toFixed(3)),
+    rssMB: Math.round(mem.rss / MB),
+    externalMB: Math.round(mem.external / MB),
+    eventLoopLagMs: Math.round(eventLoopLagMs),
+  };
+}
+
+function updateRefreshControl(mode, reason, snapshot) {
+  const previousMode = refreshControl.mode;
+  const multiplier = mode === 'critical'
+    ? CRITICAL_REFRESH_MULTIPLIER
+    : mode === 'pressure'
+      ? PRESSURE_REFRESH_MULTIPLIER
+      : BASE_REFRESH_MULTIPLIER;
+
+  Object.assign(refreshControl, {
+    ...snapshot,
+    mode,
+    multiplier,
+    lastCheck: Date.now(),
+    lastReason: reason,
+  });
+
+  if (previousMode !== mode) {
+    refreshControl.lastModeChange = Date.now();
+    const icon = mode === 'normal' ? '✅' : mode === 'pressure' ? '🛡️' : '🚨';
+    const color = mode === 'normal' ? '#4ADE80' : mode === 'pressure' ? '#FBBF24' : '#F87171';
+    logAgentAction('stability', icon,
+      `Stability guard ${mode}: refresh x${multiplier} (${reason})`, color);
+  }
+}
+
+function runStabilityGuard() {
+  const started = Date.now();
+  const timer = setTimeout(() => {
+    const lagMs = Math.max(0, Date.now() - started - 100);
+    const snapshot = readRuntimeSnapshot(lagMs);
+
+    const pressureReasons = [];
+    const criticalReasons = [];
+    if (snapshot.heapRatio >= HEAP_PRESSURE_RATIO) pressureReasons.push(`heap ${Math.round(snapshot.heapRatio * 100)}%`);
+    if (snapshot.heapRatio >= HEAP_CRITICAL_RATIO) criticalReasons.push(`heap ${Math.round(snapshot.heapRatio * 100)}%`);
+    if (snapshot.rssMB >= RSS_PRESSURE_MB) pressureReasons.push(`rss ${snapshot.rssMB}MB`);
+    if (snapshot.rssMB >= RSS_CRITICAL_MB) criticalReasons.push(`rss ${snapshot.rssMB}MB`);
+    if (snapshot.eventLoopLagMs >= LAG_PRESSURE_MS) pressureReasons.push(`lag ${snapshot.eventLoopLagMs}ms`);
+    if (snapshot.eventLoopLagMs >= LAG_CRITICAL_MS) criticalReasons.push(`lag ${snapshot.eventLoopLagMs}ms`);
+
+    const mode = criticalReasons.length ? 'critical' : pressureReasons.length ? 'pressure' : 'normal';
+    const reason = (criticalReasons.length ? criticalReasons : pressureReasons).join(', ') || 'runtime stable';
+    updateRefreshControl(mode, reason, snapshot);
+
+    if (mode !== 'normal') {
+      trimRuntimeCaches(mode);
+    }
+  }, 100);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+let crashGuardInstalled = false;
+function installCrashGuard() {
+  if (crashGuardInstalled) return;
+  crashGuardInstalled = true;
+
+  process.on('unhandledRejection', (reason) => {
+    refreshControl.unhandledRejections += 1;
+    const msg = reason?.message || String(reason);
+    logAgentAction('crash_guard', '⚠️', `Unhandled rejection contained: ${msg.slice(0, 140)}`, '#FBBF24');
+  });
+
+  process.on('uncaughtException', (err) => {
+    refreshControl.crashEvents += 1;
+    refreshControl.mode = 'critical';
+    refreshControl.multiplier = CRITICAL_REFRESH_MULTIPLIER;
+    trimRuntimeCaches('critical');
+    console.error('uncaughtException:', err);
+    const msg = err?.message || String(err);
+    logAgentAction('crash_guard', '🚨', `Uncaught exception contained; emergency throttle active: ${msg.slice(0, 140)}`, '#F87171');
+  });
+
+  process.on('warning', (warning) => {
+    if (!warning?.name || warning.name === 'ExperimentalWarning') return;
+    logAgentAction('crash_guard', '⚠️', `${warning.name}: ${(warning.message || '').slice(0, 140)}`, '#FBBF24');
+  });
+}
+
+const sourceRefreshQueue = {
+  running: false,
+  pendingIds: new Set(),
+  totalRuns: 0,
+  lastStarted: null,
+  lastFinished: null,
+  lastReason: null,
+  lastError: null,
+};
+
+function enqueueSourceRefresh(ids, reason = 'manual') {
+  const requestedIds = (Array.isArray(ids) ? ids : [ids]).filter(id => typeof SOURCE_FETCHERS[id] === 'function');
+  if (!requestedIds.length) return;
+
+  if (isStabilityCritical()) {
+    refreshControl.skippedFetches += requestedIds.length;
+    logAgentAction('refresh_queue', '⏸️', `Skipped ${requestedIds.length} queued refresh(es) while stability guard is critical`, '#FBBF24');
+    return;
+  }
+
+  requestedIds.forEach(id => sourceRefreshQueue.pendingIds.add(id));
+  sourceRefreshQueue.lastReason = reason;
+  logAgentAction('refresh_queue', '🔁',
+    `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
+
+  if (!sourceRefreshQueue.running) {
+    setImmediate(() => drainSourceRefreshQueue().catch((err) => {
+      sourceRefreshQueue.running = false;
+      sourceRefreshQueue.lastError = err?.message || String(err);
+      logAgentAction('refresh_queue', '⚠️', `Refresh queue error: ${sourceRefreshQueue.lastError}`, '#FBBF24');
+    }));
+  }
+}
+
+async function drainSourceRefreshQueue() {
+  if (sourceRefreshQueue.running) return;
+  sourceRefreshQueue.running = true;
+  sourceRefreshQueue.totalRuns += 1;
+  sourceRefreshQueue.lastStarted = Date.now();
+  sourceRefreshQueue.lastError = null;
+
+  let processed = 0;
+  try {
+    while (sourceRefreshQueue.pendingIds.size > 0) {
+      if (isStabilityCritical()) {
+        refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
+        sourceRefreshQueue.pendingIds.clear();
+        break;
+      }
+
+      const id = sourceRefreshQueue.pendingIds.values().next().value;
+      sourceRefreshQueue.pendingIds.delete(id);
+      const fetcher = SOURCE_FETCHERS[id];
+      if (typeof fetcher !== 'function') continue;
+
+      try {
+        await fetcher();
+        processed++;
+      } catch (err) {
+        const h = workerHealth.get(id);
+        if (h) {
+          h.consecutiveErrors += 1;
+          h.totalErrors += 1;
+          h.lastError = err?.message || String(err);
+        }
+      }
+
+      await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
+    }
+  } finally {
+    sourceRefreshQueue.running = false;
+    sourceRefreshQueue.lastFinished = Date.now();
+    logAgentAction('refresh_queue', '✅',
+      `Refresh queue complete - ${processed} source(s) processed`, '#4ADE80');
+  }
+}
+
 async function refreshGlobalFeedCache() {
   // 36 topics × 10 source types = 360 live endpoint calls per refresh cycle
   const commonInterests = [
@@ -2832,8 +3120,15 @@ async function refreshGlobalFeedCache() {
     'Fitness & Gym','Travel & Adventure','Cooking & Recipes','Music Discovery',
   ];
   const commonRole = 'Engineer / Developer';
+  if (isStabilityCritical()) {
+    logAgentAction('stability', '⏸️', 'Skipped full feed refresh while stability guard is critical', '#FBBF24');
+    return;
+  }
+  const interestsForCycle = refreshControl.mode === 'pressure'
+    ? commonInterests.slice(0, PRESSURE_MANUAL_TOPIC_LIMIT)
+    : commonInterests;
   try {
-    const result = await fetchAllTopicPosts(commonInterests, commonRole);
+    const result = await fetchAllTopicPosts(interestsForCycle, commonRole);
     const all = [
       ...result.reddit, ...result.hn, ...result.github, ...result.devto,
       ...result.medium, ...result.youtube, ...result.stackoverflow,
@@ -2916,6 +3211,11 @@ function runOppsCheck() {
 
 // ─── Cache Helper Agent: merge per-source caches into global feed ─────────────
 function runCacheHelperCheck() {
+  if (isStabilityCritical()) {
+    trimRuntimeCaches('critical');
+    logAgentAction('cache_helper', '⏸️', 'Cache merge skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
   if (agentSourceCache.size === 0) return;
   const total = [...agentSourceCache.values()].reduce((s, v) => s + v.posts.length, 0);
   const allSourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts);
@@ -2931,9 +3231,17 @@ function runCacheHelperCheck() {
 
 // ─── Feed Optimizer Agent: monitors all source workers, heals failing ones ─────
 async function runFeedOptimizer() {
+  if (isStabilityCritical()) {
+    trimRuntimeCaches('critical');
+    logAgentAction('optimizer', '⏸️',
+      `Skipped source healing while stability guard is critical - refresh x${refreshControl.multiplier}`, '#FBBF24');
+    return;
+  }
+
   const now = Date.now();
   const healed = [];
   const statsBySource = [];
+  const canTriggerFetchers = refreshControl.mode === 'normal';
 
   for (const [id, health] of workerHealth.entries()) {
     const cache     = agentSourceCache.get(id);
@@ -2949,20 +3257,21 @@ async function runFeedOptimizer() {
     statsBySource.push({ id, postCount, isPaused, isDegraded });
 
     if (isPaused || isDegraded || isStaleEmpty || neverSucceeded) {
+      const errorCount = health.consecutiveErrors;
       // Reset circuit breaker so the worker resumes immediately
       health.paused            = false;
       health.pauseUntil        = 0;
       health.consecutiveErrors = 0;
 
       const reason = isPaused       ? 'circuit paused'
-                   : isDegraded     ? `${health.consecutiveErrors} errors`
+                   : isDegraded     ? `${errorCount} errors`
                    : isStaleEmpty   ? `${Math.round(minStale)}min stale`
                    :                  'never succeeded';
       healed.push(`${id}(${reason})`);
 
       // Trigger an immediate re-fetch for this source (non-blocking)
       const fetcher = SOURCE_FETCHERS[id];
-      if (fetcher) fetcher().catch(() => {});
+      if (fetcher && canTriggerFetchers) enqueueSourceRefresh([id], 'optimizer healing');
     }
   }
 
@@ -3026,8 +3335,10 @@ async function runDataCheck() {
 }
 
 // Seed immediately on startup (non-blocking)
+installCrashGuard();
+runStabilityGuard();
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-logAgentAction('security',  '✅', 'All 23 agents online — 16 source + 7 ops agents active', '#4ADE80');
+logAgentAction('security',  '✅', 'All 36 agents online - adaptive refresh and crash guards active', '#4ADE80');
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
 startContinuousWorkers();
@@ -3047,16 +3358,18 @@ setInterval(runPerfCheck,    12 * 60 * 1000);
 setInterval(runCommunityCheck, 15 * 60 * 1000);
 // SEO check every 20 minutes
 setInterval(runSeoCheck,    20 * 60 * 1000);
-// Opps check every 10 minutes
-setInterval(runOppsCheck,   10 * 60 * 1000);
-// Cache helper merges source caches every 5 minutes
-setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
-// Feed Optimizer: heal degraded/paused workers every 2 minutes, first run after 45s
-setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 2 * 60 * 1000); }, 45 * 1000);
-// Deploy health check every 5 minutes
-setInterval(runDeployCheck,  5 * 60 * 1000);
-// Data check every 7 minutes
-setInterval(runDataCheck,    7 * 60 * 1000);
+// Opps check every 15 minutes
+setInterval(runOppsCheck,   15 * 60 * 1000);
+// Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
+setInterval(runStabilityGuard, STABILITY_CHECK_MS);
+// Cache helper merges source caches every 8 minutes
+setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 8 * 60 * 1000); }, 4 * 60 * 1000);
+// Feed Optimizer: heal degraded/paused workers every 5 minutes, first run after 90s
+setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 5 * 60 * 1000); }, 90 * 1000);
+// Deploy health check every 10 minutes
+setInterval(runDeployCheck,  10 * 60 * 1000);
+// Data check every 10 minutes
+setInterval(runDataCheck,    10 * 60 * 1000);
 // Run new agents soon after startup
 setTimeout(runDeployCheck, 8000);
 setTimeout(runDataCheck,  12000);
@@ -4459,19 +4772,16 @@ app.get('/feed', authenticate, async (req, res) => {
     const bustSource = req.query.source;
     if (bustSource) {
       const agentKey = feedWorkerKey(bustSource);
-      const fetcher = SOURCE_FETCHERS[agentKey];
       setImmediate(() => {
         const prefix = CACHE_KEY_PREFIX[agentKey];
         if (prefix) bustCachePrefix(prefix);
-        if (fetcher) fetcher().catch(() => {});
+        enqueueSourceRefresh([agentKey], `feed bust ${bustSource}`);
       });
     } else {
-      // Refresh all 17 source workers simultaneously so every tab gets fresh content
+      // Refresh all source workers through the queue so every tab gets fresh content without a burst.
       setImmediate(() => {
         postCache.clear();
-        for (const [, fetcher] of Object.entries(SOURCE_FETCHERS)) {
-          if (typeof fetcher === 'function') fetcher().catch(() => {});
-        }
+        enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed bust all');
       });
     }
   }
@@ -4864,8 +5174,12 @@ app.get('/feed/stream', (req, res) => {
 
 // ─── Manual feed refresh trigger ─────────────────────────────────────────────
 app.post('/feed/refresh', authenticate, (req, res) => {
-  res.json({ ok: true, message: 'Feed refresh triggered', refreshedAt: new Date().toISOString() });
-  setImmediate(() => refreshGlobalFeedCache());
+  res.json({ ok: true, message: 'Feed refresh queued', refreshedAt: new Date().toISOString() });
+  setImmediate(() => {
+    postCache.clear();
+    enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed refresh endpoint');
+    setTimeout(runCacheHelperCheck, 5000);
+  });
 });
 
 // ─── Feed source stats (posts per source in DB) ───────────────────────────────
@@ -4921,71 +5235,71 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
 const AGENT_DEFS = {
   // ── Platform source agents (one per data source) ──────────────────────────
   reddit: {
-    name: 'Reddit Agent', emoji: '🟠', color: '#FF6347', interval: '2s',
-    description: 'Polls Reddit every 2s, rotating through 36 topic keywords. Fetches top posts from relevant subreddits and streams new content to the feed.',
+    name: 'Reddit Agent', emoji: '🟠', color: '#FF6347', interval: '30s adaptive',
+    description: 'Polls Reddit every 30s, rotating through topic keywords. Fetches top posts from relevant subreddits and streams new content to the feed.',
   },
   hn: {
-    name: 'HackerNews Agent', emoji: '🔶', color: '#FF6600', interval: '2s',
-    description: 'Queries HackerNews Algolia search API every 2s across 36 topics. Surfaces top-scored technical discussions and Show HN posts.',
+    name: 'HackerNews Agent', emoji: '🔶', color: '#FF6600', interval: '20s adaptive',
+    description: 'Queries HackerNews Algolia search API every 20s across rotating topics. Surfaces top-scored technical discussions and Show HN posts.',
   },
   github: {
-    name: 'GitHub Agent', emoji: '🐙', color: '#94A3B8', interval: '3s',
-    description: 'Searches GitHub trending repos every 3s by keyword. Discovers open-source projects matching each of 36 topic areas.',
+    name: 'GitHub Agent', emoji: '🐙', color: '#94A3B8', interval: '90s adaptive',
+    description: 'Searches GitHub trending repos every 90s by keyword. Discovers open-source projects matching each topic area.',
   },
   devto: {
-    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '3s',
-    description: 'Fetches articles from DEV.to by tag every 3s. Covers developer tutorials, opinions, and project showcases across 36 mapped tags.',
+    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '30s adaptive',
+    description: 'Fetches articles from DEV.to by tag every 30s. Covers developer tutorials, opinions, and project showcases across mapped tags.',
   },
   medium: {
-    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '3s',
-    description: 'Scrapes Medium RSS feeds by topic tag every 3s. Pulls long-form articles and case studies from the broader developer and startup community.',
+    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '60s adaptive',
+    description: 'Scrapes Medium RSS feeds by topic tag every 60s. Pulls long-form articles and case studies from the broader developer and startup community.',
   },
   youtube: {
-    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '5s',
-    description: 'Queries YouTube Data API for relevant video content every 5s. Surfaces talks, tutorials, and demos across 36 topic areas.',
+    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '60s adaptive',
+    description: 'Queries YouTube RSS for relevant video content every 60s. Surfaces talks, tutorials, and demos across topic areas.',
   },
   stackoverflow: {
-    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '4s',
-    description: 'Fetches hot and recent questions from StackOverflow by tag every 4s. Captures real developer pain points and solutions across the stack.',
+    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '120s adaptive',
+    description: 'Fetches hot and recent questions from StackOverflow by tag every 120s. Captures real developer pain points and solutions across the stack.',
   },
   mastodon: {
-    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '2.5s',
-    description: 'Pulls public posts from Mastodon.social by hashtag every 2.5s. Covers the open-source and indie tech community with decentralized content.',
+    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '30s adaptive',
+    description: 'Pulls public posts from Mastodon.social by hashtag every 30s. Covers the open-source and indie tech community with decentralized content.',
   },
   lobsters: {
-    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '3s',
-    description: 'Fetches curated technical links from Lobste.rs by tag every 3s. High signal-to-noise content from a vetted engineering community.',
+    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '90s adaptive',
+    description: 'Fetches curated technical links from Lobste.rs by tag every 90s. High signal-to-noise content from a vetted engineering community.',
   },
   arxiv: {
-    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '3s',
-    description: 'Queries arXiv preprint API for research papers every 3s. Covers AI/ML, CS, and adjacent scientific topics across 36 mapped subjects.',
+    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '120s adaptive',
+    description: 'Queries arXiv preprint API for research papers every 120s. Covers AI/ML, CS, and adjacent scientific topics across mapped subjects.',
   },
   indeed: {
-    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '5min',
-    description: 'Fetches real job listings from Indeed RSS feeds across 36 topic keywords. Surfaces active job postings for professionals and job seekers.',
+    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '90s adaptive',
+    description: 'Fetches real job listings from Indeed RSS feeds across topic keywords. Surfaces active job postings for professionals and job seekers.',
   },
   producthunt: {
-    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '10min',
-    description: 'Pulls today\'s top product launches from Product Hunt RSS, filtered by 36 topic keywords. Discovers new tools, apps, and SaaS products.',
+    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '180s adaptive',
+    description: 'Pulls today\'s top product launches from Product Hunt RSS, filtered by topic keywords. Discovers new tools, apps, and SaaS products.',
   },
   techcrunch: {
-    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '3min',
-    description: 'Fetches startup and tech news from TechCrunch RSS, filtered by 36 topic keywords. Covers funding rounds, launches, and industry trends.',
+    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '120s adaptive',
+    description: 'Fetches startup and tech news from TechCrunch RSS, filtered by topic keywords. Covers funding rounds, launches, and industry trends.',
   },
   theverge: {
-    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '3min',
+    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '120s adaptive',
     description: 'Pulls technology and culture news from The Verge RSS, filtered by topic keywords. Covers consumer tech, science, and digital culture.',
   },
   indiehackers: {
-    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '8min',
-    description: 'Fetches community posts from Indie Hackers RSS. Surfaces bootstrapper stories, revenue milestones, and startup advice across 36 topics.',
+    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '120s adaptive',
+    description: 'Fetches community posts from Indie Hackers RSS. Surfaces bootstrapper stories, revenue milestones, and startup advice across topics.',
   },
   hashnode: {
-    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '5min',
-    description: 'Fetches freeCodeCamp News RSS (Hashnode API shut down) with The New Stack as fallback. Surfaces developer tutorials and engineering articles across 36 topics.',
+    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '120s adaptive',
+    description: 'Fetches freeCodeCamp News RSS (Hashnode API shut down) with The New Stack as fallback. Surfaces developer tutorials and engineering articles across topics.',
   },
   bluesky: {
-    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '2min',
+    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '30s adaptive',
     description: 'Searches Bluesky\'s public AT Protocol API for real-time posts by keyword. No auth required — streams live social content from the open web.',
   },
   tiktok: {
@@ -4997,8 +5311,8 @@ const AGENT_DEFS = {
     description: 'Surfaces federal and public-sector opportunities from the curated jobs feed when USAJobs API keys are unavailable.',
   },
   optimizer: {
-    name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '2min',
-    description: 'Monitors all source workers every 2 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources — auto-heals by resetting circuit breakers and triggering immediate re-fetches.',
+    name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '5min',
+    description: 'Monitors all source workers every 5 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources while respecting stability throttle mode.',
   },
   linkedin: {
     name: 'LinkedIn Agent', emoji: '🔷', color: '#0A66C2', interval: '30min',
@@ -5038,20 +5352,32 @@ const AGENT_DEFS = {
     description: 'Validates meta tags, sitemap.xml, Core Web Vitals (LCP/CLS/FID), Open Graph images, and structured data markup every 20 minutes.',
   },
   opps: {
-    name: 'Opportunities Agent', emoji: '💼', color: '#F97316', interval: '10min',
-    description: 'Refreshes live job listings from multiple sources, validates source URLs, removes expired entries, and updates salary coverage data every 10 minutes.',
+    name: 'Opportunities Agent', emoji: '💼', color: '#F97316', interval: '15min',
+    description: 'Refreshes live job listings from multiple sources, validates source URLs, removes expired entries, and updates salary coverage data every 15 minutes.',
   },
   deploy: {
-    name: 'Deploy Agent', emoji: '🚀', color: '#38BDF8', interval: '5min',
-    description: 'Pings the API, Web, and Office services to verify uptime and measure HTTP response times. Logs health status every 5 minutes.',
+    name: 'Deploy Agent', emoji: '🚀', color: '#38BDF8', interval: '10min',
+    description: 'Pings the API, Web, and Office services to verify uptime and measure HTTP response times. Logs health status every 10 minutes.',
   },
   data: {
-    name: 'Data Agent', emoji: '🗄️', color: '#FB7185', interval: '7min',
-    description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 7 minutes.',
+    name: 'Data Agent', emoji: '🗄️', color: '#FB7185', interval: '10min',
+    description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 10 minutes.',
+  },
+  refresh_queue: {
+    name: 'Refresh Queue Agent', emoji: '🔁', color: '#38BDF8', interval: 'on-demand',
+    description: 'Serializes manual refresh requests across source workers so refresh-all actions update every platform without launching a burst of simultaneous API calls.',
+  },
+  stability: {
+    name: 'Stability Guard', emoji: '🛡️', color: '#22C55E', interval: '90s adaptive',
+    description: 'Monitors heap usage, RSS memory, and event-loop lag. Automatically slows source refreshes, skips high-cost fetches, and trims runtime caches before crashes.',
+  },
+  crash_guard: {
+    name: 'Crash Guard', emoji: '🚨', color: '#F87171', interval: 'event-driven',
+    description: 'Captures unhandled rejections, runtime warnings, and uncaught exceptions. Switches the feed into emergency throttle mode and trims caches to keep the API alive.',
   },
   cache_helper: {
-    name: 'Cache Merge Agent', emoji: '🔄', color: '#6366F1', interval: '5min',
-    description: 'Merges per-source agent caches into the global feed every 5 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
+    name: 'Cache Merge Agent', emoji: '🔄', color: '#6366F1', interval: '8min',
+    description: 'Merges per-source agent caches into the global feed every 8 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
   },
 };
 
@@ -5073,6 +5399,8 @@ app.get('/office/status', (req, res) => {
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
+      skippedForStability: h?.skippedForStability ?? 0,
+      lastError: h?.lastError ?? null,
       lastSuccess: h?.lastSuccess ?? null,
       paused: h?.paused ?? false,
       postCount: liveCount || fallbackCount,
@@ -5120,6 +5448,32 @@ app.get('/office/status', (req, res) => {
       sseClients:  sseClients.size,
       seenIds:     seenPostIds.size,
     },
+    stability: {
+      mode: refreshControl.mode,
+      multiplier: refreshControl.multiplier,
+      lastCheck: refreshControl.lastCheck,
+      lastReason: refreshControl.lastReason,
+      heapUsedMB: refreshControl.heapUsedMB,
+      heapLimitMB: refreshControl.heapLimitMB,
+      heapRatio: refreshControl.heapRatio,
+      rssMB: refreshControl.rssMB,
+      externalMB: refreshControl.externalMB,
+      eventLoopLagMs: refreshControl.eventLoopLagMs,
+      skippedFetches: refreshControl.skippedFetches,
+      trimCount: refreshControl.trimCount,
+      trimmedAt: refreshControl.trimmedAt,
+      crashEvents: refreshControl.crashEvents,
+      unhandledRejections: refreshControl.unhandledRejections,
+    },
+    refreshQueue: {
+      running: sourceRefreshQueue.running,
+      pending: sourceRefreshQueue.pendingIds.size,
+      totalRuns: sourceRefreshQueue.totalRuns,
+      lastStarted: sourceRefreshQueue.lastStarted,
+      lastFinished: sourceRefreshQueue.lastFinished,
+      lastReason: sourceRefreshQueue.lastReason,
+      lastError: sourceRefreshQueue.lastError,
+    },
     agents: {
       count:             Object.keys(AGENT_DEFS).length,
       active:            Object.keys(AGENT_DEFS).length,
@@ -5140,13 +5494,42 @@ app.get('/office/agents', (req, res) => {
     const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
     const health = workerHealth.get(id) || null;
     const cache  = agentSourceCache.get(id) || null;
+    const runtimeHealth = id === 'stability'
+      ? {
+          status: refreshControl.mode,
+          multiplier: refreshControl.multiplier,
+          heapUsedMB: refreshControl.heapUsedMB,
+          heapLimitMB: refreshControl.heapLimitMB,
+          rssMB: refreshControl.rssMB,
+          eventLoopLagMs: refreshControl.eventLoopLagMs,
+          skippedFetches: refreshControl.skippedFetches,
+          trimCount: refreshControl.trimCount,
+        }
+      : id === 'crash_guard'
+        ? {
+            status: refreshControl.crashEvents > 0 ? 'contained' : 'armed',
+            crashEvents: refreshControl.crashEvents,
+            unhandledRejections: refreshControl.unhandledRejections,
+          }
+        : id === 'refresh_queue'
+          ? {
+              status: sourceRefreshQueue.running ? 'running' : 'idle',
+              pending: sourceRefreshQueue.pendingIds.size,
+              totalRuns: sourceRefreshQueue.totalRuns,
+              lastStarted: sourceRefreshQueue.lastStarted,
+              lastFinished: sourceRefreshQueue.lastFinished,
+              lastReason: sourceRefreshQueue.lastReason,
+              lastError: sourceRefreshQueue.lastError,
+            }
+          : null;
     result[id] = {
       ...def, id, logs, lastAction: logs[0] || null,
       health: health ? {
         status: health.paused ? 'paused' : health.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
         consecutiveErrors: health.consecutiveErrors, totalErrors: health.totalErrors,
         fetchCount: health.fetchCount, lastSuccess: health.lastSuccess, paused: health.paused,
-      } : null,
+        skippedForStability: health.skippedForStability || 0, lastError: health.lastError || null,
+      } : runtimeHealth,
       postCount: cache?.totalSeen ?? null,
       lastFetch: cache?.lastFetch ?? null,
     };
@@ -5174,7 +5557,10 @@ app.post('/office/agents/:id/trigger', (req, res) => {
   const sourceFn = SOURCE_FETCHERS[req.params.id];
   const triggers = {
     // Operational agents
-    feed:      () => refreshGlobalFeedCache(),
+    feed:      () => {
+      enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual feed trigger');
+      setTimeout(runCacheHelperCheck, 5000);
+    },
     security:  () => runSecurityScan(),
     perf:      () => runPerfCheck(),
     community: () => runCommunityCheck(),
@@ -5182,6 +5568,12 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     opps:         () => runOppsCheck(),
     deploy:       () => runDeployCheck(),
     data:         () => runDataCheck(),
+    stability:    () => runStabilityGuard(),
+    refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
+    crash_guard:  () => {
+      trimRuntimeCaches('pressure');
+      logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
+    },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
     // Source agents — resolved from SOURCE_FETCHERS map registered at startup
@@ -5238,6 +5630,13 @@ app.get('/hq/status', (req, res) => {
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
     agentsActive: Object.keys(AGENT_DEFS).length,
+    stability: refreshControl,
+    refreshQueue: {
+      running: sourceRefreshQueue.running,
+      pending: sourceRefreshQueue.pendingIds.size,
+      totalRuns: sourceRefreshQueue.totalRuns,
+      lastReason: sourceRefreshQueue.lastReason,
+    },
   });
 });
 
@@ -5262,7 +5661,10 @@ app.post('/hq/trigger/:agentId', (req, res) => {
   const { agentId } = req.params;
   const sourceFn = SOURCE_FETCHERS[agentId];
   const triggers = {
-    feed:      () => refreshGlobalFeedCache(),
+    feed:      () => {
+      enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual feed trigger');
+      setTimeout(runCacheHelperCheck, 5000);
+    },
     security:  () => runSecurityScan(),
     perf:      () => runPerfCheck(),
     community: () => runCommunityCheck(),
@@ -5270,6 +5672,12 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     opps:         () => runOppsCheck(),
     deploy:       () => runDeployCheck(),
     data:         () => runDataCheck(),
+    stability:    () => runStabilityGuard(),
+    refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
+    crash_guard:  () => {
+      trimRuntimeCaches('pressure');
+      logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
+    },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
     ...(sourceFn ? { [agentId]: sourceFn } : {}),
