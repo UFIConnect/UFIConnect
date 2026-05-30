@@ -32,8 +32,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
 
 // ─── Time helpers ─────────────────────────────────────────────────────────────
-const NOW = Date.now();
-const ago = (ms) => new Date(NOW - ms).toISOString();
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
 const H = 3600000;
 const D = 86400000;
 const MAX_TIMER_DELAY = 2_147_483_647;
@@ -793,23 +792,23 @@ function bustCachePrefix(prefix)   { for (const k of postCache.keys()) if (k.sta
 // DELAY: ms between fetching successive topics in the continuous cycler
 const SOURCE_CONFIG = {
   //            TTL (ms)          DELAY/topic (ms)
-  reddit:        { ttl:  5*60000, delay:  6000 },  // RSS feeds — no rate limit, very fast
-  hn:            { ttl:  4*60000, delay:  4000 },  // Algolia HN, generous API
-  github:        { ttl: 12*60000, delay: 45000 },  // rate-limited 60/hr unauthed
-  devto:         { ttl:  5*60000, delay:  8000 },  // REST API, generous
-  medium:        { ttl:  8*60000, delay: 12000 },  // CDN-cached RSS
-  youtube:       { ttl:  8*60000, delay: 12000 },  // channel RSS — no quota
-  stackoverflow: { ttl: 15*60000, delay: 45000 },  // 300/day unauthed limit
-  mastodon:      { ttl:  4*60000, delay:  6000 },  // real-time social
-  lobsters:      { ttl: 12*60000, delay: 20000 },  // small site — respectful
-  arxiv:         { ttl: 20*60000, delay: 30000 },  // OAI-PMH 20s recommendation
-  indeed:        { ttl:  8*60000, delay: 10000 },  // RSS, ~2,600/day
-  producthunt:   { ttl: 15*60000, delay: 35000 },  // RSS, ~1,000/day
-  techcrunch:    { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
-  theverge:      { ttl:  5*60000, delay:  8000 },  // RSS — publishes constantly
-  indiehackers:  { ttl: 12*60000, delay: 18000 },  // RSS feed
-  hashnode:      { ttl:  8*60000, delay: 12000 },  // freeCodeCamp RSS
-  bluesky:       { ttl:  4*60000, delay:  6000 },  // public ATP API, real-time social
+  reddit:        { ttl: 20*60000, delay: 30000 },  // Reddit rate-limits aggressively; fallback covers gaps
+  hn:            { ttl: 12*60000, delay: 20000 },  // Algolia HN, generous but high-volume
+  github:        { ttl: 30*60000, delay: 90000 },  // rate-limited 60/hr unauthed
+  devto:         { ttl: 20*60000, delay: 30000 },  // REST API, generous
+  medium:        { ttl: 30*60000, delay: 60000 },  // CDN-cached RSS
+  youtube:       { ttl: 30*60000, delay: 60000 },  // channel RSS — no quota
+  stackoverflow: { ttl: 45*60000, delay: 120000 }, // 300/day unauthed limit
+  mastodon:      { ttl: 15*60000, delay: 30000 },  // public federated timelines
+  lobsters:      { ttl: 30*60000, delay: 90000 },  // small site — respectful
+  arxiv:         { ttl: 60*60000, delay: 120000 }, // OAI-PMH-friendly pacing
+  indeed:        { ttl: 30*60000, delay: 90000 },  // job APIs/RSS do not need seconds-level polling
+  producthunt:   { ttl: 60*60000, delay: 180000 }, // daily launches; fallback covers low-volume windows
+  techcrunch:    { ttl: 30*60000, delay: 120000 }, // RSS news
+  theverge:      { ttl: 30*60000, delay: 120000 }, // RSS news
+  indiehackers:  { ttl: 30*60000, delay: 120000 }, // RSS feed
+  hashnode:      { ttl: 30*60000, delay: 120000 }, // freeCodeCamp RSS
+  bluesky:       { ttl: 15*60000, delay: 30000 },  // public ATP API
 };
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
@@ -4467,9 +4466,12 @@ app.get('/feed', authenticate, async (req, res) => {
         if (fetcher) fetcher().catch(() => {});
       });
     } else {
+      // Refresh all 17 source workers simultaneously so every tab gets fresh content
       setImmediate(() => {
         postCache.clear();
-        refreshGlobalFeedCache().catch(() => {});
+        for (const [, fetcher] of Object.entries(SOURCE_FETCHERS)) {
+          if (typeof fetcher === 'function') fetcher().catch(() => {});
+        }
       });
     }
   }
