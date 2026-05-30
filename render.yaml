@@ -27,6 +27,27 @@ services:
           property: connectionString
       - key: ALLOWED_ORIGINS
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
+      - key: API_BASE_URL
+        value: https://uficonnect-api.onrender.com
+      - key: FRONTEND_URL
+        value: https://uficonnect.org
+      # ── OAuth credentials (set values in Render dashboard) ──
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+      - key: TWITTER_CLIENT_ID
+        sync: false
+      - key: TWITTER_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: FACEBOOK_APP_ID
+        sync: false
+      - key: FACEBOOK_APP_SECRET
+        sync: false
 
   # ── Web Frontend (React static site) ───────────────────────
   - type: web
