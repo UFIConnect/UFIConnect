@@ -9,13 +9,23 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-const SOCIAL_LOCKED = true; // flip to false when real OAuth credentials are ready
+const SOCIAL_LOCKED = false;
 
 const SOCIAL_PLATFORMS = [
   { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your network' },
   { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets matching your interests' },
   { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from accounts you follow' },
   { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page posts matching your topics' },
+  { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Repos, contributions & open-source work' },
+  { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Videos and channels in your areas' },
+  { id: 'reddit',    emoji: '🟠', name: 'Reddit',      color: '#FF4500', desc: 'Subreddits matching your interests' },
+  { id: 'tiktok',    emoji: '🎵', name: 'TikTok',      color: '#010101', desc: 'Creators and trends in your niche' },
+  { id: 'bluesky',   emoji: '🦋', name: 'Bluesky',     color: '#0085FF', desc: 'Posts and discussions across the network' },
+  { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
+  { id: 'medium',    emoji: '📝', name: 'Medium',      color: '#1A8917', desc: 'Long-form articles in your areas' },
+  { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and creative inspiration' },
+  { id: 'behance',   emoji: '🖼️', name: 'Behance',     color: '#1769FF', desc: 'Portfolios and creative projects' },
+  { id: 'indeed',    emoji: '💼', name: 'Indeed',      color: '#003A9B', desc: 'Job listings matched to your profile' },
 ];
 
 const LINK_FIELDS = [
@@ -377,7 +387,12 @@ export default function Profile() {
           {/* Preferences */}
           {profile.preferences && (
             <div className="card">
-              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Preferences</h3>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+                <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Preferences</h3>
+                <Link to="/settings?tab=preferences">
+                  <button className="btn btn-ghost btn-sm" type="button">Edit →</button>
+                </Link>
+              </div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
                 {profile.preferences.role && (
                   <div>
