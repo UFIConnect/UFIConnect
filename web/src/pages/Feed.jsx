@@ -54,10 +54,10 @@ const SOURCE_META = {
 
 const SOURCE_TABS = [
   { key: 'all',        label: 'All',         icon: '⚡' },
-  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏',  needsAuth: true },
-  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼',  needsAuth: true },
-  { key: 'instagram',  label: 'Instagram',   icon: '📸',  needsAuth: true },
-  { key: 'facebook',   label: 'Facebook',    icon: '🔵',  needsAuth: true },
+  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
+  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
+  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
+  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
@@ -166,40 +166,6 @@ function VideoModal({ post, onClose }) {
   );
 }
 
-/** Gate shown when a connected-account social tab is selected before OAuth */
-function SocialConnectGate({ platform, onConnect, connecting }) {
-  const meta = SOURCE_META[platform] || {};
-  return (
-    <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-      <div style={{ fontSize: '3rem', marginBottom: 16 }}>{meta.icon || '🔗'}</div>
-      <div style={{ fontWeight: 800, fontSize: '1.25rem', marginBottom: 8 }}>
-        Connect your {meta.label} account
-      </div>
-      <p style={{ color: 'var(--muted)', fontSize: '.9rem', maxWidth: 340, margin: '0 auto 28px', lineHeight: 1.6 }}>
-        Authorize UFIConnect to read your {meta.label} feed and surface personalized content alongside your other sources.
-      </p>
-      <button
-        onClick={onConnect}
-        disabled={connecting}
-        style={{
-          padding: '13px 36px', borderRadius: 24, border: 'none',
-          background: meta.color || 'var(--primary)', color: '#fff',
-          fontWeight: 700, fontSize: '1rem', cursor: connecting ? 'default' : 'pointer',
-          boxShadow: `0 4px 20px ${meta.color || '#6366F1'}44`,
-          opacity: connecting ? 0.7 : 1,
-          transition: 'opacity .15s, transform .15s',
-        }}
-        onMouseOver={e => { if (!connecting) { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-        onMouseOut={e => { e.currentTarget.style.opacity = connecting ? '0.7' : '1'; e.currentTarget.style.transform = ''; }}
-      >
-        {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
-      </button>
-      <div style={{ marginTop: 16, fontSize: '.75rem', color: 'var(--muted)' }}>
-        You can disconnect at any time from Settings → Connected Accounts
-      </div>
-    </div>
-  );
-}
 
 /** Filter panel dropdown */
 function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
@@ -568,7 +534,6 @@ export default function Feed() {
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
   const [liveActive,    setLiveActive]    = useState(false);
   const [sourceTab,     setSourceTab]     = useState('all');
-  const [connecting,    setConnecting]    = useState(false);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -920,9 +885,6 @@ export default function Feed() {
             >
               <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
               {tab.label}
-              {tab.needsAuth && connectedSocial && !connectedSocial[tab.key] && (
-                <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#E0F2FE', color: '#0369A1', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>CONNECT</span>
-              )}
             </button>
           );
         })}
@@ -956,21 +918,7 @@ export default function Feed() {
         </div>
       )}
 
-      {/* Connect gate — shown when a social tab needs OAuth and user hasn't connected yet */}
-      {CONNECTED_SOCIAL_TABS.has(sourceTab) && !connectedSocial?.[sourceTab] ? (
-        <SocialConnectGate
-          platform={sourceTab}
-          connecting={connecting}
-          onConnect={async () => {
-            setConnecting(true);
-            try {
-              const { data } = await client.get(`/auth/social/${sourceTab}/start`);
-              if (data?.url) window.location.href = data.url;
-              else setConnecting(false);
-            } catch { setConnecting(false); }
-          }}
-        />
-      ) : loading ? (
+      {loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
           {sourceTab !== 'all' && (
