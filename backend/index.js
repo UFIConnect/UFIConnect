@@ -2836,6 +2836,55 @@ function runCacheHelperCheck() {
   }
 }
 
+// ─── Feed Optimizer Agent: monitors all source workers, heals failing ones ─────
+async function runFeedOptimizer() {
+  const now = Date.now();
+  const healed = [];
+  const statsBySource = [];
+
+  for (const [id, health] of workerHealth.entries()) {
+    const cache     = agentSourceCache.get(id);
+    const postCount = cache?.posts?.length ?? 0;
+    const lastOk    = health.lastSuccess || 0;
+    const minStale  = lastOk > 0 ? (now - lastOk) / 60000 : Infinity;
+
+    const isPaused        = health.paused;
+    const isDegraded      = health.consecutiveErrors >= 3;
+    const isStaleEmpty    = minStale > 12 && postCount === 0 && health.fetchCount > 5;
+    const neverSucceeded  = health.lastSuccess === null && health.fetchCount > 20;
+
+    statsBySource.push({ id, postCount, isPaused, isDegraded });
+
+    if (isPaused || isDegraded || isStaleEmpty || neverSucceeded) {
+      // Reset circuit breaker so the worker resumes immediately
+      health.paused            = false;
+      health.pauseUntil        = 0;
+      health.consecutiveErrors = 0;
+
+      const reason = isPaused       ? 'circuit paused'
+                   : isDegraded     ? `${health.consecutiveErrors} errors`
+                   : isStaleEmpty   ? `${Math.round(minStale)}min stale`
+                   :                  'never succeeded';
+      healed.push(`${id}(${reason})`);
+
+      // Trigger an immediate re-fetch for this source (non-blocking)
+      const fetcher = SOURCE_FETCHERS[id];
+      if (fetcher) fetcher().catch(() => {});
+    }
+  }
+
+  const totalPosts = statsBySource.reduce((s, v) => s + v.postCount, 0);
+  const healthyCount = statsBySource.filter(s => !s.isPaused && !s.isDegraded).length;
+
+  if (healed.length > 0) {
+    logAgentAction('optimizer', '🔧',
+      `Healed ${healed.length} source(s): ${healed.join(', ')} — ${totalPosts.toLocaleString()} posts total`, '#F59E0B');
+  } else {
+    logAgentAction('optimizer', '✅',
+      `${healthyCount}/${statsBySource.length} sources healthy — ${totalPosts.toLocaleString()} posts in cache`, '#10B981');
+  }
+}
+
 // ─── Deploy Agent: ping each live service and record response time ────────────
 async function runDeployCheck() {
   const targets = [
@@ -2904,6 +2953,8 @@ setInterval(runSeoCheck,    20 * 60 * 1000);
 setInterval(runOppsCheck,   10 * 60 * 1000);
 // Cache helper merges source caches every 5 minutes
 setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
+// Feed Optimizer: heal degraded/paused workers every 2 minutes, first run after 45s
+setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 2 * 60 * 1000); }, 45 * 1000);
 // Deploy health check every 5 minutes
 setInterval(runDeployCheck,  5 * 60 * 1000);
 // Data check every 7 minutes
@@ -4680,6 +4731,10 @@ const AGENT_DEFS = {
     name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '2min',
     description: 'Searches Bluesky\'s public AT Protocol API for real-time posts by keyword. No auth required — streams live social content from the open web.',
   },
+  optimizer: {
+    name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '2min',
+    description: 'Monitors all source workers every 2 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources — auto-heals by resetting circuit breakers and triggering immediate re-fetches.',
+  },
   linkedin: {
     name: 'LinkedIn Agent', emoji: '🔷', color: '#0A66C2', interval: '30min',
     description: 'Fetches professional content from LinkedIn API (requires LINKEDIN_TOKEN). Pulls career posts and industry insights across 36 topics.',
@@ -4839,6 +4894,7 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     deploy:       () => runDeployCheck(),
     data:         () => runDataCheck(),
     cache_helper: () => runCacheHelperCheck(),
+    optimizer:    () => runFeedOptimizer(),
     // Source agents — resolved from SOURCE_FETCHERS map registered at startup
     ...(sourceFn ? { [req.params.id]: sourceFn } : {}),
   };
@@ -4926,6 +4982,7 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     deploy:       () => runDeployCheck(),
     data:         () => runDataCheck(),
     cache_helper: () => runCacheHelperCheck(),
+    optimizer:    () => runFeedOptimizer(),
     ...(sourceFn ? { [agentId]: sourceFn } : {}),
   };
   if (!triggers[agentId]) return res.status(404).json({ error: 'Unknown agent' });
