@@ -205,42 +205,6 @@ export default function Landing() {
             </div>
           </section>
 
-          {/* FAQ — visible text helps Google rank for "UFI" */}
-          <section style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
-            <div style={{ maxWidth: '760px', margin: '0 auto' }}>
-              <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '40px' }}>
-                Frequently asked about UFI
-              </h2>
-              {[
-                {
-                  q: 'What is UFIConnect?',
-                  a: 'UFIConnect (commonly called UFI) is a free professional networking platform for engineers, designers, founders, creators, and professionals across every industry. It offers a personalised feed, 80+ communities, real job listings, and direct messaging — with no ads.',
-                },
-                {
-                  q: 'What does UFI stand for?',
-                  a: 'UFI is the short name for UFIConnect, the professional network. The platform is available at uficonnect.org and uficonnect.pro.',
-                },
-                {
-                  q: 'Is UFIConnect free?',
-                  a: 'Yes — UFI is completely free to join and use. No subscriptions, no ads, no paywalls. Register at uficonnect.org to get started.',
-                },
-                {
-                  q: 'How is UFI different from LinkedIn?',
-                  a: 'UFIConnect has zero ads and zero sponsored posts. Your feed is ranked purely by your role and interests, not by who paid the most. UFI also aggregates content from Reddit, GitHub, HackerNews, YouTube, and 15+ other sources in one place.',
-                },
-                {
-                  q: 'Who is UFI for?',
-                  a: 'UFIConnect is built for engineers, software developers, designers, founders, product managers, marketers, data scientists, healthcare professionals, educators, athletes, musicians, and anyone building a professional career.',
-                },
-              ].map(({ q, a }) => (
-                <div key={q} style={{ marginBottom: 24, padding: '20px 24px', borderRadius: 'var(--radius)', border: '1px solid var(--border)', background: 'var(--surface)' }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: '700', marginBottom: 8 }}>{q}</h3>
-                  <p style={{ fontSize: '.9rem', color: 'var(--muted)', lineHeight: 1.7, margin: 0 }}>{a}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
           {/* Bottom CTA */}
           <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
