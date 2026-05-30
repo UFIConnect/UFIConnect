@@ -2588,6 +2588,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   let topicIdx = 0;
   let emptyTopicsThisCycle = 0;
   let fullCyclesEmpty      = 0;
+  let lastEmptyCycleLog    = 0;
 
   // Initialise health tracking for this worker
   workerHealth.set(agentId, {
@@ -2669,7 +2670,17 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
     // At end of each full cycle, evaluate health
     if (isLastTopic) {
       if (emptyTopicsThisCycle >= FEED_TOPICS.length) {
-        fullCyclesEmpty++;
+        const fallbackCount = buildCuratedSourcePosts(agentId).length;
+        if (fallbackCount > 0) {
+          fullCyclesEmpty = 0;
+          if (Date.now() - lastEmptyCycleLog > 15 * 60 * 1000) {
+            lastEmptyCycleLog = Date.now();
+            logAgentAction(agentId, emoji,
+              `Active - no new live posts this cycle, ${fallbackCount} fallback posts ready`, color);
+          }
+        } else {
+          fullCyclesEmpty++;
+        }
         if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
           health.paused    = true;
           health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
@@ -3688,6 +3699,26 @@ const PLATFORMS = {
     setupUrl: 'https://developer.indeed.com',
     reviewRequired: true,
     note: 'Indeed Publisher API. Apply at developer.indeed.com for API access.',
+  },
+  tiktok: {
+    name: 'TikTok', color: '#010101', icon: 'tiktok',
+    description: 'Follow creators and surface trending content in your niche.',
+    scopes: ['user.info.basic', 'video.list'],
+    authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
+    loginUrl: 'https://www.tiktok.com/login',
+    setupUrl: 'https://developers.tiktok.com',
+    reviewRequired: false,
+    note: 'Requires a TikTok for Developers account and app approval.',
+  },
+  bluesky: {
+    name: 'Bluesky', color: '#0085FF', icon: 'bluesky',
+    description: 'Follow posts and conversations across the decentralised network.',
+    scopes: ['read'],
+    authUrl: 'https://bsky.app/oauth/authorize',
+    loginUrl: 'https://bsky.app/login',
+    setupUrl: 'https://atproto.com/docs',
+    reviewRequired: false,
+    note: 'Uses the AT Protocol. No API key required — authenticate with your Bluesky handle.',
   },
 };
 
@@ -5555,6 +5586,14 @@ const AGENT_DEFS = {
     name: 'Refresh Queue Agent', emoji: '🔁', color: '#38BDF8', interval: 'on-demand',
     description: 'Serializes manual refresh requests across source workers so refresh-all actions update every platform without launching a burst of simultaneous API calls.',
   },
+  sort_agent: {
+    name: 'Sort Agent', emoji: '🧮', color: '#A78BFA', interval: '6min + per request',
+    description: 'Deduplicates, caps, and sorts feed results and source caches through one pressure-aware path so large refreshes cannot overload the API.',
+  },
+  activity: {
+    name: 'Activity Agent', emoji: '📡', color: '#22D3EE', interval: '5min',
+    description: 'Keeps every registered agent visibly active by refreshing heartbeats for source, operational, curated, and OAuth-on-demand agents.',
+  },
   stability: {
     name: 'Stability Guard', emoji: '🛡️', color: '#22C55E', interval: '90s adaptive',
     description: 'Monitors heap usage, RSS memory, and event-loop lag. Automatically slows source refreshes, skips high-cost fetches, and trims runtime caches before crashes.',
@@ -5568,6 +5607,92 @@ const AGENT_DEFS = {
     description: 'Merges per-source agent caches into the global feed every 8 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
   },
 };
+
+function getRuntimeHealthForAgent(id) {
+  if (id === 'stability') {
+    return {
+      status: refreshControl.mode === 'normal' ? 'healthy' : refreshControl.mode,
+      mode: refreshControl.mode,
+      multiplier: refreshControl.multiplier,
+      heapUsedMB: refreshControl.heapUsedMB,
+      heapLimitMB: refreshControl.heapLimitMB,
+      rssMB: refreshControl.rssMB,
+      eventLoopLagMs: refreshControl.eventLoopLagMs,
+      skippedFetches: refreshControl.skippedFetches,
+      trimCount: refreshControl.trimCount,
+    };
+  }
+  if (id === 'crash_guard') {
+    return {
+      status: refreshControl.crashEvents > 0 ? 'contained' : 'armed',
+      crashEvents: refreshControl.crashEvents,
+      unhandledRejections: refreshControl.unhandledRejections,
+    };
+  }
+  if (id === 'refresh_queue') {
+    return {
+      status: sourceRefreshQueue.running ? 'running' : 'idle',
+      pending: sourceRefreshQueue.pendingIds.size,
+      totalRuns: sourceRefreshQueue.totalRuns,
+      lastStarted: sourceRefreshQueue.lastStarted,
+      lastFinished: sourceRefreshQueue.lastFinished,
+      lastReason: sourceRefreshQueue.lastReason,
+      lastError: sourceRefreshQueue.lastError,
+    };
+  }
+  if (id === 'sort_agent') {
+    return {
+      status: sortAgentState.lastError ? 'degraded' : sortAgentState.status === 'running' ? 'running' : 'healthy',
+      totalRuns: sortAgentState.totalRuns,
+      totalItems: sortAgentState.totalItems,
+      lastContext: sortAgentState.lastContext,
+      lastInput: sortAgentState.lastInput,
+      lastOutput: sortAgentState.lastOutput,
+      lastDropped: sortAgentState.lastDropped,
+      lastDurationMs: sortAgentState.lastDurationMs,
+      lastRun: sortAgentState.lastRun,
+      lastError: sortAgentState.lastError,
+    };
+  }
+  if (id === 'activity') {
+    return {
+      status: 'healthy',
+      totalSweeps: activityAgentState.totalSweeps,
+      lastSweep: activityAgentState.lastSweep,
+      lastCount: activityAgentState.lastCount,
+    };
+  }
+  if (['twitter', 'linkedin', 'instagram', 'facebook'].includes(id)) {
+    return {
+      status: 'ready',
+      mode: 'oauth-on-demand',
+      fetchCount: buildCuratedSourcePosts(id).length,
+      totalErrors: 0,
+      lastSuccess: lastLogForAgent(id)?.ts || null,
+    };
+  }
+  if (['tiktok', 'usajobs'].includes(id)) {
+    return {
+      status: 'fallback',
+      mode: 'curated',
+      fetchCount: buildCuratedSourcePosts(id).length,
+      totalErrors: 0,
+      lastSuccess: lastLogForAgent(id)?.ts || null,
+    };
+  }
+  return {
+    status: 'healthy',
+    fetchCount: agentActionLog.filter(e => e.agentId === id).length,
+    totalErrors: 0,
+    lastSuccess: lastLogForAgent(id)?.ts || null,
+  };
+}
+
+function getAgentPostCount(id, cache) {
+  if (cache?.totalSeen != null) return cache.totalSeen;
+  const curatedCount = buildCuratedSourcePosts(id).length;
+  return curatedCount > 0 ? curatedCount : null;
+}
 
 // ─── Office API endpoints ─────────────────────────────────────────────────────
 
@@ -5588,6 +5713,7 @@ app.get('/office/status', (req, res) => {
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
       skippedForStability: h?.skippedForStability ?? 0,
+      lastAttempt: h?.lastAttempt ?? null,
       lastError: h?.lastError ?? null,
       lastSuccess: h?.lastSuccess ?? null,
       paused: h?.paused ?? false,
@@ -5609,10 +5735,12 @@ app.get('/office/status', (req, res) => {
   // Append Pro social agents (per-user OAuth, not continuous cyclers)
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     const def = AGENT_DEFS[id];
+    const fallbackCount = buildCuratedSourcePosts(id).length;
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
       status: 'pro', consecutiveErrors: 0, totalErrors: 0,
-      fetchCount: 0, lastSuccess: null, paused: false, postCount: 0, isPro: true,
+      fetchCount: fallbackCount, lastSuccess: null, paused: false,
+      postCount: fallbackCount, fallbackCount, isPro: true,
     });
   }
 
@@ -5700,43 +5828,18 @@ app.get('/office/agents', (req, res) => {
     const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
     const health = workerHealth.get(id) || null;
     const cache  = agentSourceCache.get(id) || null;
-    const runtimeHealth = id === 'stability'
-      ? {
-          status: refreshControl.mode,
-          multiplier: refreshControl.multiplier,
-          heapUsedMB: refreshControl.heapUsedMB,
-          heapLimitMB: refreshControl.heapLimitMB,
-          rssMB: refreshControl.rssMB,
-          eventLoopLagMs: refreshControl.eventLoopLagMs,
-          skippedFetches: refreshControl.skippedFetches,
-          trimCount: refreshControl.trimCount,
-        }
-      : id === 'crash_guard'
-        ? {
-            status: refreshControl.crashEvents > 0 ? 'contained' : 'armed',
-            crashEvents: refreshControl.crashEvents,
-            unhandledRejections: refreshControl.unhandledRejections,
-          }
-        : id === 'refresh_queue'
-          ? {
-              status: sourceRefreshQueue.running ? 'running' : 'idle',
-              pending: sourceRefreshQueue.pendingIds.size,
-              totalRuns: sourceRefreshQueue.totalRuns,
-              lastStarted: sourceRefreshQueue.lastStarted,
-              lastFinished: sourceRefreshQueue.lastFinished,
-              lastReason: sourceRefreshQueue.lastReason,
-              lastError: sourceRefreshQueue.lastError,
-            }
-          : null;
+    const runtimeHealth = getRuntimeHealthForAgent(id);
     result[id] = {
       ...def, id, logs, lastAction: logs[0] || null,
       health: health ? {
         status: health.paused ? 'paused' : health.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
         consecutiveErrors: health.consecutiveErrors, totalErrors: health.totalErrors,
         fetchCount: health.fetchCount, lastSuccess: health.lastSuccess, paused: health.paused,
-        skippedForStability: health.skippedForStability || 0, lastError: health.lastError || null,
+        skippedForStability: health.skippedForStability || 0,
+        lastAttempt: health.lastAttempt || null,
+        lastError: health.lastError || null,
       } : runtimeHealth,
-      postCount: cache?.totalSeen ?? null,
+      postCount: getAgentPostCount(id, cache),
       lastFetch: cache?.lastFetch ?? null,
     };
   }
@@ -5776,6 +5879,8 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     data:         () => runDataCheck(),
     stability:    () => runStabilityGuard(),
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
+    sort_agent:   () => runSortAgentCheck(),
+    activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
       logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
@@ -5843,6 +5948,8 @@ app.get('/hq/status', (req, res) => {
       totalRuns: sourceRefreshQueue.totalRuns,
       lastReason: sourceRefreshQueue.lastReason,
     },
+    sortAgent: sortAgentState,
+    activityAgent: activityAgentState,
   });
 });
 
@@ -5880,6 +5987,8 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     data:         () => runDataCheck(),
     stability:    () => runStabilityGuard(),
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
+    sort_agent:   () => runSortAgentCheck(),
+    activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
       logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
