@@ -219,6 +219,7 @@ export default function Onboarding() {
 
   const [step,       setStep]       = useState(ctxRole ? 1 : 0);
   const [role,       setRole]       = useState(ctxRole);
+  const [customRole, setCustomRole] = useState('');
   const [interests,  setInterests]  = useState(
     ctxRole && ctxPreInterests.length > 0 ? ctxPreInterests.slice(0, 5) : []
   );
@@ -249,7 +250,7 @@ export default function Onboarding() {
   }
 
   function canNext() {
-    if (step === 0) return !!role;
+    if (step === 0) return role === '__custom__' ? customRole.trim().length > 1 : !!role;
     if (step === 1) return interests.length > 0;
     if (step === 2) return goals.length > 0;
     if (step === 3) return !!experience;
@@ -259,7 +260,8 @@ export default function Onboarding() {
   async function handleFinish() {
     setLoading(true);
     try {
-      const payload = { role, goals, interests, experience };
+      const resolvedRole = role === '__custom__' ? customRole.trim() : role;
+      const payload = { role: resolvedRole, goals, interests, experience };
       const ctx = loadSignupCtx();
       if (ctx?.bio)   payload.bio   = ctx.bio;
       if (ctx?.title) payload.title = ctx.title;
@@ -326,7 +328,51 @@ export default function Onboarding() {
                   )}
                 </button>
               ))}
+
+              {/* Other / Custom role card */}
+              <button
+                onClick={() => setRole('__custom__')}
+                style={{
+                  padding: '14px 16px', borderRadius: 14, border: `2px solid ${role === '__custom__' ? 'var(--primary)' : 'var(--border)'}`,
+                  background: role === '__custom__' ? 'var(--primary-light)' : 'var(--surface)',
+                  cursor: 'pointer', textAlign: 'left', transition: 'all .2s',
+                  transform: role === '__custom__' ? 'scale(1.02)' : 'scale(1)',
+                  boxShadow: role === '__custom__' ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
+                }}
+              >
+                <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>✏️</div>
+                <div style={{ fontWeight: 700, fontSize: '.88rem', color: role === '__custom__' ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
+                  Other / Custom
+                </div>
+                <div style={{ fontSize: '.74rem', color: 'var(--muted)', lineHeight: 1.4 }}>My role isn't listed — I'll describe it</div>
+                {role === '__custom__' && (
+                  <div style={{ marginTop: 8, fontSize: '.7rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Selected</div>
+                )}
+              </button>
             </div>
+
+            {/* Custom role text input — visible only when "Other" is selected */}
+            {role === '__custom__' && (
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', fontWeight: 700, fontSize: '.85rem', marginBottom: 8, color: 'var(--text)' }}>
+                  What's your role?
+                </label>
+                <input
+                  autoFocus
+                  className="form-input"
+                  placeholder="e.g. Robotics Engineer, Indie Author, NFT Curator…"
+                  value={customRole}
+                  maxLength={60}
+                  onChange={e => setCustomRole(e.target.value)}
+                  style={{ width: '100%', borderRadius: 12, fontSize: '.95rem', padding: '12px 14px' }}
+                />
+                {customRole.trim().length > 1 && (
+                  <div style={{ marginTop: 6, fontSize: '.74rem', color: 'var(--primary)', fontWeight: 600 }}>
+                    ✓ Your role: <strong>{customRole.trim()}</strong>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 
