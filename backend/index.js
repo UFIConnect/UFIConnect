@@ -4469,13 +4469,33 @@ app.get('/feed', authenticate, async (req, res) => {
     const globalSourcePosts = globalFeedCache.posts
       .filter(p => p.source === sourceFilter)
       .map(p => mapExternalPost(p, sourceFilter));
+    const curatedSourcePosts = (SOCIAL_POSTS[sourceFilter] || []).map(p => ({
+      id:          `${p.id}_social`,
+      authorId:    `${sourceFilter}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
+      groupId:     `ext_${sourceFilter}`,
+      content:     p.content,
+      title:       p.title || null,
+      source:      sourceFilter,
+      sourceLabel: p.source || sourceFilter,
+      sourceUrl:   getSocialPostUrl(sourceFilter, p),
+      topic:       (p.topics || [])[0] || '',
+      mediaUrl:    p.mediaUrl || null,
+      mediaType:   p.mediaType || null,
+      author:      { id: `${sourceFilter}_${p.author}`, name: p.author || null, title: p.source, organization: sourceFilter },
+      likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
+      createdAt:   p.time || new Date().toISOString(),
+      isExternal:  false,
+      group:       { id: `ext_${sourceFilter}`, name: sourceFilter.charAt(0).toUpperCase() + sourceFilter.slice(1), category: 'Social', externalUrl: getSocialPostUrl(sourceFilter, p) },
+      fromJoinedGroup: false,
+      isSocialCard: false,
+    }));
     const livePosts   = (liveResult[agentKey] || []).map(p => mapExternalPost(p, sourceFilter));
     const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     savePostsToDB(livePosts).catch(() => {});
 
     const seen = new Set();
-    const result = [...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts]
+    const result = [...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts]
       .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
