@@ -172,7 +172,7 @@ export default function Landing() {
                 {[
                   { stat: '80+', label: 'Live Communities' },
                   { stat: '500+', label: 'Professional Roles' },
-                  { stat: '6+', label: 'Social Platforms' },
+                  { stat: '14+', label: 'Social Platforms' },
                   { stat: '100%', label: 'Ad-free' },
                 ].map(({ stat, label }) => (
                   <div key={label}>
