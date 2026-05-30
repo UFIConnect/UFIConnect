@@ -1,12 +1,25 @@
 User-agent: *
 Allow: /
-
-# Sitemap
-Sitemap: https://uficonnect.org/sitemap.xml
-
-# Block private/API routes from indexing
 Disallow: /api/
 Disallow: /onboarding
 Disallow: /settings
 Disallow: /messages
 Disallow: /profile
+
+User-agent: Googlebot
+Allow: /
+
+User-agent: Bingbot
+Allow: /
+
+User-agent: Slurp
+Allow: /
+
+User-agent: DuckDuckBot
+Allow: /
+
+User-agent: YandexBot
+Allow: /
+
+Sitemap: https://uficonnect.org/sitemap.xml
+Sitemap: https://uficonnect.pro/sitemap.xml
