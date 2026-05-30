@@ -37,38 +37,31 @@ const SOURCE_META = {
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
   usajobs:       { label: 'USAJobs',       color: '#005EA8', icon: '🏛️' },
   producthunt:   { label: 'Product Hunt',  color: '#DA552F', icon: '🚀' },
-  techcrunch:    { label: 'TechCrunch',    color: '#0D9F3F', icon: '📰' },
-  theverge:      { label: 'The Verge',     color: '#FF3333', icon: '⬛' },
-  indiehackers:  { label: 'Indie Hackers', color: '#0E2150', icon: '💡' },
-  hashnode:      { label: 'freeCodeCamp',  color: '#006400', icon: '🔥' },
-  uficonnect:    { label: 'UFIConnect',    color: 'var(--primary)', icon: '🌐' },
+  techcrunch:    { label: 'TechCrunch',      color: '#0D9F3F', icon: '📰' },
+  theverge:      { label: 'The Verge',       color: '#FF3333', icon: '⬛' },
+  indiehackers:  { label: 'Indie Hackers',   color: '#0E2150', icon: '💡' },
+  hashnode:      { label: 'freeCodeCamp',    color: '#006400', icon: '🔥' },
+  arstechnica:   { label: 'Ars Technica',    color: '#FF6600', icon: '📡' },
+  wired:         { label: 'WIRED',           color: '#111111', icon: '🔌' },
+  theregister:   { label: 'The Register',    color: '#CC0000', icon: '📋' },
+  venturebeat:   { label: 'VentureBeat',     color: '#1E6FBF', icon: '💹' },
+  smashing:      { label: 'Smashing Mag',    color: '#E9620A', icon: '🎨' },
+  phoronix:      { label: 'Phoronix',        color: '#2B7BB9', icon: '🐧' },
+  infoq:         { label: 'InfoQ',           color: '#67B346', icon: '🏗️' },
+  mittr:         { label: 'MIT Tech Review', color: '#A31F34', icon: '🔬' },
+  uficonnect:    { label: 'UFIConnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
 const SOURCE_TABS = [
-  { key: 'all',          label: 'All',          icon: '⚡' },
-  { key: 'twitter',      label: 'X (Twitter)',  icon: '𝕏',  pro: true },
-  { key: 'linkedin',     label: 'LinkedIn',     icon: '💼',  pro: true },
-  { key: 'instagram',    label: 'Instagram',    icon: '📸',  pro: true },
-  { key: 'facebook',     label: 'Facebook',     icon: '🔵',  pro: true },
-  { key: 'tiktok',       label: 'TikTok',       icon: '🎵' },
-  { key: 'reddit',       label: 'Reddit',       icon: '🟠' },
-  { key: 'hackernews',   label: 'HN',           icon: '🗞' },
-  { key: 'github',       label: 'GitHub',       icon: '🐙' },
-  { key: 'devto',        label: 'DEV',          icon: '👩‍💻' },
-  { key: 'youtube',      label: 'YouTube',      icon: '▶️' },
-  { key: 'medium',       label: 'Medium',       icon: '📝' },
-  { key: 'stackoverflow',label: 'Stack',        icon: '📚' },
-  { key: 'mastodon',     label: 'Mastodon',     icon: '🦣' },
-  { key: 'bluesky',      label: 'Bluesky',      icon: '🦋' },
-  { key: 'lobsters',     label: 'Lobsters',     icon: '🦞' },
-  { key: 'arxiv',        label: 'arXiv',        icon: '🔬' },
-  { key: 'indeed',       label: 'Indeed',       icon: '💼' },
-  { key: 'usajobs',      label: 'USAJobs',      icon: '🏛️' },
-  { key: 'producthunt',  label: 'Product Hunt', icon: '🚀' },
-  { key: 'techcrunch',   label: 'TechCrunch',   icon: '📰' },
-  { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
-  { key: 'indiehackers', label: 'Indie Hackers',icon: '💡' },
-  { key: 'hashnode',     label: 'freeCodeCamp', icon: '🔥' },
+  { key: 'all',        label: 'All',         icon: '⚡' },
+  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏',  pro: true },
+  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼',  pro: true },
+  { key: 'instagram',  label: 'Instagram',   icon: '📸',  pro: true },
+  { key: 'facebook',   label: 'Facebook',    icon: '🔵',  pro: true },
+  { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
+  { key: 'github',     label: 'GitHub',      icon: '🐙' },
+  { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
+  { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
 const PRO_CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
@@ -79,6 +72,7 @@ const ALL_FILTER_SOURCES = [
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
 ];
 
 const CATEGORY_COLORS = {
@@ -678,15 +672,36 @@ export default function Feed() {
       result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
     }
 
-    // Sort
+    // Sort within each source bucket first
     if (filters.sort === 'newest') {
       result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     } else {
       result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
     }
 
+    // On the all tab with no source filter, interleave round-robin across sources
+    if (sourceTab === 'all' && filters.sources.length === 0) {
+      const buckets = new Map();
+      for (const p of result) {
+        const src = p.source || 'unknown';
+        if (!buckets.has(src)) buckets.set(src, []);
+        buckets.get(src).push(p);
+      }
+      const keys = [...buckets.keys()];
+      const mixed = [];
+      let filled = true;
+      while (filled) {
+        filled = false;
+        for (const k of keys) {
+          const bucket = buckets.get(k);
+          if (bucket.length) { mixed.push(bucket.shift()); filled = true; }
+        }
+      }
+      return mixed;
+    }
+
     return result;
-  }, [posts, search, filters]);
+  }, [posts, search, filters, sourceTab]);
 
   useEffect(() => {
     const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
