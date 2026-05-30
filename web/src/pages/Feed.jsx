@@ -35,6 +35,7 @@ const SOURCE_META = {
   lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: '🦞' },
   arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: '🔬' },
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
+  usajobs:       { label: 'USAJobs',       color: '#005EA8', icon: '🏛️' },
   producthunt:   { label: 'Product Hunt',  color: '#DA552F', icon: '🚀' },
   techcrunch:    { label: 'TechCrunch',    color: '#0D9F3F', icon: '📰' },
   theverge:      { label: 'The Verge',     color: '#FF3333', icon: '⬛' },
@@ -49,6 +50,7 @@ const SOURCE_TABS = [
   { key: 'linkedin',     label: 'LinkedIn',     icon: '💼',  pro: true },
   { key: 'instagram',    label: 'Instagram',    icon: '📸',  pro: true },
   { key: 'facebook',     label: 'Facebook',     icon: '🔵',  pro: true },
+  { key: 'tiktok',       label: 'TikTok',       icon: '🎵' },
   { key: 'reddit',       label: 'Reddit',       icon: '🟠' },
   { key: 'hackernews',   label: 'HN',           icon: '🗞' },
   { key: 'github',       label: 'GitHub',       icon: '🐙' },
@@ -61,6 +63,7 @@ const SOURCE_TABS = [
   { key: 'lobsters',     label: 'Lobsters',     icon: '🦞' },
   { key: 'arxiv',        label: 'arXiv',        icon: '🔬' },
   { key: 'indeed',       label: 'Indeed',       icon: '💼' },
+  { key: 'usajobs',      label: 'USAJobs',      icon: '🏛️' },
   { key: 'producthunt',  label: 'Product Hunt', icon: '🚀' },
   { key: 'techcrunch',   label: 'TechCrunch',   icon: '📰' },
   { key: 'theverge',     label: 'The Verge',    icon: '⬛' },
@@ -75,7 +78,7 @@ const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
-  'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
 ];
 
 const CATEGORY_COLORS = {

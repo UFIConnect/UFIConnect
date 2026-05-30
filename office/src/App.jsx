@@ -507,6 +507,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
   const statusCfg = {
     starting: { dot: '#64748b', bg: 'rgba(148,163,184,.07)', border: 'rgba(148,163,184,.16)', label: 'Starting' },
     healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
+    fallback: { dot: '#38bdf8', bg: 'rgba(56,189,248,.08)', border: 'rgba(56,189,248,.2)', label: 'Fallback' },
     degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
     pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
@@ -515,11 +516,11 @@ function SourcesView({ status, triggerAgent, triggering }) {
   return (
     <>
       <h1 style={H1}>Live Sources</h1>
-      <p style={SUBTITLE}>Real-time health of all 21 data source workers. 17 cycle through 36 topics continuously; 4 are Pro OAuth-authenticated per user.</p>
+      <p style={SUBTITLE}>Real-time health of all 23 data sources. 17 cycle through topic workers, 2 are curated fallback platform agents, and 4 are Pro OAuth-authenticated per user.</p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
-        <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching normally"         color="#4ade80" />
+        <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching or fallback-backed" color="#4ade80" />
         <StatCard icon="⏳" label="Starting"         value={src?.starting ?? '—'} sub="awaiting first fetch"       color="#94a3b8" />
         <StatCard icon="⚠️" label="Degraded"        value={src?.degraded ?? '—'} sub="≥3 consecutive errors"     color="#fbbf24" />
         <StatCard icon="🔴" label="Paused"           value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />

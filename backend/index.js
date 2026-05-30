@@ -2797,6 +2797,17 @@ function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
 }
 
+function dedupeAndSortFeedPosts(posts = []) {
+  const seen = new Set();
+  return posts
+    .filter(p => {
+      if (!p?.id || seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    })
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+}
+
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
 const agentSourceCache = new Map();
 
@@ -3316,23 +3327,120 @@ const SOCIAL_POSTS = {
   ],
 };
 
+const CURATED_SOURCE_POSTS = {
+  stackoverflow: [
+    { id: 'sofb1', source: 'Stack Overflow', author: 'react_architect', topic: 'reactjs', title: 'How should I keep an infinite feed fast when filters are changing?', content: 'A practical discussion around windowing, cursor pagination, and keeping filter state from forcing full feed reloads.', url: 'https://stackoverflow.com/questions/tagged/reactjs', time: ago(2*H), likes: 42, comments: 9 },
+    { id: 'sofb2', source: 'Stack Overflow', author: 'node_runner', topic: 'node.js', title: 'Node service runs out of heap during production build', content: 'Answers cover NODE_OPTIONS, chunking large build steps, and spotting memory leaks in bundler plugins.', url: 'https://stackoverflow.com/questions/tagged/node.js', time: ago(4*H), likes: 37, comments: 6 },
+    { id: 'sofb3', source: 'Stack Overflow', author: 'api_builder', topic: 'api', title: 'Best pattern for stale-while-revalidate API responses?', content: 'Developers compare cache-first responses, background refresh jobs, and user-visible refresh indicators.', url: 'https://stackoverflow.com/questions/tagged/api', time: ago(5*H), likes: 31, comments: 5 },
+    { id: 'sofb4', source: 'Stack Overflow', author: 'postgres_tuner', topic: 'postgresql', title: 'Paginating large Postgres result sets by source and date', content: 'Covers composite indexes, keyset pagination, and avoiding expensive offset scans on high-volume feeds.', url: 'https://stackoverflow.com/questions/tagged/postgresql', time: ago(8*H), likes: 29, comments: 4 },
+    { id: 'sofb5', source: 'Stack Overflow', author: 'vite_shipper', topic: 'vite', title: 'Vite build succeeds locally but fails in CI because of memory limits', content: 'Troubleshooting thread for GitHub Actions heap allocation and dependency install strategy.', url: 'https://stackoverflow.com/questions/tagged/vite', time: ago(12*H), likes: 26, comments: 7 },
+    { id: 'sofb6', source: 'Stack Overflow', author: 'cloud_deploy', topic: 'deployment', title: 'How do I prevent refresh from returning an empty list during upstream timeout?', content: 'Discussion of retaining last-known-good content while revalidating external providers in the background.', url: 'https://stackoverflow.com/questions/tagged/deployment', time: ago(1*D), likes: 35, comments: 8 },
+    { id: 'sofb7', source: 'Stack Overflow', author: 'oauth_debugger', topic: 'oauth', title: 'OAuth source tabs should show connected-state and fallback content clearly', content: 'Patterns for API-backed social tabs, token failures, and product gating without breaking the feed.', url: 'https://stackoverflow.com/questions/tagged/oauth', time: ago(1.4*D), likes: 18, comments: 3 },
+    { id: 'sofb8', source: 'Stack Overflow', author: 'frontend_ops', topic: 'javascript', title: 'IntersectionObserver stops loading when filtered results are empty', content: 'Solutions include sentinel placement outside empty states and proactive loading while filters are narrow.', url: 'https://stackoverflow.com/questions/tagged/javascript', time: ago(2*D), likes: 44, comments: 10 },
+  ],
+  producthunt: [
+    { id: 'phfb1', source: 'Product Hunt', author: 'Launch Team', topic: 'ai tools', title: 'AI workflow builder for small teams', content: 'A no-code workflow tool that connects documents, chat, CRM, and support data into reusable AI agents.', url: 'https://www.producthunt.com', time: ago(3*H), likes: 814, comments: 91 },
+    { id: 'phfb2', source: 'Product Hunt', author: 'Founder Stack', topic: 'startup', title: 'Founder OS for launch planning', content: 'One workspace for launch calendars, waitlists, changelogs, customer feedback, and investor updates.', url: 'https://www.producthunt.com', time: ago(5*H), likes: 621, comments: 74 },
+    { id: 'phfb3', source: 'Product Hunt', author: 'Design Tools', topic: 'design systems', title: 'Design token sync for web and mobile apps', content: 'Keeps Figma variables, Tailwind config, and native app tokens in sync through a simple Git workflow.', url: 'https://www.producthunt.com', time: ago(7*H), likes: 488, comments: 52 },
+    { id: 'phfb4', source: 'Product Hunt', author: 'Dev Tools', topic: 'developer tools', title: 'API monitor that explains failing requests', content: 'Turns endpoint failures into timeline summaries with request samples, deploy diffs, and suggested fixes.', url: 'https://www.producthunt.com', time: ago(9*H), likes: 730, comments: 83 },
+    { id: 'phfb5', source: 'Product Hunt', author: 'Remote Works', topic: 'productivity', title: 'Async standup app with decision logs', content: 'A lightweight team journal for daily updates, blockers, decisions, and shipped work across time zones.', url: 'https://www.producthunt.com', time: ago(12*H), likes: 402, comments: 39 },
+    { id: 'phfb6', source: 'Product Hunt', author: 'Growth Lab', topic: 'marketing', title: 'Landing page experiment generator', content: 'Creates testable copy, sections, and metrics plans from product positioning and customer segments.', url: 'https://www.producthunt.com', time: ago(18*H), likes: 515, comments: 47 },
+    { id: 'phfb7', source: 'Product Hunt', author: 'Open Source', topic: 'open source', title: 'Self-hosted customer feedback board', content: 'An open-source roadmap and changelog board for teams that want full control over their product data.', url: 'https://www.producthunt.com', time: ago(1*D), likes: 367, comments: 33 },
+    { id: 'phfb8', source: 'Product Hunt', author: 'Career Tools', topic: 'career growth', title: 'Portfolio builder for technical operators', content: 'Turns project notes, metrics, screenshots, and case studies into a polished public portfolio.', url: 'https://www.producthunt.com', time: ago(1.5*D), likes: 295, comments: 28 },
+  ],
+  techcrunch: [
+    { id: 'tcfb1', source: 'TechCrunch', author: 'TechCrunch', topic: 'venture capital', title: 'Seed-stage AI infrastructure startups keep raising despite a tighter market', content: 'Investors are still funding teams with clear distribution, lower inference costs, and practical enterprise workflows.', url: 'https://techcrunch.com', time: ago(2*H), likes: 210, comments: 18 },
+    { id: 'tcfb2', source: 'TechCrunch', author: 'TechCrunch', topic: 'cloud', title: 'Cloud cost platforms shift from dashboards to automated optimization', content: 'The next generation of FinOps tools is moving budget decisions directly into deployment workflows.', url: 'https://techcrunch.com', time: ago(4*H), likes: 166, comments: 13 },
+    { id: 'tcfb3', source: 'TechCrunch', author: 'TechCrunch', topic: 'security', title: 'Security startups focus on browser-based work and identity boundaries', content: 'Teams are looking past network perimeters as more sensitive workflows move into SaaS and AI tools.', url: 'https://techcrunch.com', time: ago(7*H), likes: 189, comments: 21 },
+    { id: 'tcfb4', source: 'TechCrunch', author: 'TechCrunch', topic: 'productivity', title: 'Work apps are converging around agents, notes, and project context', content: 'The productivity market is crowded, but products with reliable context memory are starting to stand out.', url: 'https://techcrunch.com', time: ago(9*H), likes: 144, comments: 10 },
+    { id: 'tcfb5', source: 'TechCrunch', author: 'TechCrunch', topic: 'startups', title: 'Founders return to smaller teams and sharper revenue discipline', content: 'Operators are prioritizing profitable customer segments instead of growth at any cost.', url: 'https://techcrunch.com', time: ago(13*H), likes: 198, comments: 16 },
+    { id: 'tcfb6', source: 'TechCrunch', author: 'TechCrunch', topic: 'developer tools', title: 'Developer platforms compete on local-first speed and deployment confidence', content: 'New tools are bundling preview environments, observability, and rollback into a single developer workflow.', url: 'https://techcrunch.com', time: ago(1*D), likes: 173, comments: 14 },
+    { id: 'tcfb7', source: 'TechCrunch', author: 'TechCrunch', topic: 'fintech', title: 'Fintech infrastructure shifts toward embedded compliance and faster onboarding', content: 'The winners are reducing the paperwork burden for small businesses and independent operators.', url: 'https://techcrunch.com', time: ago(1.3*D), likes: 132, comments: 9 },
+    { id: 'tcfb8', source: 'TechCrunch', author: 'TechCrunch', topic: 'climate tech', title: 'Climate software startups find traction in measurement and procurement', content: 'Companies want tools that connect emissions data to purchasing, logistics, and finance decisions.', url: 'https://techcrunch.com', time: ago(2*D), likes: 119, comments: 7 },
+  ],
+  theverge: [
+    { id: 'vergefb1', source: 'The Verge', author: 'The Verge', topic: 'consumer tech', title: 'AI assistants are becoming settings panels for everything', content: 'The next interface battle is less about chat and more about who controls the intent layer across devices.', url: 'https://www.theverge.com', time: ago(2*H), likes: 302, comments: 45 },
+    { id: 'vergefb2', source: 'The Verge', author: 'The Verge', topic: 'hardware', title: 'Laptop makers are betting on battery life over raw benchmark wins', content: 'Better chips, brighter displays, and lighter designs are making all-day machines more realistic.', url: 'https://www.theverge.com', time: ago(4*H), likes: 248, comments: 37 },
+    { id: 'vergefb3', source: 'The Verge', author: 'The Verge', topic: 'platforms', title: 'App stores face another wave of payment and policy pressure', content: 'Developers are watching fee rules, install flows, and regional compliance changes closely.', url: 'https://www.theverge.com', time: ago(6*H), likes: 211, comments: 29 },
+    { id: 'vergefb4', source: 'The Verge', author: 'The Verge', topic: 'creator economy', title: 'Creator tools are becoming full business suites', content: 'Video, merch, newsletters, analytics, and payments are collapsing into fewer creator platforms.', url: 'https://www.theverge.com', time: ago(8*H), likes: 190, comments: 26 },
+    { id: 'vergefb5', source: 'The Verge', author: 'The Verge', topic: 'gaming', title: 'Indie games keep winning attention with smaller worlds and sharper mechanics', content: 'Players are rewarding games that feel focused, weird, and deeply replayable.', url: 'https://www.theverge.com', time: ago(12*H), likes: 279, comments: 42 },
+    { id: 'vergefb6', source: 'The Verge', author: 'The Verge', topic: 'science', title: 'Climate data tools move from research dashboards into everyday planning', content: 'Cities and companies are using sharper local forecasts for infrastructure and operations decisions.', url: 'https://www.theverge.com', time: ago(1*D), likes: 164, comments: 19 },
+    { id: 'vergefb7', source: 'The Verge', author: 'The Verge', topic: 'social platforms', title: 'The open social web is still messy, but the tooling is improving', content: 'Moderation, identity, and cross-posting remain hard, yet developers are shipping better bridges.', url: 'https://www.theverge.com', time: ago(1.6*D), likes: 235, comments: 33 },
+    { id: 'vergefb8', source: 'The Verge', author: 'The Verge', topic: 'mobile', title: 'Mobile apps are quietly becoming AI command centers', content: 'The strongest apps are pairing short actions with memory, files, and cross-service permissions.', url: 'https://www.theverge.com', time: ago(2*D), likes: 188, comments: 22 },
+  ],
+  hashnode: [
+    { id: 'hashfb1', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'javascript', title: 'Build a resilient infinite scroll feed in React', content: 'A practical walkthrough of pagination, deduplication, observer sentinels, and refresh-safe API calls.', url: 'https://www.freecodecamp.org/news/', time: ago(3*H), likes: 420, comments: 34 },
+    { id: 'hashfb2', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'node.js', title: 'How to debug Node memory pressure in CI', content: 'Learn how heap allocation, bundle size, dependency graphs, and test workers interact during builds.', url: 'https://www.freecodecamp.org/news/', time: ago(5*H), likes: 366, comments: 28 },
+    { id: 'hashfb3', source: 'The New Stack', author: 'The New Stack', topic: 'devops', title: 'Platform engineering teams are becoming product teams', content: 'Internal platforms are getting roadmaps, user research, and reliability budgets like external products.', url: 'https://thenewstack.io', time: ago(8*H), likes: 284, comments: 20 },
+    { id: 'hashfb4', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'css', title: 'Modern CSS patterns for dense application layouts', content: 'Grid, container queries, and stable sizing techniques for dashboards and tools.', url: 'https://www.freecodecamp.org/news/', time: ago(10*H), likes: 312, comments: 24 },
+    { id: 'hashfb5', source: 'The New Stack', author: 'The New Stack', topic: 'kubernetes', title: 'Kubernetes cost control starts with product ownership', content: 'Teams are linking workloads, owners, and business metrics to make cluster spending understandable.', url: 'https://thenewstack.io', time: ago(14*H), likes: 255, comments: 17 },
+    { id: 'hashfb6', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'python', title: 'Python data pipelines without mystery state', content: 'A guide to reproducible jobs, explicit schemas, retries, and observable data quality checks.', url: 'https://www.freecodecamp.org/news/', time: ago(1*D), likes: 391, comments: 31 },
+    { id: 'hashfb7', source: 'The New Stack', author: 'The New Stack', topic: 'security', title: 'Supply chain security is now part of everyday development', content: 'Package provenance, SBOMs, and signing are moving into normal pull request workflows.', url: 'https://thenewstack.io', time: ago(1.4*D), likes: 222, comments: 18 },
+    { id: 'hashfb8', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'react', title: 'React state patterns for filters, tabs, and server data', content: 'How to coordinate query parameters, local filters, optimistic updates, and cached remote pages.', url: 'https://www.freecodecamp.org/news/', time: ago(2*D), likes: 344, comments: 29 },
+  ],
+};
+
 // ─── Curated social-source fallback posts ─────────────────────────────────────
 function buildCuratedSourcePosts(source) {
-  return (SOCIAL_POSTS[source] || []).map(p => ({
+  if (source === 'usajobs') {
+    return GOVT_JOBS.map(j => ({
+      id:          `usajobs_${j.id}_fallback`,
+      authorId:    'usajobs',
+      groupId:     'ext_usajobs',
+      content:     `${j.type} - ${j.location}${j.salary ? ' - ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
+      title:       `${j.title} - ${j.agency}`,
+      source:      'usajobs',
+      sourceLabel: 'USAJobs',
+      sourceUrl:   `https://www.usajobs.gov/search/results/?k=${encodeURIComponent(j.title)}&p=1`,
+      topic:       'career growth',
+      mediaUrl:    null,
+      mediaType:   null,
+      author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   j.posted || new Date().toISOString(),
+      isExternal:  true,
+      group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
+      fromJoinedGroup: false,
+    }));
+  }
+
+  if (source === 'indeed') {
+    return INDEED_JOBS.map(j => ({
+      id:          `indeed_${j.id}_fallback`,
+      authorId:    'indeed_jobs',
+      groupId:     'ext_indeed',
+      content:     `${j.type} - ${j.location}${j.salary ? ' - ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
+      title:       `${j.title} @ ${j.company}`,
+      source:      'indeed',
+      sourceLabel: 'Indeed',
+      sourceUrl:   `https://www.indeed.com/jobs?q=${encodeURIComponent(j.title)}&l=${encodeURIComponent(j.location)}`,
+      topic:       'career growth',
+      mediaUrl:    null,
+      mediaType:   null,
+      author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   j.posted || new Date().toISOString(),
+      isExternal:  true,
+      group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
+      fromJoinedGroup: false,
+    }));
+  }
+
+  return [...(SOCIAL_POSTS[source] || []), ...(CURATED_SOURCE_POSTS[source] || [])].map(p => ({
     id:          `${p.id}_social`,
     authorId:    `${source}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
     groupId:     `ext_${source}`,
     content:     p.content,
     title:       p.title || null,
     source,
-    sourceLabel: p.source || source,
-    sourceUrl:   getSocialPostUrl(source, p),
-    topic:       (p.topics || [])[0] || '',
+    sourceLabel: p.source || p.sourceLabel || source,
+    sourceUrl:   p.url || p.sourceUrl || getSocialPostUrl(source, p),
+    topic:       p.topic || (p.topics || [])[0] || '',
     mediaUrl:    p.mediaUrl || null,
     mediaType:   p.mediaType || null,
     author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
     likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-    createdAt:   p.time || new Date().toISOString(),
+    createdAt:   p.time || p.createdAt || new Date().toISOString(),
     isExternal:  false,
     group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
     fromJoinedGroup: false,
@@ -4383,16 +4491,18 @@ app.get('/feed', authenticate, async (req, res) => {
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = dbRows.slice(0, feedLimit);
 
-    if (!dbRows.length) {
+    if (sourceFilter) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
-      const memoryRows = sourceFilter
-        ? [
-            ...(agentSourceCache.get(agentKey)?.posts || []),
-            ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
-            ...buildCuratedSourcePosts(sourceFilter),
-          ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-        : globalFeedCache.posts;
-      pageRows = memoryRows.slice(offset, offset + feedLimit + 1);
+      const memoryRows = dedupeAndSortFeedPosts([
+        ...(agentSourceCache.get(agentKey)?.posts || []),
+        ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
+        ...buildCuratedSourcePosts(sourceFilter),
+      ]);
+      const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
+      hasMore = hasMore || memoryRows.length > offset + feedLimit;
+      pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
+    } else if (!dbRows.length) {
+      pageRows = globalFeedCache.posts.slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = pageRows.slice(0, feedLimit);
     }
@@ -4503,10 +4613,7 @@ app.get('/feed', authenticate, async (req, res) => {
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     savePostsToDB(livePosts).catch(() => {});
 
-    const seen = new Set();
-    const result = [...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts]
-      .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const result = dedupeAndSortFeedPosts([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts]);
 
     return res.json({
       posts: result.slice(0, feedLimit),
@@ -4879,6 +4986,14 @@ const AGENT_DEFS = {
     name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '2min',
     description: 'Searches Bluesky\'s public AT Protocol API for real-time posts by keyword. No auth required — streams live social content from the open web.',
   },
+  tiktok: {
+    name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'curated',
+    description: 'Serves curated short-form creator and professional posts while public TikTok APIs require approved platform access.',
+  },
+  usajobs: {
+    name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8', interval: 'curated',
+    description: 'Surfaces federal and public-sector opportunities from the curated jobs feed when USAJobs API keys are unavailable.',
+  },
   optimizer: {
     name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '2min',
     description: 'Monitors all source workers every 2 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources — auto-heals by resetting circuit breakers and triggering immediate re-fetches.',
@@ -4944,18 +5059,35 @@ app.get('/office/status', (req, res) => {
   // Build per-source health snapshot
   const sourceHealthArr = Object.keys(SOURCE_CONFIG).map((id) => {
     const h = workerHealth.get(id);
+    const fallbackCount = buildCuratedSourcePosts(id).length;
+    const liveCount = agentSourceCache.get(id)?.totalSeen ?? 0;
+    const status = h
+      ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : liveCount === 0 && fallbackCount > 0 ? 'fallback' : 'healthy')
+      : (fallbackCount > 0 ? 'fallback' : 'starting');
     return {
       id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
       name: AGENT_DEFS[id]?.name || id,
-      status: h ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy') : 'starting',
+      status,
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
       lastSuccess: h?.lastSuccess ?? null,
       paused: h?.paused ?? false,
-      postCount: agentSourceCache.get(id)?.totalSeen ?? 0,
+      postCount: liveCount || fallbackCount,
+      fallbackCount,
     };
   });
+  // Append curated platform agents that are feed sources but not continuous workers.
+  for (const id of ['tiktok', 'usajobs']) {
+    const def = AGENT_DEFS[id];
+    const fallbackCount = buildCuratedSourcePosts(id).length;
+    if (def) sourceHealthArr.push({
+      id, emoji: def.emoji, color: def.color, name: def.name,
+      status: 'fallback', consecutiveErrors: 0, totalErrors: 0,
+      fetchCount: 0, lastSuccess: null, paused: false,
+      postCount: fallbackCount, fallbackCount,
+    });
+  }
   // Append Pro social agents (per-user OAuth, not continuous cyclers)
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     const def = AGENT_DEFS[id];
@@ -4968,7 +5100,7 @@ app.get('/office/status', (req, res) => {
 
   const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
   const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
-  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'pro').length;
+  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'fallback' || s.status === 'pro').length;
   const startingCount = sourceHealthArr.filter(s => s.status === 'starting').length;
 
   res.json({
