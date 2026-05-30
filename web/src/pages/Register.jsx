@@ -397,7 +397,7 @@ export default function Register() {
             <>
               <h1 className="auth-heading" style={{ marginBottom: 6 }}>Who are you professionally?</h1>
               <p className="auth-sub" style={{ marginBottom: 20 }}>
-                Pick your category — then choose your specific title from 500+ options.
+                Pick your category — then choose your specific title from hundreds of options.
               </p>
 
               {/* Role category grid */}

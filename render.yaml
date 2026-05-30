@@ -17,6 +17,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=4096
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL
@@ -47,6 +49,8 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=4096
 
   # ── Office Dashboard (React static site) ────────────────────
   - type: web
@@ -68,3 +72,5 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=4096

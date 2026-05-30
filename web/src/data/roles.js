@@ -1,4 +1,4 @@
-// 500 professional roles — each with icon, description, and topic affinities.
+// 450+ professional roles — each with icon, description, and topic affinities.
 // topics[] drives ROLE_SUGGESTED in Onboarding (which interests are pre-highlighted).
 
 const T = {
@@ -593,6 +593,16 @@ export const ROLE_TOPICS = Object.fromEntries(
 
 // New topics to merge into ALL_INTERESTS (not already present)
 export const EXTRA_INTERESTS = [
+  'Startups',
+  'Machine Learning',
+  'MLOps',
+  'API Design',
+  'Privacy',
+  'AI Ethics',
+  'Digital Nomad',
+  'Networking',
+  'CRM',
+  'Marketing',
   'Medicine & Clinical Practice',
   'Law & Legal Practice',
   'Architecture & Urban Design',

@@ -36,6 +36,35 @@ const NOW = Date.now();
 const ago = (ms) => new Date(NOW - ms).toISOString();
 const H = 3600000;
 const D = 86400000;
+const MAX_TIMER_DELAY = 2_147_483_647;
+
+function scheduleRecurring(fn, intervalMs) {
+  if (intervalMs <= MAX_TIMER_DELAY) {
+    return setInterval(fn, intervalMs);
+  }
+
+  let remainingMs = intervalMs;
+  const scheduleNextChunk = () => {
+    const delay = Math.min(remainingMs, MAX_TIMER_DELAY);
+    setTimeout(async () => {
+      remainingMs -= delay;
+      if (remainingMs > 0) {
+        scheduleNextChunk();
+        return;
+      }
+
+      remainingMs = intervalMs;
+      try {
+        await fn();
+      } finally {
+        scheduleNextChunk();
+      }
+    }, delay);
+  };
+
+  scheduleNextChunk();
+  return null;
+}
 
 // ─── Role → category mapping ─────────────────────────────────────────────────
 const ROLE_CATEGORIES = {
@@ -73,7 +102,7 @@ const INTEREST_TO_CATEGORY = {
   // Business / Startups
   'Startups': 'Startups', 'SaaS': 'Startups', 'Bootstrapping': 'Startups',
   'VC / Fundraising': 'Finance', 'Product-Market Fit': 'Startups',
-  'Growth Hacking': 'Marketing', 'B2B Sales': 'Startups',
+  'Growth Hacking': 'Marketing', 'B2B Sales': 'Startups', 'CRM': 'Startups',
   'No-Code / Low-Code': 'Engineering',
   // Design
   'UX / UI Design': 'Design', 'Product Design': 'Design', 'Branding': 'Design',
@@ -84,7 +113,7 @@ const INTEREST_TO_CATEGORY = {
   'Fintech': 'Finance', 'Real Estate': 'Finance', 'Stock Market': 'Finance',
   'Budgeting': 'Finance', 'Tax Strategy': 'Finance',
   // Marketing
-  'Content Marketing': 'Marketing', 'SEO / SEM': 'Marketing', 'Social Media': 'Marketing',
+  'Marketing': 'Marketing', 'Content Marketing': 'Marketing', 'SEO / SEM': 'Marketing', 'Social Media': 'Marketing',
   'Email Marketing': 'Marketing', 'Paid Ads': 'Marketing', 'Influencer Marketing': 'Marketing',
   'Brand Strategy': 'Marketing', 'Copywriting': 'Marketing', 'Analytics': 'AI & ML',
   // Remote Work
@@ -94,7 +123,7 @@ const INTEREST_TO_CATEGORY = {
   'Online Learning': 'Education', 'Career Switching': 'Education', 'Mentorship': 'Education',
   'Bootcamps': 'Education', 'Academic Research': 'Education', 'Certifications': 'Education',
   // People / Culture
-  'Diversity & Inclusion': 'Education', 'Leadership': 'Startups', 'Team Building': 'Startups',
+  'Diversity & Inclusion': 'Education', 'Leadership': 'Startups', 'Networking': 'Education', 'Team Building': 'Startups',
   'Mental Health': 'Education', 'Productivity': 'Education',
   // Content / Media
   'Podcasting': 'Marketing', 'YouTube / Video': 'Marketing', 'Newsletter': 'Marketing',
@@ -109,16 +138,19 @@ const INTEREST_TO_CATEGORY = {
 const INTEREST_TO_SUBREDDIT = {
   // AI & Tech
   'AI & Machine Learning':    ['MachineLearning','artificial'],
+  'Machine Learning':         ['MachineLearning','learnmachinelearning'],
   'Generative AI':            ['LocalLLaMA','singularity'],
   'LLMs & Chatbots':          ['LocalLLaMA','LanguageModelRoundup'],
   'Computer Vision':          ['computervision','MachineLearning'],
   'Data Science':             ['datascience','datasets'],
+  'MLOps':                    ['mlops','MachineLearning'],
   'Developer Tools':          ['programming','devops'],
   'Open Source':              ['opensource','programming'],
   'Cybersecurity':            ['netsec','cybersecurity'],
   'Cloud & DevOps':           ['devops','aws'],
   'Frontend Dev':             ['webdev','javascript'],
   'Backend Dev':              ['node','golang'],
+  'API Design':               ['programming','webdev'],
   'Mobile Dev':               ['androiddev','iOSProgramming'],
   'Web3 / Crypto':            ['ethereum','defi'],
   'Blockchain':               ['ethereum','CryptoCurrency'],
@@ -130,6 +162,7 @@ const INTEREST_TO_SUBREDDIT = {
   'No-Code / Low-Code':       ['nocode','webdev'],
   // Business & Startups
   'SaaS':                     ['SaaS','startups'],
+  'Startups':                 ['startups','Entrepreneur'],
   'B2B / Enterprise':         ['sales','startups'],
   'Marketplaces':             ['startups','ecommerce'],
   'D2C / Consumer Apps':      ['Entrepreneur','ecommerce'],
@@ -138,6 +171,8 @@ const INTEREST_TO_SUBREDDIT = {
   'Angel Investing':          ['venturecapital','investing'],
   'Fundraising':              ['startups','venturecapital'],
   'Growth Marketing':         ['GrowthHacking','marketing'],
+  'Marketing':                ['marketing','digital_marketing'],
+  'CRM':                      ['sales','crm'],
   'Product-Led Growth':       ['ProductManagement','SaaS'],
   'Sales & Revenue':          ['sales','startups'],
   'Partnerships':             ['startups','Entrepreneur'],
@@ -172,10 +207,14 @@ const INTEREST_TO_SUBREDDIT = {
   'SportsTech':               ['sports','eSports'],
   // People & Culture
   'Remote Work':              ['remotework','digitalnomad'],
+  'Digital Nomad':            ['digitalnomad','remotework'],
   'Future of Work':           ['remotework','cscareerquestions'],
   'Recruiting & Hiring':      ['recruiting','humanresources'],
   'Leadership':               ['leadership','ExperiencedDevs'],
+  'Networking':               ['networking','careerguidance'],
   'Diversity & Inclusion':    ['diversity','cscareerquestions'],
+  'Privacy':                  ['privacy','cybersecurity'],
+  'AI Ethics':                ['artificial','Futurology'],
   'Mental Health & Wellness': ['mentalhealth','selfimprovement'],
   // Content & Media
   'Creator Economy':          ['content_marketing','YoutubeCreators'],
@@ -394,16 +433,19 @@ function postForm(url, params, headers = {}) {
 // Keys match EXACTLY the Onboarding.jsx INTERESTS[] array
 const INTEREST_TO_KEYWORDS = {
   'AI & Machine Learning':    'machine learning AI',
+  'Machine Learning':         'machine learning deep learning models',
   'Generative AI':            'generative AI image generation',
   'LLMs & Chatbots':          'large language model LLM chatbot',
   'Computer Vision':          'computer vision object detection',
   'Data Science':             'data science analytics',
+  'MLOps':                    'MLOps machine learning operations deployment',
   'Developer Tools':          'developer tools productivity',
   'Open Source':              'open source software',
   'Cybersecurity':            'cybersecurity infosec hacking',
   'Cloud & DevOps':           'cloud DevOps Kubernetes',
   'Frontend Dev':             'frontend development JavaScript React',
   'Backend Dev':              'backend development API Node Python',
+  'API Design':               'API design REST GraphQL developer experience',
   'Mobile Dev':               'mobile app development iOS Android',
   'Web3 / Crypto':            'Web3 blockchain crypto',
   'Blockchain':               'blockchain decentralized',
@@ -414,6 +456,7 @@ const INTEREST_TO_KEYWORDS = {
   'Game Dev':                 'game development indie game',
   'No-Code / Low-Code':       'no-code low-code automation',
   'SaaS':                     'SaaS software as a service',
+  'Startups':                 'startups entrepreneurship founders',
   'B2B / Enterprise':         'B2B enterprise software sales',
   'Marketplaces':             'marketplace platform two-sided',
   'D2C / Consumer Apps':      'direct to consumer app startup',
@@ -422,6 +465,8 @@ const INTEREST_TO_KEYWORDS = {
   'Angel Investing':          'angel investing startup funding',
   'Fundraising':              'fundraising startup pitch',
   'Growth Marketing':         'growth marketing growth hacking',
+  'Marketing':                'marketing campaigns brand growth',
+  'CRM':                      'CRM customer relationship management sales',
   'Product-Led Growth':       'product led growth PLG',
   'Sales & Revenue':          'sales revenue B2B',
   'Partnerships':             'partnerships business development',
@@ -452,10 +497,14 @@ const INTEREST_TO_KEYWORDS = {
   'FoodTech':                 'food technology restaurant innovation',
   'SportsTech':               'sports technology analytics',
   'Remote Work':              'remote work work from home distributed',
+  'Digital Nomad':            'digital nomad remote work travel',
   'Future of Work':           'future of work hybrid remote',
   'Recruiting & Hiring':      'recruiting hiring talent acquisition',
   'Leadership':               'leadership management team',
+  'Networking':               'professional networking community mentorship',
   'Diversity & Inclusion':    'diversity inclusion DEI workplace',
+  'Privacy':                  'privacy security data protection',
+  'AI Ethics':                'AI ethics responsible AI governance',
   'Mental Health & Wellness': 'mental health wellness mindfulness',
   'Creator Economy':          'creator economy YouTube newsletter',
   'Podcasting':               'podcasting podcast audio',
@@ -539,13 +588,14 @@ const INTEREST_TO_KEYWORDS = {
 // DEV Community tag mapping (one tag per interest)
 const INTEREST_TO_DEVTO_TAG = {
   'AI & Machine Learning': 'machinelearning', 'Generative AI': 'ai',
+  'Machine Learning': 'machinelearning',
   'LLMs & Chatbots': 'ai', 'Computer Vision': 'machinelearning',
-  'Data Science': 'datascience', 'Developer Tools': 'programming',
+  'Data Science': 'datascience', 'MLOps': 'devops', 'Developer Tools': 'programming',
   'Open Source': 'opensource', 'Cybersecurity': 'security',
   'Cloud & DevOps': 'devops', 'Frontend Dev': 'javascript',
-  'Backend Dev': 'python', 'Mobile Dev': 'flutter',
+  'Backend Dev': 'python', 'API Design': 'api', 'Mobile Dev': 'flutter',
   'Web3 / Crypto': 'blockchain', 'Game Dev': 'gamedev',
-  'No-Code / Low-Code': 'nocode', 'SaaS': 'startup',
+  'No-Code / Low-Code': 'nocode', 'SaaS': 'startup', 'Startups': 'startup',
   'UI/UX Design': 'ux', 'Design Systems': 'css',
   'Photography': 'design', 'FinTech': 'fintech',
   'Health Tech': 'healthtech', 'Climate Tech': 'sustainability',
@@ -559,9 +609,10 @@ const INTEREST_TO_DEVTO_TAG = {
   'Database': 'database', 'APIs & Integrations': 'api',
   'Testing & QA': 'testing', 'Performance': 'performance',
   'Architecture': 'architecture', 'Linux': 'linux',
-  'Git & Version Control': 'git', 'Networking': 'career',
-  'Leadership': 'productivity', 'Startup': 'startup',
-  'Growth Marketing': 'marketing', 'E-commerce': 'startup',
+  'Git & Version Control': 'git',
+  'Leadership': 'productivity', 'Networking': 'career', 'Privacy': 'security',
+  'AI Ethics': 'ai', 'Digital Nomad': 'career', 'Startup': 'startup',
+  'Growth Marketing': 'marketing', 'Marketing': 'marketing', 'CRM': 'startup', 'E-commerce': 'startup',
   'Product Management': 'productivity', 'Investing': 'fintech',
   'Personal Finance': 'fintech', 'Robotics': 'machinelearning',
   'Quantum Computing': 'machinelearning', 'Blockchain / Web3': 'blockchain',
@@ -580,25 +631,27 @@ const INTEREST_TO_DEVTO_TAG = {
 // Medium tag mapping — Medium uses hyphenated lowercase tags
 const INTEREST_TO_MEDIUM_TAG = {
   'AI & Machine Learning': 'machine-learning', 'Generative AI': 'artificial-intelligence',
+  'Machine Learning': 'machine-learning',
   'LLMs & Chatbots': 'llm', 'Data Science': 'data-science',
   'Computer Vision': 'computer-vision', 'Developer Tools': 'programming',
   'Open Source': 'open-source', 'Cybersecurity': 'cybersecurity',
   'Cloud & DevOps': 'devops', 'Frontend Dev': 'javascript',
-  'Backend Dev': 'backend', 'Mobile Dev': 'mobile-development',
+  'Backend Dev': 'backend', 'API Design': 'api-design', 'Mobile Dev': 'mobile-development',
   'Web3 / Crypto': 'blockchain', 'Game Dev': 'game-development',
-  'SaaS': 'startup', 'Venture Capital': 'startup',
+  'SaaS': 'startup', 'Startups': 'startup', 'Venture Capital': 'startup',
   'UI/UX Design': 'ux-design', 'Design Systems': 'design',
   'FinTech': 'fintech', 'Health Tech': 'health',
   'Climate Tech': 'sustainability', 'EdTech': 'education',
   'Career Growth': 'career', 'Productivity': 'productivity',
   'Side Projects': 'side-project', 'Freelancing': 'freelancing',
-  'Leadership': 'leadership', 'Remote Work': 'remote-work',
+  'Leadership': 'leadership', 'Networking': 'networking', 'Privacy': 'privacy',
+  'AI Ethics': 'artificial-intelligence', 'Digital Nomad': 'digital-nomad', 'Remote Work': 'remote-work',
   'Newsletter & Writing': 'writing', 'SEO & Content': 'seo',
   'No-Code / Low-Code': 'no-code', 'TypeScript': 'typescript',
   'React': 'reactjs', 'Python': 'python', 'JavaScript': 'javascript',
   'Rust': 'rust', 'Go': 'golang', 'Database': 'database',
   'APIs & Integrations': 'api', 'Architecture': 'software-architecture',
-  'Startup': 'startup', 'Growth Marketing': 'growth-hacking',
+  'Startup': 'startup', 'Growth Marketing': 'growth-hacking', 'Marketing': 'marketing', 'CRM': 'crm',
   'E-commerce': 'ecommerce', 'Product Management': 'product-management',
   'Investing': 'investing', 'Personal Finance': 'personal-finance',
   'Robotics': 'robotics', 'Quantum Computing': 'quantum-computing',
@@ -649,19 +702,25 @@ const GOAL_TO_KEYWORDS = {
 // Extra keyword phrases per interest — appended on top of INTEREST_TO_KEYWORDS
 const INTEREST_EXTRA_KEYWORDS = {
   'AI & Machine Learning':    ['neural network deep learning', 'AI tools 2024 2025'],
+  'Machine Learning':         ['model training evaluation', 'PyTorch TensorFlow scikit-learn'],
   'Generative AI':            ['ChatGPT Claude Gemini', 'text to image diffusion model'],
   'LLMs & Chatbots':          ['GPT-4 Claude Llama fine-tuning', 'RAG prompt engineering'],
   'Data Science':             ['pandas numpy data pipeline', 'data visualization insights'],
   'Developer Tools':          ['VS Code productivity CLI tools', 'developer workflow automation'],
   'Cloud & DevOps':           ['AWS GCP Azure cloud architecture', 'CI/CD pipeline Kubernetes Docker'],
+  'MLOps':                    ['model deployment monitoring pipeline', 'feature store model registry'],
   'Frontend Dev':             ['React Vue Next.js web performance', 'CSS Tailwind component design'],
   'Backend Dev':              ['Node.js Python FastAPI microservices', 'REST GraphQL API design'],
+  'API Design':               ['REST GraphQL OpenAPI', 'developer experience SDK documentation'],
   'Mobile Dev':               ['React Native Flutter Swift Kotlin', 'app store mobile UX'],
   'Cybersecurity':            ['vulnerability zero-day exploit patch', 'penetration testing SIEM'],
   'SaaS':                     ['SaaS metrics ARR churn MRR', 'product-led growth PLG onboarding'],
+  'Startups':                 ['founder startup pitch MVP', 'early stage product market fit'],
   'Venture Capital':          ['startup funding Series A term sheet', 'VC portfolio valuation cap table'],
   'UI/UX Design':             ['Figma design token accessibility WCAG', 'user research wireframe prototype'],
   'Growth Marketing':         ['conversion rate A/B testing funnel', 'acquisition retention growth loop'],
+  'Marketing':                ['campaign strategy brand positioning', 'content social email marketing'],
+  'CRM':                      ['HubSpot Salesforce pipeline', 'customer lifecycle sales enablement'],
   'FinTech':                  ['payments API banking-as-a-service', 'fintech regulation compliance'],
   'Career Growth':            ['software engineer promotion salary', 'interview system design negotiation'],
   'Productivity':             ['focus deep work async remote habits', 'tools workflow automation'],
@@ -669,12 +728,20 @@ const INTEREST_EXTRA_KEYWORDS = {
   'Health Tech':              ['digital health wearables EHR FDA', 'telehealth patient outcome AI'],
   'Climate Tech':             ['renewable energy solar carbon capture', 'EV battery grid sustainability'],
   'Remote Work':              ['async distributed team tools culture', 'remote work setup home office'],
+  'Digital Nomad':            ['remote travel visas coworking', 'location independent work'],
+  'Networking':               ['professional community referrals', 'mentor peer connections'],
+  'Privacy':                  ['data privacy GDPR CCPA', 'privacy engineering security'],
+  'AI Ethics':                ['responsible AI fairness governance', 'AI safety bias transparency'],
   'Side Projects':            ['indie hacker build in public launch', 'micro SaaS solo founder bootstrapped'],
   'Freelancing':              ['freelance rate contract client remote', 'upwork toptal contra freelancer'],
   'Content Creator':          ['YouTube algorithm thumbnail SEO', 'newsletter subscriber monetization'],
 };
 
 // Skill → Stack Overflow tag
+function interestKeyword(interest) {
+  return INTEREST_TO_KEYWORDS[interest] || (typeof interest === 'string' ? interest.trim() : '');
+}
+
 const SKILL_TO_SO_TAG = {
   'javascript': 'javascript', 'typescript': 'typescript', 'python': 'python',
   'react': 'reactjs', 'vue': 'vue.js', 'angular': 'angular', 'node': 'node.js',
@@ -770,23 +837,29 @@ const CACHE_KEY_PREFIX = {
 // Topic → subreddits. We fetch new.rss from each and merge by date.
 const TOPIC_SUBREDDITS = {
   'AI & Machine Learning':  ['MachineLearning', 'artificial', 'deeplearning', 'learnmachinelearning'],
+  'Machine Learning':       ['MachineLearning', 'learnmachinelearning', 'deeplearning', 'MLQuestions'],
   'Generative AI':          ['StableDiffusion', 'ChatGPT', 'artificial', 'MachineLearning'],
   'LLMs & Chatbots':        ['ChatGPT', 'LocalLLaMA', 'MachineLearning', 'Bard'],
   'Computer Vision':        ['computervision', 'MachineLearning', 'deeplearning'],
   'Data Science':           ['datascience', 'learnmachinelearning', 'statistics', 'datasets'],
+  'MLOps':                  ['mlops', 'MachineLearning', 'devops', 'kubernetes'],
   'Developer Tools':        ['programming', 'devops', 'webdev', 'commandline'],
   'Open Source':            ['opensource', 'programming', 'github', 'linux'],
   'Cybersecurity':          ['netsec', 'cybersecurity', 'hacking', 'AskNetsec'],
   'Cloud & DevOps':         ['devops', 'aws', 'kubernetes', 'docker', 'sysadmin'],
   'Frontend Dev':           ['webdev', 'javascript', 'reactjs', 'Frontend', 'html5'],
   'Backend Dev':            ['programming', 'node', 'Python', 'golang', 'java'],
+  'API Design':             ['programming', 'webdev', 'node', 'graphql'],
   'Mobile Dev':             ['iOSProgramming', 'androiddev', 'reactnative', 'FlutterDev'],
   'Web3 / Crypto':          ['ethereum', 'CryptoCurrency', 'Bitcoin', 'defi', 'web3'],
   'Game Dev':               ['gamedev', 'indiegaming', 'unity3d', 'unrealengine', 'gamedesign'],
   'No-Code / Low-Code':     ['nocode', 'webflow', 'AppSheet', 'bubble'],
   'SaaS':                   ['SaaS', 'startups', 'Entrepreneur', 'indiehackers'],
+  'Startups':               ['startups', 'Entrepreneur', 'indiehackers', 'SaaS'],
   'Venture Capital':        ['venturecapital', 'startups', 'Entrepreneur'],
   'Growth Marketing':       ['digital_marketing', 'marketing', 'SEO', 'GrowthHacking'],
+  'Marketing':              ['marketing', 'digital_marketing', 'content_marketing', 'socialmedia'],
+  'CRM':                    ['sales', 'smallbusiness', 'marketing', 'Entrepreneur'],
   'Design Systems':         ['web_design', 'UI_Design', 'DesignSystems', 'figma'],
   'UI/UX Design':           ['UXDesign', 'userexperience', 'UI_Design', 'graphic_design'],
   'SEO & Content':          ['SEO', 'content_marketing', 'blogging', 'juststart'],
@@ -798,6 +871,7 @@ const TOPIC_SUBREDDITS = {
   'Side Projects':          ['SideProject', 'startups', 'Entrepreneur', 'indiehackers'],
   'Content Creator':        ['NewTubers', 'juststart', 'blogging', 'twitch'],
   'Remote Work':            ['remotework', 'digitalnomad', 'WorkOnline', 'remote'],
+  'Digital Nomad':          ['digitalnomad', 'remotework', 'travel', 'WorkOnline'],
   'EdTech':                 ['learnprogramming', 'education', 'EdTech', 'OnlineLearning'],
   'Health Tech':            ['healthIT', 'medicine', 'bioinformatics', 'digitalhealth'],
   'Climate Tech':           ['ClimateChange', 'energy', 'sustainability', 'RenewableEnergy'],
@@ -808,6 +882,8 @@ const TOPIC_SUBREDDITS = {
   // — Expanded coverage —
   'Leadership':             ['leadership', 'management', 'managers', 'ExperiencedDevs'],
   'Networking':             ['networking', 'cscareerquestions', 'careerguidance'],
+  'Privacy':                ['privacy', 'cybersecurity', 'netsec', 'technology'],
+  'AI Ethics':              ['artificial', 'Futurology', 'MachineLearning', 'technology'],
   'Startup':                ['startups', 'Entrepreneur', 'SaaS', 'indiehackers'],
   'Product Management':     ['ProductManagement', 'startups', 'UXDesign', 'agile'],
   'Personal Finance':       ['personalfinance', 'financialindependence', 'investing'],
@@ -2314,7 +2390,7 @@ function generateSocialSearchCards(interests = []) {
 async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals = [], title = '', org = '', sourceFilter = null) {
   // Base: interest → primary keyword
   const keywords = interests.flatMap(i => {
-    const primary = INTEREST_TO_KEYWORDS[i];
+    const primary = interestKeyword(i);
     const extras  = INTEREST_EXTRA_KEYWORDS[i] || [];
     return [primary, ...extras].filter(Boolean);
   });
@@ -2467,7 +2543,7 @@ function addAndBroadcast(incoming) {
   fresh.forEach(p => seenPostIds.add(p.id));
   const merged = [...fresh, ...globalFeedCache.posts];
   merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  globalFeedCache.posts = merged.slice(0, 500000);
+  globalFeedCache.posts = merged.slice(0, GLOBAL_FEED_CACHE_LIMIT);
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -2556,7 +2632,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           const merged = [...fresh, ...prev.posts];
           merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
           agentSourceCache.set(agentId, {
-            posts: merged.slice(0, 10000),
+            posts: merged.slice(0, SOURCE_FEED_CACHE_LIMIT),
             lastFetch: Date.now(),
             totalSeen: prev.totalSeen + fresh.length,
             emoji, color,
@@ -2617,7 +2693,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         const merged2 = [...posts, ...prev.posts];
         merged2.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         agentSourceCache.set(agentId, {
-          posts: merged2.slice(0, 10000),
+          posts: merged2.slice(0, SOURCE_FEED_CACHE_LIMIT),
           lastFetch: Date.now(),
           totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
           emoji, color,
@@ -2635,7 +2711,7 @@ function calculateExpectedLoad() {
   const lines = [];
   for (const [src, cfg] of Object.entries(SOURCE_CONFIG)) {
     // How many topics does this source have a mapping for?
-    const kw  = t => INTEREST_TO_KEYWORDS[t];
+    const kw  = t => interestKeyword(t);
     const dev = t => INTEREST_TO_DEVTO_TAG[t];
     const med = t => INTEREST_TO_MEDIUM_TAG[t];
     const so  = t => INTEREST_TO_SO_TAG[t];
@@ -2664,14 +2740,14 @@ function calculateExpectedLoad() {
 }
 
 function startContinuousWorkers() {
-  const kw  = t => INTEREST_TO_KEYWORDS[t];
+  const kw  = t => interestKeyword(t);
   const dev = t => INTEREST_TO_DEVTO_TAG[t];
   const med = t => INTEREST_TO_MEDIUM_TAG[t];
   const so  = t => INTEREST_TO_SO_TAG[t];
   // Mastodon: use specific tag map; fall back to first keyword word as hashtag
   const mas = t => {
     if (INTEREST_TO_MASTODON_TAG[t]) return INTEREST_TO_MASTODON_TAG[t];
-    const kw = INTEREST_TO_KEYWORDS[t];
+    const kw = interestKeyword(t);
     if (!kw) return null;
     const firstWord = kw.split(/\s+/)[0].replace(/[^a-zA-Z0-9]/g, '');
     return firstWord.length >= 3 ? firstWord : null;
@@ -2712,6 +2788,10 @@ function startContinuousWorkers() {
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
+const GLOBAL_FEED_CACHE_LIMIT = 10000;
+const SOURCE_FEED_CACHE_LIMIT = 2000;
+const DEFAULT_FEED_LIMIT = 250;
+const MAX_FEED_LIMIT = 500;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
@@ -2747,7 +2827,7 @@ async function refreshGlobalFeedCache() {
       ...result.mastodon, ...result.lobsters, ...result.arxiv,
     ];
     if (all.length > 0) {
-      globalFeedCache.posts = all;
+      globalFeedCache.posts = all.slice(0, GLOBAL_FEED_CACHE_LIMIT);
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
       // Persist to DB in background
@@ -2935,11 +3015,16 @@ async function runDataCheck() {
 // Seed immediately on startup (non-blocking)
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All 23 agents online — 16 source + 7 ops agents active', '#4ADE80');
-// Warm the cache with a full initial fetch, then switch to continuous rolling workers
-refreshGlobalFeedCache().then(() => {
-  globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
-  startContinuousWorkers();
-});
+// Start rolling workers immediately; warm the larger cache after the server has had
+// a moment to come online so cold starts and Office health checks stay responsive.
+startContinuousWorkers();
+if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
+  setTimeout(() => {
+    refreshGlobalFeedCache()
+      .then(() => globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id)))
+      .catch((e) => console.warn('Initial feed warm-up:', e.message));
+  }, 15000);
+}
 runSecurityScan();
 // Security scan every 8 minutes
 setInterval(runSecurityScan,  8 * 60 * 1000);
@@ -4249,7 +4334,7 @@ app.get('/feed', authenticate, async (req, res) => {
     const PAGE_LIMIT = 200;
     const offset     = (reqPage - 1) * PAGE_LIMIT;
     const source     = req.query.source || null; // optional source filter
-    const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
+    const userTopics = (prefs.interests || []).map(interestKeyword).filter(Boolean);
     const dbRows     = await getPostsFromDB(userTopics, PAGE_LIMIT + 1, offset);
     const hasMore    = dbRows.length > PAGE_LIMIT;
     const pageRows   = dbRows.slice(0, PAGE_LIMIT);
@@ -4306,6 +4391,10 @@ app.get('/feed', authenticate, async (req, res) => {
   const sourceFilter = req.query.source || null;
   const sourcePage   = parseInt(req.query.page || '1', 10);
   const SOURCE_PAGE_LIMIT = 200;
+  const feedLimit = Math.min(
+    Math.max(parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT, 1),
+    MAX_FEED_LIMIT
+  );
 
   // ── Source-tab page 2+: DB-only with offset (no live API calls) ───────────
   if (sourceFilter && sourcePage > 1) {
@@ -4328,13 +4417,28 @@ app.get('/feed', authenticate, async (req, res) => {
     return res.json({ posts: page, source: sourceFilter, hasMore, page: sourcePage });
   }
 
-  // Fetch posts personalised to interests + role + skills + goals + title + org
-  const liveResult = await fetchAllTopicPosts(
-    prefs.interests || [], prefs.role || '',
-    user?.skills || [], prefs.goals || [],
-    user?.title || '', user?.organization || '',
-    sourceFilter
-  ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return { reddit:[], hn:[], github:[], devto:[], medium:[], youtube:[], stackoverflow:[], mastodon:[], lobsters:[], arxiv:[], indeed:[], producthunt:[], techcrunch:[], theverge:[], indiehackers:[], hashnode:[], bluesky:[] }; });
+  const emptyLiveResult = {
+    reddit: [], hn: [], github: [], devto: [], medium: [], youtube: [],
+    stackoverflow: [], mastodon: [], lobsters: [], arxiv: [], indeed: [],
+    producthunt: [], techcrunch: [], theverge: [], indiehackers: [],
+    hashnode: [], bluesky: [],
+  };
+
+  // Default feed responses should be fast and cache-first. The continuous
+  // workers keep globalFeedCache fresh; explicit live=1 is available for
+  // diagnostics or manual one-off fetches without slowing every user load.
+  const shouldFetchLive = req.query.live === '1';
+  const liveResult = shouldFetchLive
+    ? await Promise.race([
+        fetchAllTopicPosts(
+          prefs.interests || [], prefs.role || '',
+          user?.skills || [], prefs.goals || [],
+          user?.title || '', user?.organization || '',
+          sourceFilter
+        ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return emptyLiveResult; }),
+        new Promise((resolve) => setTimeout(() => resolve(emptyLiveResult), 4500)),
+      ])
+    : emptyLiveResult;
 
   // ── Pro social tabs (Twitter, LinkedIn, Instagram, Facebook) ─────────────────
   const PRO_SOCIAL_SOURCES = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
@@ -4347,7 +4451,7 @@ app.get('/feed', authenticate, async (req, res) => {
       return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
     }
     const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
-    const socialKws = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean).slice(0, 5);
+    const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
     const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
     const rawPosts = (await Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])))).flatMap(r => r.status === 'fulfilled' ? r.value : []);
     const seen = new Set();
@@ -4371,7 +4475,12 @@ app.get('/feed', authenticate, async (req, res) => {
       .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
-    return res.json({ posts: result, source: sourceFilter, hasMore: false });
+    return res.json({
+      posts: result.slice(0, feedLimit),
+      source: sourceFilter,
+      hasMore: result.length > feedLimit,
+      totalAvailable: result.length,
+    });
   }
 
   const { reddit: redditRaw, hn: hnRaw, github: githubRaw, devto: devtoRaw,
@@ -4389,11 +4498,13 @@ app.get('/feed', authenticate, async (req, res) => {
   ];
   savePostsToDB(allLive).catch(() => {});
 
-  // Fetch live posts from all joined Reddit groups
+  // Fetch live posts from all joined Reddit groups only for explicit live requests.
   const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
-  const joinedGroupPostsRaw = (await Promise.all(
-    joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
-  )).flat();
+  const joinedGroupPostsRaw = shouldFetchLive
+    ? (await Promise.all(
+        joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
+      )).flat()
+    : [];
 
   const redditPosts    = redditRaw.map(p => mapExternalPost(p, 'reddit'));
   const hnPosts        = (hnRaw     || []).map(p => mapExternalPost(p, 'hackernews'));
@@ -4508,7 +4619,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // DB-persisted posts — topic-filtered using interests + skills
   const userTopics = [
-    ...(prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean),
+    ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...(user?.skills || []).map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
   const dbPosts = (await getPostsFromDB(userTopics)).map(p => mapExternalPost(p, p.source || 'reddit'));
@@ -4561,8 +4672,12 @@ app.get('/feed', authenticate, async (req, res) => {
   // Sort everything by date descending — newest post first, like Facebook/Instagram
   all.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
+  const responsePosts = all.slice(0, feedLimit);
+
   res.json({
-    posts: all,
+    posts: responsePosts,
+    hasMore: all.length > responsePosts.length,
+    totalAvailable: all.length,
     sources: {
       reddit:        redditPosts.length,
       github:        githubPosts.length,
@@ -4794,14 +4909,20 @@ const AGENT_DEFS = {
 
 app.get('/office/status', (req, res) => {
   // Build per-source health snapshot
-  const sourceHealthArr = [...workerHealth.entries()].map(([id, h]) => ({
-    id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
-    name: AGENT_DEFS[id]?.name || id,
-    status: h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
-    consecutiveErrors: h.consecutiveErrors, totalErrors: h.totalErrors,
-    fetchCount: h.fetchCount, lastSuccess: h.lastSuccess, paused: h.paused,
-    postCount: agentSourceCache.get(id)?.totalSeen ?? 0,
-  }));
+  const sourceHealthArr = Object.keys(SOURCE_CONFIG).map((id) => {
+    const h = workerHealth.get(id);
+    return {
+      id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
+      name: AGENT_DEFS[id]?.name || id,
+      status: h ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy') : 'starting',
+      consecutiveErrors: h?.consecutiveErrors ?? 0,
+      totalErrors: h?.totalErrors ?? 0,
+      fetchCount: h?.fetchCount ?? 0,
+      lastSuccess: h?.lastSuccess ?? null,
+      paused: h?.paused ?? false,
+      postCount: agentSourceCache.get(id)?.totalSeen ?? 0,
+    };
+  });
   // Append Pro social agents (per-user OAuth, not continuous cyclers)
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     const def = AGENT_DEFS[id];
@@ -4815,6 +4936,7 @@ app.get('/office/status', (req, res) => {
   const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
   const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
   const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'pro').length;
+  const startingCount = sourceHealthArr.filter(s => s.status === 'starting').length;
 
   res.json({
     server: {
@@ -4839,7 +4961,7 @@ app.get('/office/status', (req, res) => {
     },
     sources: {
       total: sourceHealthArr.length, healthy: healthyCount,
-      degraded: degradedCount, paused: pausedCount,
+      degraded: degradedCount, paused: pausedCount, starting: startingCount,
       workers: sourceHealthArr,
     },
   });
@@ -5814,15 +5936,15 @@ db.initDB().then(async () => {
   globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
 
   // Weekly: clear opportunity caches so Remotive + Muse re-fetch fresh live jobs
-  setInterval(() => {
+  scheduleRecurring(() => {
     remotiveCache.clear();
     museCache.clear();
     logAgentAction('feed', '🔄', 'Weekly opportunity cache reset — live jobs will re-fetch on next visit', '#60A5FA');
   }, 7 * 24 * 60 * 60 * 1000);
 
   // Monthly: re-seed groups from ALL_GROUPS_SEED to pick up any new communities added to the list
-  setInterval(() => {
-    seedAndLoadGroups()
+  scheduleRecurring(() => {
+    return seedAndLoadGroups()
       .then(() => logAgentAction('feed', '🔄', `Monthly groups refresh — ${groups.length} communities loaded`, '#4ADE80'))
       .catch(e => console.warn('Monthly group refresh:', e.message));
   }, 30 * 24 * 60 * 60 * 1000);

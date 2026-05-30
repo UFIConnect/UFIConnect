@@ -115,14 +115,14 @@ const ALL_INTERESTS = [
   'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
   // ── Family & Community ───────────────────────────────────────────────────────
   'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
-  // ── Extended (from 500-role expansion) ───────────────────────────────────────
+  // ── Extended (from 450+ role expansion) ──────────────────────────────────────
   ...EXTRA_INTERESTS,
 ];
 
 // Role → top suggested interests (shown first and pre-highlighted)
-// Seeded from compact legacy set; 500-role entries come from ROLE_TOPICS below.
+// Seeded from compact legacy set; 450+ role entries come from ROLE_TOPICS below.
 const ROLE_SUGGESTED = {
-  ...ROLE_TOPICS, // all 500 roles mapped to their topic affinities
+  ...ROLE_TOPICS, // all expanded roles mapped to their topic affinities
   'Engineer / Developer':    ['AI & Machine Learning', 'Open Source', 'Cloud & DevOps', 'Backend Dev', 'Frontend Dev', 'Developer Tools', 'Cybersecurity', 'Side Projects', 'Career Growth', 'Data Science'],
   'Designer / Creative':     ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design', 'Photography', 'Film & Video', 'Creator Economy', 'Career Growth', '3D & CGI', 'Visual Storytelling'],
   'Product Manager':         ['SaaS', 'AI & Machine Learning', 'Growth Marketing', 'B2B / Enterprise', 'Product-Led Growth', 'Career Growth', 'UI/UX Design', 'Data Science', 'Startups', 'Customer Experience'],
@@ -234,16 +234,30 @@ export default function Onboarding() {
   const [experience, setExperience] = useState(ctxExperience);
   const [loading,    setLoading]    = useState(false);
   const [lastPicked, setLastPicked] = useState('');
+  const [error,      setError]      = useState('');
 
   // Interests visible for this step: suggested first, then rest
   const suggested = ROLE_SUGGESTED[role] || [];
   const related   = interests.flatMap(i => INTEREST_CONNECTIONS[i] || []);
   const unlocked  = [...new Set([...suggested, ...related])];
   const remaining = ALL_INTERESTS.filter(i => !unlocked.includes(i));
-  // Dedup and order: unlocked first, then remaining
-  const interestList = [...new Set([...unlocked, ...remaining])];
+  function selectRole(value) {
+    setRole(value);
+    setCustomRole('');
+    setLastPicked('');
+    setError('');
+    setInterests((ROLE_SUGGESTED[value] || []).slice(0, 5));
+  }
+
+  function selectCustomRole() {
+    setRole('__custom__');
+    setLastPicked('');
+    setError('');
+    setInterests([]);
+  }
 
   function toggleInterest(val) {
+    setError('');
     setLastPicked(val);
     setInterests(prev =>
       prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]
@@ -251,6 +265,7 @@ export default function Onboarding() {
   }
 
   function toggleGoal(val) {
+    setError('');
     setGoals(prev =>
       prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]
     );
@@ -266,6 +281,7 @@ export default function Onboarding() {
 
   async function handleFinish() {
     setLoading(true);
+    setError('');
     try {
       const resolvedRole = role === '__custom__' ? customRole.trim() : role;
       const payload = { role: resolvedRole, goals, interests, experience };
@@ -277,9 +293,7 @@ export default function Onboarding() {
       updateProfileLocally({ onboardingComplete: true });
       navigate('/', { replace: true });
     } catch {
-      localStorage.removeItem('ufi_signup_ctx');
-      updateProfileLocally({ onboardingComplete: true });
-      navigate('/', { replace: true });
+      setError('We could not save your setup. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -319,7 +333,7 @@ export default function Onboarding() {
         {step === 0 && (
           <>
             <h1 className="onboarding-title">What best describes you?</h1>
-            <p className="onboarding-sub">Choose from 500+ roles or type yours below. We'll tailor your feed and communities to match.</p>
+            <p className="onboarding-sub">Choose from 450+ roles or type yours below. We'll tailor your feed and communities to match.</p>
 
             {/* Role search */}
             <div style={{ position: 'relative', marginBottom: 14 }}>
@@ -346,7 +360,7 @@ export default function Onboarding() {
               {filteredRoles.map(({ value, icon, label, desc }) => (
                 <button
                   key={value}
-                  onClick={() => { setRole(value); setCustomRole(''); }}
+                  onClick={() => selectRole(value)}
                   style={{
                     padding: '12px 14px', borderRadius: 14, border: `2px solid ${role === value ? 'var(--primary)' : 'var(--border)'}`,
                     background: role === value ? 'var(--primary-light)' : 'var(--surface)',
@@ -368,7 +382,7 @@ export default function Onboarding() {
 
               {/* Other / Custom role card — always shown at the bottom */}
               <button
-                onClick={() => setRole('__custom__')}
+                onClick={selectCustomRole}
                 style={{
                   padding: '12px 14px', borderRadius: 14, border: `2px solid ${role === '__custom__' ? 'var(--primary)' : 'var(--border)'}`,
                   background: role === '__custom__' ? 'var(--primary-light)' : 'var(--surface)',
@@ -577,6 +591,8 @@ export default function Onboarding() {
             </div>
           </>
         )}
+
+        {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
 
         {/* Navigation */}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 20 }}>

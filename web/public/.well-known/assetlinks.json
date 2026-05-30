@@ -1,10 +1,14 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "org.uficonnect.app",
-    "sha256_cert_fingerprints": [
-      "F6:42:51:04:BC:6D:BD:DE:32:58:7E:DD:F5:DA:E5:79:76:EA:C9:7F:08:BE:D0:13:95:2F:4A:12:AD:75:42:E3"
-    ]
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "org.uficonnect.app",
+      "sha256_cert_fingerprints": [
+        "F6:42:51:04:BC:6D:BD:DE:32:58:7E:DD:F5:DA:E5:79:76:EA:C9:7F:08:BE:D0:13:95:2F:4A:12:AD:75:42:E3"
+      ]
+    }
   }
-}]
+]

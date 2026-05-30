@@ -157,7 +157,13 @@ function OverviewView({ status, log, agents }) {
         <StatCard icon="🤖" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
         <StatCard icon="🗄️" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                        color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
         <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
-        <StatCard icon="🌐" label="Sources"       value={src ? `${src.healthy}/${src.total}` : '—'} sub={src?.paused ? `${src.paused} paused` : 'all healthy'}       color={src?.paused ? '#f97316' : '#4ade80'} />
+        <StatCard
+          icon="🌐"
+          label="Sources"
+          value={src ? `${src.healthy}/${src.total}` : '—'}
+          sub={src?.paused ? `${src.paused} paused` : src?.starting ? `${src.starting} starting` : 'all healthy'}
+          color={src?.paused ? '#f97316' : src?.starting ? '#94a3b8' : '#4ade80'}
+        />
       </div>
 
       <Label color="#475569">Agent Status</Label>
@@ -499,6 +505,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
   const workers = src?.workers || [];
 
   const statusCfg = {
+    starting: { dot: '#64748b', bg: 'rgba(148,163,184,.07)', border: 'rgba(148,163,184,.16)', label: 'Starting' },
     healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
     degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
@@ -513,6 +520,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
         <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching normally"         color="#4ade80" />
+        <StatCard icon="⏳" label="Starting"         value={src?.starting ?? '—'} sub="awaiting first fetch"       color="#94a3b8" />
         <StatCard icon="⚠️" label="Degraded"        value={src?.degraded ?? '—'} sub="≥3 consecutive errors"     color="#fbbf24" />
         <StatCard icon="🔴" label="Paused"           value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
         <StatCard icon="📰" label="Total Seen"

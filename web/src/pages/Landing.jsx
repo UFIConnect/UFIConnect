@@ -171,7 +171,7 @@ export default function Landing() {
               <div style={{ display: 'flex', justifyContent: 'center', gap: '48px', flexWrap: 'wrap' }}>
                 {[
                   { stat: '80+', label: 'Live Communities' },
-                  { stat: '500+', label: 'Professional Roles' },
+                  { stat: '450+', label: 'Professional Roles' },
                   { stat: '6+', label: 'Social Platforms' },
                   { stat: '100%', label: 'Ad-free' },
                 ].map(({ stat, label }) => (
