@@ -3316,6 +3316,30 @@ const SOCIAL_POSTS = {
   ],
 };
 
+// ─── Curated social-source fallback posts ─────────────────────────────────────
+function buildCuratedSourcePosts(source) {
+  return (SOCIAL_POSTS[source] || []).map(p => ({
+    id:          `${p.id}_social`,
+    authorId:    `${source}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
+    groupId:     `ext_${source}`,
+    content:     p.content,
+    title:       p.title || null,
+    source,
+    sourceLabel: p.source || source,
+    sourceUrl:   getSocialPostUrl(source, p),
+    topic:       (p.topics || [])[0] || '',
+    mediaUrl:    p.mediaUrl || null,
+    mediaType:   p.mediaType || null,
+    author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
+    likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
+    createdAt:   p.time || new Date().toISOString(),
+    isExternal:  false,
+    group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
+    fromJoinedGroup: false,
+    isSocialCard: false,
+  }));
+}
+
 // ─── Mock Indeed job listings ─────────────────────────────────────────────────
 const INDEED_JOBS = [
   { id: 'j1', title: 'Senior ML Engineer', company: 'Anthropic', location: 'San Francisco, CA', type: 'Full-time', salary: '$220k–$280k', tags: ['PyTorch', 'LLMs', 'Python'], posted: ago(1*D) },
@@ -4362,7 +4386,11 @@ app.get('/feed', authenticate, async (req, res) => {
     if (!dbRows.length) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
       const memoryRows = sourceFilter
-        ? (agentSourceCache.get(agentKey)?.posts || [])
+        ? [
+            ...(agentSourceCache.get(agentKey)?.posts || []),
+            ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
+            ...buildCuratedSourcePosts(sourceFilter),
+          ].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
         : globalFeedCache.posts;
       pageRows = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
@@ -4469,26 +4497,7 @@ app.get('/feed', authenticate, async (req, res) => {
     const globalSourcePosts = globalFeedCache.posts
       .filter(p => p.source === sourceFilter)
       .map(p => mapExternalPost(p, sourceFilter));
-    const curatedSourcePosts = (SOCIAL_POSTS[sourceFilter] || []).map(p => ({
-      id:          `${p.id}_social`,
-      authorId:    `${sourceFilter}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
-      groupId:     `ext_${sourceFilter}`,
-      content:     p.content,
-      title:       p.title || null,
-      source:      sourceFilter,
-      sourceLabel: p.source || sourceFilter,
-      sourceUrl:   getSocialPostUrl(sourceFilter, p),
-      topic:       (p.topics || [])[0] || '',
-      mediaUrl:    p.mediaUrl || null,
-      mediaType:   p.mediaType || null,
-      author:      { id: `${sourceFilter}_${p.author}`, name: p.author || null, title: p.source, organization: sourceFilter },
-      likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-      createdAt:   p.time || new Date().toISOString(),
-      isExternal:  false,
-      group:       { id: `ext_${sourceFilter}`, name: sourceFilter.charAt(0).toUpperCase() + sourceFilter.slice(1), category: 'Social', externalUrl: getSocialPostUrl(sourceFilter, p) },
-      fromJoinedGroup: false,
-      isSocialCard: false,
-    }));
+    const curatedSourcePosts = buildCuratedSourcePosts(sourceFilter);
     const livePosts   = (liveResult[agentKey] || []).map(p => mapExternalPost(p, sourceFilter));
     const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
