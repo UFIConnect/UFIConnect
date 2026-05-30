@@ -3583,12 +3583,12 @@ const PLATFORMS = {
   linkedin: {
     name: 'LinkedIn', color: '#0A66C2', icon: 'linkedin',
     description: 'Import your professional profile and network activity.',
-    scopes: ['r_liteprofile', 'r_emailaddress', 'r_posts'],
+    scopes: ['r_liteprofile', 'r_emailaddress'],
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
-    reviewRequired: true,
-    note: 'r_posts requires LinkedIn Partner Program access.',
+    reviewRequired: false,
+    note: 'Basic profile import. Post feed integration coming once LinkedIn Partner access is approved.',
   },
   github: {
     name: 'GitHub', color: '#24292F', icon: 'github',
@@ -3623,12 +3623,12 @@ const PLATFORMS = {
   facebook: {
     name: 'Facebook', color: '#1877F2', icon: 'facebook',
     description: 'See posts and discussions from your Facebook Groups.',
-    scopes: ['email', 'public_profile', 'user_posts', 'groups_access_member_info'],
+    scopes: ['email', 'public_profile'],
     authUrl: 'https://www.facebook.com/v18.0/dialog/oauth',
     loginUrl: 'https://www.facebook.com/login',
     setupUrl: 'https://developers.facebook.com/apps',
-    reviewRequired: true,
-    note: 'user_posts and groups_access_member_info require Facebook App Review.',
+    reviewRequired: false,
+    note: 'Basic profile connection. Group post feed coming once Facebook App Review is approved.',
   },
   discord: {
     name: 'Discord', color: '#5865F2', icon: 'discord',
@@ -3698,7 +3698,8 @@ const PLATFORMS = {
     loginUrl: 'https://secure.indeed.com/account/login',
     setupUrl: 'https://developer.indeed.com',
     reviewRequired: true,
-    note: 'Indeed Publisher API. Apply at developer.indeed.com for API access.',
+    comingSoon: true,
+    note: 'Indeed Publisher API requires application approval. Integration coming soon.',
   },
   tiktok: {
     name: 'TikTok', color: '#010101', icon: 'tiktok',
@@ -3721,6 +3722,8 @@ const PLATFORMS = {
     note: 'Uses the AT Protocol. No API key required — authenticate with your Bluesky handle.',
   },
 };
+
+const CONNECTED_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -4290,6 +4293,7 @@ function fullProfile(user) {
       });
     }
   });
+  const connectedPlatforms = Object.keys(user.socialTokens || {}).filter(platform => !!user.socialTokens[platform]);
 
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
@@ -4300,6 +4304,8 @@ function fullProfile(user) {
     links: user.links || {},
     roleSettings: user.roleSettings || {},
     connectedGroupsByPlatform,
+    connectedPlatforms,
+    connectedSocial: Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(platform => [platform, connectedPlatforms.includes(platform)])),
     plan: user.plan || 'free',
     isPro: (user.plan || 'free') === 'pro',
   };
@@ -4711,10 +4717,14 @@ async function removeSocialToken(userId, platform) {
 }
 
 // ─── Social OAuth: initiate (returns URL so the SPA can navigate) ────────────
-app.get('/auth/social/:platform/start', authenticate, (req, res) => {
+app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
   const cfg = SOCIAL_CFG[platform];
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
+  const user = await getUser(req.user.id);
+  if (!user || (user.plan || 'free') !== 'pro') {
+    return res.status(403).json({ error: 'Pro subscription required to connect social accounts', reason: 'pro' });
+  }
 
   const clientId = cfg.clientId();
   if (!clientId) return res.status(501).json({
@@ -4810,9 +4820,30 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 });
 
 // ─── Profile: social connection status + disconnect ───────────────────────────
+app.get('/social/platforms', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  const connected = Object.fromEntries(Object.keys(PLATFORMS).map(p => [p, !!(user?.socialTokens?.[p])]));
+  const platforms = Object.fromEntries(Object.entries(PLATFORMS).map(([key, platform]) => [
+    key,
+    {
+      ...platform,
+      active: CONNECTED_SOCIAL_PLATFORMS.has(key),
+      proRequired: CONNECTED_SOCIAL_PLATFORMS.has(key),
+      connected: connected[key],
+      comingSoon: platform.comingSoon || !CONNECTED_SOCIAL_PLATFORMS.has(key),
+    },
+  ]));
+  res.json({
+    platforms,
+    connected,
+    connectedPlatforms: Object.keys(connected).filter(key => connected[key]),
+    proRequiredPlatforms: [...CONNECTED_SOCIAL_PLATFORMS],
+  });
+});
+
 app.get('/profile/social', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const platforms = ['linkedin', 'twitter', 'instagram', 'facebook'];
+  const platforms = [...CONNECTED_SOCIAL_PLATFORMS];
   const connected = Object.fromEntries(platforms.map(p => [p, !!(user?.socialTokens?.[p])]));
   res.json({ connected });
 });
@@ -4821,8 +4852,14 @@ app.get('/profile/social', authenticate, async (req, res) => {
 // Replace mock_token with a real OAuth exchange when you have API credentials.
 app.post('/social/connect', authenticate, async (req, res) => {
   const { platform } = req.body;
-  const validPlatforms = ['linkedin', 'twitter', 'instagram', 'facebook'];
-  if (!validPlatforms.includes(platform)) return res.status(400).json({ error: 'Unknown platform' });
+  if (!PLATFORMS[platform]) return res.status(400).json({ error: 'Unknown platform' });
+  if (!CONNECTED_SOCIAL_PLATFORMS.has(platform)) {
+    return res.status(400).json({ error: 'Platform connection is coming soon', reason: 'coming_soon' });
+  }
+  const user = await getUser(req.user.id);
+  if (!user || (user.plan || 'free') !== 'pro') {
+    return res.status(403).json({ error: 'Pro subscription required to connect social accounts', reason: 'pro' });
+  }
   await saveSocialToken(req.user.id, platform, `mock_token_${platform}_${Date.now()}`);
   logAgentAction('cache_helper', '🔗', `User connected ${platform}`, '#6366F1');
   res.json({ ok: true, platform, connected: true });
@@ -4836,6 +4873,13 @@ app.delete('/profile/social/:platform', authenticate, async (req, res) => {
 });
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
+app.delete('/social/connect/:platform', authenticate, async (req, res) => {
+  const { platform } = req.params;
+  if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
+  await removeSocialToken(req.user.id, platform);
+  res.json({ ok: true, disconnected: platform });
+});
+
 app.get('/profile', authenticate, async (req, res) => {
   // Always try to refresh from DB so data survives restarts
   const user = await getUser(req.user.id);
@@ -5114,9 +5158,8 @@ app.get('/feed', authenticate, async (req, res) => {
       ])
     : emptyLiveResult;
 
-  // ── Pro social tabs (Twitter, LinkedIn, Instagram, Facebook) ─────────────────
-  const PRO_SOCIAL_SOURCES = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
-  if (sourceFilter && PRO_SOCIAL_SOURCES.has(sourceFilter)) {
+  // ── Pro connected social tabs (Twitter, LinkedIn, Instagram, Facebook) ──────
+  if (sourceFilter && CONNECTED_SOCIAL_PLATFORMS.has(sourceFilter)) {
     if (!user || (user.plan || 'free') !== 'pro') {
       return res.json({ locked: true, reason: 'pro', source: sourceFilter, posts: [] });
     }
@@ -5127,11 +5170,27 @@ app.get('/feed', authenticate, async (req, res) => {
     const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
     const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
-    const rawPosts = (await Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])))).flatMap(r => r.status === 'fulfilled' ? r.value : []);
-    const result = sortFeedBatch(rawPosts, `pro-social-${sourceFilter}`, {
+    const liveFetches = Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])));
+    const settled = await Promise.race([
+      liveFetches,
+      new Promise(resolve => setTimeout(() => resolve([]), 4500)),
+    ]);
+    const livePosts = (settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    const dbRows = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
+    const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
+    const curatedSourcePosts = buildCuratedSourcePosts(sourceFilter);
+    savePostsToDB(livePosts).catch(() => {});
+
+    const result = sortFeedBatch([...livePosts, ...dbPosts, ...curatedSourcePosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
     });
-    return res.json({ posts: result, source: sourceFilter, hasMore: false });
+    return res.json({
+      posts: result.slice(0, feedLimit),
+      source: sourceFilter,
+      connected: true,
+      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
+      totalAvailable: result.length,
+    });
   }
 
   // ── Source-tab: always serve worker cache + live fetch, newest-first ────────
@@ -5732,21 +5791,21 @@ app.get('/office/status', (req, res) => {
       postCount: fallbackCount, fallbackCount,
     });
   }
-  // Append Pro social agents (per-user OAuth, not continuous cyclers)
+  // Append connected-account social agents (per-user OAuth, not continuous cyclers)
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     const def = AGENT_DEFS[id];
     const fallbackCount = buildCuratedSourcePosts(id).length;
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
-      status: 'pro', consecutiveErrors: 0, totalErrors: 0,
+      status: 'ready', consecutiveErrors: 0, totalErrors: 0,
       fetchCount: fallbackCount, lastSuccess: null, paused: false,
-      postCount: fallbackCount, fallbackCount, isPro: true,
+      postCount: fallbackCount, fallbackCount, isConnectedSource: true,
     });
   }
 
   const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
   const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
-  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'fallback' || s.status === 'pro').length;
+  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'fallback' || s.status === 'ready').length;
   const startingCount = sourceHealthArr.filter(s => s.status === 'starting').length;
 
   res.json({

@@ -516,6 +516,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
     starting: { dot: '#64748b', bg: 'rgba(148,163,184,.07)', border: 'rgba(148,163,184,.16)', label: 'Starting' },
     healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
     fallback: { dot: '#38bdf8', bg: 'rgba(56,189,248,.08)', border: 'rgba(56,189,248,.2)', label: 'Fallback' },
+    ready:    { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Ready' },
     degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
     pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
@@ -580,9 +581,9 @@ function SourcesView({ status, triggerAgent, triggering }) {
                   <span>❌ <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong> err</span>
                 </div>
 
-                {w.isPro ? (
-                  <div style={{ fontSize: 10, color: '#f59e0b', padding: '4px 8px', background: 'rgba(245,158,11,.06)', borderRadius: 4 }}>
-                    🔒 Pro feature — feeds from connected user OAuth tokens only. No global cycler.
+                {w.isConnectedSource ? (
+                  <div style={{ fontSize: 10, color: '#22c55e', padding: '4px 8px', background: 'rgba(34,197,94,.06)', borderRadius: 4 }}>
+                    Connected-account source — live requests run when a user connects this account.
                   </div>
                 ) : (
                   <>

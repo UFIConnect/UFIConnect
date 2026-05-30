@@ -71,7 +71,7 @@ const SOURCE_TABS = [
   { key: 'hashnode',     label: 'freeCodeCamp', icon: '🔥' },
 ];
 
-const PRO_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const PRO_CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
@@ -172,7 +172,7 @@ function VideoModal({ post, onClose }) {
   );
 }
 
-/** Gate shown when a Pro social tab (Twitter, LinkedIn, etc.) is selected */
+/** Gate shown when a Pro connected-account social tab is selected before unlock */
 function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
   const meta = SOURCE_META[platform] || {};
   return (
@@ -183,11 +183,11 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
       </div>
       {!isPro ? (
         <>
-          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 340, margin: '0 auto 24px' }}>
-            Stream your personalized {meta.label} feed in real time. This is a Pro feature — upgrade to unlock all social platforms.
+          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 360, margin: '0 auto 24px' }}>
+            This connector is active and ready for rollout. Upgrade to Pro to connect your {meta.label} account and stream personalized live requests.
           </p>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#FEF3C7', color: '#92400E', fontSize: '.72rem', fontWeight: 700, padding: '4px 12px', borderRadius: 20, marginBottom: 20 }}>
-            🔒 PRO FEATURE
+            PRO CONNECTOR
           </div>
           <div>
             <button
@@ -209,7 +209,7 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
       ) : !isConnected ? (
         <>
           <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 340, margin: '0 auto 24px' }}>
-            Connect your {meta.label} account to stream your personalized live feed.
+            Connect your {meta.label} account to stream the same personalized live requests as the rest of your feed.
           </p>
           <div>
             <button
@@ -224,7 +224,7 @@ function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
               onMouseOver={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
               onMouseOut={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
             >
-              🔒 Connect {meta.label}
+              Connect {meta.label}
             </button>
           </div>
         </>
@@ -568,10 +568,10 @@ export default function Feed() {
     setSourceTab(key);
     setSearch('');
     setNewPostsCount(0);
-    const isPro = profile?.isPro;
+    const isPro = !!profile?.isPro;
     const isConnected = !!connectedSocial?.[key];
-    // Pro social tabs only load if both Pro and connected; otherwise show the gate UI
-    if (!PRO_SOCIAL_TABS.has(key) || (isPro && isConnected)) {
+    // Pro connected social tabs load after Pro + OAuth; otherwise show the rollout-ready gate.
+    if (!PRO_CONNECTED_SOCIAL_TABS.has(key) || (isPro && isConnected)) {
       loadFeed(false, key === 'all' ? null : key);
     }
   }, [loadFeed, profile, connectedSocial]); // eslint-disable-line
@@ -854,6 +854,9 @@ export default function Feed() {
               {tab.pro && !profile?.isPro && (
                 <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#FEF3C7', color: '#92400E', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>PRO</span>
               )}
+              {tab.pro && profile?.isPro && connectedSocial && !connectedSocial[tab.key] && (
+                <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#E0F2FE', color: '#0369A1', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>CONNECT</span>
+              )}
             </button>
           );
         })}
@@ -887,8 +890,8 @@ export default function Feed() {
         </div>
       )}
 
-      {/* Pro social gate — shown when tab is Twitter/LinkedIn/Instagram/Facebook and not unlocked */}
-      {PRO_SOCIAL_TABS.has(sourceTab) && !(profile?.isPro && connectedSocial?.[sourceTab]) ? (
+      {/* Pro connected social gate — shown until tab is both subscribed and connected */}
+      {PRO_CONNECTED_SOCIAL_TABS.has(sourceTab) && !(profile?.isPro && connectedSocial?.[sourceTab]) ? (
         <SocialProGate
           platform={sourceTab}
           isPro={!!profile?.isPro}
@@ -899,9 +902,11 @@ export default function Feed() {
               window.location.reload();
             } catch {}
           }}
-          onConnect={() => {
-            const base = import.meta.env.VITE_API_URL || '/api';
-            window.location.href = `${base}/auth/social/${sourceTab}/start`;
+          onConnect={async () => {
+            try {
+              const { data } = await client.get(`/auth/social/${sourceTab}/start`);
+              if (data?.url) window.location.href = data.url;
+            } catch {}
           }}
         />
       ) : loading ? (
