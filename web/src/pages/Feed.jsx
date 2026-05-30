@@ -54,17 +54,17 @@ const SOURCE_META = {
 
 const SOURCE_TABS = [
   { key: 'all',        label: 'All',         icon: '⚡' },
-  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏',  pro: true },
-  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼',  pro: true },
-  { key: 'instagram',  label: 'Instagram',   icon: '📸',  pro: true },
-  { key: 'facebook',   label: 'Facebook',    icon: '🔵',  pro: true },
+  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏',  needsAuth: true },
+  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼',  needsAuth: true },
+  { key: 'instagram',  label: 'Instagram',   icon: '📸',  needsAuth: true },
+  { key: 'facebook',   label: 'Facebook',    icon: '🔵',  needsAuth: true },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
-const PRO_CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
@@ -166,63 +166,37 @@ function VideoModal({ post, onClose }) {
   );
 }
 
-/** Gate shown when a Pro connected-account social tab is selected before unlock */
-function SocialProGate({ platform, isPro, isConnected, onUpgrade, onConnect }) {
+/** Gate shown when a connected-account social tab is selected before OAuth */
+function SocialConnectGate({ platform, onConnect, connecting }) {
   const meta = SOURCE_META[platform] || {};
   return (
     <div style={{ textAlign: 'center', padding: '60px 24px' }}>
-      <div style={{ fontSize: '3rem', marginBottom: 16 }}>{meta.icon || '🔒'}</div>
+      <div style={{ fontSize: '3rem', marginBottom: 16 }}>{meta.icon || '🔗'}</div>
       <div style={{ fontWeight: 800, fontSize: '1.25rem', marginBottom: 8 }}>
-        {meta.label} Live Feed
+        Connect your {meta.label} account
       </div>
-      {!isPro ? (
-        <>
-          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 360, margin: '0 auto 24px' }}>
-            This connector is active and ready for rollout. Upgrade to Pro to connect your {meta.label} account and stream personalized live requests.
-          </p>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#FEF3C7', color: '#92400E', fontSize: '.72rem', fontWeight: 700, padding: '4px 12px', borderRadius: 20, marginBottom: 20 }}>
-            PRO CONNECTOR
-          </div>
-          <div>
-            <button
-              onClick={onUpgrade}
-              style={{
-                padding: '12px 32px', borderRadius: 24, border: 'none',
-                background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff',
-                fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
-                boxShadow: '0 4px 16px #6366F155',
-                transition: 'opacity .15s, transform .15s',
-              }}
-              onMouseOver={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-              onMouseOut={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
-            >
-              Upgrade to Pro
-            </button>
-          </div>
-        </>
-      ) : !isConnected ? (
-        <>
-          <p style={{ color: 'var(--muted)', fontSize: '.9rem', marginBottom: 24, maxWidth: 340, margin: '0 auto 24px' }}>
-            Connect your {meta.label} account to stream the same personalized live requests as the rest of your feed.
-          </p>
-          <div>
-            <button
-              onClick={onConnect}
-              style={{
-                padding: '12px 32px', borderRadius: 24, border: 'none',
-                background: meta.color || 'var(--primary)', color: '#fff',
-                fontWeight: 700, fontSize: '1rem', cursor: 'pointer',
-                boxShadow: `0 4px 16px ${meta.color || '#6366F1'}55`,
-                transition: 'opacity .15s, transform .15s',
-              }}
-              onMouseOver={e => { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-              onMouseOut={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
-            >
-              Connect {meta.label}
-            </button>
-          </div>
-        </>
-      ) : null}
+      <p style={{ color: 'var(--muted)', fontSize: '.9rem', maxWidth: 340, margin: '0 auto 28px', lineHeight: 1.6 }}>
+        Authorize UFIConnect to read your {meta.label} feed and surface personalized content alongside your other sources.
+      </p>
+      <button
+        onClick={onConnect}
+        disabled={connecting}
+        style={{
+          padding: '13px 36px', borderRadius: 24, border: 'none',
+          background: meta.color || 'var(--primary)', color: '#fff',
+          fontWeight: 700, fontSize: '1rem', cursor: connecting ? 'default' : 'pointer',
+          boxShadow: `0 4px 20px ${meta.color || '#6366F1'}44`,
+          opacity: connecting ? 0.7 : 1,
+          transition: 'opacity .15s, transform .15s',
+        }}
+        onMouseOver={e => { if (!connecting) { e.currentTarget.style.opacity = '0.88'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
+        onMouseOut={e => { e.currentTarget.style.opacity = connecting ? '0.7' : '1'; e.currentTarget.style.transform = ''; }}
+      >
+        {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
+      </button>
+      <div style={{ marginTop: 16, fontSize: '.75rem', color: 'var(--muted)' }}>
+        You can disconnect at any time from Settings → Connected Accounts
+      </div>
     </div>
   );
 }
@@ -401,13 +375,34 @@ function YouTubeCard({ post }) {
 
 /** Unified post card */
 function PostCard({ post, onVideoOpen }) {
+  const [showComments,    setShowComments]    = useState(false);
+  const [comments,        setComments]        = useState(null);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
   if (post.source === 'youtube') return <YouTubeCard post={post} />;
 
-  const isExternal = post.isExternal;
-  const hasVideo   = post.mediaUrl && post.mediaType === 'video';
+  const isExternal   = post.isExternal;
+  const hasVideo     = post.mediaUrl && post.mediaType === 'video';
+  const isReddit     = post.source === 'reddit';
+  const commentCount = post.commentsCount || 0;
+  const likeCount    = post.likesCount    || 0;
+  const isTruncated  = post.content && post.content.trim().endsWith('…') || post.content?.trim().endsWith('...');
+
+  async function toggleComments() {
+    if (showComments) { setShowComments(false); return; }
+    setShowComments(true);
+    if (comments !== null) return;
+    if (!isReddit) { setComments([]); return; }
+    setCommentsLoading(true);
+    try {
+      const { data } = await client.get(`/feed/${post.id}/comments`);
+      setComments(data.comments || []);
+    } catch { setComments([]); }
+    finally  { setCommentsLoading(false); }
+  }
 
   return (
     <div className="card post-card" style={{ marginBottom: 12 }}>
@@ -453,6 +448,13 @@ function PostCard({ post, onVideoOpen }) {
 
       <PostText text={post.content} />
 
+      {isTruncated && post.sourceUrl && (
+        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize: '.78rem', color: src.color, textDecoration: 'none', display: 'inline-block', marginBottom: 8 }}>
+          Read full post ↗
+        </a>
+      )}
+
       {post.mediaUrl && post.mediaType === 'image' && (
         <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden' }}>
           <img src={post.mediaUrl} alt={post.title || 'Post image'}
@@ -479,17 +481,64 @@ function PostCard({ post, onVideoOpen }) {
         </button>
       )}
 
-      {post.sourceUrl && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+      {/* Stats + actions bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+        {likeCount > 0 && (
+          <span style={{ fontSize: '.75rem', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            ❤️ {likeCount.toLocaleString()}
+          </span>
+        )}
+        {commentCount > 0 && (
+          <button
+            onClick={toggleComments}
+            style={{ all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: showComments ? src.color : 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, fontWeight: showComments ? 700 : 400 }}
+          >
+            💬 {commentCount.toLocaleString()} {showComments ? 'Hide' : 'Comments'}
+          </button>
+        )}
+        {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => e.stopPropagation()}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
-            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
-            <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>
-              {hasVideo ? 'Watch' : src.label} ↗
+            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 8px', borderRadius: 5 }}>
+              {hasVideo ? 'Watch' : 'Open'} on {src.label} ↗
             </span>
           </a>
+        )}
+      </div>
+
+      {/* Inline comments */}
+      {showComments && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+          {commentsLoading && (
+            <div style={{ textAlign: 'center', padding: '12px 0' }}>
+              <span className="spinner spinner-primary" />
+            </div>
+          )}
+          {!commentsLoading && isReddit && comments?.length > 0 && comments.map(c => (
+            <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+              <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#FF450018', border: '1.5px solid #FF450033', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: '#FF4500', flexShrink: 0 }}>
+                {c.author?.[0]?.toUpperCase() || 'u'}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                  <span style={{ fontWeight: 700, fontSize: '.78rem' }}>u/{c.author}</span>
+                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>▲ {c.score.toLocaleString()}</span>}
+                  <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
+                </div>
+                <p style={{ fontSize: '.82rem', lineHeight: 1.55, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+              </div>
+            </div>
+          ))}
+          {!commentsLoading && isReddit && comments?.length === 0 && (
+            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: 0 }}>No comments loaded.</p>
+          )}
+          {!isReddit && post.sourceUrl && (
+            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontSize: '.8rem', color: src.color, fontWeight: 600 }}>
+              {src.icon} View {commentCount.toLocaleString()} comments on {src.label} ↗
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -511,8 +560,9 @@ export default function Feed() {
   const [newPostsCount, setNewPostsCount]= useState(0);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
-  const [liveActive,  setLiveActive]  = useState(false);
-  const [sourceTab, setSourceTab] = useState('all');
+  const [liveActive,    setLiveActive]    = useState(false);
+  const [sourceTab,     setSourceTab]     = useState('all');
+  const [connecting,    setConnecting]    = useState(false);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -562,13 +612,11 @@ export default function Feed() {
     setSourceTab(key);
     setSearch('');
     setNewPostsCount(0);
-    const isPro = !!profile?.isPro;
     const isConnected = !!connectedSocial?.[key];
-    // Pro connected social tabs load after Pro + OAuth; otherwise show the rollout-ready gate.
-    if (!PRO_CONNECTED_SOCIAL_TABS.has(key) || (isPro && isConnected)) {
+    if (!CONNECTED_SOCIAL_TABS.has(key) || isConnected) {
       loadFeed(false, key === 'all' ? null : key);
     }
-  }, [loadFeed, profile, connectedSocial]); // eslint-disable-line
+  }, [loadFeed, connectedSocial]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
@@ -866,10 +914,7 @@ export default function Feed() {
             >
               <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
               {tab.label}
-              {tab.pro && !profile?.isPro && (
-                <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#FEF3C7', color: '#92400E', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>PRO</span>
-              )}
-              {tab.pro && profile?.isPro && connectedSocial && !connectedSocial[tab.key] && (
+              {tab.needsAuth && connectedSocial && !connectedSocial[tab.key] && (
                 <span style={{ fontSize: '.6rem', fontWeight: 800, background: '#E0F2FE', color: '#0369A1', padding: '1px 5px', borderRadius: 8, marginLeft: 2 }}>CONNECT</span>
               )}
             </button>
@@ -905,23 +950,18 @@ export default function Feed() {
         </div>
       )}
 
-      {/* Pro connected social gate — shown until tab is both subscribed and connected */}
-      {PRO_CONNECTED_SOCIAL_TABS.has(sourceTab) && !(profile?.isPro && connectedSocial?.[sourceTab]) ? (
-        <SocialProGate
+      {/* Connect gate — shown when a social tab needs OAuth and user hasn't connected yet */}
+      {CONNECTED_SOCIAL_TABS.has(sourceTab) && !connectedSocial?.[sourceTab] ? (
+        <SocialConnectGate
           platform={sourceTab}
-          isPro={!!profile?.isPro}
-          isConnected={!!connectedSocial?.[sourceTab]}
-          onUpgrade={async () => {
-            try {
-              await client.post('/user/plan/upgrade');
-              window.location.reload();
-            } catch {}
-          }}
+          connecting={connecting}
           onConnect={async () => {
+            setConnecting(true);
             try {
               const { data } = await client.get(`/auth/social/${sourceTab}/start`);
               if (data?.url) window.location.href = data.url;
-            } catch {}
+              else setConnecting(false);
+            } catch { setConnecting(false); }
           }}
         />
       ) : loading ? (
