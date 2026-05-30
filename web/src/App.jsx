@@ -13,6 +13,7 @@ const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const Messages       = lazy(() => import('./pages/Messages'));
 const Conversation   = lazy(() => import('./pages/Conversation'));
 const Profile        = lazy(() => import('./pages/Profile'));
+const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Post           = lazy(() => import('./pages/Post'));
 const Search         = lazy(() => import('./pages/Search'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
@@ -73,6 +74,9 @@ export default function App() {
       }/>
       <Route path="/profile" element={
         <RequireAuth><RequireOnboarding><Profile /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/connected-accounts" element={
+        <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/post" element={
         <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>

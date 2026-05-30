@@ -2872,6 +2872,7 @@ const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12,
 const SORT_AGENT_INPUT_LIMIT = envNumber('SORT_AGENT_INPUT_LIMIT', 25000, 1000, 200000);
 const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIMIT', 9000, 1000, SORT_AGENT_INPUT_LIMIT);
 const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 
 const refreshControl = {
   mode: 'normal',
@@ -2910,6 +2911,15 @@ const activityAgentState = {
   totalSweeps: 0,
   lastSweep: null,
   lastCount: 0,
+};
+
+const sortDistribState = {
+  totalRuns: 0,
+  lastEmptySources: [],
+  lastTriggered: 0,
+  lastDiversified: 0,
+  lastRun: null,
+  lastError: null,
 };
 
 function waitMs(ms) {
@@ -3343,6 +3353,86 @@ function runSortAgentCheck() {
     `Sorted ${beforeGlobal.toLocaleString()} global posts and ${sourcePosts.toLocaleString()} posts across ${sourcePools} source caches`, '#A78BFA');
 }
 
+// ─── Sort Distribution Agent: refills empty sources + diversifies global feed ──
+async function runSortDistribCheck() {
+  if (isStabilityCritical()) {
+    logAgentAction('sort_distrib', '⏸️', 'Distribution pass skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
+
+  try {
+  const emptySources = [];
+  const knownSources = Object.keys(SOURCE_FETCHERS);
+
+  for (const id of knownSources) {
+    const cache = agentSourceCache.get(id);
+    if (!cache || !Array.isArray(cache.posts) || cache.posts.length === 0) emptySources.push(id);
+  }
+
+  // Trigger fetchers for any source that has come back empty
+  if (emptySources.length > 0 && refreshControl.mode === 'normal') {
+    enqueueSourceRefresh(emptySources, 'sort-distrib refill');
+  }
+
+  // Build a diversity-interleaved head for the global feed (round-robin across sources)
+  const DIVERSITY_HEAD = 60;
+  const PER_SOURCE = 5;
+  const buckets = [];
+  let activeSources = 0;
+  for (const [, cache] of agentSourceCache.entries()) {
+    if (Array.isArray(cache.posts) && cache.posts.length > 0) {
+      buckets.push(cache.posts.slice(0, PER_SOURCE));
+      activeSources++;
+    }
+  }
+
+  let diversified = 0;
+  if (buckets.length >= 3) {
+    const head = [];
+    const seen = new Set();
+    let bi = 0;
+    while (head.length < DIVERSITY_HEAD && buckets.length > 0) {
+      const idx = bi % buckets.length;
+      const post = buckets[idx].shift();
+      if (!buckets[idx].length) {
+        // Bucket exhausted — remove it; don't advance bi so the next bucket fills idx
+        buckets.splice(idx, 1);
+        if (!buckets.length) break;
+      } else {
+        bi++;
+      }
+      if (!post?.id || seen.has(post.id)) continue;
+      seen.add(post.id);
+      head.push(post);
+    }
+
+    if (head.length > 0) {
+      const existingIds = new Set(head.map(p => p.id));
+      const tail = globalFeedCache.posts.filter(p => p?.id && !existingIds.has(p.id));
+      globalFeedCache.posts = [...head, ...tail].slice(0, GLOBAL_FEED_CACHE_LIMIT);
+      diversified = head.length;
+    }
+  }
+
+  sortDistribState.totalRuns += 1;
+  sortDistribState.lastEmptySources = emptySources;
+  sortDistribState.lastTriggered = emptySources.length;
+  sortDistribState.lastDiversified = diversified;
+  sortDistribState.lastRun = Date.now();
+  sortDistribState.lastError = null;
+
+  const parts = [];
+  if (emptySources.length > 0) parts.push(`refilled ${emptySources.length} empty source(s): ${emptySources.join(', ')}`);
+  if (diversified > 0) parts.push(`${diversified}-post diversity head from ${activeSources} sources`);
+  if (parts.length === 0) parts.push(`all ${knownSources.length} sources have content — feed balanced`);
+  logAgentAction('sort_distrib', '🔀', parts.join(' · '), '#818CF8');
+  } catch (e) {
+    sortDistribState.lastError = e.message;
+    sortDistribState.lastRun = Date.now();
+    logAgentAction('sort_distrib', '⚠️', `Distribution pass failed: ${e.message}`, '#FBBF24');
+  }
+}
+
 // ─── Feed Optimizer Agent: monitors all source workers, heals failing ones ─────
 async function runFeedOptimizer() {
   if (isStabilityCritical()) {
@@ -3484,6 +3574,14 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
+  if (id === 'sort_distrib') {
+    const empty = sortDistribState.lastTriggered;
+    const div = sortDistribState.lastDiversified;
+    logAgentAction(id, def.emoji,
+      `Active - ${sortDistribState.totalRuns.toLocaleString()} runs, last: ${empty} empty refilled, ${div}-post diversity head`, def.color);
+    return true;
+  }
+
   if (id === 'refresh_queue') {
     logAgentAction(id, def.emoji,
       `Active - ${sourceRefreshQueue.pendingIds.size} queued, ${sourceRefreshQueue.totalRuns.toLocaleString()} queue runs`, def.color);
@@ -3563,6 +3661,8 @@ setInterval(runOppsCheck,   15 * 60 * 1000);
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
 // Sort agent keeps large feed/cache arrays deduped and newest-first without request spikes
 setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 2 * 60 * 1000);
+// Distribution agent refills empty sources and diversifies the global feed every 3 minutes
+setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 90 * 1000);
 // Activity agent gives on-demand/curated agents visible active heartbeats
 setTimeout(() => runAgentActivityCheck(true), 20 * 1000);
 setInterval(runAgentActivityCheck, 5 * 60 * 1000);
@@ -5665,6 +5765,10 @@ const AGENT_DEFS = {
     name: 'Cache Merge Agent', emoji: '🔄', color: '#6366F1', interval: '8min',
     description: 'Merges per-source agent caches into the global feed every 8 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
   },
+  sort_distrib: {
+    name: 'Distribution Agent', emoji: '🔀', color: '#818CF8', interval: '3min',
+    description: 'Scans all source caches every 3 minutes. Refills any source returning 0 posts by re-triggering its fetcher. Interleaves posts from all active sources into a diversity-first global feed head so no single platform dominates.',
+  },
 };
 
 function getRuntimeHealthForAgent(id) {
@@ -5711,6 +5815,17 @@ function getRuntimeHealthForAgent(id) {
       lastDurationMs: sortAgentState.lastDurationMs,
       lastRun: sortAgentState.lastRun,
       lastError: sortAgentState.lastError,
+    };
+  }
+  if (id === 'sort_distrib') {
+    return {
+      status: sortDistribState.lastError ? 'degraded' : 'healthy',
+      totalRuns: sortDistribState.totalRuns,
+      lastEmptySources: sortDistribState.lastEmptySources,
+      lastTriggered: sortDistribState.lastTriggered,
+      lastDiversified: sortDistribState.lastDiversified,
+      lastRun: sortDistribState.lastRun,
+      lastError: sortDistribState.lastError,
     };
   }
   if (id === 'activity') {
@@ -5861,6 +5976,15 @@ app.get('/office/status', (req, res) => {
       lastRun: sortAgentState.lastRun,
       lastError: sortAgentState.lastError,
     },
+    sortDistributionAgent: {
+      status: sortDistribState.lastError ? 'degraded' : 'healthy',
+      totalRuns: sortDistribState.totalRuns,
+      lastEmptySources: sortDistribState.lastEmptySources,
+      lastTriggered: sortDistribState.lastTriggered,
+      lastDiversified: sortDistribState.lastDiversified,
+      lastRun: sortDistribState.lastRun,
+      lastError: sortDistribState.lastError,
+    },
     activityAgent: {
       status: activityAgentState.status,
       totalSweeps: activityAgentState.totalSweeps,
@@ -5939,6 +6063,7 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     stability:    () => runStabilityGuard(),
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
     sort_agent:   () => runSortAgentCheck(),
+    sort_distrib: () => runSortDistribCheck(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
@@ -6047,6 +6172,7 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     stability:    () => runStabilityGuard(),
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
     sort_agent:   () => runSortAgentCheck(),
+    sort_distrib: () => runSortDistribCheck(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');

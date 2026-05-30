@@ -141,7 +141,7 @@ export default function Settings() {
     setSocialConnecting(platform);
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);
-      window.location.href = data.url;
+      if (data?.url) window.location.href = data.url;
     } catch (e) {
       const msg = e?.response?.data?.error || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name}. Try again.`;
       setSocialFlash({ type: 'error', platform, msg });
@@ -162,6 +162,18 @@ export default function Settings() {
       setTimeout(() => setSocialFlash(null), 5000);
     } finally {
       setSocialDisconnecting(null);
+    }
+  }
+
+  async function upgradeToPro() {
+    try {
+      const { data } = await client.post('/user/plan/upgrade');
+      updateProfileLocally({ plan: data?.plan || 'pro', isPro: true });
+      setSocialFlash({ type: 'success', platform: 'Pro', msg: 'Pro is active. You can now connect social accounts.' });
+      setTimeout(() => setSocialFlash(null), 5000);
+    } catch (e) {
+      setSocialFlash({ type: 'error', platform: 'Pro', msg: e?.response?.data?.error || 'Could not activate Pro. Please try again.' });
+      setTimeout(() => setSocialFlash(null), 7000);
     }
   }
 
@@ -292,7 +304,7 @@ export default function Settings() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {socialFlash && (
             <div style={{ padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 500, lineHeight: 1.5, background: socialFlash.type === 'success' ? '#ECFDF5' : socialFlash.type === 'disconnected' ? '#F8FAFC' : '#FEF2F2', color: socialFlash.type === 'success' ? '#059669' : socialFlash.type === 'disconnected' ? '#64748B' : '#DC2626', border: socialFlash.type === 'error' ? '1px solid #FECACA' : 'none' }}>
-              {socialFlash.type === 'success'      && `✓ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} connected successfully`}
+              {socialFlash.type === 'success'      && (socialFlash.msg || `✓ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} connected successfully`)}
               {socialFlash.type === 'disconnected' && `${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} disconnected`}
               {socialFlash.type === 'error'        && (socialFlash.msg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name}. Try again.`)}
             </div>
@@ -300,7 +312,7 @@ export default function Settings() {
           <div className="card">
             <SectionHeading>🔗 Connected Accounts</SectionHeading>
             <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
-              Connect your social accounts to personalise your feed with content from your own network and follows.
+              Pro connectors are active for LinkedIn, X, Instagram, and Facebook. Upgrade to connect accounts and stream personalized live requests.
             </p>
             {SOCIAL_PLATFORMS.map(platform => {
               const isConnected    = !!connectedSocial[platform.id];
@@ -321,6 +333,11 @@ export default function Settings() {
                         {isDisconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
                       </button>
                     </div>
+                  ) : !profile?.isPro ? (
+                    <button type="button" onClick={upgradeToPro}
+                      style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#F59E0B', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' }}>
+                      Upgrade
+                    </button>
                   ) : (
                     <button type="button" onClick={() => connectSocial(platform.id)} disabled={isConnecting}
                       style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: platform.color, color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', opacity: isConnecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>

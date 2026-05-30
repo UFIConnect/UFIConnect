@@ -10,6 +10,7 @@ function initials(name = '') {
 }
 
 const SOCIAL_LOCKED = false;
+const ACTIVE_SOCIAL_CONNECTORS = new Set(['linkedin', 'twitter', 'instagram', 'facebook']);
 
 const SOCIAL_PLATFORMS = [
   { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your network' },
@@ -25,8 +26,13 @@ const SOCIAL_PLATFORMS = [
   { id: 'medium',    emoji: '📝', name: 'Medium',      color: '#1A8917', desc: 'Long-form articles in your areas' },
   { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and creative inspiration' },
   { id: 'behance',   emoji: '🖼️', name: 'Behance',     color: '#1769FF', desc: 'Portfolios and creative projects' },
-  { id: 'indeed',    emoji: '💼', name: 'Indeed',      color: '#003A9B', desc: 'Job listings matched to your profile' },
-];
+  { id: 'indeed',    emoji: '💼', name: 'Indeed',      color: '#003A9B', desc: 'Job listings matched to your profile', comingSoon: true },
+].map(platform => ({
+  ...platform,
+  active: ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
+  proRequired: ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
+  comingSoon: platform.comingSoon || !ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
+}));
 
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
@@ -112,9 +118,12 @@ export default function Profile() {
     setSocialConnecting(platform);
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);
-      window.location.href = data.url;
+      if (data?.url) window.location.href = data.url;
     } catch (e) {
-      setSocialFlash({ type: 'error', platform });
+      const msg = e?.response?.data?.reason === 'pro'
+        ? 'Upgrade to Pro to connect social accounts.'
+        : e?.response?.data?.error || `Could not connect ${platform}. Please try again.`;
+      setSocialFlash({ type: 'error', platform, msg });
       setTimeout(() => setSocialFlash(null), 5000);
       setSocialConnecting(null);
     }
@@ -125,6 +134,18 @@ export default function Profile() {
       await client.delete(`/profile/social/${platform}`);
       setConnectedSocial(prev => ({ ...prev, [platform]: false }));
     } catch {}
+  }
+
+  async function upgradeToPro() {
+    try {
+      const { data } = await client.post('/user/plan/upgrade');
+      updateProfileLocally({ plan: data?.plan || 'pro', isPro: true });
+      setSocialFlash({ type: 'success', platform: 'Pro', msg: 'Pro is active. You can now connect social accounts.' });
+      setTimeout(() => setSocialFlash(null), 5000);
+    } catch {
+      setSocialFlash({ type: 'error', platform: 'Pro', msg: 'Could not activate Pro. Please try again.' });
+      setTimeout(() => setSocialFlash(null), 5000);
+    }
   }
 
   async function toggleProfileHidden() {
@@ -329,36 +350,91 @@ export default function Profile() {
 
           {/* Connected Accounts */}
           <div className="card" id="social" style={{ position:'relative', overflow:'hidden' }}>
-            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:4 }}>
+              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Connected Accounts</h3>
+              <Link to="/connected-accounts">
+                <button className="btn btn-ghost btn-sm" type="button">Manage</button>
+              </Link>
+            </div>
             <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
-              Connect social platforms to pull personalised posts into your feed.
+              Pro connectors are active for LinkedIn, X, Instagram, and Facebook. Other platforms are staged for coming soon.
             </p>
 
+            {socialFlash && (
+              <div style={{
+                marginBottom:10, padding:'8px 12px', borderRadius:8, fontSize:'.8rem', fontWeight:600,
+                background: socialFlash.type === 'success' ? '#ECFDF5' : '#FEF2F2',
+                color: socialFlash.type === 'success' ? '#059669' : '#DC2626',
+                border: `1px solid ${socialFlash.type === 'success' ? '#A7F3D0' : '#FECACA'}`,
+              }}>
+                {socialFlash.type === 'success'
+                  ? (socialFlash.msg || `✓ ${socialFlash.platform.charAt(0).toUpperCase() + socialFlash.platform.slice(1)} connected successfully`)
+                  : (socialFlash.msg || `Could not connect ${socialFlash.platform} — please try again`)}
+              </div>
+            )}
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              {SOCIAL_PLATFORMS.map(platform => (
-                <div key={platform.id} style={{
-                  display:'flex', alignItems:'center', gap:12,
-                  padding:'10px 14px', borderRadius:10,
-                  border:'1.5px solid var(--border)',
-                  background:'var(--surface)',
-                }}>
-                  <span style={{
-                    width:36, height:36, borderRadius:9, flexShrink:0,
-                    background: platform.color + '18',
-                    border:`1.5px solid ${platform.color}33`,
-                    display:'flex', alignItems:'center', justifyContent:'center',
-                    fontSize:'1.1rem',
-                  }}>{platform.emoji}</span>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</div>
-                    <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
+              {SOCIAL_PLATFORMS.map(platform => {
+                const isConnected = !!connectedSocial[platform.id];
+                const isConnecting = socialConnecting === platform.id;
+                return (
+                  <div key={platform.id} style={{
+                    display:'flex', alignItems:'center', gap:12,
+                    padding:'10px 14px', borderRadius:10,
+                    border: isConnected ? `1.5px solid ${platform.color}55` : '1.5px solid var(--border)',
+                    background: isConnected ? platform.color + '08' : 'var(--surface)',
+                  }}>
+                    <span style={{
+                      width:36, height:36, borderRadius:9, flexShrink:0,
+                      background: platform.color + '18',
+                      border:`1.5px solid ${platform.color}33`,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:'1.1rem',
+                    }}>{platform.emoji}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                        <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
+                        {isConnected && (
+                          <span style={{ fontSize:'.62rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'1px 5px', borderRadius:4 }}>✓ Connected</span>
+                        )}
+                        {platform.proRequired && !profile?.isPro && !isConnected && (
+                          <span style={{ fontSize:'.62rem', fontWeight:700, color:'#92400E', background:'#FEF3C7', padding:'1px 5px', borderRadius:4 }}>PRO</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
+                    </div>
+                    {platform.comingSoon ? (
+                      <span style={{ fontSize:'.68rem', fontWeight:700, color:'var(--muted)', background:'var(--bg-secondary)', padding:'4px 8px', borderRadius:6, flexShrink:0 }}>
+                        Coming Soon
+                      </span>
+                    ) : isConnected ? (
+                      <button
+                        className="btn btn-danger btn-sm"
+                        style={{ flexShrink:0, fontSize:'.72rem' }}
+                        onClick={() => disconnectSocial(platform.id)}
+                      >
+                        Disconnect
+                      </button>
+                    ) : platform.proRequired && !profile?.isPro ? (
+                      <button
+                        className="btn btn-sm btn-primary"
+                        style={{ flexShrink:0, fontSize:'.72rem' }}
+                        onClick={upgradeToPro}
+                      >
+                        Upgrade
+                      </button>
+                    ) : (
+                      <button
+                        className="btn btn-sm btn-outline"
+                        style={{ flexShrink:0, fontSize:'.72rem', borderColor: platform.color, color: platform.color, opacity: isConnecting ? .6 : 1 }}
+                        disabled={isConnecting}
+                        onClick={() => connectSocial(platform.id)}
+                      >
+                        {isConnecting ? '...' : 'Connect'}
+                      </button>
+                    )}
                   </div>
-                  <div style={{
-                    width:70, height:28, borderRadius:7,
-                    background:'var(--border)', opacity:.5,
-                  }} />
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Blur + lock overlay */}
