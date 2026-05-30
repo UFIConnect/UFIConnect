@@ -92,8 +92,6 @@ function catStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
-const PAGE_SIZE = 200;
-
 function PostText({ text }) {
   if (!text) return null;
   return (
@@ -512,7 +510,7 @@ export default function Feed() {
   const [search,        setSearch]       = useState('');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [videoPost,     setVideoPost]    = useState(null);
-  const [clientPage,    setClientPage]   = useState(1);
+  const [newPostsCount, setNewPostsCount]= useState(0);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
   const [liveActive,  setLiveActive]  = useState(false);
@@ -523,6 +521,7 @@ export default function Feed() {
   const knownIds      = useRef(new Set());
   const sentinelRef   = useRef(null);
   const sourceTabRef  = useRef('all');
+  const postsRef      = useRef([]);
 
   const loadFeed = useCallback(async (manual = false, source = null) => {
     if (manual) setRefreshing(true);
@@ -534,21 +533,28 @@ export default function Feed() {
         : (manual ? '/feed?bust=1' : '/feed');
       const { data } = await client.get(url);
       const incoming = data.posts || [];
+      if (manual) {
+        const prevIds = new Set(postsRef.current.map(p => p.id));
+        const fresh = incoming.filter(p => !prevIds.has(p.id)).length;
+        setNewPostsCount(fresh);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
       knownIds.current = new Set(incoming.map(p => p.id));
       setPosts(incoming);
-      setClientPage(1);
       setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
-      if (manual) window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
+  // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
+  useEffect(() => { postsRef.current = posts; }, [posts]);
+
   const switchTab = useCallback((key) => {
     setSourceTab(key);
     setSearch('');
-    setClientPage(1);
+    setNewPostsCount(0);
     const isPro = profile?.isPro;
     const isConnected = !!connectedSocial?.[key];
     // Pro social tabs only load if both Pro and connected; otherwise show the gate UI
@@ -669,27 +675,17 @@ export default function Feed() {
     return result;
   }, [posts, search, filters]);
 
-  // Infinite scroll: when sentinel is visible, advance client page or fetch remote page
+  // Infinite scroll: fetch next remote page when sentinel enters the viewport
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
     const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting) return;
-        // First exhaust client-side pages, then fetch from backend
-        setClientPage(prev => {
-          const nextClientEnd = (prev + 1) * PAGE_SIZE;
-          if (nextClientEnd < processed.length) return prev + 1;
-          // Client posts exhausted — fetch remote
-          loadMoreRemote();
-          return prev + 1;
-        });
-      },
-      { rootMargin: '200px' }
+      ([entry]) => { if (entry.isIntersecting) loadMoreRemote(); },
+      { rootMargin: '400px' }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [processed.length, loadMoreRemote]);
+  }, [loadMoreRemote]);
 
   // Close filter panel on outside click
   useEffect(() => {
@@ -712,9 +708,8 @@ export default function Feed() {
     [posts]
   );
 
-  const displayed   = processed.slice(0, clientPage * PAGE_SIZE);
-  const clientHasMore = displayed.length < processed.length;
-  const hasMore     = clientHasMore || remoteHasMore;
+  const displayed = processed; // render all locally-held posts — no artificial cap
+  const hasMore   = remoteHasMore;
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
@@ -756,7 +751,7 @@ export default function Feed() {
             className="form-input"
             placeholder="Search posts…"
             value={search}
-            onChange={e => { setSearch(e.target.value); setClientPage(1); }}
+            onChange={e => { setSearch(e.target.value); setNewPostsCount(0); }}
             style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
           />
           {search && (
@@ -784,7 +779,7 @@ export default function Feed() {
           {filterOpen && (
             <FilterPanel
               filters={filters}
-              onChange={f => { setFilters(f); setClientPage(1); }}
+              onChange={f => { setFilters(f); }}
               sources={ALL_FILTER_SOURCES}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
@@ -844,6 +839,20 @@ export default function Feed() {
           );
         })}
       </div>
+
+      {/* New-posts banner — shown after manual refresh */}
+      {newPostsCount > 0 && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+          padding: '8px 14px', borderRadius: 12,
+          background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+          fontSize: '.8rem', fontWeight: 600, color: 'var(--primary)',
+        }}>
+          <span>✨</span>
+          <span>{newPostsCount} new post{newPostsCount !== 1 ? 's' : ''} loaded</span>
+          <button onClick={() => setNewPostsCount(0)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.9rem' }}>×</button>
+        </div>
+      )}
 
       {/* Last refresh time */}
       {lastRefresh && (
@@ -924,9 +933,9 @@ export default function Feed() {
               <span className="spinner spinner-primary" />
             </div>
           )}
-          {!hasMore && displayed.length > PAGE_SIZE && (
+          {!hasMore && displayed.length > 0 && (
             <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.78rem', marginBottom: 24 }}>
-              All {displayed.length} posts shown · Hit Refresh for latest content
+              All {displayed.length.toLocaleString()} posts shown · Hit Refresh for latest content
             </div>
           )}
         </>

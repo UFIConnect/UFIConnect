@@ -4175,23 +4175,16 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
-  // Manual refresh: bust all caches so fresh data is fetched
+  // Manual refresh: clear per-source caches so fresh API calls are made.
+  // Do NOT clear globalFeedCache — workers continuously populate it with new posts;
+  // clearing it would throw away fresh content the workers already gathered.
   if (req.query.bust === '1') {
-    postCache.clear();
-    // Clear the global merged feed so stale posts aren't returned
-    globalFeedCache.posts = [];
-    globalFeedCache.refreshedAt = 0;
-    // For source-tab refresh, also bust per-fetcher caches and clear agentSourceCache entry
+    postCache.clear(); // clears all per-source fetcher caches (reddit_kw_*, hn_kw_*, etc.)
     const bustSource = req.query.source;
     if (bustSource) {
       const hnKeyMap = { hackernews: 'hn' };
       const agentKey = hnKeyMap[bustSource] || bustSource;
-      const prefix = CACHE_KEY_PREFIX[agentKey];
-      if (prefix) bustCachePrefix(prefix);
       agentSourceCache.delete(agentKey);
-    } else {
-      // Full refresh: clear all agent source caches so workers re-fetch immediately
-      agentSourceCache.clear();
     }
   }
 
@@ -4202,7 +4195,7 @@ app.get('/feed', authenticate, async (req, res) => {
   // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
   const reqPage = parseInt(req.query.page || '1', 10);
   if (reqPage > 1) {
-    const PAGE_LIMIT = 60;
+    const PAGE_LIMIT = 200;
     const offset     = (reqPage - 1) * PAGE_LIMIT;
     const source     = req.query.source || null; // optional source filter
     const userTopics = (prefs.interests || []).map(i => INTEREST_TO_KEYWORDS[i]).filter(Boolean);
@@ -4261,7 +4254,7 @@ app.get('/feed', authenticate, async (req, res) => {
   // Source tab: only fetch from the requested source; null = all sources (reduced topics)
   const sourceFilter = req.query.source || null;
   const sourcePage   = parseInt(req.query.page || '1', 10);
-  const SOURCE_PAGE_LIMIT = 60;
+  const SOURCE_PAGE_LIMIT = 200;
 
   // ── Source-tab page 2+: DB-only with offset (no live API calls) ───────────
   if (sourceFilter && sourcePage > 1) {
