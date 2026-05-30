@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
+import { ALL_ROLES, ROLE_TOPICS, EXTRA_INTERESTS } from '../data/roles';
 
 /* ─── Data ─────────────────────────────────────────────────────────────────── */
 
+// Legacy compact cards kept for backward-compat (first 29 preset roles shown when no search)
 const ROLES = [
   // Professional / Business
   { value: 'Engineer / Developer',     icon: '💻', label: 'Engineer / Developer',     desc: 'Software, ML, DevOps, Infrastructure' },
@@ -113,10 +115,14 @@ const ALL_INTERESTS = [
   'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
   // ── Family & Community ───────────────────────────────────────────────────────
   'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
+  // ── Extended (from 500-role expansion) ───────────────────────────────────────
+  ...EXTRA_INTERESTS,
 ];
 
 // Role → top suggested interests (shown first and pre-highlighted)
+// Seeded from compact legacy set; 500-role entries come from ROLE_TOPICS below.
 const ROLE_SUGGESTED = {
+  ...ROLE_TOPICS, // all 500 roles mapped to their topic affinities
   'Engineer / Developer':    ['AI & Machine Learning', 'Open Source', 'Cloud & DevOps', 'Backend Dev', 'Frontend Dev', 'Developer Tools', 'Cybersecurity', 'Side Projects', 'Career Growth', 'Data Science'],
   'Designer / Creative':     ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design', 'Photography', 'Film & Video', 'Creator Economy', 'Career Growth', '3D & CGI', 'Visual Storytelling'],
   'Product Manager':         ['SaaS', 'AI & Machine Learning', 'Growth Marketing', 'B2B / Enterprise', 'Product-Led Growth', 'Career Growth', 'UI/UX Design', 'Data Science', 'Startups', 'Customer Experience'],
@@ -220,6 +226,7 @@ export default function Onboarding() {
   const [step,       setStep]       = useState(ctxRole ? 1 : 0);
   const [role,       setRole]       = useState(ctxRole);
   const [customRole, setCustomRole] = useState('');
+  const [roleSearch, setRoleSearch] = useState('');
   const [interests,  setInterests]  = useState(
     ctxRole && ctxPreInterests.length > 0 ? ctxPreInterests.slice(0, 5) : []
   );
@@ -278,6 +285,14 @@ export default function Onboarding() {
     }
   }
 
+  const filteredRoles = useMemo(() => {
+    const q = roleSearch.trim().toLowerCase();
+    if (!q) return ALL_ROLES;
+    return ALL_ROLES.filter(r =>
+      r.value.toLowerCase().includes(q) || r.desc.toLowerCase().includes(q)
+    );
+  }, [roleSearch]);
+
   const progress = ((step) / STEPS.length) * 100;
 
   return (
@@ -304,52 +319,75 @@ export default function Onboarding() {
         {step === 0 && (
           <>
             <h1 className="onboarding-title">What best describes you?</h1>
-            <p className="onboarding-sub">We'll tailor your feed, communities, and opportunities around your role.</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10, marginBottom: 24 }}>
-              {ROLES.map(({ value, icon, label, desc }) => (
+            <p className="onboarding-sub">Choose from 500+ roles or type yours below. We'll tailor your feed and communities to match.</p>
+
+            {/* Role search */}
+            <div style={{ position: 'relative', marginBottom: 14 }}>
+              <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', opacity: 0.4, pointerEvents: 'none' }}>🔍</span>
+              <input
+                className="form-input"
+                placeholder="Search roles… e.g. nurse, lawyer, ML engineer"
+                value={roleSearch}
+                onChange={e => setRoleSearch(e.target.value)}
+                style={{ paddingLeft: 38, borderRadius: 22, fontSize: '.875rem', width: '100%' }}
+              />
+              {roleSearch && (
+                <button onClick={() => setRoleSearch('')} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
+              )}
+            </div>
+            {roleSearch && (
+              <div style={{ fontSize: '.74rem', color: 'var(--muted)', marginBottom: 10 }}>
+                {filteredRoles.length} role{filteredRoles.length !== 1 ? 's' : ''} found
+              </div>
+            )}
+
+            <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 4, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 4 }}>
+              {filteredRoles.map(({ value, icon, label, desc }) => (
                 <button
                   key={value}
-                  onClick={() => setRole(value)}
+                  onClick={() => { setRole(value); setCustomRole(''); }}
                   style={{
-                    padding: '14px 16px', borderRadius: 14, border: `2px solid ${role === value ? 'var(--primary)' : 'var(--border)'}`,
+                    padding: '12px 14px', borderRadius: 14, border: `2px solid ${role === value ? 'var(--primary)' : 'var(--border)'}`,
                     background: role === value ? 'var(--primary-light)' : 'var(--surface)',
                     cursor: 'pointer', textAlign: 'left', transition: 'all .2s',
                     transform: role === value ? 'scale(1.02)' : 'scale(1)',
                     boxShadow: role === value ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                   }}
                 >
-                  <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>{icon}</div>
-                  <div style={{ fontWeight: 700, fontSize: '.88rem', color: role === value ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
-                    {label.replace(icon, '').trim()}
+                  <div style={{ fontSize: '1.3rem', marginBottom: 5 }}>{icon}</div>
+                  <div style={{ fontWeight: 700, fontSize: '.83rem', color: role === value ? 'var(--primary)' : 'var(--text)', marginBottom: 2, lineHeight: 1.3 }}>
+                    {label}
                   </div>
-                  <div style={{ fontSize: '.74rem', color: 'var(--muted)', lineHeight: 1.4 }}>{desc}</div>
+                  <div style={{ fontSize: '.7rem', color: 'var(--muted)', lineHeight: 1.35 }}>{desc}</div>
                   {role === value && (
-                    <div style={{ marginTop: 8, fontSize: '.7rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Selected</div>
+                    <div style={{ marginTop: 6, fontSize: '.68rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Selected</div>
                   )}
                 </button>
               ))}
 
-              {/* Other / Custom role card */}
+              {/* Other / Custom role card — always shown at the bottom */}
               <button
                 onClick={() => setRole('__custom__')}
                 style={{
-                  padding: '14px 16px', borderRadius: 14, border: `2px solid ${role === '__custom__' ? 'var(--primary)' : 'var(--border)'}`,
+                  padding: '12px 14px', borderRadius: 14, border: `2px solid ${role === '__custom__' ? 'var(--primary)' : 'var(--border)'}`,
                   background: role === '__custom__' ? 'var(--primary-light)' : 'var(--surface)',
                   cursor: 'pointer', textAlign: 'left', transition: 'all .2s',
                   transform: role === '__custom__' ? 'scale(1.02)' : 'scale(1)',
                   boxShadow: role === '__custom__' ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                 }}
               >
-                <div style={{ fontSize: '1.5rem', marginBottom: 6 }}>✏️</div>
-                <div style={{ fontWeight: 700, fontSize: '.88rem', color: role === '__custom__' ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
+                <div style={{ fontSize: '1.3rem', marginBottom: 5 }}>✏️</div>
+                <div style={{ fontWeight: 700, fontSize: '.83rem', color: role === '__custom__' ? 'var(--primary)' : 'var(--text)', marginBottom: 2, lineHeight: 1.3 }}>
                   Other / Custom
                 </div>
-                <div style={{ fontSize: '.74rem', color: 'var(--muted)', lineHeight: 1.4 }}>My role isn't listed — I'll describe it</div>
+                <div style={{ fontSize: '.7rem', color: 'var(--muted)', lineHeight: 1.35 }}>My role isn't listed — I'll describe it</div>
                 {role === '__custom__' && (
-                  <div style={{ marginTop: 8, fontSize: '.7rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Selected</div>
+                  <div style={{ marginTop: 6, fontSize: '.68rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Selected</div>
                 )}
               </button>
             </div>
+            </div> {/* end scrollable wrapper */}
 
             {/* Custom role text input — visible only when "Other" is selected */}
             {role === '__custom__' && (
