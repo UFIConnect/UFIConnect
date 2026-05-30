@@ -69,6 +69,7 @@ const SOURCE_TABS = [
 ];
 
 const PRO_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'devto', 'medium', 'youtube',
@@ -528,12 +529,21 @@ export default function Feed() {
     else setLoading(true);
     try {
       const src = source && source !== 'all' ? source : null;
-      const url = src
-        ? (manual ? `/feed?source=${encodeURIComponent(src)}&bust=1` : `/feed?source=${encodeURIComponent(src)}`)
-        : (manual ? '/feed?bust=1' : '/feed');
+      const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
+      if (src) params.set('source', src);
+      if (manual) {
+        params.set('bust', '1');
+        params.set('live', '1');
+      }
+      const url = `/feed?${params.toString()}`;
       const { data } = await client.get(url);
       const incoming = data.posts || [];
       if (manual) {
+        if (incoming.length === 0 && postsRef.current.length > 0) {
+          setNewPostsCount(0);
+          setLastRefresh(new Date());
+          return;
+        }
         const prevIds = new Set(postsRef.current.map(p => p.id));
         const fresh = incoming.filter(p => !prevIds.has(p.id)).length;
         setNewPostsCount(fresh);
@@ -568,12 +578,12 @@ export default function Feed() {
     setLoadingMore(true);
     try {
       const srcParam = sourceTab !== 'all' ? `&source=${encodeURIComponent(sourceTab)}` : '';
-      const { data } = await client.get(`/feed?page=${remotePage}${srcParam}`);
+      const { data } = await client.get(`/feed?page=${remotePage}&limit=${FEED_PAGE_SIZE}${srcParam}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
       if (incoming.length > 0) setPosts(prev => [...prev, ...incoming]);
       setRemotePage(p => p + 1);
-      setRemoteHasMore(data.hasMore !== false && incoming.length > 0);
+      setRemoteHasMore(data.hasMore !== false);
     } catch {}
     finally { setLoadingMore(false); }
   }, [loadingMore, remoteHasMore, remotePage, sourceTab]);
@@ -675,6 +685,12 @@ export default function Feed() {
     return result;
   }, [posts, search, filters]);
 
+  useEffect(() => {
+    const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
+    if (!hasNarrowFilter || loading || loadingMore || !remoteHasMore) return;
+    if (processed.length < 20) loadMoreRemote();
+  }, [filters, search, processed.length, loading, loadingMore, remoteHasMore, loadMoreRemote]);
+
   // Infinite scroll: fetch next remote page when sentinel enters the viewport
   useEffect(() => {
     const el = sentinelRef.current;
@@ -755,7 +771,7 @@ export default function Feed() {
             style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
           />
           {search && (
-            <button type="button" onClick={() => { setSearch(''); setClientPage(1); }}
+            <button type="button" onClick={() => { setSearch(''); setNewPostsCount(0); }}
               style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
           )}
         </div>

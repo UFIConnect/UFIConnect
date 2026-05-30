@@ -2791,8 +2791,11 @@ function startContinuousWorkers() {
 const GLOBAL_FEED_CACHE_LIMIT = 10000;
 const SOURCE_FEED_CACHE_LIMIT = 2000;
 const DEFAULT_FEED_LIMIT = 250;
-const MAX_FEED_LIMIT = 500;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
+
+function feedWorkerKey(source) {
+  return source === 'hackernews' ? 'hn' : source;
+}
 
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
 const agentSourceCache = new Map();
@@ -3821,23 +3824,31 @@ async function savePostsToDB(posts) {
 }
 
 // ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
-async function getPostsFromDB(topics = [], limit = 5000, offset = 0) {
+async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null) {
   if (!db.isConnected()) return [];
   try {
-    const { rows } = topics.length
-      ? await db.query(
-          `SELECT * FROM feed_posts_cache
-           WHERE topic = ANY($1::text[])
-           ORDER BY post_created_at DESC, likes_count DESC
-           LIMIT $2 OFFSET $3`,
-          [topics, limit, offset]
-        )
-      : await db.query(
-          `SELECT * FROM feed_posts_cache
-           ORDER BY post_created_at DESC, likes_count DESC
-           LIMIT $1 OFFSET $2`,
-          [limit, offset]
-        );
+    const clauses = [];
+    const params = [];
+    if (topics.length) {
+      params.push(topics);
+      clauses.push(`topic = ANY($${params.length}::text[])`);
+    }
+    if (source) {
+      params.push(source);
+      clauses.push(`source = $${params.length}`);
+    }
+    params.push(limit);
+    const limitParam = params.length;
+    params.push(offset);
+    const offsetParam = params.length;
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const { rows } = await db.query(
+      `SELECT * FROM feed_posts_cache
+       ${where}
+       ORDER BY post_created_at DESC, likes_count DESC
+       LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      params
+    );
     return rows.map(r => ({
       id:          r.id,
       source:      r.source,
@@ -4311,33 +4322,52 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
-  // Manual refresh: clear per-source caches so fresh API calls are made.
-  // Do NOT clear globalFeedCache — workers continuously populate it with new posts;
-  // clearing it would throw away fresh content the workers already gathered.
+  // Manual refresh is stale-while-revalidate: serve the best current feed now, then
+  // ask the workers to refresh in the background so a slow source cannot blank a tab.
   if (req.query.bust === '1') {
-    postCache.clear(); // clears all per-source fetcher caches (reddit_kw_*, hn_kw_*, etc.)
     const bustSource = req.query.source;
     if (bustSource) {
-      const hnKeyMap = { hackernews: 'hn' };
-      const agentKey = hnKeyMap[bustSource] || bustSource;
-      agentSourceCache.delete(agentKey);
+      const agentKey = feedWorkerKey(bustSource);
+      const fetcher = SOURCE_FETCHERS[agentKey];
+      setImmediate(() => {
+        const prefix = CACHE_KEY_PREFIX[agentKey];
+        if (prefix) bustCachePrefix(prefix);
+        if (fetcher) fetcher().catch(() => {});
+      });
+    } else {
+      setImmediate(() => {
+        postCache.clear();
+        refreshGlobalFeedCache().catch(() => {});
+      });
     }
   }
 
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
+  const sourceFilter = req.query.source || null;
+  const feedLimit = Math.max(
+    parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
+    1
+  );
 
   // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
   const reqPage = parseInt(req.query.page || '1', 10);
   if (reqPage > 1) {
-    const PAGE_LIMIT = 200;
-    const offset     = (reqPage - 1) * PAGE_LIMIT;
-    const source     = req.query.source || null; // optional source filter
-    const userTopics = (prefs.interests || []).map(interestKeyword).filter(Boolean);
-    const dbRows     = await getPostsFromDB(userTopics, PAGE_LIMIT + 1, offset);
-    const hasMore    = dbRows.length > PAGE_LIMIT;
-    const pageRows   = dbRows.slice(0, PAGE_LIMIT);
+    const offset     = (reqPage - 1) * feedLimit;
+    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, sourceFilter);
+    let hasMore      = dbRows.length > feedLimit;
+    let pageRows     = dbRows.slice(0, feedLimit);
+
+    if (!dbRows.length) {
+      const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
+      const memoryRows = sourceFilter
+        ? (agentSourceCache.get(agentKey)?.posts || [])
+        : globalFeedCache.posts;
+      pageRows = memoryRows.slice(offset, offset + feedLimit + 1);
+      hasMore = pageRows.length > feedLimit;
+      pageRows = pageRows.slice(0, feedLimit);
+    }
 
     function mapDbPost(p) {
       const grp = groups.find(g => g.id === p.groupId);
@@ -4351,8 +4381,7 @@ app.get('/feed', authenticate, async (req, res) => {
       };
     }
 
-    let result = pageRows.map(mapDbPost);
-    if (source) result = result.filter(p => p.source === source);
+    const result = pageRows.map(mapDbPost);
 
     return res.json({ posts: result, page: reqPage, hasMore });
   }
@@ -4388,35 +4417,6 @@ app.get('/feed', authenticate, async (req, res) => {
   }
 
   // Source tab: only fetch from the requested source; null = all sources (reduced topics)
-  const sourceFilter = req.query.source || null;
-  const sourcePage   = parseInt(req.query.page || '1', 10);
-  const SOURCE_PAGE_LIMIT = 200;
-  const feedLimit = Math.min(
-    Math.max(parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT, 1),
-    MAX_FEED_LIMIT
-  );
-
-  // ── Source-tab page 2+: DB-only with offset (no live API calls) ───────────
-  if (sourceFilter && sourcePage > 1) {
-    if (!db.isConnected()) return res.json({ posts: [], source: sourceFilter, hasMore: false });
-    const offset = (sourcePage - 1) * SOURCE_PAGE_LIMIT;
-    const { rows } = await db.query(
-      `SELECT * FROM feed_posts_cache WHERE source = $1
-       ORDER BY post_created_at DESC, likes_count DESC
-       LIMIT $2 OFFSET $3`,
-      [sourceFilter, SOURCE_PAGE_LIMIT + 1, offset]
-    ).catch(() => ({ rows: [] }));
-    const hasMore = rows.length > SOURCE_PAGE_LIMIT;
-    const page    = rows.slice(0, SOURCE_PAGE_LIMIT).map(r => mapExternalPost({
-      id: r.id, source: r.source, title: r.title, content: r.content,
-      sourceUrl: r.source_url, mediaUrl: r.media_url, mediaType: r.media_type,
-      topic: r.topic, likesCount: r.likes_count, commentsCount: r.comments_count,
-      createdAt: r.post_created_at, isExternal: true,
-      author: { name: r.author_name }, groupId: null, group: null,
-    }, sourceFilter));
-    return res.json({ posts: page, source: sourceFilter, hasMore, page: sourcePage });
-  }
-
   const emptyLiveResult = {
     reddit: [], hn: [], github: [], devto: [], medium: [], youtube: [],
     stackoverflow: [], mastodon: [], lobsters: [], arxiv: [], indeed: [],
@@ -4463,22 +4463,26 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // ── Source-tab: always serve worker cache + live fetch, newest-first ────────
   if (sourceFilter) {
-    const hnKeyMap  = { hackernews: 'hn' };
-    const agentKey  = hnKeyMap[sourceFilter] || sourceFilter;
+    const agentKey  = feedWorkerKey(sourceFilter);
 
     const workerPosts = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
+    const globalSourcePosts = globalFeedCache.posts
+      .filter(p => p.source === sourceFilter)
+      .map(p => mapExternalPost(p, sourceFilter));
     const livePosts   = (liveResult[agentKey] || []).map(p => mapExternalPost(p, sourceFilter));
+    const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
+    const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     savePostsToDB(livePosts).catch(() => {});
 
     const seen = new Set();
-    const result = [...livePosts, ...workerPosts]
+    const result = [...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts]
       .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
     return res.json({
       posts: result.slice(0, feedLimit),
       source: sourceFilter,
-      hasMore: result.length > feedLimit,
+      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
     });
   }
