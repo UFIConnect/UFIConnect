@@ -374,6 +374,17 @@ function YouTubeCard({ post }) {
 }
 
 /** Unified post card */
+function commentUrl(post) {
+  const u = post.sourceUrl || '';
+  switch (post.source) {
+    case 'devto':       return u.includes('#') ? u : `${u}#comments`;
+    case 'hackernews':  return u; // HN item page IS the comments page
+    case 'youtube':     return u; // scroll to comments on YouTube
+    case 'github':      return u; // issue/PR page has comments
+    default:            return u;
+  }
+}
+
 function PostCard({ post, onVideoOpen }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
@@ -388,8 +399,8 @@ function PostCard({ post, onVideoOpen }) {
   const hasVideo     = post.mediaUrl && post.mediaType === 'video';
   const isReddit     = post.source === 'reddit';
   const commentCount = post.commentsCount || 0;
-  const likeCount    = post.likesCount    || 0;
-  const isTruncated  = post.content && post.content.trim().endsWith('…') || post.content?.trim().endsWith('...');
+  const isTruncated  = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
+  const commUrl      = commentUrl(post);
 
   async function toggleComments() {
     if (showComments) { setShowComments(false); return; }
@@ -483,11 +494,6 @@ function PostCard({ post, onVideoOpen }) {
 
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        {likeCount > 0 && (
-          <span style={{ fontSize: '.75rem', color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-            ❤️ {likeCount.toLocaleString()}
-          </span>
-        )}
         {commentCount > 0 && (
           <button
             onClick={toggleComments}
@@ -531,12 +537,12 @@ function PostCard({ post, onVideoOpen }) {
             </div>
           ))}
           {!commentsLoading && isReddit && comments?.length === 0 && (
-            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: 0 }}>No comments loaded.</p>
+            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No comments found.</p>
           )}
-          {!isReddit && post.sourceUrl && (
-            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontSize: '.8rem', color: src.color, fontWeight: 600 }}>
-              {src.icon} View {commentCount.toLocaleString()} comments on {src.label} ↗
+          {commUrl && (
+            <a href={commUrl} target="_blank" rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontSize: '.8rem', color: src.color, fontWeight: 600, marginTop: isReddit && comments?.length > 0 ? 10 : 0, paddingTop: isReddit && comments?.length > 0 ? 10 : 0, borderTop: isReddit && comments?.length > 0 ? '1px solid var(--border)' : 'none' }}>
+              {src.icon} View {commentCount > 0 ? `${commentCount.toLocaleString()} comments` : 'comments'} on {src.label} ↗
             </a>
           )}
         </div>
