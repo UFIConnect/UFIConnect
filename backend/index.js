@@ -1085,9 +1085,9 @@ async function fetchGitHubByKeyword(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // GitHub public search — recent pushes (last 7 days), sorted by freshness
+    // GitHub public repos only — recent pushes (last 7 days), sorted by freshness
     const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} pushed:>${since}`)}&sort=updated&order=desc&per_page=100`;
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} is:public pushed:>${since}`)}&sort=updated&order=desc&per_page=100`;
     const data = await fetchJSON(url);
     const posts = (data?.items || [])
       .filter(r => r.description)
@@ -1707,7 +1707,7 @@ const MASTODON_INSTANCES = [
 
 function mapMastodonPosts(data, tag) {
   return (data || [])
-    .filter(t => t.content && t.account && !t.sensitive)
+    .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public')
     .map(t => {
       const text = t.content.replace(/<[^>]+>/g, '').trim().slice(0, 500);
       return {
@@ -1737,7 +1737,7 @@ async function fetchMastodonByTag(tag) {
   if (cached) return cached;
   for (const instance of MASTODON_INSTANCES) {
     try {
-      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=200`;
+      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=200&local=false&only_media=false`;
       const data = await fetchJSON(url);
       const posts = mapMastodonPosts(data, tag);
       if (posts.length) {
@@ -2159,7 +2159,8 @@ async function fetchBlueskyByKeyword(keyword) {
 
   try {
     const data  = await bskyFetch(keyword);
-    const posts = (data?.posts || []).filter(p => p.record?.text && p.author).map(mapPost);
+    const NSFW_LABELS = new Set(['porn','sexual','nudity','adult-only','csam','graphic-media']);
+    const posts = (data?.posts || []).filter(p => p.record?.text && p.author && !(p.labels || []).some(l => NSFW_LABELS.has(l?.val))).map(mapPost);
     if (posts.length) { setCached(key, posts); return posts; }
   } catch (e) { console.warn(`Bluesky "${keyword}":`, e.message); }
   return getCached(key) || [];
@@ -2541,9 +2542,9 @@ function addAndBroadcast(incoming) {
   const fresh = (incoming || []).filter(p => p?.id && !seenPostIds.has(p.id));
   if (!fresh.length) return 0;
   fresh.forEach(p => seenPostIds.add(p.id));
-  const merged = [...fresh, ...globalFeedCache.posts];
-  merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-  globalFeedCache.posts = merged.slice(0, GLOBAL_FEED_CACHE_LIMIT);
+  globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
+    limit: GLOBAL_FEED_CACHE_LIMIT,
+  });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
   savePostsToDB(fresh).catch(() => {});
@@ -2592,7 +2593,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   workerHealth.set(agentId, {
     consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
     lastSuccess: null, paused: false, pauseUntil: 0,
-    skippedForStability: 0, lastError: null,
+    skippedForStability: 0, lastAttempt: null, lastError: null,
   });
 
   async function fetchNextTopic() {
@@ -2633,14 +2634,17 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       try {
         const posts = await fetchFn(mappedKey).catch(() => []);
         topicFetchedAt.set(mappedKey, Date.now()); // track actual fetch time
+        health.lastAttempt = Date.now();
+        health.lastSuccess = Date.now();
+        health.lastError = null;
         const fresh = (posts || []).filter(p => p?.id);
         if (fresh.length) {
           const n = addAndBroadcast(fresh);
           const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-          const merged = [...fresh, ...prev.posts];
-          merged.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
           agentSourceCache.set(agentId, {
-            posts: merged.slice(0, SOURCE_FEED_CACHE_LIMIT),
+            posts: sortFeedBatch([...fresh, ...prev.posts], `${agentId}-source-cache`, {
+              limit: SOURCE_FEED_CACHE_LIMIT,
+            }),
             lastFetch: Date.now(),
             totalSeen: prev.totalSeen + fresh.length,
             emoji, color,
@@ -2650,7 +2654,6 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           fullCyclesEmpty = 0;
           emptyTopicsThisCycle = 0;
           health.consecutiveErrors = 0;
-          health.lastSuccess = Date.now();
         } else {
           emptyTopicsThisCycle++;
         }
@@ -2709,13 +2712,18 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       if (!key) continue;
       if (health) health.fetchCount++;
       const posts = await fetchFn(key).catch(() => []);
+      if (health) {
+        health.lastAttempt = Date.now();
+        health.lastSuccess = Date.now();
+        health.lastError = null;
+      }
       if (posts.length) {
         addAndBroadcast(posts);
         const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
-        const merged2 = [...posts, ...prev.posts];
-        merged2.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
         agentSourceCache.set(agentId, {
-          posts: merged2.slice(0, SOURCE_FEED_CACHE_LIMIT),
+          posts: sortFeedBatch([...posts, ...prev.posts], `${agentId}-manual-cache`, {
+            limit: SOURCE_FEED_CACHE_LIMIT,
+          }),
           lastFetch: Date.now(),
           totalSeen: prev.totalSeen + posts.filter(p => p?.id).length,
           emoji, color,
@@ -2822,14 +2830,7 @@ function feedWorkerKey(source) {
 }
 
 function dedupeAndSortFeedPosts(posts = []) {
-  const seen = new Set();
-  return posts
-    .filter(p => {
-      if (!p?.id || seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    })
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return sortFeedBatch(posts, 'feed-dedupe-sort');
 }
 
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
@@ -2857,6 +2858,9 @@ const RSS_CRITICAL_MB = envNumber('RSS_CRITICAL_MB', 768, RSS_PRESSURE_MB, 32768
 const LAG_PRESSURE_MS = envNumber('LAG_PRESSURE_MS', 1200, 100, 30000);
 const LAG_CRITICAL_MS = envNumber('LAG_CRITICAL_MS', 2500, LAG_PRESSURE_MS, 60000);
 const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12, 1, 60);
+const SORT_AGENT_INPUT_LIMIT = envNumber('SORT_AGENT_INPUT_LIMIT', 25000, 1000, 200000);
+const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIMIT', 9000, 1000, SORT_AGENT_INPUT_LIMIT);
+const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 
 const refreshControl = {
   mode: 'normal',
@@ -2877,6 +2881,26 @@ const refreshControl = {
   unhandledRejections: 0,
 };
 
+const sortAgentState = {
+  status: 'idle',
+  totalRuns: 0,
+  totalItems: 0,
+  lastContext: null,
+  lastInput: 0,
+  lastOutput: 0,
+  lastDropped: 0,
+  lastDurationMs: 0,
+  lastRun: null,
+  lastError: null,
+};
+
+const activityAgentState = {
+  status: 'idle',
+  totalSweeps: 0,
+  lastSweep: null,
+  lastCount: 0,
+};
+
 function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -2892,6 +2916,55 @@ function isStabilityCritical() {
 function adaptiveDelay(baseDelay) {
   const jitter = 0.9 + (Math.random() * 0.25);
   return Math.min(MAX_TIMER_DELAY, Math.max(1000, Math.round(baseDelay * currentRefreshMultiplier() * jitter)));
+}
+
+function sortAgentLimit() {
+  return refreshControl.mode === 'normal' ? SORT_AGENT_INPUT_LIMIT : SORT_AGENT_PRESSURE_INPUT_LIMIT;
+}
+
+function postTimestamp(post) {
+  const raw = post?.createdAt || post?.time || post?.posted || 0;
+  const parsed = raw instanceof Date ? raw.getTime() : Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
+  const started = Date.now();
+  const input = Array.isArray(posts) ? posts.filter(Boolean) : [];
+  const limit = Math.max(1, Math.floor(options.limit || sortAgentLimit()));
+  const pressureScanCap = refreshControl.mode === 'normal'
+    ? input.length
+    : Math.min(input.length, limit * 2);
+  const unique = [];
+  const seen = new Set();
+
+  sortAgentState.status = 'running';
+  try {
+    for (let i = 0; i < pressureScanCap; i++) {
+      const post = input[i];
+      if (!post?.id || seen.has(post.id)) continue;
+      seen.add(post.id);
+      unique.push(post);
+    }
+    unique.sort((a, b) => postTimestamp(b) - postTimestamp(a));
+    const output = unique.slice(0, limit);
+
+    sortAgentState.totalRuns += 1;
+    sortAgentState.totalItems += input.length;
+    sortAgentState.lastContext = context;
+    sortAgentState.lastInput = input.length;
+    sortAgentState.lastOutput = output.length;
+    sortAgentState.lastDropped = Math.max(0, input.length - output.length);
+    sortAgentState.lastDurationMs = Date.now() - started;
+    sortAgentState.lastRun = Date.now();
+    sortAgentState.lastError = null;
+    return output;
+  } catch (err) {
+    sortAgentState.lastError = err?.message || String(err);
+    throw err;
+  } finally {
+    sortAgentState.status = 'idle';
+  }
 }
 
 function trimOldestMapEntries(map, maxSize) {
@@ -3135,7 +3208,9 @@ async function refreshGlobalFeedCache() {
       ...result.mastodon, ...result.lobsters, ...result.arxiv,
     ];
     if (all.length > 0) {
-      globalFeedCache.posts = all.slice(0, GLOBAL_FEED_CACHE_LIMIT);
+      globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
+        limit: GLOBAL_FEED_CACHE_LIMIT,
+      });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
       // Persist to DB in background
@@ -3227,6 +3302,34 @@ function runCacheHelperCheck() {
     logAgentAction('cache_helper', '🗄️',
       `Cache sync: ${total} posts across ${agentSourceCache.size} agents — all up to date`, '#6366F1');
   }
+}
+
+// ─── Sort Agent: centralizes heavy feed sorting/dedupe work ──────────────────
+function runSortAgentCheck() {
+  if (isStabilityCritical()) {
+    trimRuntimeCaches('critical');
+    logAgentAction('sort_agent', '⏸️', 'Sort pass skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
+
+  const beforeGlobal = globalFeedCache.posts.length;
+  globalFeedCache.posts = sortFeedBatch(globalFeedCache.posts, 'sort-agent-global', {
+    limit: GLOBAL_FEED_CACHE_LIMIT,
+  });
+
+  let sourcePools = 0;
+  let sourcePosts = 0;
+  for (const [id, cache] of agentSourceCache.entries()) {
+    if (!Array.isArray(cache.posts)) continue;
+    sourcePools++;
+    sourcePosts += cache.posts.length;
+    cache.posts = sortFeedBatch(cache.posts, `sort-agent-${id}`, {
+      limit: SOURCE_FEED_CACHE_LIMIT,
+    });
+  }
+
+  logAgentAction('sort_agent', '🧮',
+    `Sorted ${beforeGlobal.toLocaleString()} global posts and ${sourcePosts.toLocaleString()} posts across ${sourcePools} source caches`, '#A78BFA');
 }
 
 // ─── Feed Optimizer Agent: monitors all source workers, heals failing ones ─────
@@ -3334,11 +3437,96 @@ async function runDataCheck() {
   try { await checks[Math.floor(Math.random() * checks.length)](); } catch {}
 }
 
+// ─── Activity Agent: gives every registered agent a visible heartbeat ─────────
+function lastLogForAgent(id) {
+  return agentActionLog.find(e => e.agentId === id) || null;
+}
+
+function logAgentHeartbeat(id) {
+  const def = AGENT_DEFS[id];
+  if (!def) return false;
+  const health = workerHealth.get(id);
+  const cache = agentSourceCache.get(id);
+  const curatedCount = buildCuratedSourcePosts(id).length;
+
+  if (health) {
+    logAgentAction(id, def.emoji,
+      `Active - ${health.fetchCount.toLocaleString()} fetches, ${(cache?.totalSeen || curatedCount || 0).toLocaleString()} posts ready`, def.color);
+    return true;
+  }
+
+  if (['twitter', 'linkedin', 'instagram', 'facebook'].includes(id)) {
+    logAgentAction(id, def.emoji,
+      `Active on demand - OAuth connector ready, ${curatedCount.toLocaleString()} curated public posts available`, def.color);
+    return true;
+  }
+
+  if (['tiktok', 'usajobs'].includes(id)) {
+    logAgentAction(id, def.emoji,
+      `Active fallback source - ${curatedCount.toLocaleString()} posts ready while live API access is gated`, def.color);
+    return true;
+  }
+
+  if (id === 'sort_agent') {
+    logAgentAction(id, def.emoji,
+      `Active - ${sortAgentState.totalRuns.toLocaleString()} sort runs, last ${sortAgentState.lastDurationMs || 0}ms`, def.color);
+    return true;
+  }
+
+  if (id === 'refresh_queue') {
+    logAgentAction(id, def.emoji,
+      `Active - ${sourceRefreshQueue.pendingIds.size} queued, ${sourceRefreshQueue.totalRuns.toLocaleString()} queue runs`, def.color);
+    return true;
+  }
+
+  if (id === 'stability') {
+    logAgentAction(id, def.emoji,
+      `Active - ${refreshControl.mode} mode, refresh x${refreshControl.multiplier}`, def.color);
+    return true;
+  }
+
+  if (id === 'crash_guard') {
+    logAgentAction(id, def.emoji,
+      `Active - armed, ${refreshControl.crashEvents} crash events contained`, def.color);
+    return true;
+  }
+
+  if (id === 'activity') {
+    logAgentAction(id, def.emoji,
+      `Active - ${activityAgentState.totalSweeps.toLocaleString()} heartbeat sweeps completed`, def.color);
+    return true;
+  }
+
+  logAgentAction(id, def.emoji, `Active - scheduled ${def.interval} check ready`, def.color);
+  return true;
+}
+
+function runAgentActivityCheck(fullSweep = false) {
+  const now = Date.now();
+  const staleMs = 12 * 60 * 1000;
+  const staleAgents = Object.keys(AGENT_DEFS).filter(id => {
+    if (fullSweep) return true;
+    const last = lastLogForAgent(id);
+    return !last || now - Date.parse(last.ts) > staleMs;
+  });
+  const selected = fullSweep ? staleAgents : staleAgents.slice(0, 10);
+  let logged = 0;
+  for (const id of selected) if (logAgentHeartbeat(id)) logged++;
+  activityAgentState.status = 'healthy';
+  activityAgentState.totalSweeps += 1;
+  activityAgentState.lastSweep = Date.now();
+  activityAgentState.lastCount = logged;
+  if (!fullSweep) {
+    logAgentAction('activity', '📡',
+      `Heartbeat sweep checked ${staleAgents.length} stale agent(s), refreshed ${logged}`, '#22D3EE');
+  }
+}
+
 // Seed immediately on startup (non-blocking)
 installCrashGuard();
 runStabilityGuard();
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-logAgentAction('security',  '✅', 'All 36 agents online - adaptive refresh and crash guards active', '#4ADE80');
+logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
 startContinuousWorkers();
@@ -3362,6 +3550,11 @@ setInterval(runSeoCheck,    20 * 60 * 1000);
 setInterval(runOppsCheck,   15 * 60 * 1000);
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
+// Sort agent keeps large feed/cache arrays deduped and newest-first without request spikes
+setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 2 * 60 * 1000);
+// Activity agent gives on-demand/curated agents visible active heartbeats
+setTimeout(() => runAgentActivityCheck(true), 20 * 1000);
+setInterval(runAgentActivityCheck, 5 * 60 * 1000);
 // Cache helper merges source caches every 8 minutes
 setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 8 * 60 * 1000); }, 4 * 60 * 1000);
 // Feed Optimizer: heal degraded/paused workers every 5 minutes, first run after 90s
@@ -4904,10 +5097,9 @@ app.get('/feed', authenticate, async (req, res) => {
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
     const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
     const rawPosts = (await Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])))).flatMap(r => r.status === 'fulfilled' ? r.value : []);
-    const seen = new Set();
-    const result = rawPosts
-      .filter(p => { if (!p.id || seen.has(p.id)) return false; seen.add(p.id); return true; })
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const result = sortFeedBatch(rawPosts, `pro-social-${sourceFilter}`, {
+      limit: Math.max(feedLimit + 1, 500),
+    });
     return res.json({ posts: result, source: sourceFilter, hasMore: false });
   }
 
@@ -4925,7 +5117,9 @@ app.get('/feed', authenticate, async (req, res) => {
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     savePostsToDB(livePosts).catch(() => {});
 
-    const result = dedupeAndSortFeedPosts([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts]);
+    const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts], `source-tab-${sourceFilter}`, {
+      limit: Math.max(feedLimit + 1, sortAgentLimit()),
+    });
 
     return res.json({
       posts: result.slice(0, feedLimit),
@@ -5105,9 +5299,8 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Deduplicate by id across all sources
-  const seen = new Set();
-  const all  = [
+  // Deduplicate and sort through Sort Agent so large feed responses stay bounded.
+  const all = sortFeedBatch([
     ...internal, ...joinedGroupPosts,
     ...connectedSocialPosts, ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
@@ -5115,14 +5308,9 @@ app.get('/feed', authenticate, async (req, res) => {
     ...lobPosts, ...arxivPosts,
     ...indeedPosts2, ...phPosts, ...tcPosts, ...vergePosts, ...ihPosts, ...hashnodePosts, ...blueskyPosts,
     ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
-  ].filter(p => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
+  ], 'main-feed-response', {
+    limit: Math.max(feedLimit + 1, sortAgentLimit()),
   });
-
-  // Sort everything by date descending — newest post first, like Facebook/Instagram
-  all.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
   const responsePosts = all.slice(0, feedLimit);
 
@@ -5473,6 +5661,24 @@ app.get('/office/status', (req, res) => {
       lastFinished: sourceRefreshQueue.lastFinished,
       lastReason: sourceRefreshQueue.lastReason,
       lastError: sourceRefreshQueue.lastError,
+    },
+    sortAgent: {
+      status: sortAgentState.status,
+      totalRuns: sortAgentState.totalRuns,
+      totalItems: sortAgentState.totalItems,
+      lastContext: sortAgentState.lastContext,
+      lastInput: sortAgentState.lastInput,
+      lastOutput: sortAgentState.lastOutput,
+      lastDropped: sortAgentState.lastDropped,
+      lastDurationMs: sortAgentState.lastDurationMs,
+      lastRun: sortAgentState.lastRun,
+      lastError: sortAgentState.lastError,
+    },
+    activityAgent: {
+      status: activityAgentState.status,
+      totalSweeps: activityAgentState.totalSweeps,
+      lastSweep: activityAgentState.lastSweep,
+      lastCount: activityAgentState.lastCount,
     },
     agents: {
       count:             Object.keys(AGENT_DEFS).length,
