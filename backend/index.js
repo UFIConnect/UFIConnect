@@ -795,21 +795,23 @@ const SOURCE_CONFIG = {
   //            TTL (ms)          DELAY/topic (ms)
   reddit:        { ttl: 20*60000, delay: 30000 },  // Reddit rate-limits aggressively; fallback covers gaps
   hn:            { ttl: 12*60000, delay: 20000 },  // Algolia HN, generous but high-volume
-  github:        { ttl: 30*60000, delay: 90000 },  // rate-limited 60/hr unauthed
-  devto:         { ttl: 20*60000, delay: 30000 },  // REST API, generous
-  medium:        { ttl: 30*60000, delay: 60000 },  // CDN-cached RSS
-  youtube:       { ttl: 30*60000, delay: 60000 },  // channel RSS — no quota
-  stackoverflow: { ttl: 45*60000, delay: 120000 }, // 300/day unauthed limit
-  mastodon:      { ttl: 15*60000, delay: 30000 },  // public federated timelines
-  lobsters:      { ttl: 30*60000, delay: 90000 },  // small site — respectful
-  arxiv:         { ttl: 60*60000, delay: 120000 }, // OAI-PMH-friendly pacing
-  indeed:        { ttl: 30*60000, delay: 90000 },  // job APIs/RSS do not need seconds-level polling
-  producthunt:   { ttl: 60*60000, delay: 180000 }, // daily launches; fallback covers low-volume windows
-  techcrunch:    { ttl: 30*60000, delay: 120000 }, // RSS news
-  theverge:      { ttl: 30*60000, delay: 120000 }, // RSS news
-  indiehackers:  { ttl: 30*60000, delay: 120000 }, // RSS feed
-  hashnode:      { ttl: 30*60000, delay: 120000 }, // freeCodeCamp RSS
-  bluesky:       { ttl: 15*60000, delay: 30000 },  // public ATP API
+  github:        { ttl: 30*60000, delay: 90000 },  // rate-limited 60/hr unauthed — keep conservative
+  devto:         { ttl: 15*60000, delay: 25000 },  // REST API, generous — bumped up
+  medium:        { ttl: 15*60000, delay: 30000 },  // CDN-cached RSS — matches Reddit pace
+  youtube:       { ttl: 15*60000, delay: 30000 },  // channel RSS — no quota, matches Reddit pace
+  stackoverflow: { ttl: 45*60000, delay: 90000 },  // 300/day unauthed — reduced carefully
+  mastodon:      { ttl: 12*60000, delay: 25000 },  // public federated timelines — bumped up
+  lobsters:      { ttl: 15*60000, delay: 35000 },  // small site — respectful but faster
+  arxiv:         { ttl: 45*60000, delay: 60000 },  // OAI-PMH allows 1 req/20s — safely doubled
+  indeed:        { ttl: 20*60000, delay: 40000 },  // RSS-based job feeds — faster
+  producthunt:   { ttl: 20*60000, delay: 40000 },  // RSS daily launches — faster cycler
+  techcrunch:    { ttl: 10*60000, delay: 25000 },  // RSS news — no limit, matches Reddit pace
+  theverge:      { ttl: 10*60000, delay: 25000 },  // RSS news — no limit, matches Reddit pace
+  indiehackers:  { ttl: 15*60000, delay: 30000 },  // RSS feed — no limit, matches Reddit pace
+  hashnode:      { ttl: 10*60000, delay: 25000 },  // freeCodeCamp RSS — no limit, matches Reddit pace
+  bluesky:       { ttl: 12*60000, delay: 25000 },  // public ATP API — bumped up
+  arstechnica:   { ttl: 10*60000, delay: 25000 },  // RSS — no limit, major tech source
+  wired:         { ttl: 10*60000, delay: 25000 },  // RSS — no limit, major tech source
 };
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
@@ -831,6 +833,8 @@ const CACHE_KEY_PREFIX = {
   indiehackers:  'ih_kw_',
   hashnode:      'hashnode_kw_',
   bluesky:       'bluesky_kw_',
+  arstechnica:   'ars_kw_',
+  wired:         'wired_kw_',
 };
 
 // ─── Reddit: subreddit RSS feeds (no API key, no auth, always works) ──────────
@@ -2112,6 +2116,49 @@ async function fetchHashnode(keyword) {
   return getCached(key) || [];
 }
 
+// ─── Ars Technica: tech/science news filtered by keyword ─────────────────────
+async function fetchArsTechnica(keyword) {
+  const key = `ars_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  const ARS_FEEDS = [
+    'https://feeds.arstechnica.com/arstechnica/index',
+    'https://feeds.arstechnica.com/arstechnica/technology-lab',
+    'https://feeds.arstechnica.com/arstechnica/gadgets',
+  ];
+  for (const url of ARS_FEEDS) {
+    try {
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const items = parseRSSItems(xml);
+      if (!items.length) continue;
+      const posts = filterAndSlice(items, keyword, 1000).map(it =>
+        rssPost(it, 'arstechnica', 'Ars Technica', 'ext_arstechnica', 'Ars Technica', 'Engineering', keyword));
+      if (posts.length) { setCached(key, posts); return posts; }
+    } catch { /* try next feed */ }
+  }
+  return getCached(key) || [];
+}
+
+// ─── Wired: tech and culture news filtered by keyword ────────────────────────
+async function fetchWired(keyword) {
+  const key = `wired_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml = await fetchText('https://www.wired.com/feed/rss', {
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+    });
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, keyword, 1000).map(it =>
+      rssPost(it, 'wired', 'WIRED', 'ext_wired', 'WIRED', 'Engineering', keyword));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`WIRED "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
 // ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
 async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
@@ -2819,6 +2866,8 @@ function startContinuousWorkers() {
     ['indiehackers',  '💡', '#0E2150', fetchIndieHackers,        kw,  14000],
     ['hashnode',      '✍️', '#2962FF', fetchHashnode,            kw,  15000],
     ['bluesky',       '🦋', '#0085FF', fetchBlueskyByKeyword,    kw,  16000],
+    ['arstechnica',   '📡', '#FF6600', fetchArsTechnica,         kw,  17000],
+    ['wired',         '🔌', '#000000', fetchWired,               kw,  18000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -2827,7 +2876,7 @@ function startContinuousWorkers() {
   }
 
   calculateExpectedLoad();
-  logAgentAction('feed', '🔄', 'All 17 source agents started - adaptive per-source topic cycling active', '#4ADE80');
+  logAgentAction('feed', '🔄', 'All 19 source agents started - adaptive per-source topic cycling active', '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
@@ -5625,60 +5674,68 @@ const AGENT_DEFS = {
     description: 'Searches GitHub trending repos every 90s by keyword. Discovers open-source projects matching each topic area.',
   },
   devto: {
-    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '30s adaptive',
-    description: 'Fetches articles from DEV.to by tag every 30s. Covers developer tutorials, opinions, and project showcases across mapped tags.',
+    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '25s adaptive',
+    description: 'Fetches articles from DEV.to by tag every 25s. Covers developer tutorials, opinions, and project showcases across mapped tags.',
   },
   medium: {
-    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '60s adaptive',
-    description: 'Scrapes Medium RSS feeds by topic tag every 60s. Pulls long-form articles and case studies from the broader developer and startup community.',
+    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '30s adaptive',
+    description: 'Scrapes Medium RSS feeds by topic tag every 30s. Pulls long-form articles and case studies from the broader developer and startup community.',
   },
   youtube: {
-    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '60s adaptive',
-    description: 'Queries YouTube RSS for relevant video content every 60s. Surfaces talks, tutorials, and demos across topic areas.',
+    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '30s adaptive',
+    description: 'Queries YouTube channel RSS for relevant video content every 30s. Surfaces talks, tutorials, and demos across topic areas.',
   },
   stackoverflow: {
-    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '120s adaptive',
-    description: 'Fetches hot and recent questions from StackOverflow by tag every 120s. Captures real developer pain points and solutions across the stack.',
+    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '90s adaptive',
+    description: 'Fetches hot and recent questions from StackOverflow by tag every 90s. Captures real developer pain points and solutions across the stack.',
   },
   mastodon: {
-    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '30s adaptive',
-    description: 'Pulls public posts from Mastodon.social by hashtag every 30s. Covers the open-source and indie tech community with decentralized content.',
+    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '25s adaptive',
+    description: 'Pulls public posts from Mastodon.social by hashtag every 25s. Covers the open-source and indie tech community with decentralized content.',
   },
   lobsters: {
-    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '90s adaptive',
-    description: 'Fetches curated technical links from Lobste.rs by tag every 90s. High signal-to-noise content from a vetted engineering community.',
+    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '35s adaptive',
+    description: 'Fetches curated technical links from Lobste.rs by tag every 35s. High signal-to-noise content from a vetted engineering community.',
   },
   arxiv: {
-    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '120s adaptive',
-    description: 'Queries arXiv preprint API for research papers every 120s. Covers AI/ML, CS, and adjacent scientific topics across mapped subjects.',
+    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '60s adaptive',
+    description: 'Queries arXiv preprint API for research papers every 60s. Covers AI/ML, CS, and adjacent scientific topics across mapped subjects.',
   },
   indeed: {
-    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '90s adaptive',
-    description: 'Fetches real job listings from Indeed RSS feeds across topic keywords. Surfaces active job postings for professionals and job seekers.',
+    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '40s adaptive',
+    description: 'Fetches job listings from Indeed RSS feeds every 40s across topic keywords. Surfaces active job postings for professionals and job seekers.',
   },
   producthunt: {
-    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '180s adaptive',
-    description: 'Pulls today\'s top product launches from Product Hunt RSS, filtered by topic keywords. Discovers new tools, apps, and SaaS products.',
+    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '40s adaptive',
+    description: 'Pulls top product launches from Product Hunt RSS every 40s, filtered by topic keywords. Discovers new tools, apps, and SaaS products.',
   },
   techcrunch: {
-    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '120s adaptive',
-    description: 'Fetches startup and tech news from TechCrunch RSS, filtered by topic keywords. Covers funding rounds, launches, and industry trends.',
+    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '25s adaptive',
+    description: 'Fetches startup and tech news from TechCrunch RSS every 25s, filtered by topic keywords. Covers funding rounds, launches, and industry trends.',
   },
   theverge: {
-    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '120s adaptive',
-    description: 'Pulls technology and culture news from The Verge RSS, filtered by topic keywords. Covers consumer tech, science, and digital culture.',
+    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '25s adaptive',
+    description: 'Pulls technology and culture news from The Verge RSS every 25s, filtered by topic keywords. Covers consumer tech, science, and digital culture.',
   },
   indiehackers: {
-    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '120s adaptive',
-    description: 'Fetches community posts from Indie Hackers RSS. Surfaces bootstrapper stories, revenue milestones, and startup advice across topics.',
+    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '30s adaptive',
+    description: 'Fetches community posts from Indie Hackers RSS every 30s. Surfaces bootstrapper stories, revenue milestones, and startup advice across topics.',
   },
   hashnode: {
-    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '120s adaptive',
-    description: 'Fetches freeCodeCamp News RSS (Hashnode API shut down) with The New Stack as fallback. Surfaces developer tutorials and engineering articles across topics.',
+    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '25s adaptive',
+    description: 'Fetches freeCodeCamp News RSS every 25s with The New Stack as fallback. Surfaces developer tutorials and engineering articles across topics.',
   },
   bluesky: {
-    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '30s adaptive',
+    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '25s adaptive',
     description: 'Searches Bluesky\'s public AT Protocol API for real-time posts by keyword. No auth required — streams live social content from the open web.',
+  },
+  arstechnica: {
+    name: 'Ars Technica Agent', emoji: '📡', color: '#FF6600', interval: '25s adaptive',
+    description: 'Fetches tech, science, and culture stories from Ars Technica RSS feeds every 25s across rotating topic keywords. Covers deep-dive engineering and hardware coverage.',
+  },
+  wired: {
+    name: 'WIRED Agent', emoji: '🔌', color: '#111111', interval: '25s adaptive',
+    description: 'Pulls technology, business, and culture articles from WIRED\'s RSS feed every 25s across rotating topic keywords. High-quality long-form tech journalism.',
   },
   tiktok: {
     name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'curated',
