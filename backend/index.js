@@ -4504,6 +4504,23 @@ logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sortin
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
 startContinuousWorkers();
+
+// Pre-seed agentSourceCache with curated posts so office cards and health status
+// reflect real content immediately — workers accumulate live posts on top over time.
+for (const id of Object.keys(SOURCE_CONFIG)) {
+  if (agentSourceCache.has(id)) continue;
+  const curated = buildCuratedSourcePosts(id);
+  if (!curated.length) continue;
+  const def = AGENT_DEFS[id];
+  agentSourceCache.set(id, {
+    posts:     curated.slice(0, SOURCE_FEED_CACHE_LIMIT),
+    lastFetch: null,
+    totalSeen: curated.length,
+    emoji:     def?.emoji,
+    color:     def?.color,
+  });
+}
+
 if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
   setTimeout(() => {
     refreshGlobalFeedCache()
@@ -5629,7 +5646,10 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       params.push(topics);
       clauses.push(`topic = ANY($${params.length}::text[])`);
     }
-    if (source) {
+    if (Array.isArray(source) && source.length) {
+      params.push(source);
+      clauses.push(`source = ANY($${params.length}::text[])`);
+    } else if (source) {
       params.push(source);
       clauses.push(`source = $${params.length}`);
     }
@@ -6205,6 +6225,9 @@ app.get('/feed', authenticate, async (req, res) => {
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
   const sourceFilter = req.query.source || null;
+  const sourcesParam = req.query.sources
+    ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
   const feedLimit = Math.max(
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
@@ -6214,7 +6237,8 @@ app.get('/feed', authenticate, async (req, res) => {
   const reqPage = parseInt(req.query.page || '1', 10);
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
-    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, sourceFilter);
+    const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, pageSources);
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = dbRows.slice(0, feedLimit);
 
@@ -6225,6 +6249,18 @@ app.get('/feed', authenticate, async (req, res) => {
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
         ...buildCuratedSourcePosts(sourceFilter),
       ]);
+      const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
+      hasMore = hasMore || memoryRows.length > offset + feedLimit;
+      pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
+    } else if (sourcesParam.length > 1) {
+      const memoryRows = dedupeAndSortFeedPosts(sourcesParam.flatMap(src => {
+        const agentKey = feedWorkerKey(src);
+        return [
+          ...(agentSourceCache.get(agentKey)?.posts || []),
+          ...globalFeedCache.posts.filter(p => p.source === src),
+          ...buildCuratedSourcePosts(src),
+        ];
+      }));
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
@@ -6332,6 +6368,32 @@ app.get('/feed', authenticate, async (req, res) => {
       posts: result.slice(0, feedLimit),
       source: sourceFilter,
       connected: true,
+      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
+      totalAvailable: result.length,
+    });
+  }
+
+  // ── Multi-source: merge posts from each requested source ────────────────────
+  if (sourcesParam.length > 1) {
+    const allSourcePosts = [];
+    for (const src of sourcesParam) {
+      const agentKey = feedWorkerKey(src);
+      const workerPosts  = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, src));
+      const globalPosts  = globalFeedCache.posts.filter(p => p.source === src).map(p => mapExternalPost(p, src));
+      const curated      = buildCuratedSourcePosts(src);
+      allSourcePosts.push(...workerPosts, ...globalPosts, ...curated);
+    }
+    const dbRows = sourcesParam.length > 0
+      ? await getPostsFromDB([], feedLimit + 1, 0, null).then(rows => rows.filter(r => sourcesParam.includes(r.source)))
+      : [];
+    const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, p.source));
+    allSourcePosts.push(...dbPosts);
+    const result = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
+      limit: Math.max(feedLimit + 1, sortAgentLimit()),
+    });
+    return res.json({
+      posts: result.slice(0, feedLimit),
+      sources: sourcesParam,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
     });

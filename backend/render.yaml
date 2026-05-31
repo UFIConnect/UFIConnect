@@ -10,7 +10,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: --max-old-space-size=4096
+        value: --max-old-space-size=6144
       - key: JWT_SECRET
         generateValue: true
       - key: PORT

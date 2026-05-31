@@ -715,6 +715,7 @@ export default function Feed() {
     try {
       const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
       if (tabs.length === 1) params.set('source', tabs[0]);
+      else if (tabs.length > 1) params.set('sources', tabs.join(','));
       if (manual) {
         params.set('bust', '1');
         params.set('live', '1');
@@ -775,7 +776,9 @@ export default function Feed() {
     setLoadingMore(true);
     try {
       const tabs = activeTabsRef.current;
-      const srcParam = tabs.length === 1 ? `&source=${encodeURIComponent(tabs[0])}` : '';
+      let srcParam = '';
+      if (tabs.length === 1) srcParam = `&source=${encodeURIComponent(tabs[0])}`;
+      else if (tabs.length > 1) srcParam = `&sources=${encodeURIComponent(tabs.join(','))}`;
       const { data } = await client.get(`/feed?page=${remotePage}&limit=${FEED_PAGE_SIZE}${srcParam}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
@@ -949,10 +952,9 @@ export default function Feed() {
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
-  const activeSourceMetas = activeTabs.map(key => ({ key, meta: SOURCE_META[key] || {} }));
+  const activeChips = activeTabs.filter(k => CHIP_SOURCE_TABS.has(k));
   const lockedSource = activeTabs.find(key => CONNECTED_SOCIAL_TABS.has(key) && connectedSocial !== null && !connectedSocial?.[key]);
-  const selectedSourceLabel = activeSourceMetas.map(({ key, meta }) => meta.label || key).join(', ');
-  const emptyMeta = activeSourceMetas[0]?.meta || {};
+  const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
     <Layout>
@@ -1069,8 +1071,9 @@ export default function Feed() {
           All
         </button>
 
-        {/* Active filter chips — pop in next to All when source tabs are selected */}
-        {activeSourceMetas.map(({ key, meta }) => {
+        {/* Chips — only for CHIP_SOURCE_TABS (reddit/github/youtube/news) when active */}
+        {activeChips.map(key => {
+          const meta  = SOURCE_META[key] || {};
           const color = meta.color || 'var(--primary)';
           return (
             <div
@@ -1141,9 +1144,9 @@ export default function Feed() {
       {/* Last refresh time */}
       {lastRefresh && (
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
-          {activeSourceMetas.length > 0 && (
-            <span style={{ fontWeight: 600, color: activeSourceMetas[0].meta.color || 'var(--primary)', marginRight: 6 }}>
-              {activeSourceMetas.map(({ key, meta }) => `${meta.icon || ''} ${meta.label || key}`.trim()).join(', ')}
+          {activeTabs.length > 0 && (
+            <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 6 }}>
+              {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
             </span>
           )}
           Last updated {timeAgo(lastRefresh.toISOString())}
@@ -1176,7 +1179,7 @@ export default function Feed() {
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? '🔍' : (emptyMeta.icon || '📭')}</div>
+          <div className="empty-icon">{search ? '🔍' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || '📭'}</div>
           <div className="empty-title">
             {search ? `No results for "${search}"` : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts found` : 'No posts found'}
           </div>
@@ -1223,6 +1226,7 @@ export default function Feed() {
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes chipPop { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
       `}</style>
     </Layout>
   );
