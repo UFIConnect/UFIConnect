@@ -19,8 +19,8 @@
     "path": "./android.keystore",
     "alias": "uficonnect"
   },
-  "appVersionName": "1.1.1",
-  "appVersionCode": 3,
+  "appVersionName": "1.1.2",
+  "appVersionCode": 4,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://uficonnect.org/manifest.json",
@@ -38,5 +38,5 @@
   "additionalTrustedOrigins": [],
   "retainedBundles": [],
   "displayOverride": [],
-  "appVersion": "1.1.1"
+  "appVersion": "1.1.2"
 }
