@@ -74,6 +74,7 @@ const ROLE_CATEGORIES = {
   'Product Manager':            ['AI & ML', 'Startups', 'Engineering'],
   'Marketer / Growth':          ['Marketing', 'Startups'],
   'Founder / Entrepreneur':     ['Startups', 'Finance', 'Marketing'],
+  'Investor / VC':              ['Finance', 'Startups'],
   'Investor':                   ['Finance', 'Startups'],
   'Data / Analytics':           ['AI & ML', 'Engineering'],
   'Student / Learner':          ['Education', 'Engineering'],
@@ -83,6 +84,11 @@ const ROLE_CATEGORIES = {
   'Community Manager':          ['Marketing', 'Education'],
   'Researcher / Academic':      ['AI & ML', 'Education', 'Engineering'],
   'HR / People Ops':            ['Education', 'Startups'],
+  'Healthcare Professional':    ['Education', 'AI & ML'],
+  'Athlete / Coach':            ['Education', 'Marketing'],
+  'Musician / Artist':          ['Design', 'Marketing'],
+  'Chef / Food Creator':        ['Marketing', 'Design'],
+  'Real Estate Pro':            ['Finance', 'Startups'],
 };
 
 // ─── Interest → category mapping ─────────────────────────────────────────────
