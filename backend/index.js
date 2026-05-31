@@ -396,14 +396,28 @@ const SOCIAL_CFG = {
   },
 };
 
-// Short-lived state store for ongoing OAuth flows (expires in 10 min)
-const oauthStates = new Map();
-
 function oauthCallbackUrl(platform) {
   return `${API_BASE}/auth/social/${platform}/callback`;
 }
 
 function pkceVerifier() { return crypto.randomBytes(32).toString('base64url'); }
+
+// Sign OAuth state as a JWT so it survives server restarts (no in-memory Map needed)
+function createOAuthState(userId, platform, codeVerifier) {
+  const payload = { userId, platform };
+  if (codeVerifier) payload.cv = codeVerifier;
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '10m' });
+}
+
+function verifyOAuthState(state, platform) {
+  try {
+    const payload = jwt.verify(state, process.env.JWT_SECRET);
+    if (payload.platform !== platform) return null;
+    return { userId: payload.userId, platform: payload.platform, codeVerifier: payload.cv };
+  } catch {
+    return null;
+  }
+}
 function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
 
 // POST application/x-www-form-urlencoded and return parsed JSON
@@ -5154,28 +5168,25 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     detail: `Set ${platform.toUpperCase()}_CLIENT_ID and ${platform.toUpperCase()}_CLIENT_SECRET in your server environment variables.`,
   });
 
-  const state = crypto.randomBytes(16).toString('hex');
-  const entry = { userId: req.user.id, platform };
   const redirectUri = oauthCallbackUrl(platform);
+  let codeVerifier;
 
   const params = new URLSearchParams({
     response_type: 'code',
     client_id:     clientId,
     redirect_uri:  redirectUri,
     scope:         cfg.scope,
-    state,
   });
 
   if (cfg.pkce) {
-    const verifier   = pkceVerifier();
-    const challenge  = pkceChallenge(verifier);
-    entry.codeVerifier = verifier;
+    codeVerifier = pkceVerifier();
+    const challenge = pkceChallenge(codeVerifier);
     params.set('code_challenge',        challenge);
     params.set('code_challenge_method', 'S256');
   }
 
-  oauthStates.set(state, entry);
-  setTimeout(() => oauthStates.delete(state), 10 * 60 * 1000);
+  // State is a signed JWT — survives server restarts, expires in 10 min
+  params.set('state', createOAuthState(req.user.id, platform, codeVerifier));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
 });
@@ -5188,11 +5199,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 
   if (oauthError) return res.redirect(`${frontendProfile}?social_error=${platform}&reason=${oauthError}`);
 
-  const entry = oauthStates.get(state);
-  if (!entry || entry.platform !== platform) {
+  const entry = verifyOAuthState(state, platform);
+  if (!entry) {
     return res.redirect(`${frontendProfile}?social_error=${platform}&reason=invalid_state`);
   }
-  oauthStates.delete(state);
 
   const cfg         = SOCIAL_CFG[platform];
   const clientId    = cfg.clientId();
