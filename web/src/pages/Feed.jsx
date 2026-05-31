@@ -978,34 +978,6 @@ export default function Feed() {
           )}
         </div>
 
-        {/* Active source filter chip */}
-        {sourceTab !== 'all' && (() => {
-          const meta = SOURCE_META[sourceTab] || {};
-          const color = meta.color || 'var(--primary)';
-          return (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              padding: '7px 10px 7px 12px', borderRadius: 20,
-              background: color, color: '#fff',
-              fontWeight: 700, fontSize: '.78rem', whiteSpace: 'nowrap',
-              animation: 'chipPop .15s ease-out',
-              flexShrink: 0,
-            }}>
-              <span style={{ fontSize: '.82rem' }}>{meta.icon || ''}</span>
-              <span>{meta.label || sourceTab}</span>
-              <button
-                onClick={() => switchTab('all')}
-                style={{
-                  marginLeft: 3, background: 'rgba(255,255,255,.25)', border: 'none',
-                  borderRadius: '50%', width: 16, height: 16, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '.7rem', fontWeight: 700, lineHeight: 1, padding: 0,
-                }}
-              >×</button>
-            </div>
-          );
-        })()}
-
         {/* Filter button */}
         <div style={{ position: 'relative' }}>
           <button
@@ -1058,7 +1030,55 @@ export default function Feed() {
         paddingBottom: 4, scrollbarWidth: 'none',
         WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
       }}>
-        {SOURCE_TABS.map(tab => {
+        {/* All button — always pinned first */}
+        <button
+          onClick={() => switchTab('all')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+            border: `1.5px solid ${sourceTab === 'all' ? 'var(--primary)' : 'var(--border)'}`,
+            background: sourceTab === 'all' ? 'var(--primary)' : 'var(--surface)',
+            color: sourceTab === 'all' ? '#fff' : 'var(--text)',
+            fontWeight: sourceTab === 'all' ? 700 : 500, fontSize: '.8rem',
+            cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: '.85rem' }}>⚡</span>
+          All
+        </button>
+
+        {/* Active filter chip — pops in next to All when a tab is selected */}
+        {sourceTab !== 'all' && (() => {
+          const meta = SOURCE_META[sourceTab] || {};
+          const color = meta.color || 'var(--primary)';
+          return (
+            <div
+              key={sourceTab}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '6px 8px 6px 12px', borderRadius: 20, whiteSpace: 'nowrap',
+                background: color, color: '#fff',
+                fontWeight: 700, fontSize: '.8rem', flexShrink: 0,
+                animation: 'chipPop .15s ease-out',
+              }}
+            >
+              <span style={{ fontSize: '.85rem' }}>{meta.icon || ''}</span>
+              <span>{meta.label || sourceTab}</span>
+              <button
+                onClick={() => switchTab('all')}
+                style={{
+                  marginLeft: 2, background: 'rgba(255,255,255,.28)', border: 'none',
+                  borderRadius: '50%', width: 17, height: 17, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#fff', fontSize: '.72rem', fontWeight: 900, padding: 0, lineHeight: 1,
+                }}
+              >×</button>
+            </div>
+          );
+        })()}
+
+        {/* Rest of the tabs (skip All — already rendered above) */}
+        {SOURCE_TABS.filter(t => t.key !== 'all').map(tab => {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
           const active = sourceTab === tab.key;
@@ -1070,11 +1090,10 @@ export default function Feed() {
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
                 border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                background: active ? (tab.key === 'all' ? 'var(--primary)' : color) : 'var(--surface)',
+                background: active ? color : 'var(--surface)',
                 color: active ? '#fff' : 'var(--text)',
                 fontWeight: active ? 700 : 500, fontSize: '.8rem',
-                cursor: 'pointer',
-                flexShrink: 0,
+                cursor: 'pointer', flexShrink: 0,
               }}
             >
               <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
