@@ -5525,7 +5525,10 @@ async function savePostsToDB(posts) {
 async function savePostsToDBFast(posts) {
   if (!db.isConnected() || !posts.length) return 0;
   const clean = (value, max = null) => {
-    const text = (value ?? '').toString().replace(/\u0000/g, '');
+    const text = (value ?? '').toString()
+      .replace(/\u0000/g, '')
+      .replace(/\\u0000/gi, '')
+      .replace(/[\uD800-\uDFFF]/g, '');
     return max ? text.slice(0, max) : text;
   };
   const seen = new Set();
@@ -5575,7 +5578,7 @@ async function savePostsToDBFast(posts) {
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
        fetched_at     = NOW()`,
-    [JSON.stringify(rows)]
+    [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   db.query(
     `DELETE FROM feed_posts_cache WHERE id IN (
