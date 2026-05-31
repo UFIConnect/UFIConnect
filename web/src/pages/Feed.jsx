@@ -450,6 +450,7 @@ function PostCard({ post, onVideoOpen }) {
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
   const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsError,   setCommentsError]   = useState(false);
 
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
@@ -465,17 +466,25 @@ function PostCard({ post, onVideoOpen }) {
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
 
-  async function toggleComments() {
-    if (showComments) { setShowComments(false); return; }
-    setShowComments(true);
-    if (comments !== null) return;
+  async function fetchComments() {
     setCommentsLoading(true);
+    setCommentsError(false);
     try {
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`);
       setComments(data.comments || []);
       setCommentsLive(!!data.live);
-    } catch { setComments([]); }
-    finally  { setCommentsLoading(false); }
+    } catch {
+      setCommentsError(true);
+      setComments([]);
+    }
+    finally { setCommentsLoading(false); }
+  }
+
+  function toggleComments() {
+    if (showComments) { setShowComments(false); return; }
+    setShowComments(true);
+    if (comments !== null && !commentsError) return;
+    fetchComments();
   }
 
   return (
@@ -618,7 +627,7 @@ function PostCard({ post, onVideoOpen }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: '.75rem', fontWeight: 700, color: src.color,
               }}>
-                {(c.author?.replace(/^[@u\/]/, '') || '?')[0]?.toUpperCase()}
+                {(c.author?.replace(/^(?:u\/|@)/, '') || '?')[0]?.toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
@@ -633,7 +642,15 @@ function PostCard({ post, onVideoOpen }) {
             </div>
           ))}
 
-          {!commentsLoading && comments?.length === 0 && (
+          {!commentsLoading && commentsError && (
+            <div style={{ fontSize: '.78rem', color: 'var(--danger)', margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              Couldn't load comments.
+              <button onClick={fetchComments} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '.78rem', fontWeight: 600, padding: 0 }}>
+                Try again
+              </button>
+            </div>
+          )}
+          {!commentsLoading && !commentsError && comments?.length === 0 && (
             <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No {sectionLabel.toLowerCase()} found.</p>
           )}
 

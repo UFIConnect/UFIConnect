@@ -129,6 +129,8 @@ function OverviewView({ status, log, agents }) {
   const a = status?.agents;
   const src = status?.sources;
   const web = status?.websiteOptimizer;
+  const webSubAgents = Object.values(web?.subAgents || {});
+  const webHealthy = webSubAgents.filter(sub => sub.status === 'healthy').length;
 
   const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
@@ -160,9 +162,9 @@ function OverviewView({ status, log, agents }) {
         <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
         <StatCard
           icon="🌐"
-          label="Web Score"
+          label="Optimizer"
           value={web?.score != null ? `${web.score}/100` : '—'}
-          sub={web?.lastTtfbMs ? `TTFB ${web.lastTtfbMs}ms · ${web.publicUrl}` : web?.publicUrl}
+          sub={webSubAgents.length ? `${webHealthy}/${webSubAgents.length} surfaces healthy` : web?.publicUrl}
           color={web?.score >= 80 ? '#14b8a6' : web?.score ? '#fbbf24' : '#94a3b8'}
         />
         <StatCard

@@ -198,6 +198,54 @@ const AGENT_DEFS = [
       'DB feed cache warmed without tripping stability guard',
     ],
   },
+  {
+    id: 'web_api', name: 'API Optimizer', emoji: '🧠',
+    color: '#0EA5E9', bg: '#F0F9FF', role: 'API Health',
+    homeX: 13, homeY: 31,
+    compact: true,
+    tasks: [
+      'Checking API health…', 'Reading DB status…',
+      'Verifying agent endpoints…', 'Timing backend response…',
+      'Auditing data layer readiness…',
+    ],
+    completions: [
+      'API health checked for the public website',
+      'Backend agent surface verified',
+      'Data layer readiness refreshed',
+    ],
+  },
+  {
+    id: 'web_office', name: 'Office Optimizer', emoji: '🏢',
+    color: '#A855F7', bg: '#FAF5FF', role: 'Office App',
+    homeX: 46, homeY: 31,
+    compact: true,
+    tasks: [
+      'Checking office app shell…', 'Timing office response…',
+      'Auditing dashboard payload…', 'Confirming public reachability…',
+      'Reviewing ops surface health…',
+    ],
+    completions: [
+      'Office dashboard health sampled from the public domain',
+      'Operations app shell verified',
+      'Office response timing refreshed',
+    ],
+  },
+  {
+    id: 'web_pwa', name: 'PWA/App Optimizer', emoji: '📱',
+    color: '#06B6D4', bg: '#ECFEFF', role: 'App Metadata',
+    homeX: 79, homeY: 31,
+    compact: true,
+    tasks: [
+      'Checking manifest.json…', 'Verifying app icons…',
+      'Auditing service worker…', 'Reviewing install metadata…',
+      'Checking Play Store readiness…',
+    ],
+    completions: [
+      'PWA metadata validated for install readiness',
+      'Manifest and service worker checks refreshed',
+      'App shell install signals checked',
+    ],
+  },
 ];
 
 /* ─── Active Source Agents ───────────────────────────────────────────────────── */
@@ -335,8 +383,8 @@ function AgentRoom({ agent, agentState }) {
   const isHome = agentState.status === 'idle';
   const isHub  = agent.id === 'cache_helper' || agent.id === 'web_optimizer';
   const isCompact = agent.compact;
-  const roomW = isHub ? 16 : isCompact ? 14 : 22;
-  const roomH = isHub ? 14 : isCompact ? 13 : 24;
+  const roomW = isHub ? 16 : isCompact ? 12 : 22;
+  const roomH = isHub ? 14 : isCompact ? 10 : 24;
   const roomPad = isHub || isCompact ? '3% 4%' : '6% 8%';
   return (
     <div style={{
@@ -357,7 +405,7 @@ function AgentRoom({ agent, agentState }) {
         {agent.role.toUpperCase()}
       </div>
       <div style={{ fontSize: isCompact ? '.62rem' : '.72rem', fontWeight: 700, color: '#0F172A' }}>{agent.name}</div>
-      {isHome && (
+      {isHome && !isCompact && (
         <div style={{ fontSize: isCompact ? '.5rem' : '.58rem', color: '#64748B', marginTop: 4, animation: 'agentTaskFade 0.4s ease', lineHeight: 1.4 }}>
           {agent.tasks[agentState.taskIdx]}
         </div>
