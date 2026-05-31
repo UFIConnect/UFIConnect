@@ -6709,82 +6709,167 @@ app.get('/feed/stats', authenticate, async (req, res) => {
 // ─── Comment pools for curated fallback (tech/dev/social/community) ──────────
 const _CP = {
   tech: [
-    { author: 'dev_sentinel',     body: "One of the cleaner breakdowns I've seen on this topic. The latency section especially.",                                  score: 142 },
-    { author: 'arch_notes',       body: "The trade-off analysis is a bit shallow — worth reading the linked paper for the full picture.",                          score:  98 },
-    { author: 'quiet_committer',  body: "Shipped something similar in Q3. Plan for the maintenance burden upfront — it's real.",                                   score:  87 },
-    { author: 'infra_pragmatist', body: "Solid piece. The vendor lock-in risks at scale are understated though.",                                                  score:  76 },
-    { author: 'systems_owl',      body: "The third section is the most useful. You can skim the rest if you know the space.",                                      score:  61 },
-    { author: 'prod_lurker',      body: "Saved. Coming back to this when we revisit our architecture next quarter.",                                                score:  44 },
+    { author: 'dev_sentinel',     body: "One of the cleaner breakdowns I've seen on this topic. The latency section especially.",                                     score: 142 },
+    { author: 'arch_notes',       body: "The trade-off analysis is a bit shallow — worth reading the linked paper for the full picture.",                             score:  98 },
+    { author: 'quiet_committer',  body: "Shipped something similar in Q3. Plan for the maintenance burden upfront — it's real.",                                      score:  87 },
+    { author: 'infra_pragmatist', body: "Solid piece. The vendor lock-in risks at scale are understated though.",                                                     score:  76 },
+    { author: 'systems_owl',      body: "The third section is the most useful. You can skim the rest if you know the space.",                                         score:  61 },
+    { author: 'prod_lurker',      body: "Saved. Coming back to this when we revisit our architecture next quarter.",                                                   score:  44 },
+    { author: 'latency_hawk',     body: "Benchmarked this pattern last month. The p99 numbers tell a different story than the averages — worth digging into.",        score: 119 },
+    { author: 'k8s_realist',      body: "Good fundamentals. Where this breaks down is multi-tenant clusters — the isolation story still has gaps.",                    score:  93 },
+    { author: 'plain_sql',        body: "ORMs hide this kind of thing until production. Raw SQL still wins for anything latency-sensitive.",                           score:  81 },
+    { author: 'ops_veteran',      body: "We ran into the same wall. The fix was boring: smaller deploys, better rollback tooling, and more staging time.",             score:  68 },
+    { author: 'ten_yr_reader',    body: "The industry keeps rediscovering this every cycle. See also: 2014, 2017, 2020. Same paper, different branding.",              score:  57 },
+    { author: 'cache_whisperer',  body: "Caching layer is doing a lot of heavy lifting here that isn't acknowledged. What happens when it's cold?",                    score:  49 },
+    { author: 'boring_infra',     body: "I appreciate that they didn't oversell it. Most 'revolutionary' architectures are just batch jobs with better marketing.",    score:  38 },
+    { author: 'type_system_fan',  body: "The real win would be catching these errors at compile time. Runtime discovery is already too late.",                         score:  33 },
+    { author: 'weekend_reader',   body: "Shared with the team. This is the kind of write-up that saves us from reinventing the wheel.",                               score:  27 },
   ],
   dev: [
-    { author: 'buildship',        body: "Bookmarked. Tried a similar approach — the async edge cases with nested state were the hard part.",                       score:  89 },
-    { author: 'frontend_labs',    body: "Clean examples. I'd wrap the async calls in try/finally to prevent the loading-state leak on unmount.",                   score:  74 },
-    { author: 'iterative_dev',    body: "Finally a guide that handles the legacy migration path and not just greenfield. Practical.",                               score:  62 },
-    { author: 'perf_observer',    body: "Approach works. At scale: batch those API calls — easy win before you hit the rate limit wall.",                          score:  55 },
-    { author: 'codebase_reader',  body: "Tested against our setup. Works cleanly in most cases; watch the race condition in step 3.",                              score:  48 },
-    { author: 'rubber_duck',      body: "The section on error boundaries saved me a day of debugging. Thank you for including it.",                                 score:  36 },
+    { author: 'buildship',        body: "Bookmarked. Tried a similar approach — the async edge cases with nested state were the hard part.",                          score:  89 },
+    { author: 'frontend_labs',    body: "Clean examples. I'd wrap the async calls in try/finally to prevent the loading-state leak on unmount.",                      score:  74 },
+    { author: 'iterative_dev',    body: "Finally a guide that handles the legacy migration path and not just greenfield. Practical.",                                  score:  62 },
+    { author: 'perf_observer',    body: "Approach works. At scale: batch those API calls — easy win before you hit the rate limit wall.",                             score:  55 },
+    { author: 'codebase_reader',  body: "Tested against our setup. Works cleanly in most cases; watch the race condition in step 3.",                                 score:  48 },
+    { author: 'rubber_duck',      body: "The section on error boundaries saved me a day of debugging. Thank you for including it.",                                    score:  36 },
+    { author: 'ts_convert',       body: "Migrated a 60k-line codebase using basically this approach. The types phase is painful but worth every hour.",               score:  91 },
+    { author: 'test_writer',      body: "Would love a companion post on testing strategy. The examples feel integration-test-light.",                                  score:  70 },
+    { author: 'dx_matters',       body: "The DX improvement alone justifies the change. Onboarding a new dev in 30 min instead of 3 hours is real money.",            score:  64 },
+    { author: 'bundle_watcher',   body: "Ran the bundle analyser after implementing this. Tree-shaking works as claimed — nice.",                                     score:  52 },
+    { author: 'senior_ic',        body: "Good pattern but the example app skips the part everyone actually struggles with: incremental adoption on a live codebase.",  score:  45 },
+    { author: 'oss_contributor',  body: "Opened a PR to add this to the official docs. Maintainers seem receptive.",                                                  score:  39 },
+    { author: 'prod_engineer',    body: "We've been running this in prod for 6 weeks. Zero incidents so far, deploy time down 40%.",                                  score:  33 },
+    { author: 'code_reviewer',    body: "Minor nit: the variable names in section 4 don't match the diagram. Confused me for a moment.",                             score:  21 },
+    { author: 'just_learning',    body: "As someone coming from a scripting background: this is one of the clearest explanations I've encountered. Thank you.",       score:  18 },
   ],
   social: [
-    { author: 'thread_reader',    body: "This. The nuance in the second point is exactly what most people miss.",                                                  score: 234 },
-    { author: 'signal_noise',     body: "Counterpoint: the data tells a different story depending on the cohort you look at.",                                     score: 187 },
-    { author: 'dm_optional',      body: "Coming back to this when I write my post on the same topic. Bookmarked.",                                                 score: 143 },
-    { author: 'lurk_no_more',     body: "Exactly what I needed to read today. Sharing this with my team.",                                                        score:  98 },
-    { author: 'reply_enjoyer',    body: "Hot take but I think the opposite is also true depending on context.",                                                    score:  67 },
+    { author: 'thread_reader',    body: "This. The nuance in the second point is exactly what most people miss.",                                                     score: 234 },
+    { author: 'signal_noise',     body: "Counterpoint: the data tells a different story depending on the cohort you look at.",                                        score: 187 },
+    { author: 'dm_optional',      body: "Coming back to this when I write my post on the same topic. Bookmarked.",                                                    score: 143 },
+    { author: 'lurk_no_more',     body: "Exactly what I needed to read today. Sharing this with my team.",                                                           score:  98 },
+    { author: 'reply_enjoyer',    body: "Hot take but I think the opposite is also true depending on context.",                                                      score:  67 },
+    { author: 'ratio_incoming',   body: "People who disagree with this have never actually tried it at scale. The results speak for themselves.",                     score: 201 },
+    { author: 'quote_poster',     body: "The third sentence is going on my wall. This is the clearest way I've heard it put.",                                       score: 156 },
+    { author: 'longtime_follower',body: "Been watching this space for years. This take is more nuanced than 90% of what gets attention.",                            score: 122 },
+    { author: 'screenshot_saver', body: "Screenshotting this for the next time someone tells me otherwise.",                                                         score:  88 },
+    { author: 'context_adder',    body: "Worth adding: the original study this references had a small sample. The effect holds, but the magnitude is contested.",     score:  74 },
+    { author: 'mild_dissenter',   body: "Mostly agree but the second half overreaches. The evidence for that part is thinner than presented.",                       score:  59 },
+    { author: 'late_to_thread',   body: "Just found this. Three days late but this is genuinely the best breakdown I've seen on the topic.",                        score:  43 },
+    { author: 'reply_chain_fan',  body: "The replies to this are almost as interesting as the original. Good discourse.",                                            score:  31 },
   ],
   community: [
-    { author: 'indie_builder',    body: "Shipped something in this space. Biggest surprise: support load — not churn — is what slows you down.",                  score: 112 },
-    { author: 'launch_log',       body: "Love the focus on sustainable growth over vanity metrics. More products should lead this way.",                           score:  94 },
-    { author: 'zero_to_ship',     body: "What's the pricing model? Couldn't find it clearly on the site.",                                                        score:  67 },
-    { author: 'product_skeptic',  body: "Seen a few tools try this angle. The category is crowded — execution is everything here.",                               score:  55 },
-    { author: 'maker_daily',      body: "Congrats on the launch! The onboarding flow is notably smooth.",                                                         score:  44 },
+    { author: 'indie_builder',    body: "Shipped something in this space. Biggest surprise: support load — not churn — is what slows you down.",                     score: 112 },
+    { author: 'launch_log',       body: "Love the focus on sustainable growth over vanity metrics. More products should lead this way.",                              score:  94 },
+    { author: 'zero_to_ship',     body: "What's the pricing model? Couldn't find it clearly on the site.",                                                          score:  67 },
+    { author: 'product_skeptic',  body: "Seen a few tools try this angle. The category is crowded — execution is everything here.",                                  score:  55 },
+    { author: 'maker_daily',      body: "Congrats on the launch! The onboarding flow is notably smooth.",                                                            score:  44 },
+    { author: 'mrr_curious',      body: "What does the revenue curve look like at month 6? The early traction is impressive but sustainability is the question.",     score: 103 },
+    { author: 'solo_founder',     body: "Bootstrapped to $8k MRR with a similar model. The niche-first approach is the right call. Don't expand too soon.",          score:  88 },
+    { author: 'b2b_skeptic',      body: "The enterprise angle is interesting but SMB is probably the better wedge. Faster sales cycle, less customization pressure.", score:  76 },
+    { author: 'waitlist_watcher', body: "On the waitlist. The positioning is sharp — clearer than most tools in this space.",                                        score:  61 },
+    { author: 'churn_hunter',     body: "The features look good. Retention will be the real test — what's your strategy when the initial novelty wears off?",        score:  52 },
+    { author: 'growth_observer',  body: "The PH launch was well-executed. Comment threads on day one are usually a good proxy for actual interest.",                 score:  41 },
+    { author: 'user_number_7',    body: "Early user here. The core loop is solid. Would love more integrations but I understand you have to start somewhere.",        score:  37 },
+    { author: 'ship_it_culture',  body: "This is what building in public should look like. Transparent, specific, honest about what's working.",                     score:  29 },
   ],
   stackoverflow: [
     { author: 'accepted_answer',  body: "The issue is you're not handling cleanup in the async effect. Use an abort controller and check `mounted` in the callback.", score: 312 },
-    { author: 'edge_catcher',     body: "Works in most cases, but fails when the component unmounts before the promise resolves. Test for that.",                  score:  87 },
-    { author: 'docs_reader',      body: "Worth noting: this behavior changed in v18. Check the migration guide for the updated concurrent-mode API.",              score:  64 },
-    { author: 'alt_approach',     body: "Alternative: use a library like SWR or React Query — they handle cancellation, deduplication, and retry automatically.", score:  59 },
+    { author: 'edge_catcher',     body: "Works in most cases, but fails when the component unmounts before the promise resolves. Test for that.",                     score:  87 },
+    { author: 'docs_reader',      body: "Worth noting: this behavior changed in v18. Check the migration guide for the updated concurrent-mode API.",                 score:  64 },
+    { author: 'alt_approach',     body: "Alternative: use a library like SWR or React Query — they handle cancellation, deduplication, and retry automatically.",    score:  59 },
+    { author: 'repro_machine',    body: "Reproduced with a minimal example: `codesandbox.io/s/...` — the issue is definitely in the dependency array.",             score: 143 },
+    { author: 'version_checker',  body: "Which version of Node are you on? This error was fixed in 20.x. Running `nvm use 20` might resolve it immediately.",         score:  98 },
+    { author: 'type_narrower',    body: "The real problem is the type isn't narrowed before the conditional. TypeScript is telling you something important here.",    score:  77 },
+    { author: 'sql_explainer',    body: "The query plan shows a full table scan. Add an index on `(user_id, created_at DESC)` — that's your bottleneck.",            score:  66 },
+    { author: 'regex_whisperer',  body: "Your regex has catastrophic backtracking potential on certain inputs. Use a possessive quantifier or atomic group instead.", score:  54 },
+    { author: 'async_veteran',    body: "Classic async/await anti-pattern. You're creating a new promise inside an existing promise chain. Flatten it.",              score:  47 },
+    { author: 'memory_profiler',  body: "Memory leak confirmed. The event listener registered in the constructor is never removed. Detach it in the destructor.",     score:  42 },
+    { author: 'mdn_linker',       body: "The MDN article on this covers exactly what's happening: developer.mozilla.org/... — worth a read before trying fixes.",     score:  35 },
   ],
   github: [
-    { author: 'pr_reviewer',      body: "Looks solid overall. `src/core/index.ts` needs a test for the null-input edge case before this is merge-ready.",         score:   0 },
-    { author: 'issue_tracker',    body: "Reproduced on v3.1.2. Stacktrace attached. Seems related to #482.",                                                      score:   0 },
-    { author: 'maintainer_note',  body: "Thanks for the report! Triaged as medium priority — targeting the next patch release.",                                   score:   0 },
-    { author: 'ci_bot',           body: "Build passed ✅  Coverage: 94.2% (+0.3%). All 1,847 tests green.",                                                       score:   0 },
+    { author: 'pr_reviewer',      body: "Looks solid overall. `src/core/index.ts` needs a test for the null-input edge case before this is merge-ready.",            score:   0 },
+    { author: 'issue_tracker',    body: "Reproduced on v3.1.2. Stacktrace attached. Seems related to #482.",                                                         score:   0 },
+    { author: 'maintainer_note',  body: "Thanks for the report! Triaged as medium priority — targeting the next patch release.",                                      score:   0 },
+    { author: 'ci_bot',           body: "Build passed ✅  Coverage: 94.2% (+0.3%). All 1,847 tests green.",                                                          score:   0 },
+    { author: 'stale_bot',        body: "This issue has been automatically marked as stale. It will be closed in 14 days if there is no further activity.",           score:   0 },
+    { author: 'first_timer',      body: "First contribution here! Happy to iterate on the feedback. Should I squash the commits before you merge?",                   score:   0 },
+    { author: 'code_owner',       body: "This touches a hot path — benchmarks needed. Even a 1% regression here will show up in prod metrics.",                      score:   0 },
+    { author: 'security_review',  body: "Flagging for security review: user-controlled input reaches `exec()` on line 87. Needs sanitisation or a safer API.",        score:   0 },
+    { author: 'changelog_writer', body: "Added to the changelog draft. Tagging for the v2.4.0 milestone — we'll cut a release once #601 is also merged.",            score:   0 },
+    { author: 'refactor_suggest', body: "The logic in `handleAuth()` is now duplicated in three places. Worth extracting before this grows further.",                 score:   0 },
+    { author: 'dependabot',       body: "Bumps `axios` from 1.6.2 to 1.7.4. Resolves a SSRF vulnerability. Merge when ready.",                                      score:   0 },
+    { author: 'good_bot',         body: "Releasing v2.3.1... Signed artifacts uploaded to GitHub Releases. Changelog published.",                                    score:   0 },
   ],
   lobsters: [
-    { author: 'lobster_lurker',   body: "Interesting take. The author seems to be conflating two distinct problems in the third section.",                         score:  28 },
-    { author: 'pedantic_dev',     body: "Small correction: the RFC they cite was deprecated in 2021. Current best practice is different.",                         score:  22 },
-    { author: 'tag_pedant',       body: "Good read. The follow-up post linked at the bottom is also worth your time.",                                             score:  17 },
+    { author: 'lobster_lurker',   body: "Interesting take. The author seems to be conflating two distinct problems in the third section.",                            score:  28 },
+    { author: 'pedantic_dev',     body: "Small correction: the RFC they cite was deprecated in 2021. Current best practice is different.",                            score:  22 },
+    { author: 'tag_pedant',       body: "Good read. The follow-up post linked at the bottom is also worth your time.",                                               score:  17 },
+    { author: 'hacker_adjacent',  body: "This was discussed here about two years ago with roughly the same conclusion. The cycle continues.",                         score:  31 },
+    { author: 'kernel_notes',     body: "The performance claim doesn't hold under the testing methodology they used. Happy to share the counter-benchmark.",          score:  26 },
+    { author: 'lisp_enjoyer',     body: "Worth comparing to the 1986 paper by Lamport that solved a subset of this. Footnotes matter.",                              score:  19 },
+    { author: 'minimal_ist',      body: "100 lines could do this without the framework. But I understand why they chose the abstraction.",                            score:  14 },
+    { author: 'openbsd_person',   body: "The security model breaks down if you assume a trusted compiler. Most people do. Most people shouldn't.",                   score:  11 },
+    { author: 'bsd_user',         body: "Flagged for the [show] tag — this is clearly the author's own project and should be labelled appropriately.",               score:   8 },
   ],
   mastodon: [
-    { author: '@hal@fosstodon.org',  body: "Boosted. This is the clearest explanation I've seen of the underlying mechanism.",                                     score:  0 },
-    { author: '@vera@mastodon.social', body: "Interesting! Does anyone know if this applies to the ActivityPub spec too?",                                         score:  0 },
-    { author: '@dev@hachyderm.io',   body: "Been saying this for months. Nice to see it written up properly.",                                                     score:  0 },
+    { author: '@hal@fosstodon.org',      body: "Boosted. This is the clearest explanation I've seen of the underlying mechanism.",                                    score:  0 },
+    { author: '@vera@mastodon.social',   body: "Interesting! Does anyone know if this applies to the ActivityPub spec too?",                                         score:  0 },
+    { author: '@dev@hachyderm.io',       body: "Been saying this for months. Nice to see it written up properly.",                                                   score:  0 },
+    { author: '@rms@mastodon.social',    body: "The free software implications here deserve more attention than the post gives them.",                                score:  0 },
+    { author: '@linuxfan@fosstodon.org', body: "Shared to the #linux and #opensource communities. This deserves wider discussion.",                                  score:  0 },
+    { author: '@fedi_dev@infosec.exchange', body: "Important nuance: the fediverse implementation varies significantly between servers. Test on multiple.",          score:  0 },
+    { author: '@techwriter@social.coop', body: "Wrote a thread with more context last week — this aligns with what I found. Linking in the replies.",                score:  0 },
+    { author: '@newhere@mastodon.online',body: "Just joined from Twitter. This is exactly the kind of content I was hoping to find here.",                           score:  0 },
   ],
   bluesky: [
-    { author: 'arch.bsky.social',    body: "Good thread. The bit about federation trade-offs is exactly right.",                                                   score:  0 },
-    { author: 'buildlog.bsky.social', body: "Reposted — my followers need to see this.",                                                                           score:  0 },
-    { author: 'labs.bsky.social',    body: "Counterpoint incoming in my own thread. Agree on the premises, not the conclusion.",                                   score:  0 },
+    { author: 'arch.bsky.social',        body: "Good thread. The bit about federation trade-offs is exactly right.",                                                 score:  0 },
+    { author: 'buildlog.bsky.social',    body: "Reposted — my followers need to see this.",                                                                          score:  0 },
+    { author: 'labs.bsky.social',        body: "Counterpoint incoming in my own thread. Agree on the premises, not the conclusion.",                                 score:  0 },
+    { author: 'protocol.bsky.social',    body: "The AT Protocol angle is underexplored here. The decentralisation story is more interesting than most realise.",     score:  0 },
+    { author: 'devrel.bsky.social',      body: "We covered this in our recent docs update. The API surface is cleaner now — might be worth a follow-up post.",      score:  0 },
+    { author: 'starter.bsky.social',     body: "New here and this is the thread that convinced me the migration was worth it. Great discussion.",                    score:  0 },
+    { author: 'feeds.bsky.social',       body: "Built a custom feed that surfaces threads like this. If anyone wants the algo, DM me.",                             score:  0 },
+    { author: 'open.bsky.social',        body: "Quoted with some additional context. The user-controlled algorithm part is what sets this apart from the others.",   score:  0 },
   ],
 };
 
-function _curatedComments(source, postId) {
-  const seed = [...postId].reduce((a, c) => a + c.charCodeAt(0), 0);
-  let pool;
-  if (source === 'stackoverflow')                                       pool = _CP.stackoverflow;
-  else if (source === 'github')                                         pool = _CP.github;
-  else if (source === 'lobsters')                                       pool = _CP.lobsters;
-  else if (source === 'mastodon')                                       pool = _CP.mastodon;
-  else if (source === 'bluesky')                                        pool = _CP.bluesky;
-  else if (['twitter','linkedin','instagram','facebook','tiktok'].includes(source)) pool = _CP.social;
-  else if (['producthunt','indiehackers'].includes(source))             pool = _CP.community;
-  else if (['devto','medium','hashnode','smashing','infoq'].includes(source)) pool = _CP.dev;
-  else                                                                  pool = _CP.tech;
+// Positional hash — much better dispersion than sum-of-char-codes
+function _hashPostId(id) {
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = (Math.imul(h, 31) + id.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
 
+// Seeded Fisher-Yates shuffle — deterministic per post ID, unique order per post
+function _seededShuffle(arr, seed) {
+  const a = arr.slice();
+  let s = seed;
+  for (let i = a.length - 1; i > 0; i--) {
+    s = (Math.imul(s, 1664525) + 1013904223) | 0;
+    const j = Math.abs(s) % (i + 1);
+    const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+  }
+  return a;
+}
+
+function _curatedComments(source, postId) {
+  const seed = _hashPostId(postId);
+  let pool;
+  if (source === 'stackoverflow')                                                    pool = _CP.stackoverflow;
+  else if (source === 'github')                                                      pool = _CP.github;
+  else if (source === 'lobsters')                                                    pool = _CP.lobsters;
+  else if (source === 'mastodon')                                                    pool = _CP.mastodon;
+  else if (source === 'bluesky')                                                     pool = _CP.bluesky;
+  else if (['twitter','linkedin','instagram','facebook','tiktok'].includes(source))  pool = _CP.social;
+  else if (['producthunt','indiehackers'].includes(source))                          pool = _CP.community;
+  else if (['devto','medium','hashnode','smashing','infoq'].includes(source))        pool = _CP.dev;
+  else                                                                               pool = _CP.tech;
+
+  const shuffled = _seededShuffle(pool, seed);
+  const count    = 3 + (seed % 4);  // 3-6 comments, varies per post
   const ago = ms => new Date(Date.now() - ms).toISOString();
-  const offsets = [H, 2*H, 3.5*H, 5*H, 7*H, 10*H];
-  const count  = 3 + (seed % 3);
-  const start  = seed % Math.max(1, pool.length - count + 1);
-  return pool.slice(start, start + count).map((c, i) => ({
+  const offsets  = [H, 2*H, 3.5*H, 5*H, 7*H, 10*H, 14*H];
+  return shuffled.slice(0, count).map((c, i) => ({
     id:      `curated_${postId}_${i}`,
     author:  c.author,
     body:    c.body,
