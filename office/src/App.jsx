@@ -387,7 +387,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
         <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.8 }}>
           Every push to <code style={CODE}>main</code> automatically triggers a rebuild and deploy via Render's GitHub integration — typically live within 2–3 minutes.
           <br />
-          For the <em>Deploy Now</em> buttons to work, add these to your backend env vars on Render:
+          For the <em>Deploy Now</em> buttons to work, add deploy hooks or Render API credentials to the backend env vars:
           <br />
           <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code>
           <br />

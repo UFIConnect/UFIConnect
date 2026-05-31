@@ -31,6 +31,22 @@ services:
         value: https://uficonnect-api.onrender.com
       - key: FRONTEND_URL
         value: https://uficonnect.org
+      # Manual deploy triggers for the Office Deploy Center.
+      # Use either service deploy hook URLs or RENDER_API_KEY with service IDs.
+      - key: RENDER_HOOK_API
+        sync: false
+      - key: RENDER_HOOK_WEB
+        sync: false
+      - key: RENDER_HOOK_OFFICE
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_API_ID
+        sync: false
+      - key: RENDER_SERVICE_WEB_ID
+        sync: false
+      - key: RENDER_SERVICE_OFFICE_ID
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false
