@@ -755,7 +755,16 @@ export default function Feed() {
       return;
     }
     const prev = activeTabsRef.current;
-    const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+    let next;
+    if (SOCIAL_SOURCE_TABS.has(key)) {
+      // Single-select social: deselect any other social, keep active chips
+      const chips = prev.filter(k => CHIP_SOURCE_TABS.has(k));
+      next = prev.includes(key) ? chips : [...chips, key];
+    } else {
+      // Multi-select chip: toggle in/out, preserve social selection
+      const social = prev.filter(k => SOCIAL_SOURCE_TABS.has(k));
+      next = prev.includes(key) ? prev.filter(k => k !== key) : [...social, key];
+    }
     activeTabsRef.current = next;
     setActiveTabs(next);
     loadFeed(false, next);
