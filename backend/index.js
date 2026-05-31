@@ -2836,25 +2836,32 @@ function trimPostContent(p) {
   return p;
 }
 
-// SSE batch buffer: collect posts for 1s before broadcasting to reduce write overhead
+// SSE batch buffer: collect posts for 2s (debounce) and flush in batches of up to 10
+const SSE_BATCH_DEBOUNCE = 2000;   // 2-second debounce
+const SSE_BATCH_MAX      = 10;     // max posts per SSE message
 let sseBatchBuffer = [];
 let sseBatchTimer  = null;
 
 function flushSSEBatch() {
   sseBatchTimer = null;
   if (!sseBatchBuffer.length || !sseClients.size) { sseBatchBuffer = []; return; }
-  const posts = sseBatchBuffer.splice(0);
-  const msg = `data: ${JSON.stringify({ posts })}\n\n`;
-  for (const [id, res] of sseClients) {
-    try { res.write(msg); }
-    catch { sseClients.delete(id); }
+  // Send in chunks of SSE_BATCH_MAX so no single message is too large
+  while (sseBatchBuffer.length > 0) {
+    const posts = sseBatchBuffer.splice(0, SSE_BATCH_MAX);
+    const msg = `data: ${JSON.stringify({ posts })}\n\n`;
+    for (const [id, res] of sseClients) {
+      try { res.write(msg); }
+      catch { sseClients.delete(id); }
+    }
   }
 }
 
 function broadcastSSE(posts) {
   if (!posts.length || !sseClients.size) return;
   sseBatchBuffer.push(...posts);
-  if (!sseBatchTimer) sseBatchTimer = setTimeout(flushSSEBatch, 1000);
+  // Reset debounce timer on every new post
+  if (sseBatchTimer) clearTimeout(sseBatchTimer);
+  sseBatchTimer = setTimeout(flushSSEBatch, SSE_BATCH_DEBOUNCE);
 }
 
 // Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE
@@ -3181,7 +3188,7 @@ function startContinuousWorkers() {
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
 const GLOBAL_FEED_CACHE_LIMIT = 500;   // 2 pages served without hitting DB; was 2000
-const SOURCE_FEED_CACHE_LIMIT = 50;    // per-source tab view; was 300
+const SOURCE_FEED_CACHE_LIMIT = 100;   // per-source tab view; was 50
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 

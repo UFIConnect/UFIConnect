@@ -65,8 +65,6 @@ const SOURCE_TABS = [
 ];
 
 const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
-const SOCIAL_SOURCE_TABS    = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
-const CHIP_SOURCE_TABS      = new Set(['reddit', 'github', 'youtube', 'hackernews']);
 const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
@@ -686,6 +684,7 @@ function PostCard({ post, onVideoOpen }) {
 export default function Feed() {
   const { profile } = useAuth();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
+  const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
   const [posts,         setPosts]        = useState([]);
   const [loading,       setLoading]      = useState(true);
@@ -756,16 +755,7 @@ export default function Feed() {
       return;
     }
     const prev = activeTabsRef.current;
-    let next;
-    if (SOCIAL_SOURCE_TABS.has(key)) {
-      // Single-select social: deselect any other social, keep active chips
-      const chips = prev.filter(k => CHIP_SOURCE_TABS.has(k));
-      next = prev.includes(key) ? chips : [...chips, key];
-    } else {
-      // Multi-select chip: toggle in/out, preserve social selection
-      const social = prev.filter(k => SOCIAL_SOURCE_TABS.has(k));
-      next = prev.includes(key) ? prev.filter(k => k !== key) : [...social, key];
-    }
+    const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
     loadFeed(false, next);
@@ -952,7 +942,6 @@ export default function Feed() {
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
-  const activeChips = activeTabs.filter(k => CHIP_SOURCE_TABS.has(k));
   const lockedSource = activeTabs.find(key => CONNECTED_SOCIAL_TABS.has(key) && connectedSocial !== null && !connectedSocial?.[key]);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
@@ -1048,84 +1037,99 @@ export default function Feed() {
         </button>
       </div>
 
-      {/* Source tabs */}
-      <div className="feed-source-tabs" style={{
-        display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
-        paddingBottom: 4, scrollbarWidth: 'none',
-        WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
-      }}>
-        {/* All button — always pinned first */}
+      {/* Source tabs: fixed (All + active chips) + scrollable tab buttons */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center' }}>
+
+        {/* Always-visible: All button */}
         <button
           onClick={() => toggleTab('all')}
           style={{
-            display: 'flex', alignItems: 'center', gap: 5,
+            display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
             padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
             border: `1.5px solid ${activeTabs.length === 0 ? 'var(--primary)' : 'var(--border)'}`,
             background: activeTabs.length === 0 ? 'var(--primary)' : 'var(--surface)',
             color: activeTabs.length === 0 ? '#fff' : 'var(--text)',
-            fontWeight: activeTabs.length === 0 ? 700 : 500, fontSize: '.8rem',
-            cursor: 'pointer', flexShrink: 0,
+            fontWeight: activeTabs.length === 0 ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
           }}
         >
-          <span style={{ fontSize: '.85rem' }}>⚡</span>
-          All
+          <span style={{ fontSize: '.85rem' }}>⚡</span> All
         </button>
 
-        {/* Chips — only for CHIP_SOURCE_TABS (reddit/github/youtube/news) when active */}
-        {activeChips.map(key => {
+        {/* Active-filter chips — one per selected tab, always visible */}
+        {activeTabs.map(key => {
           const meta  = SOURCE_META[key] || {};
           const color = meta.color || 'var(--primary)';
           return (
-            <div
-              key={key}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4,
-                padding: '6px 8px 6px 12px', borderRadius: 20, whiteSpace: 'nowrap',
-                background: color, color: '#fff',
-                fontWeight: 700, fontSize: '.8rem', flexShrink: 0,
-                animation: 'chipPop .15s ease-out',
-              }}
-            >
-              <span style={{ fontSize: '.85rem' }}>{meta.icon || ''}</span>
+            <div key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+              padding: '5px 8px 5px 11px', borderRadius: 20, whiteSpace: 'nowrap',
+              background: color, color: '#fff', fontWeight: 700, fontSize: '.8rem',
+            }}>
+              <span style={{ fontSize: '.82rem' }}>{meta.icon || ''}</span>
               <span>{meta.label || key}</span>
               <button
                 onClick={() => toggleTab(key)}
                 style={{
                   marginLeft: 2, background: 'rgba(255,255,255,.28)', border: 'none',
-                  borderRadius: '50%', width: 17, height: 17, cursor: 'pointer',
+                  borderRadius: '50%', width: 16, height: 16, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '.72rem', fontWeight: 900, padding: 0, lineHeight: 1,
+                  color: '#fff', fontSize: '.7rem', fontWeight: 900, padding: 0, lineHeight: 1,
                 }}
               >×</button>
             </div>
           );
         })}
 
-        {/* Rest of the tabs (skip All — already rendered above) */}
-        {SOURCE_TABS.filter(t => t.key !== 'all').map(tab => {
-          const meta  = SOURCE_META[tab.key];
-          const color = meta?.color || 'var(--primary)';
-          const active = activeTabs.includes(tab.key);
-          return (
-            <button
-              key={tab.key}
-              onClick={() => toggleTab(tab.key)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-                border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                background: active ? color : 'var(--surface)',
-                color: active ? '#fff' : 'var(--text)',
-                fontWeight: active ? 700 : 500, fontSize: '.8rem',
-                cursor: 'pointer', flexShrink: 0,
-              }}
-            >
-              <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
-              {tab.label}
-            </button>
-          );
-        })}
+        {/* Scrollable: all tab buttons, highlighted when active */}
+        <div style={{
+          display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, minWidth: 0,
+          scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
+        }}>
+          {SOURCE_TABS.filter(t => t.key !== 'all').map(tab => {
+            const meta  = SOURCE_META[tab.key];
+            const color = meta?.color || 'var(--primary)';
+            const active = activeTabs.includes(tab.key);
+            return (
+              <button
+                key={tab.key}
+                onClick={() => toggleTab(tab.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                  padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+                  border: `1.5px solid ${active ? color : 'var(--border)'}`,
+                  background: active ? color : 'var(--surface)',
+                  color: active ? '#fff' : 'var(--text)',
+                  fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Social connect prompt — logged-in users with no social accounts connected */}
+      {profile && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+          padding: '10px 14px', borderRadius: 12,
+          background: '#FFF7ED', border: '1.5px solid #FED7AA',
+          fontSize: '.82rem', fontWeight: 500, color: '#92400E',
+        }}>
+          <span style={{ fontSize: '1rem' }}>🔗</span>
+          <span>Connect your social accounts to see personalised content in your feed.</span>
+          <Link to="/connected-accounts" style={{ marginLeft: 4, fontWeight: 700, color: '#EA580C', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+            Connect accounts
+          </Link>
+          <button
+            onClick={() => setSocialBannerDismissed(true)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#92400E', fontSize: '.9rem', opacity: 0.7, padding: '0 2px' }}
+            aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
 
       {/* New-posts banner — shown after manual refresh */}
       {newPostsCount > 0 && (
@@ -1224,9 +1228,35 @@ export default function Feed() {
         </>
       )}
 
+      {/* Guest sign-in sticky bottom banner */}
+      {!profile && (
+        <div style={{
+          position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1000,
+          background: 'linear-gradient(90deg, #1E40AF, #4F46E5)',
+          color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          gap: 12, padding: '14px 20px',
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.18)',
+        }}>
+          <span style={{ fontSize: '1.1rem' }}>🌐</span>
+          <span style={{ fontSize: '.9rem', fontWeight: 500 }}>
+            Sign in to personalise your feed, save posts, and join communities
+          </span>
+          <Link
+            to="/login"
+            style={{
+              background: '#fff', color: '#2563EB', fontWeight: 700,
+              padding: '7px 18px', borderRadius: 20, fontSize: '.85rem',
+              textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
+            }}
+          >
+            Sign In
+          </Link>
+        </div>
+      )}
+
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        @keyframes chipPop { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
       `}</style>
     </Layout>
   );
