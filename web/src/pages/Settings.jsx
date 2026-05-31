@@ -61,10 +61,10 @@ const ALL_INTERESTS = [...new Set([...BASE_INTERESTS, ...EXTRA_INTERESTS])];
 
 // ── Social platform metadata ──────────────────────────────────────────────────
 const SOCIAL_PLATFORMS = [
-  { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
-  { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets and threads matching your interests' },
-  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from accounts you follow' },
-  { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page and group posts matching your topics' },
+  { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'See posts, articles, and updates from your LinkedIn network — right inside UFIConnect.' },
+  { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Pull tweets, threads, and trending topics from the people you follow on X.' },
+  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Bring posts and reels from the creators and brands you follow on Instagram.' },
+  { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'See updates from friends, pages, and groups you follow on Facebook.' },
 ];
 
 // ── Role → icon / color metadata (for badge display) ─────────────────────────
@@ -162,18 +162,6 @@ export default function Settings() {
       setTimeout(() => setSocialFlash(null), 5000);
     } finally {
       setSocialDisconnecting(null);
-    }
-  }
-
-  async function upgradeToPro() {
-    try {
-      const { data } = await client.post('/user/plan/upgrade');
-      updateProfileLocally({ plan: data?.plan || 'pro', isPro: true });
-      setSocialFlash({ type: 'success', platform: 'Pro', msg: 'Pro is active. You can now connect social accounts.' });
-      setTimeout(() => setSocialFlash(null), 5000);
-    } catch (e) {
-      setSocialFlash({ type: 'error', platform: 'Pro', msg: e?.response?.data?.error || 'Could not activate Pro. Please try again.' });
-      setTimeout(() => setSocialFlash(null), 7000);
     }
   }
 
@@ -312,7 +300,7 @@ export default function Settings() {
           <div className="card">
             <SectionHeading>🔗 Connected Accounts</SectionHeading>
             <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
-              Pro connectors are active for LinkedIn, X, Instagram, and Facebook. Upgrade to connect accounts and stream personalized live requests.
+              Connect your social accounts to bring your existing feeds into UFIConnect. One tap — you'll be redirected to the platform and automatically sent back once connected.
             </p>
             {SOCIAL_PLATFORMS.map(platform => {
               const isConnected    = !!connectedSocial[platform.id];
