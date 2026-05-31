@@ -3213,6 +3213,8 @@ const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIM
 const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
+const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
+const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api.onrender.com';
 const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
 const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
 const WEB_STORAGE_BATCH_LIMIT = envNumber('WEB_STORAGE_BATCH_LIMIT', 2500, 100, 15000);
@@ -3269,6 +3271,11 @@ const sortDistribState = {
 const websiteOptimizerState = {
   status: 'idle',
   publicUrl: WEB_OPTIMIZER_URL,
+  targets: {
+    website: WEB_OPTIMIZER_URL,
+    office: WEB_OPTIMIZER_OFFICE_URL,
+    api: WEB_OPTIMIZER_API_URL,
+  },
   totalRuns: 0,
   lastRun: null,
   lastError: null,
@@ -3283,6 +3290,9 @@ const websiteOptimizerState = {
     web_seo:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_cache:   { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_storage: { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_api:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_office:  { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_pwa:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
   },
 };
 
@@ -4129,6 +4139,111 @@ async function runWebStorageSubAgent() {
   }
 }
 
+async function runWebApiSubAgent() {
+  const id = 'web_api';
+  try {
+    const health = await fetchPublicText(new URL('/health', WEB_OPTIMIZER_API_URL).toString(), { maxBytes: 100_000 });
+    let parsed = null;
+    try { parsed = JSON.parse(health.body || '{}'); } catch {}
+    const agents = await fetchPublicText(new URL('/office/agents', WEB_OPTIMIZER_API_URL).toString(), { maxBytes: 500_000 }).catch(() => null);
+    let agentCount = 0;
+    let hasOptimizerAgents = false;
+    try {
+      const agentPayload = JSON.parse(agents?.body || '{}');
+      const ids = Object.keys(agentPayload.agents || {});
+      agentCount = ids.length;
+      hasOptimizerAgents = ['web_optimizer', 'web_api', 'web_office', 'web_pwa', 'web_storage'].every(agentId => ids.includes(agentId));
+    } catch {}
+    const ok = health.statusCode < 400 && parsed?.status === 'ok' && hasOptimizerAgents;
+    updateWebSubAgent(id, {
+      increment: true,
+      status: ok ? 'healthy' : 'degraded',
+      lastError: null,
+      statusCode: health.statusCode,
+      db: parsed?.db,
+      totalMs: health.totalMs,
+      agentCount,
+      hasOptimizerAgents,
+    });
+    logAgentAction(id, ok ? '🧠' : '⚠️',
+      `API optimizer audit: HTTP ${health.statusCode} · db ${parsed?.db === true ? 'connected' : parsed?.db === false ? 'fallback' : 'unknown'} · ${agentCount} agents exposed`,
+      ok ? '#0EA5E9' : '#FBBF24');
+    return ok;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `API optimization audit failed: ${e.message}`, '#F87171');
+    return false;
+  }
+}
+
+async function runWebOfficeSubAgent() {
+  const id = 'web_office';
+  try {
+    const snap = await fetchPublicText(WEB_OPTIMIZER_OFFICE_URL, { maxBytes: 800_000 });
+    const html = snap.body || '';
+    const ok = snap.statusCode < 400 && snap.totalMs < 3000 && /script/i.test(html);
+    updateWebSubAgent(id, {
+      increment: true,
+      status: ok ? 'healthy' : 'degraded',
+      lastError: null,
+      statusCode: snap.statusCode,
+      totalMs: snap.totalMs,
+      bytes: snap.bytes,
+      hasAppShell: /<div[^>]+id=["']root["']/i.test(html) || /script/i.test(html),
+    });
+    logAgentAction(id, ok ? '🏢' : '⚠️',
+      `Office optimizer audit: HTTP ${snap.statusCode} · total ${snap.totalMs}ms · ${Math.round(snap.bytes / 1024)}KB app shell`,
+      ok ? '#A855F7' : '#FBBF24');
+    return ok;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `Office optimization audit failed: ${e.message}`, '#F87171');
+    return false;
+  }
+}
+
+async function runWebPwaSubAgent() {
+  const id = 'web_pwa';
+  try {
+    const [manifest, serviceWorker, homepage] = await Promise.allSettled([
+      fetchPublicText(new URL('/manifest.json', WEB_OPTIMIZER_URL).toString(), { maxBytes: 150_000 }),
+      fetchPublicText(new URL('/sw.js', WEB_OPTIMIZER_URL).toString(), { maxBytes: 150_000 }),
+      fetchPublicText(WEB_OPTIMIZER_URL, { maxBytes: 800_000 }),
+    ]);
+    let manifestJson = null;
+    try { manifestJson = JSON.parse(manifest.value?.body || '{}'); } catch {}
+    const checks = {
+      manifest: manifest.status === 'fulfilled' && manifest.value.statusCode < 400,
+      name: !!(manifestJson?.name || manifestJson?.short_name),
+      startUrl: !!manifestJson?.start_url,
+      display: !!manifestJson?.display,
+      icons: Array.isArray(manifestJson?.icons) && manifestJson.icons.length > 0,
+      serviceWorker: serviceWorker.status === 'fulfilled' && serviceWorker.value.statusCode < 400 && /CACHE_NAME|caches\./i.test(serviceWorker.value.body || ''),
+      manifestLinked: homepage.status === 'fulfilled' && /rel=["']manifest["']/i.test(homepage.value.body || ''),
+    };
+    const passed = Object.values(checks).filter(Boolean).length;
+    const healthy = passed >= 6;
+    updateWebSubAgent(id, {
+      increment: true,
+      status: healthy ? 'healthy' : 'degraded',
+      lastError: null,
+      checks,
+      passed,
+      display: manifestJson?.display,
+      startUrl: manifestJson?.start_url,
+      iconCount: manifestJson?.icons?.length || 0,
+    });
+    logAgentAction(id, healthy ? '📱' : '⚠️',
+      `PWA/app optimizer audit: ${passed}/7 checks passing · display ${manifestJson?.display || 'missing'} · icons ${manifestJson?.icons?.length || 0}`,
+      healthy ? '#06B6D4' : '#FBBF24');
+    return healthy;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `PWA/app optimization audit failed: ${e.message}`, '#F87171');
+    return false;
+  }
+}
+
 async function runWebsiteOptimizerCheck() {
   websiteOptimizerState.status = 'running';
   websiteOptimizerState.totalRuns += 1;
@@ -4163,12 +4278,22 @@ async function runWebsiteOptimizerCheck() {
       runWebSeoSubAgent(snapshot),
       runWebCacheSubAgent(),
       runWebStorageSubAgent(),
+      runWebApiSubAgent(),
+      runWebOfficeSubAgent(),
+      runWebPwaSubAgent(),
     ]);
 
-    const summary = assessment.findings.length ? assessment.findings.slice(0, 2).join(' · ') : 'all public-domain checks passing';
+    const degradedSubAgents = Object.entries(websiteOptimizerState.subAgents)
+      .filter(([, sub]) => sub.status === 'degraded')
+      .map(([subId]) => subId);
+    websiteOptimizerState.status = assessment.score >= 80 && degradedSubAgents.length === 0 ? 'healthy' : 'degraded';
+
+    const summary = degradedSubAgents.length
+      ? `${degradedSubAgents.length} surface check(s) need attention: ${degradedSubAgents.slice(0, 3).join(', ')}`
+      : assessment.findings.length ? assessment.findings.slice(0, 2).join(' · ') : 'all public-system checks passing';
     logAgentAction('web_optimizer', '🌐',
-      `Website optimizer score ${assessment.score}/100 on ${WEB_OPTIMIZER_URL} · ${summary}`,
-      assessment.score >= 80 ? '#14B8A6' : '#FBBF24');
+      `Full optimizer score ${assessment.score}/100 · website ${WEB_OPTIMIZER_URL} · API ${WEB_OPTIMIZER_API_URL} · office ${WEB_OPTIMIZER_OFFICE_URL} · ${summary}`,
+      websiteOptimizerState.status === 'healthy' ? '#14B8A6' : '#FBBF24');
   } catch (e) {
     websiteOptimizerState.status = 'degraded';
     websiteOptimizerState.lastError = e.message;
@@ -4281,7 +4406,7 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
-  if (['web_perf', 'web_seo', 'web_cache', 'web_storage'].includes(id)) {
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_office', 'web_pwa'].includes(id)) {
     const sub = websiteOptimizerState.subAgents[id] || {};
     logAgentAction(id, def.emoji,
       `Active - ${sub.status || 'idle'} · ${(sub.totalRuns || 0).toLocaleString()} runs · parent ${websiteOptimizerState.publicUrl}`, def.color);
@@ -4556,6 +4681,9 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'github', 'discord', 'youtube', 'reddit',
   'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
 ]);
+
+// Feed tabs that gate content behind an OAuth token (pure social APIs with no public fallback)
+const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -6073,7 +6201,7 @@ app.get('/feed', authenticate, async (req, res) => {
     : emptyLiveResult;
 
   // ── Connected social tabs (Twitter, LinkedIn, Instagram, Facebook) ──────────
-  if (sourceFilter && CONNECTED_SOCIAL_PLATFORMS.has(sourceFilter)) {
+  if (sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter)) {
     const token = user?.socialTokens?.[sourceFilter];
     if (!token) {
       return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
@@ -6720,6 +6848,18 @@ const AGENT_DEFS = {
     name: 'Fast Storage Sub-Agent', emoji: '💾', color: '#FB7185', interval: '90s',
     description: 'Persists hot feed/source data to PostgreSQL on a shorter loop, queues stale source refreshes, and keeps the enlarged DB cache warm without overloading stability guard.',
   },
+  web_api: {
+    name: 'API Optimizer Sub-Agent', emoji: '🧠', color: '#0EA5E9', interval: '2min',
+    description: 'Audits the live backend API, health endpoint, DB connectivity, and optimizer-agent exposure so the public website has a stable data layer.',
+  },
+  web_office: {
+    name: 'Office Optimizer Sub-Agent', emoji: '🏢', color: '#A855F7', interval: '2min',
+    description: 'Checks the public office dashboard app shell, response time, payload size, and public-domain reachability.',
+  },
+  web_pwa: {
+    name: 'PWA/App Optimizer Sub-Agent', emoji: '📱', color: '#06B6D4', interval: '2min',
+    description: 'Validates manifest.json, service worker cache readiness, icons, install metadata, and app-shell links for web and Play Store readiness.',
+  },
   security: {
     name: 'Security Agent', emoji: '🔒', color: '#4ADE80', interval: '8min',
     description: 'Scans JWT tokens, validates CORS headers, monitors failed login attempts, checks CVE database, and enforces rate-limit rules every 8 minutes.',
@@ -6839,6 +6979,7 @@ function getRuntimeHealthForAgent(id) {
     return {
       status: websiteOptimizerState.status,
       publicUrl: websiteOptimizerState.publicUrl,
+      targets: websiteOptimizerState.targets,
       totalRuns: websiteOptimizerState.totalRuns,
       score: websiteOptimizerState.score,
       lastStatus: websiteOptimizerState.lastStatus,
@@ -6850,7 +6991,7 @@ function getRuntimeHealthForAgent(id) {
       lastError: websiteOptimizerState.lastError,
     };
   }
-  if (['web_perf', 'web_seo', 'web_cache', 'web_storage'].includes(id)) {
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_office', 'web_pwa'].includes(id)) {
     return websiteOptimizerState.subAgents[id] || { status: 'idle', totalRuns: 0 };
   }
   if (id === 'activity') {
@@ -7013,6 +7154,7 @@ app.get('/office/status', (req, res) => {
     websiteOptimizer: {
       status: websiteOptimizerState.status,
       publicUrl: websiteOptimizerState.publicUrl,
+      targets: websiteOptimizerState.targets,
       totalRuns: websiteOptimizerState.totalRuns,
       score: websiteOptimizerState.score,
       lastStatus: websiteOptimizerState.lastStatus,
@@ -7108,6 +7250,9 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     web_seo:       () => runWebSeoSubAgent(),
     web_cache:     () => runWebCacheSubAgent(),
     web_storage:   () => runWebStorageSubAgent(),
+    web_api:       () => runWebApiSubAgent(),
+    web_office:    () => runWebOfficeSubAgent(),
+    web_pwa:       () => runWebPwaSubAgent(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
@@ -7227,6 +7372,9 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     web_seo:       () => runWebSeoSubAgent(),
     web_cache:     () => runWebCacheSubAgent(),
     web_storage:   () => runWebStorageSubAgent(),
+    web_api:       () => runWebApiSubAgent(),
+    web_office:    () => runWebOfficeSubAgent(),
+    web_pwa:       () => runWebPwaSubAgent(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
