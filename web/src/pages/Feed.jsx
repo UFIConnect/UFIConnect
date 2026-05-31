@@ -65,6 +65,8 @@ const SOURCE_TABS = [
 ];
 
 const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const SOCIAL_SOURCE_TABS    = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const CHIP_SOURCE_TABS      = new Set(['reddit', 'github', 'youtube', 'hackernews']);
 const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
@@ -698,22 +700,21 @@ export default function Feed() {
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
   const [liveActive,    setLiveActive]    = useState(false);
-  const [sourceTab,     setSourceTab]     = useState('all');
+  const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set());
   const sentinelRef   = useRef(null);
-  const sourceTabRef  = useRef('all');
+  const activeTabsRef = useRef([]);
   const postsRef      = useRef([]);
 
-  const loadFeed = useCallback(async (manual = false, source = null) => {
+  const loadFeed = useCallback(async (manual = false, tabs = []) => {
     if (manual) setRefreshing(true);
     else setLoading(true);
     try {
-      const src = source && source !== 'all' ? source : null;
       const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
-      if (src) params.set('source', src);
+      if (tabs.length === 1) params.set('source', tabs[0]);
       if (manual) {
         params.set('bust', '1');
         params.set('live', '1');
@@ -744,21 +745,28 @@ export default function Feed() {
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
 
-  const switchTab = useCallback((key) => {
-    setSourceTab(key);
+  const toggleTab = useCallback((key) => {
     setSearch('');
     setNewPostsCount(0);
-    const isConnected = !!connectedSocial?.[key];
-    if (!CONNECTED_SOCIAL_TABS.has(key) || isConnected) {
-      loadFeed(false, key === 'all' ? null : key);
+    if (key === 'all') {
+      activeTabsRef.current = [];
+      setActiveTabs([]);
+      loadFeed(false, []);
+      return;
     }
-  }, [loadFeed, connectedSocial]); // eslint-disable-line
+    const prev = activeTabsRef.current;
+    const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+    activeTabsRef.current = next;
+    setActiveTabs(next);
+    loadFeed(false, next);
+  }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
     if (loadingMore || !remoteHasMore) return;
     setLoadingMore(true);
     try {
-      const srcParam = sourceTab !== 'all' ? `&source=${encodeURIComponent(sourceTab)}` : '';
+      const tabs = activeTabsRef.current;
+      const srcParam = tabs.length === 1 ? `&source=${encodeURIComponent(tabs[0])}` : '';
       const { data } = await client.get(`/feed?page=${remotePage}&limit=${FEED_PAGE_SIZE}${srcParam}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
@@ -767,7 +775,7 @@ export default function Feed() {
       setRemoteHasMore(data.hasMore !== false);
     } catch {}
     finally { setLoadingMore(false); }
-  }, [loadingMore, remoteHasMore, remotePage, sourceTab]);
+  }, [loadingMore, remoteHasMore, remotePage]);
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
@@ -777,9 +785,6 @@ export default function Feed() {
     if (!profile) { setConnectedSocial({}); return; }
     client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
   }, [profile]);
-
-  // Keep sourceTabRef in sync so the SSE closure can read the current tab
-  useEffect(() => { sourceTabRef.current = sourceTab; }, [sourceTab]);
 
   // SSE: stream new posts from all source workers in real time
   useEffect(() => {
@@ -800,9 +805,9 @@ export default function Feed() {
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
-        // Only inject posts that match the current source tab
-        const tab = sourceTabRef.current;
-        const tabFresh = tab === 'all' ? fresh : fresh.filter(p => p.source === tab);
+        // Only inject posts that match the active source tabs.
+        const tabs = activeTabsRef.current;
+        const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
         if (!tabFresh.length) return;
         setPosts(prev => {
           const merged = [...tabFresh, ...prev];
@@ -846,6 +851,10 @@ export default function Feed() {
     }
 
     // Source filter
+    if (activeTabs.length > 0) {
+      result = result.filter(p => activeTabs.includes(p.source));
+    }
+
     if (filters.sources.length > 0) {
       result = result.filter(p => filters.sources.includes(p.source));
     }
@@ -864,7 +873,7 @@ export default function Feed() {
     }
 
     // On the all tab with no source filter, interleave round-robin across sources
-    if (sourceTab === 'all' && filters.sources.length === 0) {
+    if (activeTabs.length === 0 && filters.sources.length === 0) {
       const buckets = new Map();
       for (const p of result) {
         const src = p.source || 'unknown';
@@ -885,7 +894,7 @@ export default function Feed() {
     }
 
     return result;
-  }, [posts, search, filters, sourceTab]);
+  }, [posts, search, filters, activeTabs]);
 
   useEffect(() => {
     const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
@@ -931,6 +940,10 @@ export default function Feed() {
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
+  const activeSourceMetas = activeTabs.map(key => ({ key, meta: SOURCE_META[key] || {} }));
+  const lockedSource = activeTabs.find(key => CONNECTED_SOCIAL_TABS.has(key) && connectedSocial !== null && !connectedSocial?.[key]);
+  const selectedSourceLabel = activeSourceMetas.map(({ key, meta }) => meta.label || key).join(', ');
+  const emptyMeta = activeSourceMetas[0]?.meta || {};
 
   return (
     <Layout>
@@ -1007,7 +1020,7 @@ export default function Feed() {
 
         {/* Refresh button */}
         <button
-          onClick={() => loadFeed(true, sourceTab !== 'all' ? sourceTab : null)}
+          onClick={() => loadFeed(true, activeTabsRef.current)}
           disabled={refreshing}
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
@@ -1032,14 +1045,14 @@ export default function Feed() {
       }}>
         {/* All button — always pinned first */}
         <button
-          onClick={() => switchTab('all')}
+          onClick={() => toggleTab('all')}
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
             padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-            border: `1.5px solid ${sourceTab === 'all' ? 'var(--primary)' : 'var(--border)'}`,
-            background: sourceTab === 'all' ? 'var(--primary)' : 'var(--surface)',
-            color: sourceTab === 'all' ? '#fff' : 'var(--text)',
-            fontWeight: sourceTab === 'all' ? 700 : 500, fontSize: '.8rem',
+            border: `1.5px solid ${activeTabs.length === 0 ? 'var(--primary)' : 'var(--border)'}`,
+            background: activeTabs.length === 0 ? 'var(--primary)' : 'var(--surface)',
+            color: activeTabs.length === 0 ? '#fff' : 'var(--text)',
+            fontWeight: activeTabs.length === 0 ? 700 : 500, fontSize: '.8rem',
             cursor: 'pointer', flexShrink: 0,
           }}
         >
@@ -1047,13 +1060,12 @@ export default function Feed() {
           All
         </button>
 
-        {/* Active filter chip — pops in next to All when a tab is selected */}
-        {sourceTab !== 'all' && (() => {
-          const meta = SOURCE_META[sourceTab] || {};
+        {/* Active filter chips — pop in next to All when source tabs are selected */}
+        {activeSourceMetas.map(({ key, meta }) => {
           const color = meta.color || 'var(--primary)';
           return (
             <div
-              key={sourceTab}
+              key={key}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 padding: '6px 8px 6px 12px', borderRadius: 20, whiteSpace: 'nowrap',
@@ -1063,9 +1075,9 @@ export default function Feed() {
               }}
             >
               <span style={{ fontSize: '.85rem' }}>{meta.icon || ''}</span>
-              <span>{meta.label || sourceTab}</span>
+              <span>{meta.label || key}</span>
               <button
-                onClick={() => switchTab('all')}
+                onClick={() => toggleTab(key)}
                 style={{
                   marginLeft: 2, background: 'rgba(255,255,255,.28)', border: 'none',
                   borderRadius: '50%', width: 17, height: 17, cursor: 'pointer',
@@ -1075,17 +1087,17 @@ export default function Feed() {
               >×</button>
             </div>
           );
-        })()}
+        })}
 
         {/* Rest of the tabs (skip All — already rendered above) */}
         {SOURCE_TABS.filter(t => t.key !== 'all').map(tab => {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
-          const active = sourceTab === tab.key;
+          const active = activeTabs.includes(tab.key);
           return (
             <button
               key={tab.key}
-              onClick={() => switchTab(tab.key)}
+              onClick={() => toggleTab(tab.key)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
@@ -1120,9 +1132,9 @@ export default function Feed() {
       {/* Last refresh time */}
       {lastRefresh && (
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
-          {sourceTab !== 'all' && SOURCE_META[sourceTab] && (
-            <span style={{ fontWeight: 600, color: SOURCE_META[sourceTab].color, marginRight: 6 }}>
-              {SOURCE_META[sourceTab].icon} {SOURCE_META[sourceTab].label}
+          {activeSourceMetas.length > 0 && (
+            <span style={{ fontWeight: 600, color: activeSourceMetas[0].meta.color || 'var(--primary)', marginRight: 6 }}>
+              {activeSourceMetas.map(({ key, meta }) => `${meta.icon || ''} ${meta.label || key}`.trim()).join(', ')}
             </span>
           )}
           Last updated {timeAgo(lastRefresh.toISOString())}
@@ -1131,14 +1143,14 @@ export default function Feed() {
         </div>
       )}
 
-      {CONNECTED_SOCIAL_TABS.has(sourceTab) && connectedSocial !== null && !connectedSocial?.[sourceTab] ? (
+      {lockedSource ? (
         <SocialConnectGate
-          platform={sourceTab}
+          platform={lockedSource}
           connecting={connecting}
           onConnect={async () => {
             setConnecting(true);
             try {
-              const { data } = await client.get(`/auth/social/${sourceTab}/start`);
+              const { data } = await client.get(`/auth/social/${lockedSource}/start`);
               if (data?.url) window.location.href = data.url;
               else setConnecting(false);
             } catch { setConnecting(false); }
@@ -1147,17 +1159,17 @@ export default function Feed() {
       ) : loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
-          {sourceTab !== 'all' && (
+          {activeTabs.length > 0 && (
             <div style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>
-              Fetching {SOURCE_META[sourceTab]?.label || sourceTab} posts…
+              Fetching {selectedSourceLabel} posts…
             </div>
           )}
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? '🔍' : (SOURCE_META[sourceTab]?.icon || '📭')}</div>
+          <div className="empty-icon">{search ? '🔍' : (emptyMeta.icon || '📭')}</div>
           <div className="empty-title">
-            {search ? `No results for "${search}"` : `No ${SOURCE_META[sourceTab]?.label || ''} posts found`.trim()}
+            {search ? `No results for "${search}"` : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts found` : 'No posts found'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -1166,8 +1178,8 @@ export default function Feed() {
               <button className="btn btn-ghost btn-sm" onClick={() => setFilters({ sort: 'newest', sources: [], timeRange: 'all' })}>
                 Reset filters
               </button>
-            ) : sourceTab !== 'all' ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => switchTab('all')}>Back to All</button>
+            ) : activeTabs.length > 0 ? (
+              <button className="btn btn-ghost btn-sm" onClick={() => toggleTab('all')}>Back to All</button>
             ) : (
               <>
                 <Link to="/groups">Join some communities</Link> or complete your{' '}
