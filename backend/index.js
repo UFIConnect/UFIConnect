@@ -3134,6 +3134,11 @@ const SORT_AGENT_INPUT_LIMIT = envNumber('SORT_AGENT_INPUT_LIMIT', 5000, 1000, 5
 const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIMIT', 2000, 1000, SORT_AGENT_INPUT_LIMIT);
 const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
+const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
+const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
+const WEB_STORAGE_BATCH_LIMIT = envNumber('WEB_STORAGE_BATCH_LIMIT', 2500, 100, 15000);
+const WEB_STORAGE_REFRESH_BATCH = envNumber('WEB_STORAGE_REFRESH_BATCH', 6, 1, 25);
 
 const refreshControl = {
   mode: 'normal',
@@ -3181,6 +3186,26 @@ const sortDistribState = {
   lastDiversified: 0,
   lastRun: null,
   lastError: null,
+};
+
+const websiteOptimizerState = {
+  status: 'idle',
+  publicUrl: WEB_OPTIMIZER_URL,
+  totalRuns: 0,
+  lastRun: null,
+  lastError: null,
+  score: 0,
+  lastStatus: null,
+  lastTtfbMs: null,
+  lastTotalMs: null,
+  lastBytes: 0,
+  findings: [],
+  subAgents: {
+    web_perf:    { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_seo:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_cache:   { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_storage: { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+  },
 };
 
 function waitMs(ms) {
@@ -4805,6 +4830,33 @@ async function getUser(id) {
 async function migrateDB() {
   if (!db.isConnected()) return;
   try {
+    // Create users table if it doesn't exist yet (safe on every restart)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name                TEXT NOT NULL,
+        email               TEXT UNIQUE NOT NULL,
+        password_hash       TEXT NOT NULL,
+        title               TEXT DEFAULT '',
+        bio                 TEXT DEFAULT '',
+        organization        TEXT DEFAULT '',
+        skills              JSONB DEFAULT '[]',
+        joined_groups       TEXT[] DEFAULT '{}',
+        onboarding_complete BOOLEAN DEFAULT false,
+        profile_hidden      BOOLEAN DEFAULT false,
+        role                TEXT,
+        experience          TEXT,
+        goals               TEXT[] DEFAULT '{}',
+        interests           TEXT[] DEFAULT '{}',
+        links               JSONB DEFAULT '{}',
+        role_settings       JSONB DEFAULT '{}',
+        social_tokens       JSONB DEFAULT '{}',
+        plan                VARCHAR(20) DEFAULT 'free',
+        created_at          TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
+    // Backfill columns added after initial launch (no-ops if already present)
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS links JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups TEXT[] DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
@@ -4884,12 +4936,30 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
 
-    console.log('✅ DB migration applied');
-  } catch (err) { console.warn('DB migration:', err.message); }
+    // Website optimizer snapshots - public-domain checks retained for office/HQ history
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS website_optimization_runs (
+        id           TEXT PRIMARY KEY,
+        agent_id     TEXT NOT NULL,
+        target_url   TEXT NOT NULL,
+        status_code  INTEGER,
+        ttfb_ms      INTEGER,
+        total_ms     INTEGER,
+        bytes        INTEGER,
+        score        INTEGER,
+        findings     JSONB DEFAULT '[]',
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
+
+    const { rows } = await db.query('SELECT COUNT(*) FROM users');
+    console.log(`✅ DB migration applied — ${rows[0].count} registered user(s) in DB`);
+  } catch (err) { console.warn('DB migration error:', err.message); }
 }
 
 // ─── Save external posts to persistent DB cache ───────────────────────────────
-const MAX_CACHED_DB_POSTS = 100000;
+const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000000);
 
 async function savePostsToDB(posts) {
   if (!db.isConnected() || !posts.length) return;
@@ -4931,6 +5001,36 @@ async function savePostsToDB(posts) {
 }
 
 // ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
+async function saveWebsiteOptimizationRun(run) {
+  if (!db.isConnected() || !run) return;
+  try {
+    await db.query(
+      `INSERT INTO website_optimization_runs
+         (id, agent_id, target_url, status_code, ttfb_ms, total_ms, bytes, score, findings)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        run.id,
+        run.agentId,
+        run.targetUrl,
+        run.statusCode || null,
+        run.ttfbMs || null,
+        run.totalMs || null,
+        run.bytes || 0,
+        run.score || 0,
+        JSON.stringify(run.findings || []),
+      ]
+    );
+    db.query(
+      `DELETE FROM website_optimization_runs WHERE id IN (
+         SELECT id FROM website_optimization_runs ORDER BY created_at DESC OFFSET 2000
+       )`
+    ).catch(() => {});
+  } catch (e) {
+    console.warn('saveWebsiteOptimizationRun:', e.message);
+  }
+}
+
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null) {
   if (!db.isConnected()) return [];
   try {
