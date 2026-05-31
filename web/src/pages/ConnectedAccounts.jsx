@@ -31,7 +31,6 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]     = useState(null);
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
-  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -71,26 +70,8 @@ export default function ConnectedAccounts() {
     }
   }
 
-  async function handleUpgrade() {
-    setUpgrading(true);
-    try {
-      const { data } = await client.post('/user/plan/upgrade');
-      const nextProfile = { ...(profile || {}), plan: data?.plan || 'pro', isPro: true };
-      setProfile(nextProfile);
-      updateProfileLocally({ plan: nextProfile.plan, isPro: true });
-      setFlash({ type: 'success', msg: 'Pro is active. You can now connect social accounts.' });
-      setTimeout(() => setFlash(null), 5000);
-    } catch (err) {
-      setFlash({ type: 'error', msg: err?.response?.data?.error || 'Could not activate Pro. Please try again.' });
-      setTimeout(() => setFlash(null), 6000);
-    } finally {
-      setUpgrading(false);
-    }
-  }
-
-  const connectedList = platforms.filter(([k]) => connected[k]);
-  const availableList = platforms.filter(([k]) => !connected[k]);
-  const isPro = !!profile?.isPro;
+  const connectedList = platforms.filter(([k, p]) => connected[k]);
+  const availableList = platforms.filter(([k, p]) => !connected[k] && p.active !== false);
 
   return (
     <Layout>
@@ -103,7 +84,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Pro connectors are active for LinkedIn, X, Instagram, and Facebook. Additional platforms are staged for coming soon.
+          Connect your social accounts to personalise your feed. One tap — you're redirected to the platform and sent right back.
         </p>
       </div>
 
@@ -136,7 +117,7 @@ export default function ConnectedAccounts() {
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
                 {connectedList.length === 0
-                  ? (isPro ? 'Connect active accounts to personalise your feed.' : 'Upgrade to Pro to connect active social accounts.')
+                  ? 'Connect an account to personalise your feed.'
                   : `Connected: ${connectedList.map(([k, p]) => p.name).join(', ')}`}
               </div>
             </div>
@@ -171,11 +152,8 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
-                  onUpgrade={handleUpgrade}
-                  isPro={isPro}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
-                  upgrading={upgrading}
                 />
               ))}
             </div>
@@ -197,11 +175,8 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
-                  onUpgrade={handleUpgrade}
-                  isPro={isPro}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
-                  upgrading={upgrading}
                 />
               ))}
             </div>
@@ -212,7 +187,7 @@ export default function ConnectedAccounts() {
   );
 }
 
-function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect, onUpgrade, isPro, connecting, disconnecting, upgrading }) {
+function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect, connecting, disconnecting }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
@@ -239,14 +214,6 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                 ✓ Connected
               </span>
             )}
-            {p.proRequired && !isConnected && (
-              <span style={{
-                fontSize: '.65rem', fontWeight: 700, color: '#92400E',
-                background: '#FEF3C7', padding: '1px 6px', borderRadius: 4,
-              }}>
-                Pro
-              </span>
-            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
@@ -261,17 +228,9 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           >
             {expanded ? '▲' : '▼'} Details
           </button>
-          {p.comingSoon ? (
-            <span style={{ fontSize: '.68rem', fontWeight: 700, color: 'var(--muted)', background: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: 6 }}>
-              Coming Soon
-            </span>
-          ) : isConnected ? (
+          {isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
-            </button>
-          ) : p.proRequired && !isPro ? (
-            <button className="btn btn-primary btn-sm" onClick={onUpgrade} disabled={upgrading}>
-              {upgrading ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Upgrade'}
             </button>
           ) : (
             <button
@@ -289,7 +248,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
       {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           {benefits.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
+            <div>
               <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
                 What you unlock
               </div>
@@ -301,17 +260,6 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                 ))}
               </ul>
             </div>
-          )}
-          {p.note && (
-            <div style={{ fontSize: '.72rem', color: 'var(--warning)', background: '#FFFBEB', padding: '6px 10px', borderRadius: 6 }}>
-              ℹ️ {p.note}
-            </div>
-          )}
-          {p.setupUrl && (
-            <a href={p.setupUrl} target="_blank" rel="noopener noreferrer"
-               style={{ fontSize: '.72rem', color: p.color, display: 'block', marginTop: 6 }}>
-              → Developer / API setup guide ↗
-            </a>
           )}
         </div>
       )}

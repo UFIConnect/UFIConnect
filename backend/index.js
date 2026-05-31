@@ -3824,6 +3824,281 @@ async function runFeedOptimizer() {
 }
 
 // ─── Deploy Agent: ping all three live services and log each response ────────
+function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const requestUrl = new URL(url);
+    const req = https.get({
+      protocol: requestUrl.protocol,
+      hostname: requestUrl.hostname,
+      port: requestUrl.port || 443,
+      path: requestUrl.pathname + requestUrl.search,
+      headers: { 'User-Agent': 'UFIConnect-WebOptimizer/1.0' },
+    }, (res) => {
+      const location = res.headers.location;
+      if ([301, 302, 307, 308].includes(res.statusCode) && location && redirects > 0) {
+        res.resume();
+        const nextUrl = new URL(location, url).toString();
+        fetchPublicText(nextUrl, { maxBytes, redirects: redirects - 1 }).then(resolve).catch(reject);
+        return;
+      }
+
+      let bytes = 0;
+      let firstByteAt = 0;
+      const chunks = [];
+      res.on('data', (chunk) => {
+        if (!firstByteAt) firstByteAt = Date.now();
+        bytes += chunk.length;
+        if (bytes <= maxBytes) chunks.push(chunk);
+      });
+      res.on('end', () => {
+        resolve({
+          url,
+          statusCode: res.statusCode,
+          headers: res.headers,
+          body: Buffer.concat(chunks).toString('utf8'),
+          bytes,
+          ttfbMs: (firstByteAt || Date.now()) - started,
+          totalMs: Date.now() - started,
+        });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(12000, () => req.destroy(new Error(`timeout for ${url}`)));
+  });
+}
+
+function scoreWebsiteSnapshot(snapshot) {
+  const html = snapshot.body || '';
+  const headers = snapshot.headers || {};
+  const findings = [];
+  let score = 100;
+
+  if (!snapshot.statusCode || snapshot.statusCode >= 400) {
+    score -= 35;
+    findings.push(`HTTP status ${snapshot.statusCode || 'unknown'}`);
+  }
+  if (snapshot.ttfbMs > 800) {
+    score -= 12;
+    findings.push(`TTFB ${snapshot.ttfbMs}ms above 800ms target`);
+  }
+  if (snapshot.totalMs > 2500) {
+    score -= 10;
+    findings.push(`Total load ${snapshot.totalMs}ms above 2500ms target`);
+  }
+  if (snapshot.bytes > 450_000) {
+    score -= 8;
+    findings.push(`HTML payload ${Math.round(snapshot.bytes / 1024)}KB is heavier than target`);
+  }
+  if (!/rel=["']canonical["']/i.test(html)) {
+    score -= 8;
+    findings.push('Canonical link missing');
+  }
+  if (!/property=["']og:title["']/i.test(html)) {
+    score -= 6;
+    findings.push('Open Graph title missing');
+  }
+  if (!/application\/ld\+json/i.test(html)) {
+    score -= 6;
+    findings.push('Structured data missing');
+  }
+  if (!/rel=["']manifest["']/i.test(html)) {
+    score -= 4;
+    findings.push('Web manifest link missing');
+  }
+  if (!headers['cache-control'] && !headers.etag) {
+    score -= 4;
+    findings.push('No cache-control or ETag header detected');
+  }
+
+  return { score: Math.max(0, Math.min(100, score)), findings };
+}
+
+function updateWebSubAgent(id, patch) {
+  const prev = websiteOptimizerState.subAgents[id] || {};
+  websiteOptimizerState.subAgents[id] = {
+    ...prev,
+    ...patch,
+    totalRuns: patch.increment ? (prev.totalRuns || 0) + 1 : (patch.totalRuns ?? prev.totalRuns ?? 0),
+    lastRun: Date.now(),
+  };
+  delete websiteOptimizerState.subAgents[id].increment;
+}
+
+async function runWebPerfSubAgent(snapshot = null) {
+  const id = 'web_perf';
+  try {
+    const snap = snapshot || await fetchPublicText(WEB_OPTIMIZER_URL);
+    const ok = snap.statusCode < 400 && snap.ttfbMs < 800 && snap.totalMs < 2500;
+    updateWebSubAgent(id, {
+      increment: true,
+      status: ok ? 'healthy' : 'degraded',
+      lastError: null,
+      ttfbMs: snap.ttfbMs,
+      totalMs: snap.totalMs,
+      bytes: snap.bytes,
+      statusCode: snap.statusCode,
+    });
+    logAgentAction(id, ok ? '⚡' : '⚠️',
+      `${WEB_OPTIMIZER_URL}: HTTP ${snap.statusCode} · TTFB ${snap.ttfbMs}ms · total ${snap.totalMs}ms · ${Math.round(snap.bytes / 1024)}KB`,
+      ok ? '#FBBF24' : '#F87171');
+    return snap;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `Public performance check failed: ${e.message}`, '#F87171');
+    return null;
+  }
+}
+
+async function runWebSeoSubAgent(snapshot = null) {
+  const id = 'web_seo';
+  try {
+    const snap = snapshot || await fetchPublicText(WEB_OPTIMIZER_URL);
+    const [sitemap, robots, manifest] = await Promise.allSettled([
+      fetchPublicText(new URL('/sitemap.xml', WEB_OPTIMIZER_URL).toString(), { maxBytes: 300_000 }),
+      fetchPublicText(new URL('/robots.txt', WEB_OPTIMIZER_URL).toString(), { maxBytes: 100_000 }),
+      fetchPublicText(new URL('/manifest.json', WEB_OPTIMIZER_URL).toString(), { maxBytes: 100_000 }),
+    ]);
+    const html = snap.body || '';
+    const routes = (sitemap.value?.body.match(/<loc>/g) || []).length;
+    const checks = {
+      canonical: /rel=["']canonical["']/i.test(html),
+      og: /property=["']og:title["']/i.test(html),
+      schema: /application\/ld\+json/i.test(html),
+      sitemap: sitemap.status === 'fulfilled' && sitemap.value.statusCode < 400,
+      robots: robots.status === 'fulfilled' && robots.value.statusCode < 400,
+      manifest: manifest.status === 'fulfilled' && manifest.value.statusCode < 400,
+    };
+    const passed = Object.values(checks).filter(Boolean).length;
+    const healthy = passed >= 5;
+    updateWebSubAgent(id, { increment: true, status: healthy ? 'healthy' : 'degraded', lastError: null, checks, routes });
+    logAgentAction(id, healthy ? '🔍' : '⚠️',
+      `SEO public-domain audit: ${passed}/6 checks passing · sitemap routes ${routes} · manifest ${checks.manifest ? 'ok' : 'missing'}`,
+      healthy ? '#34D399' : '#FBBF24');
+    return checks;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `SEO audit failed: ${e.message}`, '#F87171');
+    return null;
+  }
+}
+
+async function runWebCacheSubAgent() {
+  const id = 'web_cache';
+  try {
+    runCacheHelperCheck();
+    runSortAgentCheck();
+    const sw = await fetchPublicText(new URL('/sw.js', WEB_OPTIMIZER_URL).toString(), { maxBytes: 100_000 }).catch(() => null);
+    const hasServiceWorker = !!(sw && sw.statusCode < 400 && /CACHE_NAME|caches\./i.test(sw.body || ''));
+    updateWebSubAgent(id, {
+      increment: true,
+      status: 'healthy',
+      lastError: null,
+      hasServiceWorker,
+      sourceCaches: agentSourceCache.size,
+      globalPosts: globalFeedCache.posts.length,
+    });
+    logAgentAction(id, '🗄️',
+      `Public cache optimized · service worker ${hasServiceWorker ? 'active' : 'not detected'} · ${agentSourceCache.size} source caches · ${globalFeedCache.posts.length.toLocaleString()} global posts`,
+      '#6366F1');
+    return true;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `Web cache optimization failed: ${e.message}`, '#FBBF24');
+    return false;
+  }
+}
+
+async function runWebStorageSubAgent() {
+  const id = 'web_storage';
+  if (isStabilityCritical()) {
+    updateWebSubAgent(id, { increment: true, status: 'skipped', lastError: 'stability critical' });
+    logAgentAction(id, '⏸️', 'Fast storage pass skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
+  try {
+    const sourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts || []);
+    const hotPosts = sortFeedBatch([...globalFeedCache.posts, ...sourcePosts], 'web-storage-hot-cache', {
+      limit: WEB_STORAGE_BATCH_LIMIT,
+    });
+    const saved = await savePostsToDB(hotPosts) || 0;
+
+    const stale = Object.keys(SOURCE_FETCHERS)
+      .filter(id => {
+        const health = workerHealth.get(id);
+        return !health?.lastSuccess || Date.now() - health.lastSuccess > 10 * 60 * 1000;
+      })
+      .slice(0, WEB_STORAGE_REFRESH_BATCH);
+    if (stale.length && refreshControl.mode === 'normal') {
+      enqueueSourceRefresh(stale, 'web-storage fast intake');
+    }
+
+    updateWebSubAgent(id, {
+      increment: true,
+      status: 'healthy',
+      lastError: null,
+      saved,
+      queuedSources: stale,
+      batchLimit: WEB_STORAGE_BATCH_LIMIT,
+      dbCap: MAX_CACHED_DB_POSTS,
+    });
+    logAgentAction(id, '💾',
+      `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB cap ${MAX_CACHED_DB_POSTS.toLocaleString()}`,
+      '#FB7185');
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, '⚠️', `Fast storage pass failed: ${e.message}`, '#F87171');
+  }
+}
+
+async function runWebsiteOptimizerCheck() {
+  websiteOptimizerState.status = 'running';
+  websiteOptimizerState.totalRuns += 1;
+  websiteOptimizerState.lastRun = Date.now();
+  try {
+    const snapshot = await runWebPerfSubAgent();
+    if (!snapshot) throw new Error('public web snapshot unavailable');
+    const assessment = scoreWebsiteSnapshot(snapshot);
+    Object.assign(websiteOptimizerState, {
+      status: assessment.score >= 80 ? 'healthy' : 'degraded',
+      lastError: null,
+      score: assessment.score,
+      lastStatus: snapshot.statusCode,
+      lastTtfbMs: snapshot.ttfbMs,
+      lastTotalMs: snapshot.totalMs,
+      lastBytes: snapshot.bytes,
+      findings: assessment.findings,
+    });
+    saveWebsiteOptimizationRun({
+      id: `webopt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      agentId: 'web_optimizer',
+      targetUrl: WEB_OPTIMIZER_URL,
+      statusCode: snapshot.statusCode,
+      ttfbMs: snapshot.ttfbMs,
+      totalMs: snapshot.totalMs,
+      bytes: snapshot.bytes,
+      score: assessment.score,
+      findings: assessment.findings,
+    }).catch(() => {});
+
+    await Promise.allSettled([
+      runWebSeoSubAgent(snapshot),
+      runWebCacheSubAgent(),
+      runWebStorageSubAgent(),
+    ]);
+
+    const summary = assessment.findings.length ? assessment.findings.slice(0, 2).join(' · ') : 'all public-domain checks passing';
+    logAgentAction('web_optimizer', '🌐',
+      `Website optimizer score ${assessment.score}/100 on ${WEB_OPTIMIZER_URL} · ${summary}`,
+      assessment.score >= 80 ? '#14B8A6' : '#FBBF24');
+  } catch (e) {
+    websiteOptimizerState.status = 'degraded';
+    websiteOptimizerState.lastError = e.message;
+    websiteOptimizerState.lastRun = Date.now();
+    logAgentAction('web_optimizer', '⚠️', `Website optimizer failed: ${e.message}`, '#F87171');
+  }
+}
+
 async function runDeployCheck() {
   return runDeployCheckAll();
 }
@@ -3922,6 +4197,19 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
+  if (id === 'web_optimizer') {
+    logAgentAction(id, def.emoji,
+      `Active - ${websiteOptimizerState.publicUrl} score ${websiteOptimizerState.score || 0}/100 · ${websiteOptimizerState.totalRuns.toLocaleString()} runs`, def.color);
+    return true;
+  }
+
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage'].includes(id)) {
+    const sub = websiteOptimizerState.subAgents[id] || {};
+    logAgentAction(id, def.emoji,
+      `Active - ${sub.status || 'idle'} · ${(sub.totalRuns || 0).toLocaleString()} runs · parent ${websiteOptimizerState.publicUrl}`, def.color);
+    return true;
+  }
+
   if (id === 'refresh_queue') {
     logAgentAction(id, def.emoji,
       `Active - ${sourceRefreshQueue.pendingIds.size} queued, ${sourceRefreshQueue.totalRuns.toLocaleString()} queue runs`, def.color);
@@ -4011,6 +4299,8 @@ setTimeout(runSeoCheck,       15000);
 setTimeout(runOppsCheck,      20000);
 setTimeout(runDataCheck,      25000);
 setTimeout(runDeployCheckAll, 30000);
+setTimeout(runWebsiteOptimizerCheck, 35000);
+setTimeout(runWebStorageSubAgent,    45000);
 
 // Frequent intervals — each function now logs 2 entries per run (staggered internally)
 setInterval(runSecurityScan,   2.5 * 60 * 1000); // every 2.5 min
@@ -4020,6 +4310,8 @@ setInterval(runOppsCheck,        3 * 60 * 1000); // every 3 min
 setInterval(runSeoCheck,         4 * 60 * 1000); // every 4 min
 setInterval(runDataCheck,        4 * 60 * 1000); // every 4 min
 setInterval(runDeployCheckAll,   5 * 60 * 1000); // every 5 min (pings all 3 services)
+setInterval(runWebsiteOptimizerCheck, WEB_OPTIMIZER_INTERVAL_MS);
+setInterval(runWebStorageSubAgent,    WEB_STORAGE_INTERVAL_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
@@ -5000,7 +5292,7 @@ async function savePostsToDB(posts) {
   return saved;
 }
 
-// ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
+// ─── Save public website optimizer snapshots ─────────────────────────────────
 async function saveWebsiteOptimizationRun(run) {
   if (!db.isConnected() || !run) return;
   try {
@@ -5031,6 +5323,7 @@ async function saveWebsiteOptimizationRun(run) {
   }
 }
 
+// ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null) {
   if (!db.isConnected()) return [];
   try {
@@ -5354,22 +5647,15 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // ─── Profile: social connection status + disconnect ───────────────────────────
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const connected = Object.fromEntries(Object.keys(PLATFORMS).map(p => [p, !!(user?.socialTokens?.[p])]));
-  const platforms = Object.fromEntries(Object.entries(PLATFORMS).map(([key, platform]) => [
+  const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => [p, !!(user?.socialTokens?.[p])]));
+  const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => [
     key,
-    {
-      ...platform,
-      active: CONNECTED_SOCIAL_PLATFORMS.has(key),
-      proRequired: false,
-      connected: connected[key],
-      comingSoon: platform.comingSoon || !CONNECTED_SOCIAL_PLATFORMS.has(key),
-    },
+    { ...PLATFORMS[key], connected: connected[key] },
   ]));
   res.json({
     platforms,
     connected,
     connectedPlatforms: Object.keys(connected).filter(key => connected[key]),
-    proRequiredPlatforms: [...CONNECTED_SOCIAL_PLATFORMS],
   });
 });
 
@@ -5384,10 +5670,7 @@ app.get('/profile/social', authenticate, async (req, res) => {
 // Replace mock_token with a real OAuth exchange when you have API credentials.
 app.post('/social/connect', authenticate, async (req, res) => {
   const { platform } = req.body;
-  if (!PLATFORMS[platform]) return res.status(400).json({ error: 'Unknown platform' });
-  if (!CONNECTED_SOCIAL_PLATFORMS.has(platform)) {
-    return res.status(400).json({ error: 'Platform connection is coming soon', reason: 'coming_soon' });
-  }
+  if (!CONNECTED_SOCIAL_PLATFORMS.has(platform)) return res.status(400).json({ error: 'Unknown platform' });
   await saveSocialToken(req.user.id, platform, `mock_token_${platform}_${Date.now()}`);
   logAgentAction('cache_helper', '🔗', `User connected ${platform}`, '#6366F1');
   res.json({ ok: true, platform, connected: true });
@@ -6322,6 +6605,26 @@ const AGENT_DEFS = {
     name: 'Feed Cache Agent', emoji: '🗂️', color: '#60A5FA', interval: 'on-demand',
     description: 'Manages the global feed cache. Aggregates all source agent output, deduplicates posts, persists to DB, and triggers the initial warm-up on startup.',
   },
+  web_optimizer: {
+    name: 'Website Optimizer', emoji: '🌐', color: '#14B8A6', interval: '2min',
+    description: 'Continuously audits the public website domain, scores live performance/SEO/cache signals, and coordinates optimization sub-agents against uficonnect.org.',
+  },
+  web_perf: {
+    name: 'Web Performance Sub-Agent', emoji: '⚡', color: '#FBBF24', interval: '2min',
+    description: 'Measures public-domain HTTP status, TTFB, total response time, payload size, and response headers for the live website.',
+  },
+  web_seo: {
+    name: 'Web SEO Sub-Agent', emoji: '🔍', color: '#34D399', interval: '2min',
+    description: 'Validates canonical tags, Open Graph metadata, structured data, manifest.json, robots.txt, and sitemap.xml on the public website.',
+  },
+  web_cache: {
+    name: 'Web Cache Sub-Agent', emoji: '🗄️', color: '#6366F1', interval: '2min',
+    description: 'Keeps website-facing caches sorted and merged, verifies the public service worker, and keeps the feed cache ready for fast page loads.',
+  },
+  web_storage: {
+    name: 'Fast Storage Sub-Agent', emoji: '💾', color: '#FB7185', interval: '90s',
+    description: 'Persists hot feed/source data to PostgreSQL on a shorter loop, queues stale source refreshes, and keeps the enlarged DB cache warm without overloading stability guard.',
+  },
   security: {
     name: 'Security Agent', emoji: '🔒', color: '#4ADE80', interval: '8min',
     description: 'Scans JWT tokens, validates CORS headers, monitors failed login attempts, checks CVE database, and enforces rate-limit rules every 8 minutes.',
@@ -6436,6 +6739,24 @@ function getRuntimeHealthForAgent(id) {
       lastRun: sortDistribState.lastRun,
       lastError: sortDistribState.lastError,
     };
+  }
+  if (id === 'web_optimizer') {
+    return {
+      status: websiteOptimizerState.status,
+      publicUrl: websiteOptimizerState.publicUrl,
+      totalRuns: websiteOptimizerState.totalRuns,
+      score: websiteOptimizerState.score,
+      lastStatus: websiteOptimizerState.lastStatus,
+      lastTtfbMs: websiteOptimizerState.lastTtfbMs,
+      lastTotalMs: websiteOptimizerState.lastTotalMs,
+      lastBytes: websiteOptimizerState.lastBytes,
+      findings: websiteOptimizerState.findings,
+      lastRun: websiteOptimizerState.lastRun,
+      lastError: websiteOptimizerState.lastError,
+    };
+  }
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage'].includes(id)) {
+    return websiteOptimizerState.subAgents[id] || { status: 'idle', totalRuns: 0 };
   }
   if (id === 'activity') {
     return {
@@ -6594,6 +6915,20 @@ app.get('/office/status', (req, res) => {
       lastRun: sortDistribState.lastRun,
       lastError: sortDistribState.lastError,
     },
+    websiteOptimizer: {
+      status: websiteOptimizerState.status,
+      publicUrl: websiteOptimizerState.publicUrl,
+      totalRuns: websiteOptimizerState.totalRuns,
+      score: websiteOptimizerState.score,
+      lastStatus: websiteOptimizerState.lastStatus,
+      lastTtfbMs: websiteOptimizerState.lastTtfbMs,
+      lastTotalMs: websiteOptimizerState.lastTotalMs,
+      lastBytes: websiteOptimizerState.lastBytes,
+      findings: websiteOptimizerState.findings,
+      lastRun: websiteOptimizerState.lastRun,
+      lastError: websiteOptimizerState.lastError,
+      subAgents: websiteOptimizerState.subAgents,
+    },
     activityAgent: {
       status: activityAgentState.status,
       totalSweeps: activityAgentState.totalSweeps,
@@ -6673,6 +7008,11 @@ app.post('/office/agents/:id/trigger', (req, res) => {
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
     sort_agent:   () => runSortAgentCheck(),
     sort_distrib: () => runSortDistribCheck(),
+    web_optimizer: () => runWebsiteOptimizerCheck(),
+    web_perf:      () => runWebPerfSubAgent(),
+    web_seo:       () => runWebSeoSubAgent(),
+    web_cache:     () => runWebCacheSubAgent(),
+    web_storage:   () => runWebStorageSubAgent(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
@@ -6727,6 +7067,10 @@ app.get('/office/versions', (req, res) => {
 });
 
 // ─── HQ status endpoint (no auth — feeds the internal control room) ──────────
+app.get('/office/website-optimizer', (_req, res) => {
+  res.json({ websiteOptimizer: websiteOptimizerState });
+});
+
 app.get('/hq/status', (req, res) => {
   res.json({
     agentLog:     agentActionLog,
@@ -6742,6 +7086,7 @@ app.get('/hq/status', (req, res) => {
       lastReason: sourceRefreshQueue.lastReason,
     },
     sortAgent: sortAgentState,
+    websiteOptimizer: websiteOptimizerState,
     activityAgent: activityAgentState,
   });
 });
@@ -6782,6 +7127,11 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     refresh_queue: () => enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'manual refresh queue trigger'),
     sort_agent:   () => runSortAgentCheck(),
     sort_distrib: () => runSortDistribCheck(),
+    web_optimizer: () => runWebsiteOptimizerCheck(),
+    web_perf:      () => runWebPerfSubAgent(),
+    web_seo:       () => runWebSeoSubAgent(),
+    web_cache:     () => runWebCacheSubAgent(),
+    web_storage:   () => runWebStorageSubAgent(),
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');

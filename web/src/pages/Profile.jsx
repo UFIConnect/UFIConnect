@@ -9,30 +9,12 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-const SOCIAL_LOCKED = false;
-const ACTIVE_SOCIAL_CONNECTORS = new Set(['linkedin', 'twitter', 'instagram', 'facebook']);
-
 const SOCIAL_PLATFORMS = [
-  { id: 'linkedin',  emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your network' },
-  { id: 'twitter',   emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', desc: 'Tweets matching your interests' },
-  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from accounts you follow' },
-  { id: 'facebook',  emoji: '📘', name: 'Facebook',    color: '#1877F2', desc: 'Page posts matching your topics' },
-  { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Repos, contributions & open-source work' },
-  { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Videos and channels in your areas' },
-  { id: 'reddit',    emoji: '🟠', name: 'Reddit',      color: '#FF4500', desc: 'Subreddits matching your interests' },
-  { id: 'tiktok',    emoji: '🎵', name: 'TikTok',      color: '#010101', desc: 'Creators and trends in your niche' },
-  { id: 'bluesky',   emoji: '🦋', name: 'Bluesky',     color: '#0085FF', desc: 'Posts and discussions across the network' },
-  { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
-  { id: 'medium',    emoji: '📝', name: 'Medium',      color: '#1A8917', desc: 'Long-form articles in your areas' },
-  { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and creative inspiration' },
-  { id: 'behance',   emoji: '🖼️', name: 'Behance',     color: '#1769FF', desc: 'Portfolios and creative projects' },
-  { id: 'indeed',    emoji: '💼', name: 'Indeed',      color: '#003A9B', desc: 'Job listings matched to your profile', comingSoon: true },
-].map(platform => ({
-  ...platform,
-  active: ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
-  proRequired: ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
-  comingSoon: platform.comingSoon || !ACTIVE_SOCIAL_CONNECTORS.has(platform.id),
-}));
+  { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
+  { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Tweets and threads from the people you follow' },
+  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from the creators and brands you follow' },
+  { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'Updates from friends, pages, and groups you follow' },
+];
 
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
@@ -120,9 +102,7 @@ export default function Profile() {
       const { data } = await client.get(`/auth/social/${platform}/start`);
       if (data?.url) window.location.href = data.url;
     } catch (e) {
-      const msg = e?.response?.data?.reason === 'pro'
-        ? 'Upgrade to Pro to connect social accounts.'
-        : e?.response?.data?.error || `Could not connect ${platform}. Please try again.`;
+      const msg = e?.response?.data?.error || `Could not connect ${platform}. Please try again.`;
       setSocialFlash({ type: 'error', platform, msg });
       setTimeout(() => setSocialFlash(null), 5000);
       setSocialConnecting(null);
@@ -134,18 +114,6 @@ export default function Profile() {
       await client.delete(`/profile/social/${platform}`);
       setConnectedSocial(prev => ({ ...prev, [platform]: false }));
     } catch {}
-  }
-
-  async function upgradeToPro() {
-    try {
-      const { data } = await client.post('/user/plan/upgrade');
-      updateProfileLocally({ plan: data?.plan || 'pro', isPro: true });
-      setSocialFlash({ type: 'success', platform: 'Pro', msg: 'Pro is active. You can now connect social accounts.' });
-      setTimeout(() => setSocialFlash(null), 5000);
-    } catch {
-      setSocialFlash({ type: 'error', platform: 'Pro', msg: 'Could not activate Pro. Please try again.' });
-      setTimeout(() => setSocialFlash(null), 5000);
-    }
   }
 
   async function toggleProfileHidden() {
@@ -357,7 +325,7 @@ export default function Profile() {
               </Link>
             </div>
             <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
-              Pro connectors are active for LinkedIn, X, Instagram, and Facebook. Other platforms are staged for coming soon.
+              Connect your social accounts to bring your existing feeds into UFIConnect. One tap — you're redirected and sent back automatically.
             </p>
 
             {socialFlash && (
@@ -396,31 +364,16 @@ export default function Profile() {
                         {isConnected && (
                           <span style={{ fontSize:'.62rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'1px 5px', borderRadius:4 }}>✓ Connected</span>
                         )}
-                        {platform.proRequired && !profile?.isPro && !isConnected && (
-                          <span style={{ fontSize:'.62rem', fontWeight:700, color:'#92400E', background:'#FEF3C7', padding:'1px 5px', borderRadius:4 }}>PRO</span>
-                        )}
                       </div>
                       <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
                     </div>
-                    {platform.comingSoon ? (
-                      <span style={{ fontSize:'.68rem', fontWeight:700, color:'var(--muted)', background:'var(--bg-secondary)', padding:'4px 8px', borderRadius:6, flexShrink:0 }}>
-                        Coming Soon
-                      </span>
-                    ) : isConnected ? (
+                    {isConnected ? (
                       <button
                         className="btn btn-danger btn-sm"
                         style={{ flexShrink:0, fontSize:'.72rem' }}
                         onClick={() => disconnectSocial(platform.id)}
                       >
                         Disconnect
-                      </button>
-                    ) : platform.proRequired && !profile?.isPro ? (
-                      <button
-                        className="btn btn-sm btn-primary"
-                        style={{ flexShrink:0, fontSize:'.72rem' }}
-                        onClick={upgradeToPro}
-                      >
-                        Upgrade
                       </button>
                     ) : (
                       <button
@@ -437,27 +390,6 @@ export default function Profile() {
               })}
             </div>
 
-            {/* Blur + lock overlay */}
-            {SOCIAL_LOCKED && (
-              <div style={{
-                position:'absolute', inset:0,
-                backdropFilter:'blur(4px)', WebkitBackdropFilter:'blur(4px)',
-                background:'rgba(255,255,255,0.55)',
-                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                gap:10, borderRadius:'inherit',
-              }}>
-                <div style={{
-                  width:48, height:48, borderRadius:'50%',
-                  background:'var(--surface)', border:'1.5px solid var(--border)',
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  fontSize:'1.4rem', boxShadow:'0 2px 12px rgba(0,0,0,.08)',
-                }}>🔒</div>
-                <div style={{ fontWeight:700, fontSize:'.9rem', color:'var(--text)' }}>Coming Soon</div>
-                <div style={{ fontSize:'.75rem', color:'var(--muted)', textAlign:'center', maxWidth:220, lineHeight:1.5 }}>
-                  Social account connections are being set up.
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Preferences */}
