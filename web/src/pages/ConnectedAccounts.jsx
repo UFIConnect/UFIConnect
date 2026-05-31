@@ -16,32 +16,49 @@ const PLATFORM_BENEFITS = {
   medium:    ['Import your published articles', 'Share writing with your network', 'Discover great long-form reads'],
   dribbble:  ['Display your design shots', 'Get discovered by hiring managers', 'Connect with top designers'],
   behance:   ['Showcase your full portfolio', 'Import case studies to profile', 'Get design feedback'],
-  indeed:    ['Surface matched job listings', 'Track applications in one place', 'Get salary insights'],
   tiktok:    ['Follow creators in your niche', 'Surface trending videos in your feed', 'Connect with content creators'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 
+const HANDLE_PLATFORMS = new Set(['github', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+
+const HANDLE_PLACEHOLDER = {
+  github:   'your-github-username',
+  reddit:   'your-reddit-username',
+  youtube:  'your-channel-handle',
+  medium:   'your-medium-username',
+  dribbble: 'your-dribbble-username',
+  behance:  'your-behance-username',
+  tiktok:   'your-tiktok-username',
+  bluesky:  'yourhandle.bsky.social',
+};
+
 export default function ConnectedAccounts() {
-  const { profile: authProfile, updateProfileLocally } = useAuth();
-  const [platforms, setPlatforms] = useState([]);
-  const [connected, setConnected] = useState({});
-  const [loading,   setLoading]   = useState(true);
-  const [expanded,  setExpanded]  = useState(null);
-  const [profile,   setProfile]   = useState(authProfile);
-  const [flash,     setFlash]     = useState(null);
-  const [connecting, setConnecting] = useState(null);
+  const { profile: authProfile } = useAuth();
+  const [platforms, setPlatforms]       = useState([]);
+  const [connected, setConnected]       = useState({});
+  const [loading,   setLoading]         = useState(true);
+  const [expanded,  setExpanded]        = useState(null);
+  const [flash,     setFlash]           = useState(null);
+  const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  const [handleInputs, setHandleInputs] = useState({});
+  const [savingHandle, setSavingHandle] = useState(null);
 
   useEffect(() => {
     Promise.all([
       client.get('/social/platforms'),
       client.get('/profile'),
-    ]).then(([pRes, uRes]) => {
+    ]).then(([pRes]) => {
       setPlatforms(Object.entries(pRes.data.platforms || {}));
-      setProfile(uRes.data);
       setConnected(pRes.data.connected || {});
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
+
+  function flash_(type, msg, ms = 4000) {
+    setFlash({ type, msg });
+    setTimeout(() => setFlash(null), ms);
+  }
 
   async function handleConnect(platform) {
     setConnecting(platform);
@@ -49,8 +66,7 @@ export default function ConnectedAccounts() {
       const { data } = await client.get(`/auth/social/${platform}/start`);
       if (data?.url) window.location.href = data.url;
     } catch (err) {
-      setFlash({ type: 'error', msg: err?.response?.data?.error || 'Could not start this connection. Please try again.' });
-      setTimeout(() => setFlash(null), 6000);
+      flash_('error', err?.response?.data?.error || 'Could not start this connection.', 6000);
       setConnecting(null);
     }
   }
@@ -59,19 +75,33 @@ export default function ConnectedAccounts() {
     setDisconnecting(platform);
     try {
       await client.delete(`/social/connect/${platform}`);
-      setConnected((prev) => { const n = { ...prev }; delete n[platform]; return n; });
-      setFlash({ type: 'success', msg: 'Account disconnected.' });
-      setTimeout(() => setFlash(null), 4000);
+      setConnected(prev => { const n = { ...prev }; delete n[platform]; return n; });
+      flash_('success', 'Account disconnected.');
     } catch (err) {
-      setFlash({ type: 'error', msg: err?.response?.data?.error || 'Could not disconnect this account.' });
-      setTimeout(() => setFlash(null), 6000);
+      flash_('error', err?.response?.data?.error || 'Could not disconnect.', 6000);
     } finally {
       setDisconnecting(null);
     }
   }
 
-  const connectedList = platforms.filter(([k, p]) => connected[k]);
-  const availableList = platforms.filter(([k, p]) => !connected[k] && p.active !== false);
+  async function saveHandle(platform) {
+    const raw = (handleInputs[platform] || '').replace(/^@/, '').trim();
+    if (!raw) return;
+    setSavingHandle(platform);
+    try {
+      await client.post('/social/connect/handle', { platform, handle: raw });
+      setConnected(prev => ({ ...prev, [platform]: raw }));
+      setHandleInputs(prev => ({ ...prev, [platform]: '' }));
+      flash_('success', `Connected ${platform} as @${raw}.`);
+    } catch (err) {
+      flash_('error', err?.response?.data?.error || 'Could not save handle.', 6000);
+    } finally {
+      setSavingHandle(null);
+    }
+  }
+
+  const connectedList = platforms.filter(([k]) => connected[k]);
+  const availableList = platforms.filter(([k]) => !connected[k]);
 
   return (
     <Layout>
@@ -84,7 +114,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Connect your social accounts to personalise your feed. One tap — you're redirected to the platform and sent right back.
+          Connect your social accounts to personalise your feed. Handle-based platforms connect instantly — OAuth platforms redirect you to the app and back.
         </p>
       </div>
 
@@ -148,12 +178,19 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected
+                  handle={typeof connected[key] === 'string' ? connected[key] : null}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
+                  isHandlePlatform={HANDLE_PLATFORMS.has(key)}
+                  handleInput={handleInputs[key] || ''}
+                  onHandleChange={v => setHandleInputs(prev => ({ ...prev, [key]: v }))}
+                  onHandleSave={() => saveHandle(key)}
+                  savingHandle={savingHandle === key}
+                  placeholder={HANDLE_PLACEHOLDER[key] || 'your-username'}
                 />
               ))}
             </div>
@@ -171,12 +208,19 @@ export default function ConnectedAccounts() {
                   platformKey={key}
                   p={p}
                   isConnected={false}
+                  handle={null}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
+                  isHandlePlatform={HANDLE_PLATFORMS.has(key)}
+                  handleInput={handleInputs[key] || ''}
+                  onHandleChange={v => setHandleInputs(prev => ({ ...prev, [key]: v }))}
+                  onHandleSave={() => saveHandle(key)}
+                  savingHandle={savingHandle === key}
+                  placeholder={HANDLE_PLACEHOLDER[key] || 'your-username'}
                 />
               ))}
             </div>
@@ -187,12 +231,17 @@ export default function ConnectedAccounts() {
   );
 }
 
-function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect, connecting, disconnecting }) {
+function PlatformCard({
+  platformKey, p, isConnected, handle, expanded, onToggle,
+  onDisconnect, onConnect, connecting, disconnecting,
+  isHandlePlatform, handleInput, onHandleChange, onHandleSave, savingHandle, placeholder,
+}) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
     <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        {/* Platform icon */}
         <div style={{
           width: 40, height: 40, borderRadius: 10,
           background: p.color, display: 'flex', alignItems: 'center',
@@ -203,6 +252,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           </span>
         </div>
 
+        {/* Name + description */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
@@ -211,7 +261,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                 fontSize: '.65rem', fontWeight: 700, color: '#059669',
                 background: '#ECFDF5', padding: '1px 6px', borderRadius: 4,
               }}>
-                ✓ Connected
+                ✓ {handle ? `@${handle}` : 'Connected'}
               </span>
             )}
           </div>
@@ -220,47 +270,84 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           </div>
         </div>
 
+        {/* Action buttons */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-          <button
-            onClick={onToggle}
-            className="btn btn-ghost btn-sm"
-            style={{ fontSize: '.72rem', padding: '4px 8px' }}
-          >
+          <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
           {isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
             </button>
+          ) : isHandlePlatform ? (
+            <button className="btn btn-sm btn-outline" onClick={onToggle} style={{ borderColor: p.color, color: p.color }}>
+              Connect
+            </button>
           ) : (
-            <button
-              className="btn btn-sm btn-outline"
-              onClick={onConnect}
-              disabled={connecting}
-              style={{ borderColor: p.color, color: p.color }}
-            >
+            <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
               {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
             </button>
           )}
         </div>
       </div>
 
-      {expanded && (
+      {/* Handle input — shown inline when expanded for handle platforms not yet connected */}
+      {expanded && isHandlePlatform && !isConnected && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-          {benefits.length > 0 && (
-            <div>
-              <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
-                What you unlock
-              </div>
-              <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
-                {benefits.map((b, i) => (
-                  <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
-                    <span style={{ color: p.color }}>✦</span> {b}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          <div style={{ fontSize: '.78rem', fontWeight: 600, marginBottom: 8 }}>
+            Enter your {p.name} username
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              className="input"
+              value={handleInput}
+              onChange={e => onHandleChange(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && onHandleSave()}
+              placeholder={placeholder}
+              style={{ flex: 1, fontSize: '.85rem' }}
+              autoFocus
+            />
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={onHandleSave}
+              disabled={savingHandle || !handleInput.trim()}
+            >
+              {savingHandle ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Benefits */}
+      {expanded && (benefits.length > 0) && (isConnected || !isHandlePlatform) && (
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+            What you unlock
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
+            {benefits.map((b, i) => (
+              <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
+                <span style={{ color: p.color }}>✦</span> {b}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Benefits after handle input when expanded (show both) */}
+      {expanded && isHandlePlatform && !isConnected && benefits.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+            What you unlock
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
+            {benefits.map((b, i) => (
+              <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
+                <span style={{ color: p.color }}>✦</span> {b}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
     </div>

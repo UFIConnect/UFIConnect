@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
+const http   = require('http');
 const https  = require('https');
 const crypto = require('crypto');
 const v8 = require('v8');
@@ -1302,7 +1303,7 @@ async function fetchMediumByTag(tag) {
     const xml   = await fetchText(`https://medium.com/feed/tag/${encodeURIComponent(tag)}`);
     const items = parseMediumRSS(xml);
     const posts = items.map(a => ({
-      id:          `medium_${a.guid.split('/p/')[1] || Buffer.from(a.link).toString('base64').slice(0,16)}`,
+      id:          `medium_${a.guid.split('/p/')[1] || Buffer.from(a.link).toString('hex').slice(0,16)}`,
       authorId:    `medium_${a.creator}`,
       groupId:     'ext_medium',
       content:     a.snippet || a.title,
@@ -3916,10 +3917,11 @@ function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const requestUrl = new URL(url);
-    const req = https.get({
+    const transport = requestUrl.protocol === 'http:' ? http : https;
+    const req = transport.get({
       protocol: requestUrl.protocol,
       hostname: requestUrl.hostname,
-      port: requestUrl.port || 443,
+      port: requestUrl.port || (requestUrl.protocol === 'http:' ? 80 : 443),
       path: requestUrl.pathname + requestUrl.search,
       headers: { 'User-Agent': 'UFIConnect-WebOptimizer/1.0' },
     }, (res) => {
@@ -4684,6 +4686,9 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 
 // Feed tabs that gate content behind an OAuth token (pure social APIs with no public fallback)
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+
+// Platforms connected by typing a username — no OAuth app registration needed
+const HANDLE_PLATFORMS = new Set(['github', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -5870,7 +5875,12 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // ─── Profile: social connection status + disconnect ───────────────────────────
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => [p, !!(user?.socialTokens?.[p])]));
+  // For handle platforms return the handle string; for OAuth platforms return true/false
+  const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => {
+    const token = user?.socialTokens?.[p];
+    if (!token) return [p, false];
+    return [p, HANDLE_PLATFORMS.has(p) ? token : true];
+  }));
   const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => [
     key,
     { ...PLATFORMS[key], connected: connected[key] },
@@ -5885,8 +5895,22 @@ app.get('/social/platforms', authenticate, async (req, res) => {
 app.get('/profile/social', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   const platforms = [...CONNECTED_SOCIAL_PLATFORMS];
-  const connected = Object.fromEntries(platforms.map(p => [p, !!(user?.socialTokens?.[p])]));
+  const connected = Object.fromEntries(platforms.map(p => {
+    const token = user?.socialTokens?.[p];
+    if (!token) return [p, false];
+    return [p, HANDLE_PLATFORMS.has(p) ? token : true];
+  }));
   res.json({ connected });
+});
+
+app.post('/social/connect/handle', authenticate, async (req, res) => {
+  const { platform, handle } = req.body;
+  if (!HANDLE_PLATFORMS.has(platform)) return res.status(400).json({ error: 'Not a handle-based platform' });
+  const clean = (handle || '').replace(/^@/, '').trim();
+  if (!clean) return res.status(400).json({ error: 'Handle is required' });
+  await saveSocialToken(req.user.id, platform, clean);
+  logAgentAction('cache_helper', '🔗', `User connected ${platform} as @${clean}`, '#6366F1');
+  res.json({ ok: true, platform, handle: clean });
 });
 
 // One-button mock connect — instantly marks a platform as connected without real OAuth.
@@ -6608,7 +6632,19 @@ function _curatedComments(source, postId) {
 }
 
 function _sourceFromPostId(id) {
-  const prefix = id.split('_')[0];
+  const base = id.replace(/_(social|fallback)$/, '');
+  if (/^fb\d/.test(base))       return 'facebook';
+  if (/^ig\d/.test(base))       return 'instagram';
+  if (/^li\d/.test(base))       return 'linkedin';
+  if (/^tw\d/.test(base))       return 'twitter';
+  if (/^tt\d/.test(base))       return 'tiktok';
+  if (/^re\d/.test(base))       return 'reddit';
+  if (/^sofb\d/.test(base))     return 'stackoverflow';
+  if (/^phfb\d/.test(base))     return 'producthunt';
+  if (/^tcfb\d/.test(base))     return 'techcrunch';
+  if (/^vergefb\d/.test(base))  return 'theverge';
+  if (/^hashfb\d/.test(base))   return 'hashnode';
+  const prefix = base.split('_')[0];
   const map = {
     reddit:'reddit', hn:'hackernews', devto:'devto', github:'github',
     medium:'medium', yt:'youtube', youtube:'youtube', mastodon:'mastodon',
@@ -6830,7 +6866,7 @@ const AGENT_DEFS = {
   },
   web_optimizer: {
     name: 'Website Optimizer', emoji: '🌐', color: '#14B8A6', interval: '2min',
-    description: 'Continuously audits the public website domain, scores live performance/SEO/cache signals, and coordinates optimization sub-agents against uficonnect.org.',
+    description: 'Continuously audits the full public system, scores live website performance/SEO/cache signals, and coordinates API, office, PWA, and storage optimization sub-agents.',
   },
   web_perf: {
     name: 'Web Performance Sub-Agent', emoji: '⚡', color: '#FBBF24', interval: '2min',
