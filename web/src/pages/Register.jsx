@@ -118,91 +118,326 @@ const ROLE_MACROS = [
   },
 ];
 
-// Per-category title focuses for 500+ combinations
+// Per-category title focuses — ~40-55 specific titles per role.
+// Combined with TITLE_PREFIXES below, each category generates 500+ searchable combinations.
 const ROLE_FOCUSES = {
   'Engineer / Developer': [
+    // Core
     'Software Engineer', 'Full-Stack Developer', 'Frontend Engineer', 'Backend Engineer',
-    'Mobile Developer', 'iOS Developer', 'Android Developer', 'DevOps Engineer',
-    'Cloud Architect', 'Platform Engineer', 'ML Engineer', 'Data Engineer',
-    'QA Engineer', 'Security Engineer', 'Site Reliability Engineer', 'AI Engineer',
-    'Blockchain Developer', 'Game Developer', 'Embedded Engineer', 'Infrastructure Engineer',
+    'Web Developer', 'Mobile Developer', 'iOS Developer', 'Android Developer',
+    // Infrastructure & Ops
+    'DevOps Engineer', 'Site Reliability Engineer', 'Platform Engineer', 'Infrastructure Engineer',
+    'Cloud Engineer', 'Cloud Architect', 'Solutions Architect', 'Technical Architect',
+    'Network Engineer', 'Systems Engineer', 'Database Engineer', 'Database Administrator',
+    // AI / Data
+    'ML Engineer', 'AI Engineer', 'Data Engineer', 'Analytics Engineer',
+    'Computer Vision Engineer', 'NLP Engineer', 'Robotics Engineer', 'AI Researcher',
+    // Security & Quality
+    'Security Engineer', 'Cybersecurity Engineer', 'Penetration Tester',
+    'QA Engineer', 'Test Engineer', 'Automation Engineer',
+    // Language / Framework specific
+    'React Developer', 'Vue Developer', 'Angular Developer', 'Next.js Developer',
+    'Node.js Developer', 'Python Developer', 'Go Developer', 'Rust Developer',
+    'TypeScript Developer', 'Java Developer', 'Kotlin Developer', 'Swift Developer',
+    'Flutter Developer', 'Solidity Developer', 'Blockchain Developer',
+    // Niche
+    'Embedded Engineer', 'Firmware Engineer', 'Hardware Engineer',
+    'Game Developer', 'Unity Developer', 'Unreal Engine Developer',
+    'Smart Contract Developer', 'API Engineer', 'Developer Tools Engineer',
+    // Leadership
+    'Technical Lead', 'Engineering Manager', 'Staff Engineer', 'Distinguished Engineer',
+    'Chief Technology Officer', 'VP of Engineering',
   ],
   'Designer / Creative': [
-    'UX Designer', 'UI Designer', 'Product Designer', 'Visual Designer', 'Brand Designer',
-    'Graphic Designer', 'Motion Designer', 'Creative Director', 'Art Director',
-    'Web Designer', 'Industrial Designer', 'Illustrator', 'Design Systems Lead',
-    'User Researcher', 'Interaction Designer', 'Typography Designer',
+    // UX & Product
+    'UX Designer', 'UI Designer', 'Product Designer', 'UX Researcher',
+    'User Researcher', 'Interaction Designer', 'Information Architect',
+    'Accessibility Designer', 'Conversational Designer', 'Service Designer',
+    // Visual & Brand
+    'Visual Designer', 'Brand Designer', 'Graphic Designer', 'Art Director',
+    'Creative Director', 'Brand Strategist', 'Typography Designer',
+    'Package Designer', 'Print Designer', 'Environmental Designer',
+    // Web & Digital
+    'Web Designer', 'UI Engineer', 'Design Engineer', 'Design Technologist',
+    'Landing Page Designer', 'Email Designer',
+    // Motion & 3D
+    'Motion Designer', 'Animator', '3D Designer', '3D Artist', '3D Modeler',
+    'Character Designer', 'Concept Artist', 'Visual Effects Artist',
+    'Game Artist', 'Storyboard Artist',
+    // Illustration & Art
+    'Illustrator', 'Digital Artist', 'Visual Artist', 'Comic Artist',
+    // Writing & Systems
+    'UX Writer', 'Content Designer', 'Design Systems Designer',
+    'Design Systems Lead', 'Industrial Designer', 'Fashion Designer',
+    'Interior Designer', 'Design Manager', 'Design Lead',
   ],
   'Founder / Entrepreneur': [
-    'Founder', 'Co-Founder', 'CEO', 'Entrepreneur', 'Startup Founder',
-    'Indie Hacker', 'Product Builder', 'Venture Builder', 'Solopreneur',
+    // Titles
+    'Founder', 'Co-Founder', 'CEO', 'CTO', 'CPO', 'CMO', 'CFO', 'COO',
+    'Chief Executive Officer', 'Chief Strategy Officer', 'President',
+    'Managing Director', 'Executive Director', 'Managing Partner', 'General Partner',
+    // Builder types
+    'Entrepreneur', 'Startup Founder', 'Serial Entrepreneur', 'Technical Founder',
+    'Non-Technical Founder', 'Indie Hacker', 'Bootstrapper', 'Solopreneur',
+    'Product Builder', 'Venture Builder', 'Studio Founder', 'Agency Founder',
+    'Platform Builder', 'Marketplace Builder', 'SaaS Founder',
+    'B2B Founder', 'Consumer Founder', 'Deep Tech Founder',
+    // Ownership
+    'Business Owner', 'Studio Owner', 'Agency Owner', 'Operating Partner',
   ],
   'Marketer / Growth': [
-    'Marketing Manager', 'Growth Manager', 'Digital Marketer', 'Content Marketer',
-    'SEO Specialist', 'Brand Manager', 'Social Media Manager', 'Performance Marketer',
-    'Email Marketer', 'Demand Gen Manager', 'Product Marketer', 'Growth Hacker',
-    'Marketing Analyst', 'Content Creator', 'Influencer Marketer',
+    // Core marketing
+    'Marketing Manager', 'Digital Marketer', 'Brand Manager', 'Content Marketer',
+    'Product Marketer', 'Field Marketer', 'Event Marketer', 'Marketing Coordinator',
+    // Growth & Acquisition
+    'Growth Manager', 'Growth Hacker', 'Acquisition Manager', 'Demand Gen Manager',
+    'Performance Marketer', 'Paid Media Manager', 'PPC Specialist', 'SEM Specialist',
+    // SEO & Content
+    'SEO Specialist', 'SEO Manager', 'Content Strategist', 'Content Manager',
+    'Copywriter', 'Technical Writer', 'Blog Manager',
+    // Social & Influencer
+    'Social Media Manager', 'Social Media Strategist', 'Community Marketer',
+    'Influencer Marketer', 'Creator Partnerships Manager', 'Affiliate Marketer',
+    // Email & CRM
+    'Email Marketer', 'CRM Manager', 'Lifecycle Marketer', 'Retention Manager',
+    // Analytics & Ops
+    'Marketing Analyst', 'Marketing Operations Manager', 'Revenue Operations Manager',
+    'Growth Analyst',
+    // Leadership
+    'Head of Marketing', 'VP of Marketing', 'Chief Marketing Officer',
   ],
   'Product Manager': [
-    'Product Manager', 'Product Owner', 'Technical PM', 'Product Lead',
-    'Product Strategist', 'Group PM', 'Enterprise PM', 'Consumer PM',
-    'Platform PM', 'Growth PM', 'Data PM',
+    // Core PM
+    'Product Manager', 'Product Owner', 'Product Lead', 'Product Strategist',
+    // Technical PM
+    'Technical PM', 'API PM', 'Infrastructure PM', 'Platform PM', 'Mobile PM',
+    // Domain PM
+    'Growth PM', 'Data PM', 'Enterprise PM', 'Consumer PM', 'Group PM',
+    'B2B PM', 'B2C PM', 'Marketplace PM', 'Payments PM', 'Security PM',
+    'AI PM', 'ML PM', 'Design PM', 'Research PM', 'International PM',
+    'Monetization PM', 'Community PM', 'Social PM',
+    // Leadership
+    'Director of Product Management', 'VP of Product', 'Chief Product Officer',
+    'Head of Product', 'Sr. Director of Product',
   ],
   'Investor / VC': [
-    'Angel Investor', 'Venture Partner', 'VC Analyst', 'Investment Manager',
-    'Fund Manager', 'Portfolio Manager', 'Investment Analyst', 'LP',
-    'Deal Sourcing Analyst', 'Investment Director',
+    // Venture roles
+    'Angel Investor', 'Venture Capitalist', 'Venture Partner', 'General Partner',
+    'Managing Partner', 'Solo GP', 'Micro VC', 'VC Analyst', 'VC Associate',
+    'Investment Director', 'Investment Manager', 'Investment Analyst',
+    'Portfolio Manager', 'Fund Manager', 'Deal Sourcing Analyst', 'Scout',
+    // Private equity
+    'Private Equity Associate', 'Private Equity Manager', 'PE Analyst',
+    'Growth Equity Investor', 'Buyout Analyst',
+    // Other investing
+    'LP', 'Limited Partner', 'Family Office Manager', 'Hedge Fund Analyst',
+    'Corporate VC', 'Impact Investor', 'ESG Investor', 'Crypto Fund Manager',
+    // Stage focus
+    'Pre-Seed Investor', 'Seed Investor', 'Series A Investor', 'Growth Investor',
+    'Syndicator', 'Operator-Turned-Investor',
   ],
   'Content Creator': [
-    'Content Creator', 'YouTuber', 'Podcast Host', 'Newsletter Writer',
-    'Video Creator', 'Social Media Creator', 'Blogger', 'Journalist',
-    'Content Strategist', 'Vlogger', 'Live Streamer', 'Screenwriter',
+    // Video
+    'Content Creator', 'YouTuber', 'Video Creator', 'Vlogger', 'Short-Form Creator',
+    'Long-Form Creator', 'Live Streamer', 'Twitch Streamer', 'TikToker',
+    // Audio
+    'Podcast Host', 'Podcast Producer', 'Audio Creator',
+    // Writing
+    'Newsletter Writer', 'Blogger', 'Journalist', 'Ghostwriter', 'Copywriter',
+    'Technical Writer', 'UX Writer', 'Screenwriter',
+    // Social & Niche
+    'Social Media Creator', 'Instagram Creator', 'LinkedIn Creator',
+    'Tech Creator', 'Finance Creator', 'Health & Wellness Creator',
+    'Lifestyle Creator', 'Travel Creator', 'Gaming Creator',
+    'Educational Creator', 'Business Creator', 'Comedy Creator',
+    // Production
+    'Video Editor', 'Content Strategist', 'Music Video Director',
+    'Documentary Filmmaker', 'Motion Graphics Creator',
+    // Leadership
+    'Head of Content', 'Content Director', 'Creative Director',
   ],
   'Data / Analytics': [
-    'Data Scientist', 'Data Analyst', 'Analytics Engineer', 'BI Analyst',
-    'ML Engineer', 'Quant Researcher', 'Research Scientist', 'Data Engineer',
-    'Statistician', 'Data Architect', 'Business Intelligence Lead',
+    // Scientist / Analyst
+    'Data Scientist', 'Data Analyst', 'Applied Scientist', 'Research Scientist',
+    'Quantitative Researcher', 'Quant Researcher', 'Decision Scientist',
+    'Behavioral Scientist', 'Statistician',
+    // Engineering
+    'Data Engineer', 'Analytics Engineer', 'ML Engineer', 'AI Engineer',
+    'Data Platform Engineer', 'ML Platform Engineer', 'Feature Engineer',
+    // Business Intelligence
+    'BI Analyst', 'Business Intelligence Lead', 'Data Architect',
+    'Data Warehouse Engineer', 'ETL Engineer',
+    // Product & Growth Analytics
+    'Product Analyst', 'Growth Analyst', 'User Researcher', 'Revenue Analyst',
+    'Marketing Analyst', 'Sales Analyst', 'Customer Insights Analyst',
+    // Risk & Finance
+    'Risk Analyst', 'Credit Analyst', 'Fraud Analyst', 'Quantitative Analyst',
+    'Algorithmic Trader',
+    // Leadership
+    'Analytics Lead', 'Data Team Lead', 'Head of Data', 'Data Director',
+    'Chief Data Officer', 'VP of Data', 'VP of Analytics',
   ],
   'Student / Learner': [
-    'Student', 'Research Assistant', 'Graduate Student', 'Teaching Assistant',
-    'Intern', 'Bootcamp Graduate', 'Career Switcher', 'Self-Taught Developer',
-    'Academic Researcher', 'PhD Candidate',
+    // Students
+    'Student', 'Undergraduate Student', 'Graduate Student', 'Masters Student',
+    'PhD Candidate', 'PhD Student', 'Postdoc', 'Research Fellow',
+    'Visiting Scholar', 'Exchange Student',
+    // Assistants & TAs
+    'Research Assistant', 'Teaching Assistant', 'Lab Assistant',
+    'Academic Researcher',
+    // Career changers & learners
+    'Bootcamp Graduate', 'Bootcamp Student', 'Career Switcher',
+    'Self-Taught Developer', 'Online Learner', 'Lifelong Learner',
+    'Certification Candidate', 'Professional Development Student',
+    // Entry level
+    'Apprentice', 'Trainee', 'Intern', 'Co-op Student',
+    'Junior Developer', 'Junior Designer', 'Junior Analyst', 'Junior Engineer',
+    'Recent Graduate', 'New Grad',
   ],
   'Operations / Finance': [
-    'Operations Manager', 'COO', 'Finance Manager', 'Business Analyst',
-    'Strategy Consultant', 'Chief of Staff', 'Financial Analyst', 'Accountant',
-    'Controller', 'Procurement Manager', 'Logistics Manager', 'Revenue Operations Manager',
+    // Operations
+    'Operations Manager', 'COO', 'Chief Operating Officer',
+    'VP of Operations', 'Director of Operations', 'Head of Operations',
+    'Operations Lead', 'Business Operations Manager',
+    // Revenue & Sales Ops
+    'Revenue Operations Manager', 'Sales Operations Manager',
+    'Marketing Operations Manager', 'Customer Success Operations',
+    // Finance
+    'Finance Manager', 'CFO', 'Chief Financial Officer',
+    'VP of Finance', 'Finance Director', 'Head of Finance',
+    'Financial Analyst', 'FP&A Analyst', 'Controller', 'Accountant',
+    'Treasury Manager', 'Tax Manager', 'Internal Auditor',
+    // Strategy & Consulting
+    'Business Analyst', 'Strategy Consultant', 'Management Consultant',
+    'Chief of Staff', 'Strategy Lead',
+    // Supply chain & logistics
+    'Procurement Manager', 'Logistics Manager', 'Supply Chain Manager',
+    'Inventory Manager',
+    // Project / Program
+    'Project Manager', 'Program Manager', 'PMO Lead',
+    // Risk & Compliance
+    'Risk Manager', 'Compliance Manager', 'Legal Operations Manager',
   ],
   'Community Manager': [
-    'Community Manager', 'Head of Community', 'Developer Advocate',
-    'Developer Relations', 'Partnership Manager', 'Community Lead',
-    'Community Builder', 'Events Manager', 'Brand Ambassador',
+    'Community Manager', 'Head of Community', 'Community Lead', 'Community Builder',
+    'Community Strategist', 'Community Operations Manager', 'Community Growth Manager',
+    // Developer relations
+    'Developer Advocate', 'Developer Relations Engineer', 'Technical Evangelist',
+    'Developer Experience Engineer', 'Developer Relations Manager',
+    // Partnerships & events
+    'Partnership Manager', 'Events Manager', 'Conference Manager',
+    'Brand Ambassador', 'Creator Relations Manager', 'Influencer Relations Manager',
+    // Trust & safety
+    'Trust and Safety Manager', 'Content Moderator', 'Policy Manager',
+    // Platforms
+    'Discord Community Manager', 'Reddit Community Manager',
+    'Slack Community Manager', 'Forum Manager',
+    // Analytics & growth
+    'Community Analyst', 'Community Marketing Manager', 'Engagement Manager',
+    // Support
+    'Customer Success Manager', 'User Support Lead', 'Customer Experience Manager',
   ],
   'Healthcare Professional': [
-    'Physician', 'Nurse', 'Nurse Practitioner', 'Healthcare Manager',
-    'Medical Researcher', 'Pharmacist', 'Physical Therapist', 'Healthcare Consultant',
-    'Medical Director', 'Clinical Lead', 'Surgeon', 'Psychologist',
-    'Dentist', 'Public Health Specialist',
+    // Physicians by specialty
+    'Physician', 'General Practitioner', 'Family Medicine Doctor', 'Internist',
+    'Hospitalist', 'Emergency Physician', 'Radiologist', 'Anesthesiologist',
+    'Psychiatrist', 'Psychologist', 'Neurologist', 'Cardiologist', 'Oncologist',
+    'Surgeon', 'Orthopedic Surgeon', 'Pediatrician', 'Dermatologist',
+    'Ophthalmologist', 'OB-GYN', 'Urologist', 'Endocrinologist',
+    // Nursing & Allied
+    'Nurse', 'Registered Nurse', 'Nurse Practitioner', 'Clinical Nurse Specialist',
+    'Physician Assistant', 'Physical Therapist', 'Occupational Therapist',
+    'Speech Therapist', 'Respiratory Therapist', 'Pharmacist',
+    'Dentist', 'Dental Surgeon', 'Optometrist',
+    // Mental Health
+    'Mental Health Counselor', 'Clinical Psychologist', 'Therapist',
+    'Social Worker', 'Behavioral Health Specialist',
+    // Research & Admin
+    'Medical Researcher', 'Clinical Researcher', 'Clinical Trial Manager',
+    'Healthcare Manager', 'Healthcare Consultant', 'Medical Director',
+    'Hospital Administrator', 'Health Informatics Specialist',
+    'Public Health Specialist', 'Epidemiologist', 'Biostatistician',
+    'Regulatory Affairs Manager',
   ],
   'Athlete / Coach': [
-    'Personal Trainer', 'Sports Coach', 'Athletic Director', 'Performance Coach',
-    'Fitness Instructor', 'Strength Coach', 'Wellness Coach', 'Sports Analyst',
-    'Nutritionist', 'Physical Conditioning Coach',
+    // Coaching
+    'Personal Trainer', 'Sports Coach', 'Head Coach', 'Assistant Coach',
+    'Performance Coach', 'Strength Coach', 'Strength and Conditioning Coach',
+    'Fitness Instructor', 'Group Fitness Instructor', 'Wellness Coach',
+    'Physical Conditioning Coach', 'Recovery Coach', 'Mental Performance Coach',
+    // Allied sports
+    'Athletic Trainer', 'Sports Therapist', 'Sports Physiotherapist',
+    'Sports Psychologist', 'Nutritionist', 'Sports Nutritionist',
+    'Sports Dietitian',
+    // Sports admin & analytics
+    'Athletic Director', 'Sports Analyst', 'Performance Analyst',
+    'Video Analyst', 'Sports Scout', 'Team Manager', 'General Manager',
+    'Sports Director', 'Sports Agent',
+    // Athletes
+    'Professional Athlete', 'Semi-Professional Athlete', 'Amateur Athlete',
+    'Esports Player', 'Esports Coach', 'Esports Manager',
+    // Media
+    'Sports Journalist', 'Sports Broadcaster', 'Fantasy Sports Analyst',
   ],
   'Musician / Artist': [
-    'Musician', 'Music Producer', 'Songwriter', 'DJ', 'Performer',
-    'Artist', 'Recording Artist', 'Session Musician', 'Composer',
-    'Sound Designer', 'Music Director', 'Beatmaker',
+    // Performing
+    'Musician', 'Performer', 'Recording Artist', 'Session Musician',
+    'Live Performer', 'Touring Musician', 'Vocalist', 'Singer',
+    // Genre-specific
+    'Music Producer', 'Beatmaker', 'DJ', 'Electronic Musician',
+    'Hip Hop Artist', 'R&B Artist', 'Pop Artist', 'Rock Musician',
+    'Jazz Musician', 'Classical Musician', 'Folk Musician', 'Country Musician',
+    'Gospel Singer', 'Indie Artist',
+    // Creation
+    'Songwriter', 'Composer', 'Lyricist', 'Arranger', 'Sound Designer',
+    'Audio Engineer', 'Mixing Engineer', 'Mastering Engineer',
+    'Music Director', 'Conductor',
+    // Industry
+    'A&R Manager', 'Music Publisher', 'Music Supervisor', 'Sync Licensing Manager',
+    'Music Curator', 'Playlist Curator', 'Tour Manager', 'Artist Manager',
+    'Music Journalist', 'Music Critic',
+    // Education
+    'Music Teacher', 'Music Educator', 'Music Therapist',
   ],
   'Chef / Food Creator': [
-    'Chef', 'Executive Chef', 'Pastry Chef', 'Food Creator', 'Culinary Director',
-    'Recipe Developer', 'Food Blogger', 'Catering Manager', 'Sous Chef',
-    'Food Scientist', 'Nutritionist',
+    // Culinary
+    'Chef', 'Executive Chef', 'Head Chef', 'Sous Chef', 'Chef de Partie',
+    'Pastry Chef', 'Pastry Artist', 'Chocolatier', 'Bread Baker', 'Pastry Cook',
+    'Line Cook', 'Prep Cook', 'Private Chef', 'Personal Chef',
+    'Vegan Chef', 'Plant-Based Chef', 'Sushi Chef', 'BBQ Pitmaster',
+    'Catering Chef', 'Catering Manager', 'Banquet Chef',
+    // Management
+    'Culinary Director', 'Food & Beverage Manager', 'Restaurant Manager',
+    'Restaurant Owner', 'Food Truck Owner', 'Caterer',
+    // Content & Media
+    'Food Creator', 'Food Blogger', 'Recipe Developer', 'Food Writer',
+    'Food Journalist', 'Food Critic', 'Food Stylist', 'Food Photographer',
+    'Culinary Content Creator', 'Food YouTuber',
+    // Science & Education
+    'Food Scientist', 'Culinary Instructor', 'Culinary Educator',
+    // Nutrition
+    'Nutritionist', 'Registered Dietitian', 'Sports Nutritionist', 'Wellness Chef',
   ],
   'Real Estate Pro': [
-    'Real Estate Agent', 'Property Manager', 'Real Estate Investor', 'Property Developer',
-    'Mortgage Broker', 'Real Estate Consultant', 'Commercial Agent', 'Leasing Agent',
-    'Real Estate Analyst', 'Appraiser',
+    // Agents & Brokers
+    'Real Estate Agent', 'Buyer\'s Agent', 'Listing Agent', 'Real Estate Broker',
+    'Licensed Realtor', 'Commercial Real Estate Agent', 'Industrial Real Estate Agent',
+    'Retail Real Estate Agent', 'Leasing Agent', 'Luxury Real Estate Agent',
+    // Investing & Development
+    'Real Estate Investor', 'Property Developer', 'Real Estate Developer',
+    'Real Estate Development Manager', 'Residential Developer',
+    'Commercial Developer', 'Urban Planner', 'Construction Manager',
+    'Project Developer',
+    // Management
+    'Property Manager', 'Asset Manager', 'Portfolio Manager',
+    'Short-Term Rental Manager', 'Vacation Rental Manager',
+    'HOA Manager',
+    // Finance & Advisory
+    'Mortgage Broker', 'Real Estate Consultant', 'Real Estate Analyst',
+    'Real Estate Finance Manager', 'Real Estate Appraiser',
+    'Appraiser', 'Title Officer', 'Escrow Officer',
+    // Legal & Support
+    'Real Estate Attorney', 'Home Inspector', 'Real Estate Coach',
   ],
 };
 
