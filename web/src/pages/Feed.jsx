@@ -286,6 +286,54 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
   );
 }
 
+/** Gate shown when user clicks a social tab but hasn't connected that account */
+function SocialConnectGate({ platform, onConnect, connecting }) {
+  const meta = SOURCE_META[platform] || {};
+  const descriptions = {
+    twitter:   'See posts, threads, and trending topics from the people you follow on X (Twitter).',
+    linkedin:  'Bring your LinkedIn feed into UFIConnect — professional updates, articles, and job posts.',
+    instagram: 'View posts and reels from the creators and brands you follow on Instagram.',
+    facebook:  'See updates from your Facebook friends and the pages you follow.',
+  };
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', padding: '60px 24px', textAlign: 'center',
+    }}>
+      <div style={{
+        width: 72, height: 72, borderRadius: '50%', marginBottom: 20,
+        background: `${meta.color}18`, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', fontSize: '2rem',
+        border: `2px solid ${meta.color}30`,
+      }}>
+        {meta.icon}
+      </div>
+      <h2 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: 10, color: 'var(--text)' }}>
+        Connect your {meta.label} account
+      </h2>
+      <p style={{ fontSize: '.9rem', color: 'var(--muted)', maxWidth: 380, lineHeight: 1.6, marginBottom: 28 }}>
+        {descriptions[platform] || `Connect your ${meta.label} account to see your personalised feed here.`}
+      </p>
+      <button
+        onClick={onConnect}
+        disabled={connecting}
+        style={{
+          padding: '12px 32px', borderRadius: 24, fontWeight: 700, fontSize: '.95rem',
+          background: meta.color, color: '#fff', border: 'none', cursor: connecting ? 'default' : 'pointer',
+          opacity: connecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 8,
+          transition: 'opacity .15s',
+        }}
+      >
+        {connecting ? <span className="spinner" style={{ borderTopColor: '#fff', width: 16, height: 16 }} /> : meta.icon}
+        {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
+      </button>
+      <p style={{ marginTop: 16, fontSize: '.78rem', color: 'var(--muted)' }}>
+        You can disconnect at any time from Settings → Connected Accounts
+      </p>
+    </div>
+  );
+}
+
 /** YouTube embed card */
 function YouTubeCard({ post }) {
   const [playing, setPlaying] = useState(false);
@@ -619,6 +667,7 @@ function PostCard({ post, onVideoOpen }) {
 export default function Feed() {
   const { profile } = useAuth();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
+  const [connecting,    setConnecting]   = useState(false);
   const [posts,         setPosts]        = useState([]);
   const [loading,       setLoading]      = useState(true);
   const [refreshing,    setRefreshing]   = useState(false);
@@ -1017,7 +1066,20 @@ export default function Feed() {
         </div>
       )}
 
-      {loading ? (
+      {CONNECTED_SOCIAL_TABS.has(sourceTab) && connectedSocial !== null && !connectedSocial?.[sourceTab] ? (
+        <SocialConnectGate
+          platform={sourceTab}
+          connecting={connecting}
+          onConnect={async () => {
+            setConnecting(true);
+            try {
+              const { data } = await client.get(`/auth/social/${sourceTab}/start`);
+              if (data?.url) window.location.href = data.url;
+              else setConnecting(false);
+            } catch { setConnecting(false); }
+          }}
+        />
+      ) : loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
           {sourceTab !== 'all' && (
