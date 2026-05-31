@@ -48,6 +48,42 @@ services:
         sync: false
       - key: FACEBOOK_APP_SECRET
         sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: MEDIUM_CLIENT_ID
+        sync: false
+      - key: MEDIUM_CLIENT_SECRET
+        sync: false
+      - key: DRIBBBLE_CLIENT_ID
+        sync: false
+      - key: DRIBBBLE_CLIENT_SECRET
+        sync: false
+      - key: BEHANCE_CLIENT_ID
+        sync: false
+      - key: BEHANCE_CLIENT_SECRET
+        sync: false
+      - key: TIKTOK_CLIENT_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: BLUESKY_CLIENT_ID
+        sync: false
+      - key: BLUESKY_CLIENT_SECRET
+        sync: false
 
   # ── Web Frontend (React static site) ───────────────────────
   - type: web
