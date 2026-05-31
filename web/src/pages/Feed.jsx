@@ -978,6 +978,34 @@ export default function Feed() {
           )}
         </div>
 
+        {/* Active source filter chip */}
+        {sourceTab !== 'all' && (() => {
+          const meta = SOURCE_META[sourceTab] || {};
+          const color = meta.color || 'var(--primary)';
+          return (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              padding: '7px 10px 7px 12px', borderRadius: 20,
+              background: color, color: '#fff',
+              fontWeight: 700, fontSize: '.78rem', whiteSpace: 'nowrap',
+              animation: 'chipPop .15s ease-out',
+              flexShrink: 0,
+            }}>
+              <span style={{ fontSize: '.82rem' }}>{meta.icon || ''}</span>
+              <span>{meta.label || sourceTab}</span>
+              <button
+                onClick={() => switchTab('all')}
+                style={{
+                  marginLeft: 3, background: 'rgba(255,255,255,.25)', border: 'none',
+                  borderRadius: '50%', width: 16, height: 16, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#fff', fontSize: '.7rem', fontWeight: 700, lineHeight: 1, padding: 0,
+                }}
+              >×</button>
+            </div>
+          );
+        })()}
+
         {/* Filter button */}
         <div style={{ position: 'relative' }}>
           <button
