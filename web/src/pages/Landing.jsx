@@ -65,28 +65,28 @@ export default function Landing() {
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>
 
         {/* Header */}
-        <header style={{ padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,.05)', background: '#fff', boxShadow: 'var(--shadow)' }}>
+        <header className="landing-header" style={{ padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,.05)', background: '#fff', boxShadow: 'var(--shadow)' }}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{ width: '40px', height: '40px', background: 'var(--primary)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '900', fontSize: '1.1rem' }}>
                 UF
               </div>
-              <span style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFIConnect</span>
+              <span className="landing-logo-text" style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFIConnect</span>
             </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
               <Link to="/login"
-                style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: 'var(--primary)', border: '1.5px solid var(--primary)', background: 'transparent', textDecoration: 'none' }}
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: 'var(--primary)', border: '1.5px solid var(--primary)', background: 'transparent', textDecoration: 'none' }}
                 onMouseEnter={e => e.target.style.background = 'var(--primary-light)'}
                 onMouseLeave={e => e.target.style.background = 'transparent'}
               >
                 Sign In
               </Link>
-              <Link to="/register"
-                style={{ padding: '8px 20px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', textDecoration: 'none' }}
+              <Link to="/register" className="landing-nav-join"
+                style={{ padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', textDecoration: 'none' }}
                 onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
                 onMouseLeave={e => e.target.style.background = 'var(--primary)'}
               >
-                Get Started Free
+                Get Started
               </Link>
             </div>
           </div>

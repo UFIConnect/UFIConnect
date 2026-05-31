@@ -678,6 +678,20 @@ input, textarea, select { font-family: inherit; }
 
   /* Auth pages */
   .auth-card { padding: 24px 20px; }
+
+  /* Landing page nav */
+  .landing-header { padding: 12px 16px !important; }
+  .landing-logo-text { display: none; }
+  .landing-nav-join { display: none; }
+
+  /* Feed source tabs */
+  .feed-source-tabs::-webkit-scrollbar { display: none; }
+
+  /* Feed refresh button — icon only on mobile */
+  .feed-refresh-label { display: none; }
+
+  /* Profile page — Connected Accounts buttons smaller */
+  .platform-item { flex-wrap: wrap; gap: 10px; }
 }
 
 /* ── PWA / App optimisations ──────────────────────────────── */

@@ -104,23 +104,103 @@ const AGENT_DEFS = [
   {
     id: 'cache_helper', name: 'Cache Helper', emoji: '🗄️',
     color: '#6366F1', bg: '#EEF2FF', role: 'Feed Cache Coordinator',
-    homeX: 46, homeY: 40,
+    homeX: 46, homeY: 52,
     tasks: [
       'Merging source caches…', 'Deduplicating feed entries…',
-      'Indexing per-source posts…', 'Syncing 20 agent stores…',
+      'Indexing per-source posts…', 'Syncing source agent stores…',
       'Compacting stale entries…',
     ],
     completions: [
       'Source caches merged — global feed updated',
       'Deduplication complete — feed quality maintained',
-      '20 agent stores synchronised successfully',
+      'Source agent stores synchronised successfully',
       'Cache compacted — 500 newest posts retained per source',
       'Cache sync: all source agents reporting healthy',
     ],
   },
+  {
+    id: 'web_optimizer', name: 'Website Optimizer', emoji: '🌐',
+    color: '#14B8A6', bg: '#ECFDF5', role: 'Public Domain Optimizer',
+    homeX: 46, homeY: 40,
+    tasks: [
+      'Auditing uficonnect.org…', 'Coordinating optimizer sub-agents…',
+      'Scoring public-domain readiness…', 'Checking live page health…',
+      'Reviewing domain response signals…',
+    ],
+    completions: [
+      'Public website optimizer finished a domain health pass',
+      'Optimizer score refreshed from live uficonnect.org checks',
+      'Public-domain audit coordinated across performance, SEO, cache, and storage',
+      'Website optimization run stored for office reporting',
+    ],
+  },
+  {
+    id: 'web_perf', name: 'Web Perf Sub-Agent', emoji: '⚡',
+    color: '#F59E0B', bg: '#FFFBEB', role: 'Latency Watch',
+    homeX: 13, homeY: 40,
+    compact: true,
+    tasks: [
+      'Measuring TTFB…', 'Timing public response…',
+      'Checking payload size…', 'Inspecting HTTP status…',
+      'Sampling live headers…',
+    ],
+    completions: [
+      'Performance sample saved from the public domain',
+      'TTFB and total response timing refreshed',
+      'Public payload size checked against optimizer targets',
+    ],
+  },
+  {
+    id: 'web_seo', name: 'Web SEO Sub-Agent', emoji: '🔎',
+    color: '#22C55E', bg: '#F0FDF4', role: 'SEO Signals',
+    homeX: 30, homeY: 40,
+    compact: true,
+    tasks: [
+      'Checking canonical tags…', 'Validating sitemap.xml…',
+      'Reading robots.txt…', 'Checking manifest.json…',
+      'Scanning Open Graph metadata…',
+    ],
+    completions: [
+      'SEO surface checked across sitemap, robots, manifest, and metadata',
+      'Public search signals refreshed for office reporting',
+      'Domain metadata audit completed',
+    ],
+  },
+  {
+    id: 'web_cache', name: 'Web Cache Sub-Agent', emoji: '🗄️',
+    color: '#6366F1', bg: '#EEF2FF', role: 'Cache Sort',
+    homeX: 63, homeY: 40,
+    compact: true,
+    tasks: [
+      'Verifying service worker…', 'Sorting hot feed data…',
+      'Merging source caches…', 'Checking public cache path…',
+      'Coordinating cache helper…',
+    ],
+    completions: [
+      'Website cache pass coordinated with source cache helpers',
+      'Hot feed cache sorted for faster page loads',
+      'Public service worker cache status refreshed',
+    ],
+  },
+  {
+    id: 'web_storage', name: 'Fast Storage Sub-Agent', emoji: '💾',
+    color: '#FB7185', bg: '#FFF1F2', role: 'Fast Intake',
+    homeX: 79, homeY: 40,
+    compact: true,
+    tasks: [
+      'Persisting hot posts…', 'Queueing stale sources…',
+      'Warming DB feed cache…', 'Batching source data…',
+      'Respecting stability guard…',
+    ],
+    completions: [
+      'Fast storage pass saved hot source data',
+      'Stale source refreshes queued for shorter intake windows',
+      'DB feed cache warmed without tripping stability guard',
+    ],
+  },
 ];
 
-/* ─── 25 Active Source Agents ────────────────────────────────────────────────── */
+/* ─── Active Source Agents ───────────────────────────────────────────────────── */
 const SOURCE_AGENTS = [
   { id: 'reddit',        emoji: '🟠', name: 'Reddit',          color: '#FF6347' },
   { id: 'hn',            emoji: '🔶', name: 'Hacker News',     color: '#FF6600' },
@@ -253,28 +333,32 @@ function LiveDataCard({ agent, phaseData, stats, onTrigger, onConnect, connected
 /* ─── Floor Plan Sub-components ─────────────────────────────────────────────── */
 function AgentRoom({ agent, agentState }) {
   const isHome = agentState.status === 'idle';
-  const isHub  = agent.id === 'cache_helper';
+  const isHub  = agent.id === 'cache_helper' || agent.id === 'web_optimizer';
+  const isCompact = agent.compact;
+  const roomW = isHub ? 16 : isCompact ? 14 : 22;
+  const roomH = isHub ? 14 : isCompact ? 13 : 24;
+  const roomPad = isHub || isCompact ? '3% 4%' : '6% 8%';
   return (
     <div style={{
       position: 'absolute',
-      left: isHub ? `${agent.homeX - 8}%`  : `${agent.homeX - 11}%`,
-      top:  isHub ? `${agent.homeY - 5}%`  : `${agent.homeY - 8}%`,
-      width:  isHub ? '16%' : '22%',
-      height: isHub ? '14%' : '24%',
+      left: `${agent.homeX - roomW / 2}%`,
+      top:  `${agent.homeY - roomH / 2}%`,
+      width:  `${roomW}%`,
+      height: `${roomH}%`,
       background: isHome ? agent.bg : '#fff',
       border: `1.5px solid ${isHome ? agent.color + '44' : '#E2E8F0'}`,
       borderRadius: isHub ? 8 : 10,
-      padding: isHub ? '3% 5%' : '6% 8%',
+      padding: roomPad,
       transition: 'all 0.5s ease',
       boxShadow: isHome ? `0 2px 12px ${agent.color}18` : 'none',
       zIndex: isHub ? 2 : 1,
     }}>
-      <div style={{ fontSize: '.6rem', fontWeight: 800, color: agent.color, opacity: .7, marginBottom: 2, letterSpacing: '.5px' }}>
+      <div style={{ fontSize: isCompact ? '.5rem' : '.6rem', fontWeight: 800, color: agent.color, opacity: .7, marginBottom: 2, letterSpacing: '.5px' }}>
         {agent.role.toUpperCase()}
       </div>
-      <div style={{ fontSize: '.72rem', fontWeight: 700, color: '#0F172A' }}>{agent.name}</div>
+      <div style={{ fontSize: isCompact ? '.62rem' : '.72rem', fontWeight: 700, color: '#0F172A' }}>{agent.name}</div>
       {isHome && (
-        <div style={{ fontSize: '.58rem', color: '#64748B', marginTop: 4, animation: 'agentTaskFade 0.4s ease', lineHeight: 1.4 }}>
+        <div style={{ fontSize: isCompact ? '.5rem' : '.58rem', color: '#64748B', marginTop: 4, animation: 'agentTaskFade 0.4s ease', lineHeight: 1.4 }}>
           {agent.tasks[agentState.taskIdx]}
         </div>
       )}
@@ -303,7 +387,7 @@ function ServerRoom({ eventsCount }) {
     { k: 'API ERR',  v: '0',                     color: '#4ADE80' },
     { k: 'FEED',     v: `${1820 + tick * 3}`,    color: '#60A5FA' },
     { k: 'EVENTS',   v: eventsCount.toString(),  color: '#A78BFA' },
-    { k: 'AGENTS',   v: '25 / 25',               color: '#FCD34D' },
+    { k: 'AGENTS',   v: `${SOURCE_AGENTS.length}+${AGENT_DEFS.length}`, color: '#FCD34D' },
   ];
 
   return (
@@ -734,7 +818,7 @@ export default function AgentDashboard() {
   /* ── Bootstrap ────────────────────────────────────────────────────────────── */
   useEffect(() => {
     addLog('🚀', 'UFIConnect Agent System initialized', '#60A5FA');
-    addLog('✅', 'All 7 agents online — autonomous mode active', '#4ADE80');
+    addLog('✅', `All ${AGENT_DEFS.length} ops agents online — autonomous mode active`, '#4ADE80');
     addLog('🔒', 'Security Agent: initial scan complete, 0 threats', '#4ADE80');
 
     AGENT_DEFS.forEach((agent, i) => {
@@ -864,7 +948,7 @@ export default function AgentDashboard() {
       <div className="page-header">
         <h1 className="page-title">🏢 UFIConnect HQ</h1>
         <p className="page-subtitle">
-          25 data agents + 7 ops agents running simultaneously 24/7
+          {SOURCE_AGENTS.length} data agents + {AGENT_DEFS.length} ops agents running simultaneously 24/7
         </p>
       </div>
 
@@ -876,7 +960,7 @@ export default function AgentDashboard() {
         letterSpacing: '1.5px', textTransform: 'uppercase',
         marginBottom: 12,
       }}>
-        ▸ Ops Centre — 7 platform agents
+        ▸ Ops Centre — {AGENT_DEFS.length} platform agents
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 18, alignItems: 'start', marginBottom: 28 }}>
@@ -936,7 +1020,7 @@ export default function AgentDashboard() {
               ⚡ Live Data Operations
             </div>
             <div style={{ fontSize: '.65rem', color: '#475569' }}>
-              16 source agents cycling topics continuously — one topic at a time per source
+              {SOURCE_AGENTS.length} source agents cycling topics continuously — one topic at a time per source
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -988,11 +1072,10 @@ export default function AgentDashboard() {
       }}>
         <span>ℹ️</span>
         <span>
-          16 source agents continuously cycle through topics pulling from Reddit, HN, GitHub, DEV.to,
-          Medium, YouTube, Stack Overflow, Mastodon, Lobsters, arXiv, Indeed, Product Hunt, TechCrunch,
-          The Verge, Indie Hackers, and Hashnode. Connect LinkedIn, X, Instagram, or Facebook to activate
-          personalised social feeds. 7 ops agents handle curation, SEO, security, performance, community,
-          opportunities, and cache coordination.
+          {SOURCE_AGENTS.length} source agents continuously cycle through topics and connected social feeds.
+          Pro users can connect LinkedIn, X, Instagram, or Facebook to activate personalised sources.
+          {AGENT_DEFS.length} ops agents handle curation, SEO, security, performance, storage, public-domain
+          optimisation, and cache coordination.
         </span>
       </div>
     </Layout>

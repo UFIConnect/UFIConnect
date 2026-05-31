@@ -14,6 +14,15 @@ const SOCIAL_PLATFORMS = [
   { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Tweets and threads from the people you follow' },
   { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from the creators and brands you follow' },
   { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'Updates from friends, pages, and groups you follow' },
+  { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Your repos, contributions, and open-source work' },
+  { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
+  { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Channels and video content in your areas' },
+  { id: 'reddit',    emoji: '🤖', name: 'Reddit',      color: '#FF4500', desc: 'Posts from subreddits matching your interests' },
+  { id: 'medium',    emoji: '✍️', name: 'Medium',      color: '#000000', desc: 'Articles and long-form reads from writers in your field' },
+  { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and inspiration from top creatives' },
+  { id: 'behance',   emoji: '🎨', name: 'Behance',     color: '#1769FF', desc: 'Creative portfolios and design projects' },
+  { id: 'tiktok',    emoji: '🎵', name: 'TikTok',      color: '#010101', desc: 'Trending videos from creators in your niche' },
+  { id: 'bluesky',   emoji: '🦋', name: 'Bluesky',     color: '#0085FF', desc: 'Posts across the decentralised social network' },
 ];
 
 const LINK_FIELDS = [

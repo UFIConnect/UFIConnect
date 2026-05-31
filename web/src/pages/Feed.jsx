@@ -1003,14 +1003,15 @@ export default function Feed() {
           onMouseOut={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
           <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↺</span>
-          {refreshing ? 'Updating…' : 'Refresh'}
+          <span className="feed-refresh-label">{refreshing ? 'Updating…' : 'Refresh'}</span>
         </button>
       </div>
 
       {/* Source tabs */}
-      <div style={{
+      <div className="feed-source-tabs" style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
         paddingBottom: 4, scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
       }}>
         {SOURCE_TABS.map(tab => {
           const meta  = SOURCE_META[tab.key];

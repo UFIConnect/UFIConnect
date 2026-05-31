@@ -362,7 +362,7 @@ const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
 
 const SOCIAL_CFG = {
-  linkedin:  {
+  linkedin: {
     authUrl:  'https://www.linkedin.com/oauth/v2/authorization',
     tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
     clientId:     () => process.env.LINKEDIN_CLIENT_ID,
@@ -377,6 +377,7 @@ const SOCIAL_CFG = {
     clientSecret: () => process.env.TWITTER_CLIENT_SECRET,
     scope: 'tweet.read users.read offline.access',
     pkce: true,
+    basicAuth: true,
   },
   instagram: {
     authUrl:  'https://api.instagram.com/oauth/authorize',
@@ -393,6 +394,83 @@ const SOCIAL_CFG = {
     clientSecret: () => process.env.FACEBOOK_APP_SECRET,
     scope: 'public_profile,email',
     pkce: false,
+    getToken: true,
+  },
+  github: {
+    authUrl:  'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    clientId:     () => process.env.GITHUB_CLIENT_ID,
+    clientSecret: () => process.env.GITHUB_CLIENT_SECRET,
+    scope: 'read:user public_repo',
+    pkce: false,
+  },
+  discord: {
+    authUrl:  'https://discord.com/api/oauth2/authorize',
+    tokenUrl: 'https://discord.com/api/oauth2/token',
+    clientId:     () => process.env.DISCORD_CLIENT_ID,
+    clientSecret: () => process.env.DISCORD_CLIENT_SECRET,
+    scope: 'identify guilds',
+    pkce: false,
+  },
+  youtube: {
+    authUrl:  'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    clientId:     () => process.env.YOUTUBE_CLIENT_ID,
+    clientSecret: () => process.env.YOUTUBE_CLIENT_SECRET,
+    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    pkce: true,
+    extraAuthParams: { access_type: 'offline', prompt: 'consent' },
+  },
+  reddit: {
+    authUrl:  'https://www.reddit.com/api/v1/authorize',
+    tokenUrl: 'https://www.reddit.com/api/v1/access_token',
+    clientId:     () => process.env.REDDIT_CLIENT_ID,
+    clientSecret: () => process.env.REDDIT_CLIENT_SECRET,
+    scope: 'identity read',
+    pkce: false,
+    basicAuth: true,
+    extraAuthParams: { duration: 'permanent' },
+  },
+  medium: {
+    authUrl:  'https://medium.com/m/oauth/authorize',
+    tokenUrl: 'https://api.medium.com/v1/tokens',
+    clientId:     () => process.env.MEDIUM_CLIENT_ID,
+    clientSecret: () => process.env.MEDIUM_CLIENT_SECRET,
+    scope: 'basicProfile',
+    pkce: false,
+  },
+  dribbble: {
+    authUrl:  'https://dribbble.com/oauth/authorize',
+    tokenUrl: 'https://dribbble.com/oauth/token',
+    clientId:     () => process.env.DRIBBBLE_CLIENT_ID,
+    clientSecret: () => process.env.DRIBBBLE_CLIENT_SECRET,
+    scope: 'public',
+    pkce: false,
+  },
+  behance: {
+    authUrl:  'https://www.behance.net/v2/oauth/authenticate',
+    tokenUrl: 'https://www.behance.net/v2/oauth/token',
+    clientId:     () => process.env.BEHANCE_CLIENT_ID,
+    clientSecret: () => process.env.BEHANCE_CLIENT_SECRET,
+    scope: 'activity_read project_read',
+    pkce: false,
+  },
+  tiktok: {
+    authUrl:  'https://www.tiktok.com/v2/auth/authorize/',
+    tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
+    clientId:     () => process.env.TIKTOK_CLIENT_KEY,
+    clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
+    scope: 'user.info.basic',
+    pkce: true,
+    clientIdParam: 'client_key',
+  },
+  bluesky: {
+    authUrl:  'https://bsky.social/oauth/authorize',
+    tokenUrl: 'https://bsky.social/oauth/token',
+    clientId:     () => process.env.BLUESKY_CLIENT_ID,
+    clientSecret: () => process.env.BLUESKY_CLIENT_SECRET,
+    scope: 'atproto transition:generic',
+    pkce: true,
   },
 };
 
@@ -4473,7 +4551,11 @@ const PLATFORMS = {
   },
 };
 
-const CONNECTED_SOCIAL_PLATFORMS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const CONNECTED_SOCIAL_PLATFORMS = new Set([
+  'linkedin', 'twitter', 'instagram', 'facebook',
+  'github', 'discord', 'youtube', 'reddit',
+  'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
+]);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -5566,9 +5648,10 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
 
   const params = new URLSearchParams({
     response_type: 'code',
-    client_id:     clientId,
+    [cfg.clientIdParam || 'client_id']: clientId,
     redirect_uri:  redirectUri,
     scope:         cfg.scope,
+    ...(cfg.extraAuthParams || {}),
   });
 
   if (cfg.pkce) {
@@ -5605,30 +5688,42 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   try {
     let accessToken;
 
-    if (platform === 'facebook') {
-      // Facebook exchanges via GET
+    if (cfg.getToken) {
+      // GET-based token exchange (Facebook)
       const data = await fetchJSON(
         `${cfg.tokenUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`
       );
       accessToken = data.access_token;
-    } else if (platform === 'twitter') {
-      // Twitter: Basic auth + PKCE verifier
+    } else if (cfg.basicAuth) {
+      // Basic-auth token exchange (Twitter, Reddit)
       const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
       const data = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,
         redirect_uri:  redirectUri,
-        code_verifier: entry.codeVerifier,
+        ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
       }, { Authorization: `Basic ${basicAuth}` });
       accessToken = data.access_token;
+    } else if (cfg.clientIdParam) {
+      // Non-standard client_id param (TikTok uses client_key)
+      const data = await postForm(cfg.tokenUrl, {
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  redirectUri,
+        [cfg.clientIdParam]: clientId,
+        client_secret: clientSecret,
+        ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
+      });
+      accessToken = data.data?.access_token || data.access_token;
     } else {
-      // LinkedIn & Instagram: standard POST form
+      // Standard POST form (LinkedIn, Instagram, GitHub, Discord, YouTube, Reddit, Medium, Dribbble, Behance, Bluesky)
       const data = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,
         redirect_uri:  redirectUri,
         client_id:     clientId,
         client_secret: clientSecret,
+        ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
       });
       accessToken = data.access_token;
     }

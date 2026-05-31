@@ -128,6 +128,7 @@ function OverviewView({ status, log, agents }) {
   const f = status?.feed;
   const a = status?.agents;
   const src = status?.sources;
+  const web = status?.websiteOptimizer;
 
   const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
@@ -157,6 +158,13 @@ function OverviewView({ status, log, agents }) {
         <StatCard icon="🤖" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
         <StatCard icon="🗄️" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                        color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
         <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
+        <StatCard
+          icon="🌐"
+          label="Web Score"
+          value={web?.score != null ? `${web.score}/100` : '—'}
+          sub={web?.lastTtfbMs ? `TTFB ${web.lastTtfbMs}ms · ${web.publicUrl}` : web?.publicUrl}
+          color={web?.score >= 80 ? '#14b8a6' : web?.score ? '#fbbf24' : '#94a3b8'}
+        />
         <StatCard
           icon="🌐"
           label="Sources"
@@ -219,6 +227,7 @@ function HealthBadge({ health }) {
     armed:    { bg: 'rgba(34,197,94,.12)',  color: '#4ade80', label: 'Armed' },
     idle:     { bg: 'rgba(56,189,248,.1)',  color: '#38bdf8', label: 'Idle' },
     running:  { bg: 'rgba(56,189,248,.12)', color: '#38bdf8', label: 'Running' },
+    skipped:  { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Skipped' },
     fallback: { bg: 'rgba(56,189,248,.1)',  color: '#38bdf8', label: 'Fallback' },
     contained:{ bg: 'rgba(168,85,247,.12)', color: '#c084fc', label: 'Contained' },
     pressure: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Pressure' },
@@ -525,7 +534,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
   return (
     <>
       <h1 style={H1}>Live Sources</h1>
-      <p style={SUBTITLE}>Real-time health of all 23 data sources. 17 cycle through topic workers, 2 are curated fallback platform agents, and 4 are Pro OAuth-authenticated per user.</p>
+      <p style={SUBTITLE}>Real-time health of all {src?.total ?? 'data'} sources, including public workers, curated fallback agents, and Pro OAuth-authenticated per-user sources.</p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
         <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
