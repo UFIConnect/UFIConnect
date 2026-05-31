@@ -880,13 +880,22 @@ const SKILL_TO_DEVTO_TAG = {
 
 // ─── Post fetch cache ─────────────────────────────────────────────────────────
 const postCache = new Map();
-const CACHE_TTL = 30 * 60 * 1000; // default 30 min — individual entries can override
+const CACHE_TTL     = 30 * 60 * 1000; // default 30 min
+const POST_CACHE_MAX = 300;            // hard cap on entries — evict oldest when exceeded
 
-// Each entry stores its own TTL so active sources expire faster than slow ones
-function getCached(key)            { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
-function setCached(key, val, ttl)  { postCache.set(key, { v: val, t: Date.now(), ttl: ttl ?? CACHE_TTL }); }
-function bustCache(key)            { postCache.delete(key); }
-function bustCachePrefix(prefix)   { for (const k of postCache.keys()) if (k.startsWith(prefix)) postCache.delete(k); }
+function getCached(key)           { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
+function setCached(key, val, ttl) {
+  postCache.set(key, { v: val, t: Date.now(), ttl: ttl ?? CACHE_TTL });
+  if (postCache.size > POST_CACHE_MAX) postCache.delete(postCache.keys().next().value);
+}
+function bustCache(key)           { postCache.delete(key); }
+function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.startsWith(prefix)) postCache.delete(k); }
+
+// Sweep expired entries every 5 min so RAM doesn't fill with stale cached fetches
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, c] of postCache) if (now - c.t > (c.ttl ?? CACHE_TTL)) postCache.delete(k);
+}, 5 * 60 * 1000);
 
 // ─── Per-source freshness config ──────────────────────────────────────────────
 // TTL:   real freshness window — worker busts cache and re-fetches from API after this time
@@ -3171,8 +3180,8 @@ function startContinuousWorkers() {
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
-const GLOBAL_FEED_CACHE_LIMIT = 2000;
-const SOURCE_FEED_CACHE_LIMIT = 300;
+const GLOBAL_FEED_CACHE_LIMIT = 500;   // 2 pages served without hitting DB; was 2000
+const SOURCE_FEED_CACHE_LIMIT = 50;    // per-source tab view; was 300
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
@@ -3384,7 +3393,7 @@ function trimRuntimeCaches(level = 'pressure') {
   const critical = level === 'critical';
   const globalLimit   = critical ? Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.5) : Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.75);
   const sourceLimit   = critical ? Math.floor(SOURCE_FEED_CACHE_LIMIT * 0.5) : Math.floor(SOURCE_FEED_CACHE_LIMIT * 0.75);
-  const postCacheLimit= critical ? 300 : 500;
+  const postCacheLimit= critical ? Math.floor(POST_CACHE_MAX * 0.25) : Math.floor(POST_CACHE_MAX * 0.5);
   const seenLimit     = critical ? Math.floor(SEEN_IDS_MAX * 0.5) : Math.floor(SEEN_IDS_MAX * 0.75);
 
   if (globalFeedCache.posts.length > globalLimit) {
@@ -7459,7 +7468,108 @@ app.post('/office/agents/:id/trigger', (req, res) => {
 });
 
 // Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
-app.post('/office/deploy/:service', (req, res) => {
+function requestRenderDeploy(options, body = null) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(options, (response) => {
+      let raw = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { raw += chunk; });
+      response.on('end', () => {
+        let data = raw;
+        try { data = raw ? JSON.parse(raw) : null; } catch {}
+        resolve({ statusCode: response.statusCode || 0, data });
+      });
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('Render deploy request timed out')));
+    request.on('error', reject);
+    if (body) request.write(JSON.stringify(body));
+    request.end();
+  });
+}
+
+async function triggerRenderServiceDeploy(service, hook) {
+  if (hook) {
+    const url = new URL(hook);
+    return {
+      method: 'hook',
+      ...(await requestRenderDeploy({
+        method: 'GET',
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: `${url.pathname}${url.search}`,
+        headers: { 'User-Agent': 'UFIConnect-Office/1.0' },
+      })),
+    };
+  }
+
+  const serviceIds = {
+    api:    process.env.RENDER_SERVICE_API_ID,
+    web:    process.env.RENDER_SERVICE_WEB_ID,
+    office: process.env.RENDER_SERVICE_OFFICE_ID,
+  };
+  const serviceId = serviceIds[service];
+  if (!process.env.RENDER_API_KEY || !serviceId) return null;
+
+  return {
+    method: 'api',
+    ...(await requestRenderDeploy({
+      method: 'POST',
+      hostname: 'api.render.com',
+      path: `/v1/services/${encodeURIComponent(serviceId)}/deploys`,
+      headers: {
+        'Authorization': `Bearer ${process.env.RENDER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'UFIConnect-Office/1.0',
+      },
+    }, { clearCache: 'do_not_clear' })),
+  };
+}
+
+app.post('/office/deploy/:service', async (req, res) => {
+  const service = req.params.service;
+  if (!['api', 'web', 'office'].includes(service)) {
+    return res.status(404).json({ ok: false, msg: `Unknown deploy service "${service}"` });
+  }
+
+  const hooks = {
+    api:    process.env.RENDER_HOOK_API,
+    web:    process.env.RENDER_HOOK_WEB,
+    office: process.env.RENDER_HOOK_OFFICE,
+  };
+
+  try {
+    const result = await triggerRenderServiceDeploy(service, hooks[service]);
+    if (!result) {
+      const suffix = service.toUpperCase();
+      const serviceIdVar = `RENDER_SERVICE_${suffix}_ID`;
+      logAgentAction('deploy', 'WARN',
+        `Manual deploy for "${service}" needs RENDER_HOOK_${suffix} or RENDER_API_KEY + ${serviceIdVar}`, '#FBBF24');
+      return res.json({
+        ok: false,
+        msg: `No deploy config - set RENDER_HOOK_${suffix} or RENDER_API_KEY + ${serviceIdVar}`,
+      });
+    }
+
+    const ok = result.statusCode >= 200 && result.statusCode < 300;
+    logAgentAction('deploy',
+      ok ? 'OK' : 'FAIL',
+      `Deploy "${service}" via Render ${result.method}: HTTP ${result.statusCode}`,
+      ok ? '#4ADE80' : '#F87171'
+    );
+    return res.status(ok ? 200 : 502).json({
+      ok,
+      service,
+      method: result.method,
+      statusCode: result.statusCode,
+      deployId: result.data?.id || result.data?.deploy?.id || null,
+    });
+  } catch (e) {
+    logAgentAction('deploy', 'FAIL', `Deploy "${service}" failed: ${e.message}`, '#F87171');
+    return res.status(502).json({ ok: false, service, msg: e.message });
+  }
+});
+
+app.post('/office/deploy-legacy/:service', (req, res) => {
   const hooks = {
     api:    process.env.RENDER_HOOK_API,
     web:    process.env.RENDER_HOOK_WEB,
