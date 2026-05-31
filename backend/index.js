@@ -3296,6 +3296,7 @@ const websiteOptimizerState = {
     web_pwa:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
   },
 };
+let webStorageInFlight = false;
 
 function waitMs(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -4101,17 +4102,29 @@ async function runWebCacheSubAgent() {
 
 async function runWebStorageSubAgent() {
   const id = 'web_storage';
+  if (webStorageInFlight) {
+    updateWebSubAgent(id, { status: 'running', lastError: 'previous fast storage pass still running' });
+    return;
+  }
   if (isStabilityCritical()) {
     updateWebSubAgent(id, { increment: true, status: 'skipped', lastError: 'stability critical' });
     logAgentAction(id, '⏸️', 'Fast storage pass skipped while stability guard is critical', '#FBBF24');
     return;
   }
+  webStorageInFlight = true;
+  updateWebSubAgent(id, {
+    increment: true,
+    status: 'running',
+    lastError: null,
+    batchLimit: WEB_STORAGE_BATCH_LIMIT,
+    dbCap: MAX_CACHED_DB_POSTS,
+  });
   try {
     const sourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts || []);
     const hotPosts = sortFeedBatch([...globalFeedCache.posts, ...sourcePosts], 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
-    const saved = await savePostsToDB(hotPosts) || 0;
+    const saved = await savePostsToDBFast(hotPosts) || 0;
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
@@ -4136,8 +4149,10 @@ async function runWebStorageSubAgent() {
       `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB cap ${MAX_CACHED_DB_POSTS.toLocaleString()}`,
       '#FB7185');
   } catch (e) {
-    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    updateWebSubAgent(id, { status: 'degraded', lastError: e.message });
     logAgentAction(id, '⚠️', `Fast storage pass failed: ${e.message}`, '#F87171');
+  } finally {
+    webStorageInFlight = false;
   }
 }
 
@@ -5505,6 +5520,65 @@ async function savePostsToDB(posts) {
      )`, [MAX_CACHED_DB_POSTS]
   ).catch(() => {});
   return saved;
+}
+
+async function savePostsToDBFast(posts) {
+  if (!db.isConnected() || !posts.length) return 0;
+  const seen = new Set();
+  const rows = [];
+  for (const p of posts) {
+    if (!p?.id || seen.has(p.id)) continue;
+    seen.add(p.id);
+    rows.push({
+      id: p.id,
+      source: p.source || 'unknown',
+      title: (p.title || '').slice(0, 500),
+      content: (p.content || '').slice(0, 2000),
+      author_name: p.author?.name || null,
+      source_url: p.sourceUrl || null,
+      media_url: p.mediaUrl || null,
+      media_type: p.mediaType || null,
+      topic: p.topic || null,
+      likes_count: p.likesCount || 0,
+      comments_count: p.commentsCount || 0,
+      post_created_at: p.createdAt || new Date().toISOString(),
+    });
+  }
+  if (!rows.length) return 0;
+
+  const result = await db.query(
+    `WITH incoming AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
+         id TEXT,
+         source TEXT,
+         title TEXT,
+         content TEXT,
+         author_name TEXT,
+         source_url TEXT,
+         media_url TEXT,
+         media_type TEXT,
+         topic TEXT,
+         likes_count INTEGER,
+         comments_count INTEGER,
+         post_created_at TIMESTAMPTZ
+       )
+     )
+     INSERT INTO feed_posts_cache
+       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at)
+     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at
+     FROM incoming
+     ON CONFLICT (id) DO UPDATE SET
+       likes_count    = EXCLUDED.likes_count,
+       comments_count = EXCLUDED.comments_count,
+       fetched_at     = NOW()`,
+    [JSON.stringify(rows)]
+  );
+  db.query(
+    `DELETE FROM feed_posts_cache WHERE id IN (
+       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
+     )`, [MAX_CACHED_DB_POSTS]
+  ).catch(() => {});
+  return result.rowCount || rows.length;
 }
 
 // ─── Save public website optimizer snapshots ─────────────────────────────────

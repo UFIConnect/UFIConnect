@@ -609,9 +609,9 @@ function OfficeFloorPlan({ agentStates, eventsCount }) {
 }
 
 /* ─── Activity Log ───────────────────────────────────────────────────────────── */
-function ActivityLog({ log }) {
+function ActivityLog({ log, maxHeight = 280 }) {
   return (
-    <div style={{ background: '#0F172A', borderRadius: 12, padding: '14px', maxHeight: 280, overflowY: 'auto' }}>
+    <div style={{ background: '#0F172A', borderRadius: 12, padding: '14px', maxHeight, overflowY: 'auto' }}>
       <div style={{ fontSize: '.65rem', color: '#475569', fontWeight: 700, letterSpacing: '1px', marginBottom: 8 }}>
         ▸ ACTIVITY LOG
       </div>
@@ -641,7 +641,7 @@ function ActivityLog({ log }) {
 }
 
 /* ─── Status Header ──────────────────────────────────────────────────────────── */
-function StatusHeader({ sessionTime, eventsCount }) {
+function StatusHeader({ sessionTime, eventsCount, agentCount }) {
   return (
     <div style={{
       background: '#0F172A',
@@ -662,10 +662,10 @@ function StatusHeader({ sessionTime, eventsCount }) {
 
       <div style={{ flex: 1, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {[
-          { label: 'Mode',    value: '🟢 Fully Autonomous', color: '#4ADE80' },
-          { label: 'Agents',  value: '25 / 25 active',       color: '#60A5FA' },
-          { label: 'Events',  value: eventsCount.toLocaleString(), color: '#A78BFA' },
-          { label: 'Session', value: sessionTime,           color: '#34D399' },
+          { label: 'Mode',    value: '🟢 Fully Autonomous',          color: '#4ADE80' },
+          { label: 'Agents',  value: `${agentCount} / ${agentCount} active`, color: '#60A5FA' },
+          { label: 'Events',  value: eventsCount.toLocaleString(),   color: '#A78BFA' },
+          { label: 'Session', value: sessionTime,                    color: '#34D399' },
         ].map(s => (
           <div key={s.label}>
             <div style={{ fontSize: '.6rem', color: '#475569', textTransform: 'uppercase', letterSpacing: '.5px' }}>{s.label}</div>
@@ -938,6 +938,29 @@ export default function AgentDashboard() {
   const sessionTime = `${String(Math.floor(sessionSeconds / 60)).padStart(2, '0')}:${String(sessionSeconds % 60).padStart(2, '0')}`;
 
   /* ── Render ────────────────────────────────────────────────────────────────── */
+
+  const techAgents   = SOURCE_AGENTS.filter(a => !a.needsAuth);
+  const socialAgents = SOURCE_AGENTS.filter(a => a.needsAuth);
+
+  function SectionBar({ label, right }) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ fontSize: '.68rem', fontWeight: 800, color: '#64748B', letterSpacing: '1.5px', textTransform: 'uppercase' }}>
+          ▸ {label}
+        </div>
+        {right && <div>{right}</div>}
+      </div>
+    );
+  }
+
+  function Badge({ label, color = '#2563EB', bg = '#EFF6FF', border = '#BFDBFE' }) {
+    return (
+      <div style={{ fontSize: '.62rem', fontWeight: 700, color, background: bg, padding: '3px 10px', borderRadius: 8, border: `1px solid ${border}` }}>
+        {label}
+      </div>
+    );
+  }
+
   return (
     <Layout>
       <style>{`
@@ -996,123 +1019,142 @@ export default function AgentDashboard() {
       <div className="page-header">
         <h1 className="page-title">🏢 UFIConnect HQ</h1>
         <p className="page-subtitle">
-          {SOURCE_AGENTS.length} data agents + {AGENT_DEFS.length} ops agents running simultaneously 24/7
+          {techAgents.length + socialAgents.length} data agents + {AGENT_DEFS.length} ops agents — fully autonomous 24/7
         </p>
       </div>
 
-      <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} />
+      <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length} />
 
-      {/* ── PRIMARY: Ops Centre (floor plan) ──────────────────────────────────── */}
-      <div style={{
-        fontSize: '.7rem', fontWeight: 800, color: '#94A3B8',
-        letterSpacing: '1.5px', textTransform: 'uppercase',
-        marginBottom: 12,
-      }}>
-        ▸ Ops Centre — {AGENT_DEFS.length} platform agents
-      </div>
+      {/* ── Ops Command Centre: floor plan + live activity ── */}
+      <SectionBar
+        label="Ops Command Centre"
+        right={<Badge label={`${AGENT_DEFS.length} ops agents`} />}
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 18, alignItems: 'start', marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start', marginBottom: 24 }}>
         <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <LastExecution entry={lastExecution} />
-
-          {/* Agent roster */}
-          <div style={{ background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: '14px' }}>
-            <div style={{ fontWeight: 800, fontSize: '.82rem', marginBottom: 10, color: '#0F172A' }}>
-              🤖 Ops Roster
-            </div>
-            {AGENT_DEFS.map(agent => {
-              const s = agentStates[agent.id];
-              const statusLabel =
-                s.status === 'idle'      ? '● Monitoring'  :
-                s.status === 'walking'   ? '⚙️ Working'   :
-                s.status === 'executing' ? '🔄 Executing'  :
-                s.status === 'returning' ? '↩ Returning'  : '●';
-              const statusColor =
-                s.status === 'idle'      ? agent.color :
-                s.status === 'walking'   ? '#D97706'   :
-                s.status === 'executing' ? '#DC2626'   : '#059669';
-              return (
-                <div key={agent.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '6px 0', borderBottom: '1px solid #F1F5F9',
-                }}>
-                  <span style={{ fontSize: '1rem' }}>{agent.emoji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: '.75rem', fontWeight: 700 }}>{agent.name}</div>
-                    <div style={{ fontSize: '.63rem', color: '#94A3B8' }}>{agent.role}</div>
-                  </div>
-                  <span style={{ fontSize: '.62rem', fontWeight: 700, color: statusColor, whiteSpace: 'nowrap' }}>
-                    {statusLabel}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          <ActivityLog log={activityLog} />
+          <ActivityLog log={activityLog} maxHeight={480} />
         </div>
       </div>
 
-      {/* ── SECONDARY: Live Data Operations ────────────────────────────────────── */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14,
-          padding: '10px 14px',
-          background: '#0F172A', borderRadius: 10,
-          border: '1px solid #1E293B',
-        }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '.82rem', fontWeight: 800, color: '#F1F5F9' }}>
-              ⚡ Live Data Operations
-            </div>
-            <div style={{ fontSize: '.65rem', color: '#475569' }}>
-              {SOURCE_AGENTS.length} source agents cycling topics continuously — one topic at a time per source
-            </div>
-          </div>
+      {/* ── Ops Roster: full-width responsive grid ── */}
+      <SectionBar
+        label="Ops Roster"
+        right={
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', background: '#4ADE80',
-              display: 'inline-block', animation: 'agentPulse 1.6s ease-out infinite',
-              boxShadow: '0 0 0 0 #4ADE8055',
-            }} />
-            <span style={{ fontSize: '.7rem', fontWeight: 700, color: '#4ADE80' }}>ALL ACTIVE</span>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ADE80', display: 'inline-block', animation: 'agentPulse 1.6s ease-out infinite' }} />
+            <span style={{ fontSize: '.62rem', fontWeight: 700, color: '#059669' }}>ALL AUTONOMOUS</span>
           </div>
-          <div style={{ fontSize: '.7rem', fontWeight: 700, color: '#60A5FA', background: '#1E3A5F', padding: '3px 10px', borderRadius: 8 }}>
-            {SOURCE_AGENTS.length} AGENTS ({SOURCE_AGENTS.filter(a => a.needsAuth).length} need auth)
-          </div>
-        </div>
+        }
+      />
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
-          gap: 10,
-        }}>
-          {SOURCE_AGENTS.map(agent => {
-            const stats = sourceAgents.find(s => s.id === agent.id);
-            return (
-              <LiveDataCard
-                key={agent.id}
-                agent={agent}
-                phaseData={workerPhases[agent.id]}
-                stats={stats}
-                connected={connectedSocial[agent.id]}
-                onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-                onConnect={async () => {
-                  try {
-                    const { data } = await client.get(`/auth/social/${agent.id}/start`);
-                    window.location.href = data.url;
-                  } catch { /* ignore — server will error if platform not configured */ }
-                }}
-              />
-            );
-          })}
-        </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(185px, 1fr))',
+        gap: 8, marginBottom: 28,
+        background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: 12,
+      }}>
+        {AGENT_DEFS.map(agent => {
+          const s = agentStates[agent.id];
+          const statusLabel =
+            s.status === 'idle'      ? '● Monitoring'  :
+            s.status === 'walking'   ? '⚙️ Working'    :
+            s.status === 'executing' ? '🔄 Executing'  :
+            s.status === 'returning' ? '↩ Returning'   : '●';
+          const statusColor =
+            s.status === 'idle'      ? agent.color :
+            s.status === 'walking'   ? '#D97706'   :
+            s.status === 'executing' ? '#DC2626'   : '#059669';
+          return (
+            <div key={agent.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 10px',
+              background: s.status === 'idle' ? agent.bg : '#F8FAFC',
+              borderRadius: 8,
+              border: `1px solid ${s.status === 'idle' ? agent.color + '30' : '#E2E8F0'}`,
+              transition: 'all 0.4s',
+            }}>
+              <span style={{ fontSize: '1rem', flexShrink: 0 }}>{agent.emoji}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '.73rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</div>
+                <div style={{ fontSize: '.59rem', color: '#94A3B8' }}>{agent.role}</div>
+              </div>
+              <div style={{ fontSize: '.58rem', fontWeight: 700, color: statusColor, textAlign: 'right', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                {statusLabel}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Live Data Operations ── */}
+      <SectionBar
+        label="Live Data Operations"
+        right={
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Badge label={`${techAgents.length} tech & news`} color="#0284C7" bg="#F0F9FF" border="#BAE6FD" />
+            <Badge label={`${socialAgents.length} social`} color="#7C3AED" bg="#F3EEFF" border="#DDD6FE" />
+          </div>
+        }
+      />
+
+      {/* Tech & News agents */}
+      <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
+        Tech &amp; News
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 20 }}>
+        {techAgents.map(agent => {
+          const stats = sourceAgents.find(s => s.id === agent.id);
+          return (
+            <LiveDataCard
+              key={agent.id}
+              agent={agent}
+              phaseData={workerPhases[agent.id]}
+              stats={stats}
+              connected={connectedSocial[agent.id]}
+              onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
+              onConnect={async () => {
+                try {
+                  const { data } = await client.get(`/auth/social/${agent.id}/start`);
+                  window.location.href = data.url;
+                } catch {}
+              }}
+            />
+          );
+        })}
+      </div>
+
+      {/* Social platform agents */}
+      <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
+        Social Platforms
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 24 }}>
+        {socialAgents.map(agent => {
+          const stats = sourceAgents.find(s => s.id === agent.id);
+          return (
+            <LiveDataCard
+              key={agent.id}
+              agent={agent}
+              phaseData={workerPhases[agent.id]}
+              stats={stats}
+              connected={connectedSocial[agent.id]}
+              onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
+              onConnect={async () => {
+                try {
+                  const { data } = await client.get(`/auth/social/${agent.id}/start`);
+                  window.location.href = data.url;
+                } catch {}
+              }}
+            />
+          );
+        })}
       </div>
 
       <div style={{
-        marginTop: 18, padding: '10px 14px',
+        padding: '10px 14px',
         background: '#F8FAFC', borderRadius: 10,
         border: '1px solid #E2E8F0',
         fontSize: '.72rem', color: '#64748B',
@@ -1120,10 +1162,9 @@ export default function AgentDashboard() {
       }}>
         <span>ℹ️</span>
         <span>
-          {SOURCE_AGENTS.length} source agents continuously cycle through topics and connected social feeds.
-          Pro users can connect LinkedIn, X, Instagram, or Facebook to activate personalised sources.
-          {AGENT_DEFS.length} ops agents handle curation, SEO, security, performance, storage, public-domain
-          optimisation, and cache coordination.
+          {techAgents.length} tech & news agents cycle topics continuously.{' '}
+          {socialAgents.length} social agents require OAuth connection to activate personalised feeds.{' '}
+          {AGENT_DEFS.length} ops agents handle curation, SEO, security, performance, cache coordination, and public-domain optimisation.
         </span>
       </div>
     </Layout>
