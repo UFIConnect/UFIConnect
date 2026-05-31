@@ -12,3 +12,4 @@ yarn.lock
 dist/
 .cache/
 web/dist/
+backend/data/

@@ -339,21 +339,68 @@ function YouTubeCard({ post }) {
   );
 }
 
+// Sources that have an inline comment/review section
+const COMMENT_SOURCES = new Set([
+  'reddit','hackernews','devto','github','medium','stackoverflow',
+  'mastodon','bluesky','lobsters','producthunt','techcrunch','theverge',
+  'indiehackers','hashnode','arstechnica','wired','theregister','venturebeat',
+  'smashing','phoronix','infoq','mittr','youtube','twitter','linkedin',
+  'instagram','facebook','tiktok',
+]);
+// Article sources where comments read as reader reviews/discussion
+const ARTICLE_SOURCES = new Set([
+  'medium','techcrunch','theverge','arstechnica','wired','theregister',
+  'venturebeat','smashing','phoronix','infoq','mittr','hashnode',
+]);
+
+function commentSectionLabel(source) {
+  if (source === 'stackoverflow') return 'Answers';
+  if (source === 'github')        return 'Discussion';
+  if (['twitter','linkedin','instagram','facebook','bluesky','mastodon','tiktok'].includes(source)) return 'Replies';
+  if (ARTICLE_SOURCES.has(source)) return 'Reader Comments';
+  return 'Comments';
+}
+
 /** Unified post card */
 function commentUrl(post) {
   const u = post.sourceUrl || '';
   switch (post.source) {
-    case 'devto':       return u.includes('#') ? u : `${u}#comments`;
-    case 'hackernews':  return u; // HN item page IS the comments page
-    case 'youtube':     return u; // scroll to comments on YouTube
-    case 'github':      return u; // issue/PR page has comments
-    default:            return u;
+    case 'hackernews':   return u;
+    case 'reddit':       return u;
+    case 'devto':        return u.includes('#') ? u : `${u}#comments`;
+    case 'github':       return u;
+    case 'youtube':      return u;
+    case 'stackoverflow':return u.includes('#') ? u : `${u}#answers`;
+    case 'lobsters':     return u;
+    case 'mastodon':     return u;
+    case 'bluesky':      return u;
+    case 'twitter':      return u;
+    case 'linkedin':     return u;
+    case 'instagram':    return u;
+    case 'facebook':     return u;
+    case 'tiktok':       return u;
+    case 'producthunt':  return u;
+    case 'indiehackers': return u;
+    case 'medium':       return u;
+    case 'techcrunch':   return `${u}#comments`;
+    case 'theverge':     return `${u}#comments`;
+    case 'arstechnica':  return `${u}?comments=1`;
+    case 'theregister':  return `${u}#comments`;
+    case 'venturebeat':  return `${u}#comments`;
+    case 'smashing':     return `${u}#comments`;
+    case 'infoq':        return `${u}#community`;
+    case 'hashnode':     return u.includes('#') ? u : `${u}#comments`;
+    case 'phoronix':     return u;
+    case 'mittr':        return u;
+    case 'wired':        return u;
+    default:             return u;
   }
 }
 
 function PostCard({ post, onVideoOpen }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
+  const [commentsLive,    setCommentsLive]    = useState(false);
   const [commentsLoading, setCommentsLoading] = useState(false);
 
   const c   = catStyle(post.group?.category);
@@ -361,22 +408,24 @@ function PostCard({ post, onVideoOpen }) {
 
   if (post.source === 'youtube') return <YouTubeCard post={post} />;
 
-  const isExternal   = post.isExternal;
-  const hasVideo     = post.mediaUrl && post.mediaType === 'video';
-  const isReddit     = post.source === 'reddit';
-  const commentCount = post.commentsCount || 0;
-  const isTruncated  = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
-  const commUrl      = commentUrl(post);
+  const isExternal     = post.isExternal;
+  const hasVideo       = post.mediaUrl && post.mediaType === 'video';
+  const commentCount   = post.commentsCount || 0;
+  const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
+  const commUrl        = commentUrl(post);
+  const hasComments    = COMMENT_SOURCES.has(post.source);
+  const sectionLabel   = commentSectionLabel(post.source);
+  const isArticle      = ARTICLE_SOURCES.has(post.source);
 
   async function toggleComments() {
     if (showComments) { setShowComments(false); return; }
     setShowComments(true);
     if (comments !== null) return;
-    if (!isReddit) { setComments([]); return; }
     setCommentsLoading(true);
     try {
-      const { data } = await client.get(`/feed/${post.id}/comments`);
+      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`);
       setComments(data.comments || []);
+      setCommentsLive(!!data.live);
     } catch { setComments([]); }
     finally  { setCommentsLoading(false); }
   }
@@ -460,12 +509,17 @@ function PostCard({ post, onVideoOpen }) {
 
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        {commentCount > 0 && (
+        {post.likesCount > 0 && (
+          <span style={{ fontSize: '.75rem', color: 'var(--muted)' }}>
+            {'❤️'} {post.likesCount.toLocaleString()}
+          </span>
+        )}
+        {hasComments && (
           <button
             onClick={toggleComments}
             style={{ all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: showComments ? src.color : 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, fontWeight: showComments ? 700 : 400 }}
           >
-            💬 {commentCount.toLocaleString()} {showComments ? 'Hide' : 'Comments'}
+            💬 {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}{showComments ? `Hide ${sectionLabel}` : sectionLabel}
           </button>
         )}
         {post.sourceUrl && (
@@ -479,36 +533,81 @@ function PostCard({ post, onVideoOpen }) {
         )}
       </div>
 
-      {/* Inline comments */}
+      {/* Inline comments / replies / answers / reviews */}
       {showComments && (
         <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+
+          {/* Section header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+            <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+              {sectionLabel}
+            </span>
+            {!commentsLive && (
+              <span style={{ fontSize: '.62rem', color: 'var(--muted)', background: 'var(--border)', padding: '1px 6px', borderRadius: 4 }}>
+                top picks
+              </span>
+            )}
+            {commentsLive && (
+              <span style={{ fontSize: '.62rem', color: '#059669', background: '#ECFDF5', padding: '1px 6px', borderRadius: 4 }}>
+                live
+              </span>
+            )}
+          </div>
+
+          {/* Loading spinner */}
           {commentsLoading && (
             <div style={{ textAlign: 'center', padding: '12px 0' }}>
               <span className="spinner spinner-primary" />
             </div>
           )}
-          {!commentsLoading && isReddit && comments?.length > 0 && comments.map(c => (
+
+          {/* Comment list */}
+          {!commentsLoading && comments?.length > 0 && comments.map(c => (
             <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#FF450018', border: '1.5px solid #FF450033', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.72rem', fontWeight: 700, color: '#FF4500', flexShrink: 0 }}>
-                {c.author?.[0]?.toUpperCase() || 'u'}
+              <div style={{
+                width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                background: `${src.color}18`, border: `1.5px solid ${src.color}33`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '.75rem', fontWeight: 700, color: src.color,
+              }}>
+                {(c.author?.replace(/^[@u\/]/, '') || '?')[0]?.toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                  <span style={{ fontWeight: 700, fontSize: '.78rem' }}>u/{c.author}</span>
-                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>▲ {c.score.toLocaleString()}</span>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, fontSize: '.78rem' }}>{c.author}</span>
+                  {c.score > 0 && (
+                    <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>▲ {c.score.toLocaleString()}</span>
+                  )}
                   <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
                 </div>
-                <p style={{ fontSize: '.82rem', lineHeight: 1.55, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                <p style={{ fontSize: '.83rem', lineHeight: 1.6, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
               </div>
             </div>
           ))}
-          {!commentsLoading && isReddit && comments?.length === 0 && (
-            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No comments found.</p>
+
+          {!commentsLoading && comments?.length === 0 && (
+            <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No {sectionLabel.toLowerCase()} found.</p>
           )}
+
+          {/* Read-more link — always shown at bottom */}
           {commUrl && (
-            <a href={commUrl} target="_blank" rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontSize: '.8rem', color: src.color, fontWeight: 600, marginTop: isReddit && comments?.length > 0 ? 10 : 0, paddingTop: isReddit && comments?.length > 0 ? 10 : 0, borderTop: isReddit && comments?.length > 0 ? '1px solid var(--border)' : 'none' }}>
-              {src.icon} View {commentCount > 0 ? `${commentCount.toLocaleString()} comments` : 'comments'} on {src.label} ↗
+            <a
+              href={commUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                textDecoration: 'none', marginTop: comments?.length > 0 ? 12 : 0,
+                paddingTop: comments?.length > 0 ? 10 : 0,
+                borderTop: comments?.length > 0 ? '1px solid var(--border)' : 'none',
+              }}
+            >
+              <span style={{ fontSize: '.82rem', fontWeight: 700, color: src.color }}>
+                {src.icon} {isArticle ? 'Read all ' : 'View all '}
+                {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}
+                {sectionLabel.toLowerCase()} on {src.label}
+              </span>
+              <span style={{ fontSize: '.72rem', color: src.color, background: `${src.color}14`, padding: '2px 8px', borderRadius: 5, fontWeight: 700 }}>↗</span>
             </a>
           )}
         </div>

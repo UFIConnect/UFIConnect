@@ -333,11 +333,6 @@ export default function Settings() {
                         {isDisconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
                       </button>
                     </div>
-                  ) : !profile?.isPro ? (
-                    <button type="button" onClick={upgradeToPro}
-                      style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: '#F59E0B', color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer' }}>
-                      Upgrade
-                    </button>
                   ) : (
                     <button type="button" onClick={() => connectSocial(platform.id)} disabled={isConnecting}
                       style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: platform.color, color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', opacity: isConnecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>

@@ -120,28 +120,37 @@ const AGENT_DEFS = [
   },
 ];
 
-/* ─── 16 Active Source Agents (no-token platforms) ─────────────────────────── */
+/* ─── 25 Active Source Agents ────────────────────────────────────────────────── */
 const SOURCE_AGENTS = [
-  { id: 'reddit',        emoji: '🟠', name: 'Reddit',         color: '#FF6347' },
-  { id: 'hn',            emoji: '🔶', name: 'Hacker News',    color: '#FF6600' },
-  { id: 'github',        emoji: '🐙', name: 'GitHub',         color: '#475569' },
-  { id: 'devto',         emoji: '💻', name: 'DEV.to',         color: '#8B5CF6' },
-  { id: 'medium',        emoji: '📝', name: 'Medium',         color: '#10B981' },
-  { id: 'youtube',       emoji: '▶️',  name: 'YouTube',        color: '#EF4444' },
-  { id: 'stackoverflow', emoji: '💬', name: 'Stack Overflow', color: '#F59E0B' },
-  { id: 'mastodon',      emoji: '🐘', name: 'Mastodon',       color: '#6366F1' },
-  { id: 'lobsters',      emoji: '🦞', name: 'Lobsters',       color: '#DC2626' },
-  { id: 'arxiv',         emoji: '📄', name: 'arXiv',          color: '#3B82F6' },
-  { id: 'indeed',        emoji: '💼', name: 'Indeed',         color: '#2557A7' },
-  { id: 'producthunt',   emoji: '🚀', name: 'Product Hunt',   color: '#DA552F' },
-  { id: 'techcrunch',    emoji: '📰', name: 'TechCrunch',     color: '#0D9F3F' },
-  { id: 'theverge',      emoji: '⬛', name: 'The Verge',      color: '#CC2200' },
-  { id: 'indiehackers',  emoji: '💡', name: 'Indie Hackers',  color: '#0E2150' },
-  { id: 'hashnode',      emoji: '✍️',  name: 'Hashnode',       color: '#2962FF' },
-  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',   color: '#0A66C2', needsAuth: true },
+  { id: 'reddit',        emoji: '🟠', name: 'Reddit',          color: '#FF6347' },
+  { id: 'hn',            emoji: '🔶', name: 'Hacker News',     color: '#FF6600' },
+  { id: 'github',        emoji: '🐙', name: 'GitHub',          color: '#475569' },
+  { id: 'devto',         emoji: '💻', name: 'DEV.to',          color: '#8B5CF6' },
+  { id: 'medium',        emoji: '📝', name: 'Medium',          color: '#10B981' },
+  { id: 'youtube',       emoji: '▶️',  name: 'YouTube',         color: '#EF4444' },
+  { id: 'stackoverflow', emoji: '💬', name: 'Stack Overflow',  color: '#F59E0B' },
+  { id: 'mastodon',      emoji: '🐘', name: 'Mastodon',        color: '#6366F1' },
+  { id: 'lobsters',      emoji: '🦞', name: 'Lobsters',        color: '#DC2626' },
+  { id: 'arxiv',         emoji: '📄', name: 'arXiv',           color: '#3B82F6' },
+  { id: 'indeed',        emoji: '💼', name: 'Indeed',          color: '#2557A7' },
+  { id: 'producthunt',   emoji: '🚀', name: 'Product Hunt',    color: '#DA552F' },
+  { id: 'techcrunch',    emoji: '📰', name: 'TechCrunch',      color: '#0D9F3F' },
+  { id: 'theverge',      emoji: '⬛', name: 'The Verge',       color: '#CC2200' },
+  { id: 'indiehackers',  emoji: '💡', name: 'Indie Hackers',   color: '#0E2150' },
+  { id: 'hashnode',      emoji: '✍️',  name: 'Hashnode',        color: '#2962FF' },
+  { id: 'bluesky',       emoji: '🦋', name: 'Bluesky',         color: '#0085FF' },
+  { id: 'arstechnica',   emoji: '📡', name: 'Ars Technica',    color: '#FF6600' },
+  { id: 'wired',         emoji: '🔌', name: 'WIRED',           color: '#444444' },
+  { id: 'theregister',   emoji: '📋', name: 'The Register',    color: '#CC0000' },
+  { id: 'venturebeat',   emoji: '💹', name: 'VentureBeat',     color: '#1E6FBF' },
+  { id: 'smashing',      emoji: '🎨', name: 'Smashing Mag',    color: '#E9620A' },
+  { id: 'phoronix',      emoji: '🐧', name: 'Phoronix',        color: '#2B7BB9' },
+  { id: 'infoq',         emoji: '🏗️',  name: 'InfoQ',           color: '#67B346' },
+  { id: 'mittr',         emoji: '🔬', name: 'MIT Tech Review', color: '#A31F34' },
+  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', needsAuth: true },
   { id: 'twitter',    emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', needsAuth: true },
-  { id: 'instagram',  emoji: '📸', name: 'Instagram',  color: '#E1306C', needsAuth: true },
-  { id: 'facebook',   emoji: '📘', name: 'Facebook',   color: '#1877F2', needsAuth: true },
+  { id: 'instagram',  emoji: '📸', name: 'Instagram',   color: '#E1306C', needsAuth: true },
+  { id: 'facebook',   emoji: '📘', name: 'Facebook',    color: '#1877F2', needsAuth: true },
 ];
 
 const SCAN_TOPICS = [
@@ -294,7 +303,7 @@ function ServerRoom({ eventsCount }) {
     { k: 'API ERR',  v: '0',                     color: '#4ADE80' },
     { k: 'FEED',     v: `${1820 + tick * 3}`,    color: '#60A5FA' },
     { k: 'EVENTS',   v: eventsCount.toString(),  color: '#A78BFA' },
-    { k: 'AGENTS',   v: '7 / 7',                 color: '#FCD34D' },
+    { k: 'AGENTS',   v: '25 / 25',               color: '#FCD34D' },
   ];
 
   return (
@@ -522,7 +531,7 @@ function StatusHeader({ sessionTime, eventsCount }) {
       <div style={{ flex: 1, display: 'flex', gap: 20, flexWrap: 'wrap' }}>
         {[
           { label: 'Mode',    value: '🟢 Fully Autonomous', color: '#4ADE80' },
-          { label: 'Agents',  value: '7 / 7 active',        color: '#60A5FA' },
+          { label: 'Agents',  value: '25 / 25 active',       color: '#60A5FA' },
           { label: 'Events',  value: eventsCount.toLocaleString(), color: '#A78BFA' },
           { label: 'Session', value: sessionTime,           color: '#34D399' },
         ].map(s => (
@@ -855,7 +864,7 @@ export default function AgentDashboard() {
       <div className="page-header">
         <h1 className="page-title">🏢 UFIConnect HQ</h1>
         <p className="page-subtitle">
-          16 data agents + 7 ops agents running simultaneously 24/7
+          25 data agents + 7 ops agents running simultaneously 24/7
         </p>
       </div>
 
