@@ -5524,24 +5524,28 @@ async function savePostsToDB(posts) {
 
 async function savePostsToDBFast(posts) {
   if (!db.isConnected() || !posts.length) return 0;
+  const clean = (value, max = null) => {
+    const text = (value ?? '').toString().replace(/\u0000/g, '');
+    return max ? text.slice(0, max) : text;
+  };
   const seen = new Set();
   const rows = [];
   for (const p of posts) {
     if (!p?.id || seen.has(p.id)) continue;
     seen.add(p.id);
     rows.push({
-      id: p.id,
-      source: p.source || 'unknown',
-      title: (p.title || '').slice(0, 500),
-      content: (p.content || '').slice(0, 2000),
-      author_name: p.author?.name || null,
-      source_url: p.sourceUrl || null,
-      media_url: p.mediaUrl || null,
-      media_type: p.mediaType || null,
-      topic: p.topic || null,
+      id: clean(p.id),
+      source: clean(p.source || 'unknown'),
+      title: clean(p.title, 500),
+      content: clean(p.content, 2000),
+      author_name: p.author?.name ? clean(p.author.name) : null,
+      source_url: p.sourceUrl ? clean(p.sourceUrl) : null,
+      media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
+      media_type: p.mediaType ? clean(p.mediaType) : null,
+      topic: p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
-      post_created_at: p.createdAt || new Date().toISOString(),
+      post_created_at: clean(p.createdAt || new Date().toISOString()),
     });
   }
   if (!rows.length) return 0;
