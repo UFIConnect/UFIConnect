@@ -11,14 +11,14 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node index.js
+    startCommand: node --max-old-space-size=6144 index.js
     plan: starter
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: --max-old-space-size=4096
+        value: --max-old-space-size=6144
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL
@@ -107,7 +107,7 @@ services:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
       - key: NODE_OPTIONS
-        value: --max-old-space-size=4096
+        value: --max-old-space-size=6144
 
   # ── Office Dashboard (React static site) ────────────────────
   - type: web
@@ -130,4 +130,4 @@ services:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
       - key: NODE_OPTIONS
-        value: --max-old-space-size=4096
+        value: --max-old-space-size=6144
