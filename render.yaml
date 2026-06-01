@@ -11,14 +11,14 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=6144 index.js
+    startCommand: node --max-old-space-size=400 index.js
     plan: starter
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: --max-old-space-size=6144
+        value: --max-old-space-size=400
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL

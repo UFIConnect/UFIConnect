@@ -3187,8 +3187,8 @@ function startContinuousWorkers() {
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
-const GLOBAL_FEED_CACHE_LIMIT = 500;   // 2 pages served without hitting DB; was 2000
-const SOURCE_FEED_CACHE_LIMIT = 100;   // per-source tab view; was 50
+const GLOBAL_FEED_CACHE_LIMIT = 300;   // cap tighter to fit 512MB container
+const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
