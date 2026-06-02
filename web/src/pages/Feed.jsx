@@ -1146,86 +1146,89 @@ export default function Feed() {
             </button>
           );
         })}
-
-        {pinnedSources.map(key => {
-          const meta = SOURCE_META[key] || {};
-          const color = meta.color || 'var(--primary)';
-          const active = activeTabs.includes(key);
-          return (
-            <button key={key} onClick={() => toggleTab(key)} style={{
-              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-              padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-              border: `1.5px solid ${active ? color : 'var(--border)'}`,
-              background: active ? color : 'var(--surface)',
-              color: active ? '#fff' : 'var(--text)',
-              fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-            }}>
-              <span style={{ fontSize: '.85rem' }}>{meta.icon || ''}</span>
-              {meta.label || key}
-            </button>
-          );
-        })}
-
-        <div style={{ position: 'relative', flexShrink: 0 }} ref={pickerRef}>
-          <button onClick={() => setPickerOpen(o => !o)} style={{
-            display: 'flex', alignItems: 'center', gap: 4,
-            padding: '6px 12px', borderRadius: 20, whiteSpace: 'nowrap',
-            border: `1.5px solid ${pickerOpen ? 'var(--primary)' : 'var(--border)'}`,
-            background: pickerOpen ? 'var(--primary-light, #EEF2FF)' : 'var(--surface)',
-            color: pickerOpen ? 'var(--primary)' : 'var(--muted)',
-            fontWeight: 600, fontSize: '.8rem', cursor: 'pointer',
-          }}>
-            + More
-          </button>
-          {pickerOpen && (
-            <div style={{
-              position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 400,
-              background: 'var(--surface)', border: '1.5px solid var(--border)',
-              borderRadius: 16, padding: '14px 16px', width: 280,
-              boxShadow: '0 8px 32px rgba(0,0,0,.12)', maxHeight: '70vh', overflowY: 'auto',
-            }}>
-              <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>
-                Add to tab bar
-              </div>
-              {EXTRA_SOURCE_GROUPS.map(group => (
-                <div key={group.label} style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: '.68rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>
-                    {group.label}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                    {group.sources.map(key => {
-                      const meta = SOURCE_META[key] || {};
-                      const pinned = pinnedSources.includes(key);
-                      return (
-                        <button key={key} onClick={() => togglePinned(key)} style={{
-                          display: 'flex', alignItems: 'center', gap: 4,
-                          padding: '4px 10px', borderRadius: 16, fontSize: '.75rem', fontWeight: 600,
-                          border: `1.5px solid ${pinned ? (meta.color || 'var(--primary)') : 'var(--border)'}`,
-                          background: pinned ? `${meta.color || 'var(--primary)'}22` : 'var(--surface)',
-                          color: pinned ? (meta.color || 'var(--primary)') : 'var(--text)',
-                          cursor: 'pointer',
-                        }}>
-                          <span>{meta.icon || ''}</span>
-                          {meta.label || key}
-                          {pinned && <span style={{ marginLeft: 2, fontSize: '.65rem' }}>✓</span>}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-              {pinnedSources.length > 0 && (
-                <button
-                  onClick={() => { setPinnedSources([]); localStorage.removeItem('feed_pinned_sources'); }}
-                  style={{ marginTop: 4, fontSize: '.72rem', color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                >
-                  Clear all
-                </button>
-              )}
-            </div>
-          )}
-        </div>
       </div>
+
+      {(activeTabs.length > 0 || activeFilterCount > 0) && (
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
+          <span style={{ color: 'var(--muted)', fontWeight: 500, marginRight: 2 }}>Showing:</span>
+
+          {activeTabs.length > 0 ? activeTabs.map(key => {
+            const meta = SOURCE_META[key] || {};
+            const color = meta.color || 'var(--primary)';
+            return (
+              <span key={key} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '3px 9px', borderRadius: 12,
+                background: `${color}18`, color, fontWeight: 600,
+                border: `1px solid ${color}44`,
+              }}>
+                {meta.icon || ''} {meta.label || key}
+                <button onClick={() => toggleTab(key)} style={{
+                  marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                  color, fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
+                }}>×</button>
+              </span>
+            );
+          }) : (
+            <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>All sources</span>
+          )}
+
+          {filters.timeRange !== 'all' && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 9px', borderRadius: 12,
+              background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
+              border: '1px solid var(--border)',
+            }}>
+              {filters.timeRange === '1h' ? 'Past hour' : filters.timeRange === '24h' ? 'Past 24h' : filters.timeRange === '7d' ? 'Past week' : filters.timeRange}
+              <button onClick={() => setFilters(f => ({ ...f, timeRange: 'all' }))} style={{
+                marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
+              }}>×</button>
+            </span>
+          )}
+
+          {filters.sort !== 'newest' && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 9px', borderRadius: 12,
+              background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
+              border: '1px solid var(--border)',
+            }}>
+              Sort: {filters.sort}
+              <button onClick={() => setFilters(f => ({ ...f, sort: 'newest' }))} style={{
+                marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
+              }}>×</button>
+            </span>
+          )}
+
+          {filters.sources.length > 0 && filters.sources.map(key => {
+            const meta = SOURCE_META[key] || {};
+            return (
+              <span key={key} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+                padding: '3px 9px', borderRadius: 12,
+                background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
+                border: '1px solid var(--border)',
+              }}>
+                {meta.label || key}
+                <button onClick={() => setFilters(f => ({ ...f, sources: f.sources.filter(s => s !== key) }))} style={{
+                  marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
+                }}>×</button>
+              </span>
+            );
+          })}
+
+          <button
+            onClick={() => { setActiveTabs([]); activeTabsRef.current = []; setFilters({ sort: 'newest', sources: [], timeRange: 'all' }); loadFeed(false, []); }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.75rem', fontWeight: 600, padding: '2px 4px', textDecoration: 'underline' }}
+          >
+            Clear all
+          </button>
+        </div>
+      )}
 
       {/* Social connect prompt — logged-in users with no social accounts connected */}
       {profile && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
