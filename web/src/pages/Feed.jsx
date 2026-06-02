@@ -921,7 +921,8 @@ export default function Feed() {
         const tabs = activeTabsRef.current;
         const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
         if (!tabFresh.length) return;
-        // Community posts (user-authored) appear immediately; external posts buffer for 2 minutes.
+        // Community posts (user-authored) appear immediately.
+        // External posts are buffered and merged on the next auto/manual refresh.
         const communityPosts = tabFresh.filter(p => p.source === 'uficonnect');
         const externalPosts  = tabFresh.filter(p => p.source !== 'uficonnect');
         if (communityPosts.length) {
@@ -933,9 +934,7 @@ export default function Feed() {
           setLastRefresh(new Date());
         }
         if (externalPosts.length) {
-          pendingRef.current = [...externalPosts, ...pendingRef.current].slice(0, 100);
-          clearTimeout(flushTimerRef.current);
-          flushTimerRef.current = setTimeout(() => flushPendingRef.current(), 2 * 60 * 1000);
+          pendingRef.current = [...externalPosts, ...pendingRef.current].slice(0, 200);
         }
       } catch {}
     };
@@ -971,12 +970,12 @@ export default function Feed() {
       );
     }
 
-    // Source filter
-    if (activeTabs.length > 0) {
+    // Source filter — skip when a search is active (backend returns cross-source results)
+    if (!search && activeTabs.length > 0) {
       result = result.filter(p => activeTabs.includes(p.source));
     }
 
-    if (filters.sources.length > 0) {
+    if (!search && filters.sources.length > 0) {
       result = result.filter(p => filters.sources.includes(p.source));
     }
 
