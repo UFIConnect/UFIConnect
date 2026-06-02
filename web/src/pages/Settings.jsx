@@ -59,14 +59,6 @@ const BASE_INTERESTS = [
 ];
 const ALL_INTERESTS = [...new Set([...BASE_INTERESTS, ...EXTRA_INTERESTS])];
 
-// ── Social platform metadata ──────────────────────────────────────────────────
-const SOCIAL_PLATFORMS = [
-  { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'See posts, articles, and updates from your LinkedIn network — right inside UFIConnect.' },
-  { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Pull tweets, threads, and trending topics from the people you follow on X.' },
-  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Bring posts and reels from the creators and brands you follow on Instagram.' },
-  { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'See updates from friends, pages, and groups you follow on Facebook.' },
-];
-
 // ── Role → icon / color metadata (for badge display) ─────────────────────────
 const ROLE_META = {
   'Engineer / Developer':    { icon: '💻', color: '#2563EB', bg: '#EFF6FF', tagline: 'Software, ML, DevOps',          fields: [{ key: 'primaryStack', label: 'Primary tech stack', placeholder: 'e.g. React, Node.js, Python, Rust' }, { key: 'preferredRole', label: 'Preferred role type', placeholder: 'e.g. Full-stack, Backend, ML, DevOps' }, { key: 'yearsExp', label: 'Years of coding experience', placeholder: 'e.g. 5' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }, { key: 'remoteOnly', label: 'Remote only', type: 'toggle' }] },
@@ -107,63 +99,11 @@ export default function Settings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
 
-  // ── Social connect state ──────────────────────────────────────────────────
-  const [connectedSocial, setConnectedSocial] = useState({});
-  const [socialConnecting, setSocialConnecting] = useState(null);
-  const [socialDisconnecting, setSocialDisconnecting] = useState(null);
-  const [socialFlash, setSocialFlash] = useState(null);
-
   useEffect(() => {
-    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
     const params = new URLSearchParams(window.location.search);
-    const connected = params.get('social_connected');
-    const errored   = params.get('social_error');
-    const tab       = params.get('tab');
+    const tab = params.get('tab');
     if (tab === 'preferences') setActiveTab('preferences');
-    if (connected) {
-      setConnectedSocial(prev => ({ ...prev, [connected]: true }));
-      setSocialFlash({ type: 'success', platform: connected });
-      setActiveTab('connect');
-      window.history.replaceState({}, '', '/settings');
-      setTimeout(() => setSocialFlash(null), 5000);
-    } else if (errored) {
-      const reason = params.get('reason');
-      const name   = SOCIAL_PLATFORMS.find(p => p.id === errored)?.name || errored;
-      const msg    = reason === 'invalid_state' ? `OAuth session expired — please try connecting ${name} again.` : reason ? `Could not connect ${name}: ${reason.replace(/_/g, ' ')}.` : `Could not connect ${name}. Please try again.`;
-      setSocialFlash({ type: 'error', platform: errored, msg });
-      setActiveTab('connect');
-      window.history.replaceState({}, '', '/settings');
-      setTimeout(() => setSocialFlash(null), 7000);
-    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function connectSocial(platform) {
-    setSocialConnecting(platform);
-    try {
-      const { data } = await client.get(`/auth/social/${platform}/start`);
-      if (data?.url) window.location.href = data.url;
-    } catch (e) {
-      const msg = e?.response?.data?.error || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === platform)?.name}. Try again.`;
-      setSocialFlash({ type: 'error', platform, msg });
-      setTimeout(() => setSocialFlash(null), 7000);
-      setSocialConnecting(null);
-    }
-  }
-
-  async function disconnectSocial(platform) {
-    setSocialDisconnecting(platform);
-    try {
-      await client.delete(`/profile/social/${platform}`);
-      setConnectedSocial(prev => ({ ...prev, [platform]: false }));
-      setSocialFlash({ type: 'disconnected', platform });
-      setTimeout(() => setSocialFlash(null), 4000);
-    } catch {
-      setSocialFlash({ type: 'error', platform });
-      setTimeout(() => setSocialFlash(null), 5000);
-    } finally {
-      setSocialDisconnecting(null);
-    }
-  }
 
   // ── General / role-specific settings state ────────────────────────────────
   const [form, setForm] = useState({
@@ -266,7 +206,6 @@ export default function Settings() {
   const TABS = [
     { key: 'general',     label: 'General' },
     { key: 'preferences', label: '🎯 Preferences' },
-    { key: 'connect',     label: '🔗 Connect', badge: Object.values(connectedSocial).filter(Boolean).length || null },
   ];
 
   return (
@@ -286,53 +225,6 @@ export default function Settings() {
           </button>
         ))}
       </div>
-
-      {/* ── Connect tab ──────────────────────────────────────────────────────── */}
-      {activeTab === 'connect' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {socialFlash && (
-            <div style={{ padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 500, lineHeight: 1.5, background: socialFlash.type === 'success' ? '#ECFDF5' : socialFlash.type === 'disconnected' ? '#F8FAFC' : '#FEF2F2', color: socialFlash.type === 'success' ? '#059669' : socialFlash.type === 'disconnected' ? '#64748B' : '#DC2626', border: socialFlash.type === 'error' ? '1px solid #FECACA' : 'none' }}>
-              {socialFlash.type === 'success'      && (socialFlash.msg || `✓ ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} connected successfully`)}
-              {socialFlash.type === 'disconnected' && `${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name} disconnected`}
-              {socialFlash.type === 'error'        && (socialFlash.msg || `Could not connect ${SOCIAL_PLATFORMS.find(p => p.id === socialFlash.platform)?.name}. Try again.`)}
-            </div>
-          )}
-          <div className="card">
-            <SectionHeading>🔗 Connected Accounts</SectionHeading>
-            <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
-              Connect your social accounts to bring your existing feeds into UFIConnect. One tap — you'll be redirected to the platform and automatically sent back once connected.
-            </p>
-            {SOCIAL_PLATFORMS.map(platform => {
-              const isConnected    = !!connectedSocial[platform.id];
-              const isConnecting   = socialConnecting    === platform.id;
-              const isDisconnecting= socialDisconnecting === platform.id;
-              return (
-                <div key={platform.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, background: `${platform.color}18`, border: `1.5px solid ${platform.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem' }}>{platform.emoji}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: '.875rem' }}>{platform.name}</div>
-                    <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{platform.desc}</div>
-                  </div>
-                  {isConnected ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: '.72rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '3px 8px', borderRadius: 6 }}>✓ Connected</span>
-                      <button type="button" onClick={() => disconnectSocial(platform.id)} disabled={isDisconnecting}
-                        style={{ padding: '5px 12px', borderRadius: 7, border: '1.5px solid var(--border)', background: 'none', color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600, cursor: 'pointer' }}>
-                        {isDisconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
-                      </button>
-                    </div>
-                  ) : (
-                    <button type="button" onClick={() => connectSocial(platform.id)} disabled={isConnecting}
-                      style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: platform.color, color: '#fff', fontWeight: 700, fontSize: '.82rem', cursor: 'pointer', opacity: isConnecting ? 0.7 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {isConnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* ── Preferences tab ──────────────────────────────────────────────────── */}
       {activeTab === 'preferences' && (
