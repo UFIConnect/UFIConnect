@@ -8480,6 +8480,10 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     source: 'uficonnect', sourceLabel: 'UFIConnect',
   };
   posts.unshift(post);
+  // Broadcast to all connected feed clients immediately so the post
+  // appears in every user's feed without waiting for the next refresh.
+  const serialized = serializeCommunityPost(post, req.user.id);
+  broadcastSSE([serialized]);
 
   if (db.isConnected()) {
     db.query(
@@ -8488,7 +8492,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       [id, group.id, user.id, user.name, content.trim(), post.createdAt]
     ).catch(e => console.error('create post DB:', e.message));
   }
-  res.status(201).json({ post: serializeCommunityPost(post, req.user.id) });
+  res.status(201).json({ post: serialized });
 });
 
 app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);

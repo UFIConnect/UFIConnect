@@ -921,10 +921,22 @@ export default function Feed() {
         const tabs = activeTabsRef.current;
         const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
         if (!tabFresh.length) return;
-        // Buffer new posts for 2 minutes instead of injecting immediately.
-        pendingRef.current = [...tabFresh, ...pendingRef.current].slice(0, 100);
-        clearTimeout(flushTimerRef.current);
-        flushTimerRef.current = setTimeout(() => flushPendingRef.current(), 2 * 60 * 1000);
+        // Community posts (user-authored) appear immediately; external posts buffer for 2 minutes.
+        const communityPosts = tabFresh.filter(p => p.source === 'uficonnect');
+        const externalPosts  = tabFresh.filter(p => p.source !== 'uficonnect');
+        if (communityPosts.length) {
+          setPosts(prev => {
+            const next = mergeFeedPosts([...communityPosts, ...prev]);
+            knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
+            return next;
+          });
+          setLastRefresh(new Date());
+        }
+        if (externalPosts.length) {
+          pendingRef.current = [...externalPosts, ...pendingRef.current].slice(0, 100);
+          clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = setTimeout(() => flushPendingRef.current(), 2 * 60 * 1000);
+        }
       } catch {}
     };
 
