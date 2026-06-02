@@ -714,14 +714,38 @@ export default function Feed() {
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
 
+  const [pendingCount, setPendingCount] = useState(0);
+
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set());
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
   const postsRef      = useRef([]);
+  const pendingRef    = useRef([]);   // SSE posts buffered until user loads them
+  const flushTimerRef = useRef(null); // 2-minute auto-flush timer
+  // Updated each render so the SSE closure always calls the current version
+  const flushPendingRef = useRef(null);
+  flushPendingRef.current = () => {
+    if (!pendingRef.current.length) return;
+    clearTimeout(flushTimerRef.current);
+    setPosts(prev => {
+      const merged = [...pendingRef.current, ...prev];
+      const seen = new Set();
+      return merged
+        .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    });
+    pendingRef.current = [];
+    setPendingCount(0);
+    setLastRefresh(new Date());
+  };
 
   const loadFeed = useCallback(async (manual = false, tabs = []) => {
+    // Clear any buffered SSE posts — a full load supersedes them
+    clearTimeout(flushTimerRef.current);
+    pendingRef.current = [];
+    setPendingCount(0);
     if (manual) setRefreshing(true);
     else setLoading(true);
     try {
@@ -820,23 +844,21 @@ export default function Feed() {
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
-        // Only inject posts that match the active source tabs.
+        // Only surface posts that match the active source tabs.
         const tabs = activeTabsRef.current;
         const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
         if (!tabFresh.length) return;
-        setPosts(prev => {
-          const merged = [...tabFresh, ...prev];
-          const seen = new Set();
-          return merged
-            .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
-            .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-        });
+        // Buffer new posts for 2 minutes instead of injecting immediately.
+        pendingRef.current = [...tabFresh, ...pendingRef.current].slice(0, 100);
+        setPendingCount(pendingRef.current.length);
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = setTimeout(() => flushPendingRef.current(), 2 * 60 * 1000);
       } catch {}
     };
 
     es.onerror = () => { setLiveActive(false); };
 
-    return () => { es.close(); setLiveActive(false); };
+    return () => { es.close(); setLiveActive(false); clearTimeout(flushTimerRef.current); };
   }, []);
 
   // Time range cutoff helper
@@ -1033,7 +1055,7 @@ export default function Feed() {
 
         {/* Refresh button */}
         <button
-          onClick={() => loadFeed(true, activeTabsRef.current)}
+          onClick={() => { flushPendingRef.current(); loadFeed(true, activeTabsRef.current); }}
           disabled={refreshing}
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
@@ -1140,6 +1162,27 @@ export default function Feed() {
             onClick={() => setSocialBannerDismissed(true)}
             style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#92400E', fontSize: '.9rem', opacity: 0.7, padding: '0 2px' }}
             aria-label="Dismiss"
+          >×</button>
+        </div>
+      )}
+
+      {/* Pending posts banner — SSE posts buffered for 2 min, tap to load early */}
+      {pendingCount > 0 && (
+        <div
+          onClick={() => flushPendingRef.current()}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+            padding: '8px 14px', borderRadius: 12, cursor: 'pointer',
+            background: '#EFF6FF', border: '1.5px solid #BFDBFE',
+            fontSize: '.8rem', fontWeight: 600, color: '#2563EB',
+          }}
+        >
+          <span>⬆</span>
+          <span>{pendingCount} new post{pendingCount !== 1 ? 's' : ''} ready</span>
+          <span style={{ fontWeight: 400, color: '#3B82F6', marginLeft: 2 }}>· tap to load</span>
+          <button
+            onClick={e => { e.stopPropagation(); clearTimeout(flushTimerRef.current); pendingRef.current = []; setPendingCount(0); }}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#93C5FD', fontSize: '.9rem' }}
           >×</button>
         </div>
       )}
