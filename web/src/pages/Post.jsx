@@ -103,8 +103,8 @@ export default function Post() {
   return (
     <Layout>
       <div className="page-header">
-        <h1 className="page-title">Community</h1>
-        <p className="page-subtitle">See what the UFIConnect community is sharing — and add your voice.</p>
+        <h1 className="page-title">Posts</h1>
+        <p className="page-subtitle">Write a post and see what the UFIConnect community is sharing.</p>
       </div>
 
       {/* ── Compose card ── */}

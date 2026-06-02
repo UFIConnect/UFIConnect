@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
+import PostList from '../components/PostList';
 import client from '../api/client';
 
 function initials(name = '') {
@@ -29,6 +30,7 @@ const ROLE_META = {
 const LINK_ICONS = {
   linkedin:  { icon: '🔷', label: 'LinkedIn' },
   github:    { icon: '🐙', label: 'GitHub' },
+  gitlab:    { icon: 'GL', label: 'GitLab' },
   portfolio: { icon: '🌐', label: 'Portfolio' },
   resume:    { icon: '📄', label: 'Resume' },
   twitter:   { icon: '🐦', label: 'X / Twitter' },
@@ -76,6 +78,8 @@ export default function PublicProfile() {
   const [error,    setError]    = useState('');
   const [toggling, setToggling] = useState(false);
   const [modal,    setModal]    = useState(null);
+  const [posts,    setPosts]    = useState([]);
+  const [postsLoading, setPostsLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -83,6 +87,14 @@ export default function PublicProfile() {
       .then(({ data }) => { setUser(data); setError(''); })
       .catch(() => setError('User not found.'))
       .finally(() => setLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    setPostsLoading(true);
+    client.get(`/users/${id}/posts`)
+      .then(({ data }) => setPosts(data.posts || []))
+      .catch(() => setPosts([]))
+      .finally(() => setPostsLoading(false));
   }, [id]);
 
   async function toggleFollow() {
@@ -221,6 +233,20 @@ export default function PublicProfile() {
             <p style={{ fontSize: '.9rem', lineHeight: 1.7, margin: 0 }}>{user.bio}</p>
           </div>
         )}
+
+        {/* Posts */}
+        <div>
+          <div style={{ maxWidth: 640, marginBottom: 8 }}>
+            <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', margin: '0 0 4px' }}>Posts</h3>
+          </div>
+          <PostList
+            posts={posts}
+            loading={postsLoading}
+            showAuthor={false}
+            emptyTitle="No posts yet"
+            emptyDesc={`${user.name} has not posted to the community yet.`}
+          />
+        </div>
 
         {/* Skills */}
         {user.skills?.length > 0 && (

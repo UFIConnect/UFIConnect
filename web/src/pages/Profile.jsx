@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
+import PostList from '../components/PostList';
 import client from '../api/client';
 
 function initials(name = '') {
@@ -36,7 +37,7 @@ const LINK_FIELDS = [
   { key: 'other',     label: 'Other link',     icon: '🔗', placeholder: 'https://...' },
 ];
 
-const TABS = ['Overview', 'Skills', 'Attachments'];
+const TABS = ['Overview', 'Posts', 'Skills', 'Attachments'];
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
@@ -50,8 +51,9 @@ export default function Profile() {
   const [skillInput,    setSkillInput]    = useState('');
   const [skills,        setSkills]        = useState([]);
   const [skillSaving,   setSkillSaving]   = useState(false);
-  // Privacy
-  const [hiddenSaving,  setHiddenSaving]  = useState(false);
+  // Posts
+  const [posts,        setPosts]        = useState([]);
+  const [postsLoading, setPostsLoading] = useState(false);
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
@@ -75,6 +77,16 @@ export default function Profile() {
     client.get(`/users/${profile.id}`)
       .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
       .catch(() => {});
+  }, [profile?.id]);
+
+  // Load posts created by this member
+  useEffect(() => {
+    if (!profile?.id) return;
+    setPostsLoading(true);
+    client.get(`/users/${profile.id}/posts`)
+      .then(({ data }) => setPosts(data.posts || []))
+      .catch(() => setPosts([]))
+      .finally(() => setPostsLoading(false));
   }, [profile?.id]);
 
   // Load social connection status
@@ -147,16 +159,6 @@ export default function Profile() {
     } finally {
       setSavingHandle(null);
     }
-  }
-
-  async function toggleProfileHidden() {
-    setHiddenSaving(true);
-    try {
-      const newVal = !profile.profileHidden;
-      const { data } = await client.patch('/profile', { profileHidden: newVal });
-      updateProfileLocally(data.profile || data);
-    } catch {}
-    finally { setHiddenSaving(false); }
   }
 
   async function saveSkills() {
@@ -275,7 +277,7 @@ export default function Profile() {
       {/* Tabs */}
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
-          const icons = { Overview: '👤', Skills: '🛠', Attachments: '📎' };
+          const icons = { Overview: '👤', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
           return (
             <button key={t} onClick={() => { setTab(t); setEditing(false); }}
               style={{
@@ -312,40 +314,21 @@ export default function Profile() {
             </div>
           )}
 
-          {/* Privacy */}
+          {/* Visibility */}
           <div className="card">
-            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Privacy</h3>
+            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Visibility</h3>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 }}>
               <div>
                 <div style={{ fontWeight:600, fontSize:'.9rem', marginBottom:3 }}>
-                  {profile.profileHidden ? '🔒 Profile hidden' : '🌐 Profile visible'}
+                  🌐 Profile visible to members
                 </div>
                 <div style={{ fontSize:'.8rem', color:'var(--muted)', lineHeight:1.5 }}>
-                  {profile.profileHidden
-                    ? 'Your profile is hidden from search. Only you can see it.'
-                    : 'Your profile appears in search so others can find and follow you.'}
+                  Everyone with an account can find your profile, follow you, view your posts, and message you.
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={toggleProfileHidden}
-                disabled={hiddenSaving}
-                style={{
-                  flexShrink: 0,
-                  width: 48, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
-                  background: profile.profileHidden ? '#6B7280' : 'var(--primary)',
-                  position: 'relative', transition: 'background .2s',
-                  opacity: hiddenSaving ? 0.6 : 1,
-                }}
-                title={profile.profileHidden ? 'Make profile visible' : 'Hide profile'}
-              >
-                <span style={{
-                  position:'absolute', top:3, left: profile.profileHidden ? 3 : 23,
-                  width:20, height:20, borderRadius:'50%', background:'#fff',
-                  transition:'left .2s', boxShadow:'0 1px 4px rgba(0,0,0,.2)',
-                  display:'block',
-                }} />
-              </button>
+              <span style={{ flexShrink:0, fontSize:'.72rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'4px 10px', borderRadius:10 }}>
+                Active
+              </span>
             </div>
           </div>
 
@@ -529,6 +512,28 @@ export default function Profile() {
             <button className="btn btn-ghost" type="button" onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </form>
+      )}
+
+      {/* ── POSTS TAB ───────────────────────────────────────── */}
+      {tab === 'Posts' && !editing && (
+        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <div className="card" style={{ maxWidth: 640 }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+              <div>
+                <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Your Posts</h3>
+                <p style={{ fontSize:'.84rem', color:'var(--muted)', margin:0 }}>Posts you share with the UFIConnect community appear here.</p>
+              </div>
+              <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>
+            </div>
+          </div>
+          <PostList
+            posts={posts}
+            loading={postsLoading}
+            emptyTitle="No posts yet"
+            emptyDesc="Write your first community post and it will appear on your profile."
+            emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>}
+          />
+        </div>
       )}
 
       {/* ── SKILLS TAB ───────────────────────────────────────── */}

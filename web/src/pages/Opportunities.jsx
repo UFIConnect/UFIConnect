@@ -72,15 +72,17 @@ export default function Opportunities() {
   const [lastRefresh, setLastRefresh] = useState(null);
   const debounceRef = useRef(null);
 
-  const fetchOpps = useCallback((params = {}, bust = false) => {
-    if (bust) setRefreshing(true); else setLoading(true);
+  const fetchOpps = useCallback((params = {}, bust = false, silent = false) => {
+    if (!silent) {
+      if (bust) setRefreshing(true); else setLoading(true);
+    }
     const finalParams = bust ? { ...params, bust: '1' } : params;
     client.get('/opportunities', { params: finalParams })
       .then(({ data }) => {
         let list = data.opportunities || [];
         if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive' || o.source === 'The Muse');
         setOpps(list);
-        setPage(1);
+        if (!silent) setPage(1);
         setLastRefresh(new Date());
         setLiveCount(data.liveCount || 0);
         if (data.platformSearchUrls) setSearchUrls(data.platformSearchUrls);
@@ -98,6 +100,18 @@ export default function Opportunities() {
     if (search)           params.search = search;
     fetchOpps(params);
   }, [filter, remote, liveOnly]); // eslint-disable-line
+
+  // Auto-refresh every 10 minutes silently in the background
+  useEffect(() => {
+    const id = setInterval(() => {
+      const params = {};
+      if (filter !== 'all') params.type   = filter;
+      if (remote)           params.remote = 'true';
+      if (search)           params.search = search;
+      fetchOpps(params, false, true);
+    }, 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [filter, remote, search, fetchOpps]); // eslint-disable-line
 
   function handleSearchChange(e) {
     const val = e.target.value;

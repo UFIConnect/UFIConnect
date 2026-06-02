@@ -5543,6 +5543,39 @@ function sanitizeUser(u) {
   return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: u.skills || [] };
 }
 
+function serializeCommunityPost(post, viewerId = null) {
+  const author = users.find((u) => u.id === post.authorId);
+  const group  = groups.find((g) => g.id === post.groupId);
+  const cat    = group?.category;
+  return {
+    ...post,
+    author:      author ? sanitizeUser(author) : { id: post.authorId, name: 'Unknown', title: '', organization: '' },
+    group:       group ? { id: group.id, name: group.name, category: cat } : null,
+    likedByMe:   viewerId ? (post.likes || []).includes(viewerId) : false,
+    likesCount:  (post.likes || []).length,
+    commentsCount: post.commentsCount || 0,
+    source:      post.source || 'uficonnect',
+    sourceLabel: post.sourceLabel || 'UFIConnect',
+    sourceUrl:   post.sourceUrl || null,
+    isExternal:  false,
+  };
+}
+
+function dbCommunityPostToMemPost(row) {
+  return {
+    id: row.id,
+    authorId: row.author_id,
+    groupId: row.group_id,
+    content: row.content,
+    likes: row.likes || [],
+    commentsCount: row.comments_count || 0,
+    createdAt: row.created_at,
+    source: row.source || 'uficonnect',
+    sourceLabel: row.source_label || 'UFIConnect',
+    url: row.url,
+  };
+}
+
 function fullProfile(user) {
   // Build platform → [group] mapping for joined external groups
   const connectedGroupsByPlatform = {};
@@ -5562,7 +5595,7 @@ function fullProfile(user) {
     id: user.id, name: user.name, email: user.email, title: user.title,
     bio: user.bio, skills: user.skills, organization: user.organization,
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
-    profileHidden: user.profileHidden || false,
+    profileHidden: false,
     preferences: user.preferences,
     links: user.links || {},
     roleSettings: user.roleSettings || {},
@@ -5591,7 +5624,7 @@ function dbRowToMemUser(row) {
     organization: row.organization || '',
     joinedGroups: row.joined_groups || [],
     onboardingComplete: row.onboarding_complete || false,
-    profileHidden: row.profile_hidden || false,
+    profileHidden: false,
     preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
@@ -5720,6 +5753,21 @@ async function migrateDB() {
     `);
 
     // Feed post cache — stores fetched external posts across restarts
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS direct_messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        receiver_id TEXT NOT NULL,
+        content TEXT DEFAULT '',
+        attachment JSONB DEFAULT NULL,
+        read BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS dm_conversation_idx ON direct_messages(conversation_id, created_at)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS dm_participant_idx ON direct_messages(sender_id, receiver_id, created_at DESC)`);
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS feed_posts_cache (
         id              TEXT PRIMARY KEY,
@@ -6315,7 +6363,7 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization, links, roleSettings, profileHidden } = req.body;
+  const { name, title, bio, skills, organization, links, roleSettings } = req.body;
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
@@ -6323,7 +6371,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
-  if (profileHidden !== undefined) user.profileHidden = profileHidden;
+  user.profileHidden = false;
   if (db.isConnected() && isDBId(user.id)) {
     db.query(
       `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8 WHERE id=$9`,
@@ -6555,20 +6603,10 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Internal posts (user-created)
   const internal = posts.map((p) => {
-    const author = users.find((u) => u.id === p.authorId);
-    const group  = groups.find((g) => g.id === p.groupId);
-    const cat    = group?.category;
+    const post = serializeCommunityPost(p, req.user.id);
     return {
-      ...p,
-      author:          author ? sanitizeUser(author) : { id: p.authorId, name: 'Unknown', title: '', organization: '' },
-      group:           group  ? { id: group.id, name: group.name, category: cat } : null,
-      likedByMe:       (p.likes || []).includes(req.user.id),
-      likesCount:      (p.likes || []).length,
+      ...post,
       fromJoinedGroup: joined.has(p.groupId),
-      source:          'uficonnect',
-      sourceLabel:     'UFIConnect',
-      sourceUrl:       null,
-      isExternal:      false,
     };
   });
 
@@ -8145,7 +8183,7 @@ app.get('/users/search', authenticate, (req, res) => {
   const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
   const myRole      = (myUser?.preferences?.role || '').toLowerCase();
 
-  let results = users.filter(u => u.onboardingComplete && (!u.profileHidden || u.id === myId));
+  let results = users.filter(u => u.id && u.email);
 
   if (q) {
     results = results.filter(u =>
@@ -8234,6 +8272,42 @@ app.get('/users/:id', authenticate, async (req, res) => {
     followersCount, followingCount, isFollowing, followsYouBack,
     links: user.links || {},
   });
+});
+
+app.get('/users/:id/posts', authenticate, async (req, res) => {
+  const user = await getUser(req.params.id);
+  if (!user) return res.status(404).json({ message: 'User not found.' });
+
+  let userPosts = posts.filter((p) =>
+    p.authorId === user.id && (p.source || 'uficonnect') === 'uficonnect'
+  );
+
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT * FROM community_posts
+         WHERE author_id=$1 AND COALESCE(source,'uficonnect')='uficonnect'
+         ORDER BY created_at DESC
+         LIMIT 100`,
+        [user.id]
+      );
+      userPosts = [...userPosts, ...rows.map(dbCommunityPostToMemPost)];
+    } catch (e) {
+      console.error('user posts DB:', e.message);
+    }
+  }
+
+  const seen = new Set();
+  const serialized = userPosts
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    })
+    .map((p) => serializeCommunityPost(p, req.user.id));
+
+  res.json({ posts: serialized });
 });
 
 app.post('/users/:id/follow', authenticate, async (req, res) => {
@@ -8549,7 +8623,7 @@ function getPlatformSearchUrls(role, title) {
 
 // ─── Remotive live job fetching ───────────────────────────────────────────────
 const remotiveCache = new Map(); // category → { jobs, fetchedAt }
-const REMOTIVE_TTL  = 30 * 60 * 1000; // 30 minutes
+const REMOTIVE_TTL  = 15 * 60 * 1000; // 15 minutes
 
 // Role → Remotive job categories (all 16 roles mapped)
 const ROLE_TO_REMOTIVE = {
@@ -8603,7 +8677,7 @@ async function fetchRemotiveJobs(category) {
 
 // ─── The Muse API live job fetching ──────────────────────────────────────────
 const museCache = new Map(); // cacheKey → { jobs, fetchedAt }
-const MUSE_TTL  = 60 * 60 * 1000; // 1 hour
+const MUSE_TTL  = 30 * 60 * 1000; // 30 minutes
 
 const ROLE_TO_MUSE = {
   'Engineer / Developer':    'Software Engineering',
@@ -8769,7 +8843,21 @@ app.get('/opportunities', authenticate, async (req, res) => {
     return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
   });
 
-  results.sort((a, b) => b.matchScore - a.matchScore || new Date(b.posted) - new Date(a.posted));
+  // When user has a role, filter out curated items that don't match (score=0 AND wrong type)
+  if (role && roleTypes.size > 0) {
+    results = results.filter(o => o.isLive || o.matchScore > 0 || roleTypes.has(o.type));
+  }
+
+  // Sort: by matchScore desc, then daily rotation for equal-score items so list rotates each day
+  const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+  results.sort((a, b) => {
+    if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+    let ha = 5381, hb = 5381;
+    const ka = String(a.id) + dayBucket, kb = String(b.id) + dayBucket;
+    for (let i = 0; i < ka.length; i++) ha = (Math.imul(ha, 31) + ka.charCodeAt(i)) | 0;
+    for (let i = 0; i < kb.length; i++) hb = (Math.imul(hb, 31) + kb.charCodeAt(i)) | 0;
+    return Math.abs(ha) - Math.abs(hb);
+  });
 
   res.json({
     opportunities: results,
@@ -8810,7 +8898,85 @@ function getOtherUser(conv, userId) {
   return users.find((u) => u.id === otherId);
 }
 
-app.get('/messages', authenticate, (req, res) => {
+function directConversationId(a, b) {
+  return [String(a), String(b)].sort().join('__');
+}
+
+function dbDirectMessageToApi(row) {
+  return {
+    id: row.id,
+    senderId: row.sender_id,
+    content: row.content || '',
+    attachment: row.attachment || null,
+    createdAt: row.created_at,
+    read: !!row.read,
+  };
+}
+
+async function getDirectMessageSummariesFromDB(userId) {
+  if (!db.isConnected()) return [];
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM direct_messages
+       WHERE sender_id=$1 OR receiver_id=$1
+       ORDER BY created_at DESC
+       LIMIT 500`,
+      [userId]
+    );
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const key = row.conversation_id;
+      const existing = grouped.get(key) || { last: row, unreadCount: 0 };
+      if (row.receiver_id === userId && !row.read) existing.unreadCount += 1;
+      grouped.set(key, existing);
+    });
+
+    const summaries = [];
+    for (const [conversationId, group] of grouped.entries()) {
+      const otherId = group.last.sender_id === userId ? group.last.receiver_id : group.last.sender_id;
+      const other = await getUser(otherId);
+      summaries.push({
+        id: conversationId,
+        participant: other ? sanitizeUser(other) : null,
+        lastMessage: {
+          content: group.last.content || '',
+          createdAt: group.last.created_at,
+          isMe: group.last.sender_id === userId,
+        },
+        unreadCount: group.unreadCount,
+      });
+    }
+    return summaries;
+  } catch (e) {
+    console.error('direct messages summary DB:', e.message);
+    return [];
+  }
+}
+
+async function getDirectMessagesFromDB(userId, otherId) {
+  if (!db.isConnected()) return [];
+  try {
+    const conversationId = directConversationId(userId, otherId);
+    const { rows } = await db.query(
+      `SELECT * FROM direct_messages
+       WHERE conversation_id=$1
+       ORDER BY created_at ASC
+       LIMIT 500`,
+      [conversationId]
+    );
+    await db.query(
+      `UPDATE direct_messages SET read=true
+       WHERE conversation_id=$1 AND receiver_id=$2`,
+      [conversationId, userId]
+    );
+    return rows.map(dbDirectMessageToApi);
+  } catch (e) {
+    console.error('direct messages DB:', e.message);
+    return [];
+  }
+}
+
+app.get('/messages', authenticate, async (req, res) => {
   const uid = req.user.id;
   const myConvs = conversations.filter((c) => c.participants.includes(uid));
   const result = myConvs.map((c) => {
@@ -8823,39 +8989,73 @@ app.get('/messages', authenticate, (req, res) => {
       lastMessage: last ? { content: last.content, createdAt: last.createdAt, isMe: last.senderId === uid } : null,
       unreadCount: unread,
     };
-  }).sort((a, b) => new Date(b.lastMessage?.createdAt) - new Date(a.lastMessage?.createdAt));
-  res.json({ conversations: result });
+  });
+
+  const byParticipant = new Map();
+  [...result, ...(await getDirectMessageSummariesFromDB(uid))].forEach((conv) => {
+    const key = conv.participant?.id || conv.id;
+    const existing = byParticipant.get(key);
+    if (!existing) {
+      byParticipant.set(key, conv);
+      return;
+    }
+    const existingTime = new Date(existing.lastMessage?.createdAt || 0).getTime();
+    const incomingTime = new Date(conv.lastMessage?.createdAt || 0).getTime();
+    const mergedUnread = (existing.unreadCount || 0) + (conv.unreadCount || 0);
+    byParticipant.set(key, {
+      ...(incomingTime >= existingTime ? conv : existing),
+      unreadCount: mergedUnread,
+    });
+  });
+
+  const merged = [...byParticipant.values()]
+    .sort((a, b) => new Date(b.lastMessage?.createdAt || 0) - new Date(a.lastMessage?.createdAt || 0));
+  res.json({ conversations: merged });
 });
 
-app.get('/messages/:userId', authenticate, (req, res) => {
+app.get('/messages/:userId', authenticate, async (req, res) => {
   const uid = req.user.id;
   const otherId = req.params.userId;
+  const otherUser = await getUser(otherId);
+  if (!otherUser) return res.status(404).json({ message: 'User not found.' });
   let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
-  if (!conv) return res.json({ messages: [], conversationId: null });
   // Mark as read
-  conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
-  const other = getOtherUser(conv, uid);
+  if (conv) conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
+  const dbMessages = await getDirectMessagesFromDB(uid, otherId);
+  const seen = new Set();
+  const mergedMessages = [
+    ...(conv?.messages || []),
+    ...dbMessages,
+  ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
   res.json({
-    conversationId: conv.id,
-    participant: other ? { id: other.id, name: other.name, title: other.title, organization: other.organization } : null,
-    messages: conv.messages,
+    conversationId: conv?.id || directConversationId(uid, otherId),
+    participant: sanitizeUser(otherUser),
+    messages: mergedMessages,
   });
 });
 
-app.post('/messages/:userId', authenticate, (req, res) => {
+app.post('/messages/:userId', authenticate, async (req, res) => {
   const uid = req.user.id;
   const otherId = req.params.userId;
   const { content, attachment } = req.body;
   if (!content?.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
+  if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
+  const otherUser = await getUser(otherId);
+  if (!otherUser) return res.status(404).json({ message: 'User not found.' });
 
   let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
   if (!conv) {
-    conv = { id: `conv${Date.now()}`, participants: [uid, otherId], messages: [] };
+    conv = { id: directConversationId(uid, otherId), participants: [uid, otherId], messages: [] };
     conversations.push(conv);
   }
 
   const newMsg = {
-    id: `m${Date.now()}`,
+    id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     senderId: uid,
     content: content?.trim() || '',
     attachment: attachment || null,   // { name, size, mimeType, uri }
@@ -8864,10 +9064,19 @@ app.post('/messages/:userId', authenticate, (req, res) => {
   };
   conv.messages.push(newMsg);
 
-  const other = getOtherUser(conv, uid);
+  if (db.isConnected()) {
+    db.query(
+      `INSERT INTO direct_messages
+       (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,false,$7)
+       ON CONFLICT DO NOTHING`,
+      [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
+    ).catch(e => console.error('direct message DB:', e.message));
+  }
+
   res.json({
     message: newMsg,
-    participant: other ? { id: other.id, name: other.name, title: other.title, organization: other.organization } : null,
+    participant: sanitizeUser(otherUser),
   });
 });
 

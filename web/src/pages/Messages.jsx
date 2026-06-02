@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
@@ -48,6 +48,9 @@ export default function Messages() {
           <div className="empty-icon">✉️</div>
           <div className="empty-title">No conversations yet</div>
           <div className="empty-desc">Connect with professionals to start a conversation.</div>
+          <Link to="/search" className="btn btn-primary btn-sm" style={{ marginTop: 14, textDecoration: 'none' }}>
+            Find people
+          </Link>
         </div>
       ) : (
         <div className="conv-list">
