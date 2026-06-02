@@ -341,7 +341,8 @@ function fetchJSON(url) {
     https.get(url, opts, (res) => {
       // Follow redirects
       if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
-        return fetchJSON(res.headers.location).then(resolve).catch(reject);
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return fetchJSON(nextUrl).then(resolve).catch(reject);
       }
       // Reject on non-success HTTP status (catches 429, 403, 503, etc.)
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -932,6 +933,12 @@ const SOURCE_CONFIG = {
   phoronix:      { ttl: 10*60000, delay: 15000, shards: 2 },  // RSS — Linux/hardware
   infoq:         { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — enterprise/cloud
   mittr:         { ttl: 15*60000, delay: 20000, shards: 2 },  // RSS — deep tech
+  gitlab:        { ttl: 30*60000, delay: 45000, shards: 1 },  // public project API
+  remoteok:      { ttl: 20*60000, delay: 45000, shards: 1 },  // remote jobs RSS
+  yc:            { ttl: 20*60000, delay: 45000, shards: 1 },  // startup/professional RSS
+  crunchbase:    { ttl: 20*60000, delay: 45000, shards: 1 },  // business/funding RSS
+  behance:       { ttl: 20*60000, delay: 45000, shards: 1 },  // creative portfolios RSS
+  designweb:     { ttl: 20*60000, delay: 45000, shards: 1 },  // design/web industry RSS bundle
 };
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
@@ -961,6 +968,12 @@ const CACHE_KEY_PREFIX = {
   phoronix:      'phor_kw_',
   infoq:         'infoq_kw_',
   mittr:         'mittr_kw_',
+  gitlab:        'gitlab_kw_',
+  remoteok:      'remoteok_kw_',
+  yc:            'yc_kw_',
+  crunchbase:    'crunchbase_kw_',
+  behance:       'behance_kw_',
+  designweb:     'designweb_kw_',
 };
 
 // ─── Reddit: subreddit RSS feeds (no API key, no auth, always works) ──────────
@@ -1284,7 +1297,8 @@ function fetchText(url, extraHeaders = {}) {
     };
     https.get(url, opts, (res) => {
       if ([301,302,307,308].includes(res.statusCode)) {
-        return fetchText(res.headers.location, extraHeaders).then(resolve).catch(reject);
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return fetchText(nextUrl, extraHeaders).then(resolve).catch(reject);
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
@@ -2409,6 +2423,154 @@ async function fetchWired(keyword) {
   }
 }
 
+// Additional public/professional source agents
+// GitLab: public projects by keyword
+async function fetchGitLabByKeyword(keyword) {
+  const key = `gitlab_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const data = await fetchJSON(
+      `https://gitlab.com/api/v4/projects?search=${encodeURIComponent(keyword)}&order_by=last_activity_at&sort=desc&simple=true&per_page=30`
+    );
+    const posts = (Array.isArray(data) ? data : [])
+      .filter(p => p?.web_url && (p.name_with_namespace || p.name))
+      .map(p => ({
+        id:          `gitlab_${String(p.id || p.web_url).replace(/[^a-z0-9]/gi, '').slice(0, 24)}`,
+        authorId:    `gitlab_${String(p.namespace?.id || p.namespace?.path || 'project').replace(/[^a-z0-9]/gi, '_')}`,
+        groupId:     'ext_gitlab',
+        content:     (p.description || `${p.name_with_namespace || p.name} public GitLab project.`).slice(0, 600),
+        title:       p.name_with_namespace || p.name,
+        source:      'gitlab',
+        sourceLabel: 'GitLab',
+        sourceUrl:   p.web_url,
+        topic:       keyword,
+        author:      {
+          id:           `gitlab_${String(p.namespace?.id || p.namespace?.path || 'project').replace(/[^a-z0-9]/gi, '_')}`,
+          name:         p.namespace?.full_path || p.namespace?.name || 'GitLab',
+          title:        'Public project',
+          organization: 'GitLab',
+        },
+        likes: [], likesCount: p.star_count || 0, commentsCount: p.forks_count || 0,
+        createdAt:   p.last_activity_at || p.created_at || new Date().toISOString(),
+        isExternal:  true,
+        group:       { id: 'ext_gitlab', name: 'GitLab Projects', category: 'Engineering', externalUrl: 'https://gitlab.com' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`GitLab "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// Remote OK: remote professional job listings
+async function fetchRemoteOKJobs(keyword) {
+  const key = `remoteok_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml = await fetchText('https://remoteok.com/remote-dev-jobs.rss', {
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+    });
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, keyword, 1000)
+      .map(it => rssPost(it, 'remoteok', 'Remote OK', 'ext_remoteok', 'Remote OK Jobs', 'Opportunities', keyword));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Remote OK "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// Y Combinator: startup and founder essays
+async function fetchYCombinator(keyword) {
+  const key = `yc_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml = await fetchText('https://www.ycombinator.com/blog/rss', {
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+    });
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, keyword, 1000)
+      .map(it => rssPost(it, 'yc', 'Y Combinator', 'ext_yc', 'Y Combinator', 'Startups', keyword));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Y Combinator "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// Crunchbase News: funding, companies, and market coverage
+async function fetchCrunchbaseNews(keyword) {
+  const key = `crunchbase_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml = await fetchText('https://news.crunchbase.com/feed/', {
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+    });
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, keyword, 1000)
+      .map(it => rssPost(it, 'crunchbase', 'Crunchbase News', 'ext_crunchbase', 'Crunchbase News', 'Startups', keyword));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Crunchbase "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// Behance: creative portfolio projects
+async function fetchBehanceProjects(keyword) {
+  const key = `behance_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const xml = await fetchText('https://www.behance.net/feeds/projects', {
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+    });
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, keyword, 1000)
+      .map(it => rssPost(it, 'behance', 'Behance', 'ext_behance', 'Behance Projects', 'Design', keyword));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`Behance "${keyword}":`, e.message);
+    return getCached(key) || [];
+  }
+}
+
+// Design/Web bundle: public design, UX, CSS, and product craft feeds
+async function fetchDesignWeb(keyword) {
+  const key = `designweb_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  const feeds = [
+    { url: 'https://www.designboom.com/feed/', label: 'Designboom' },
+    { url: 'https://www.awwwards.com/blog/feed/', label: 'Awwwards' },
+    { url: 'https://css-tricks.com/feed/', label: 'CSS-Tricks' },
+    { url: 'https://www.fastcompany.com/rss', label: 'Fast Company' },
+  ];
+  const posts = [];
+  for (const feed of feeds) {
+    try {
+      const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const items = parseRSSItems(xml);
+      posts.push(...filterAndSlice(items, keyword, 250).map(it =>
+        rssPost(it, 'designweb', feed.label, 'ext_designweb', 'Design Web', 'Design', keyword)));
+    } catch (e) {
+      console.warn(`${feed.label} "${keyword}":`, e.message);
+    }
+  }
+  const sorted = sortFeedBatch(posts, `designweb-${keyword}`, { limit: 1000 });
+  setCached(key, sorted);
+  return sorted.length ? sorted : (getCached(key) || []);
+}
+
 // ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
 async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
@@ -2741,6 +2903,8 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     devtoResults, mediumResults,
     soResults, mastoResults, lobResults, arxivResults,
     indeedResults, phResults, tcResults, vergeResults, ihResults, hashnodeResults, blueskyResults,
+    arsResults, wiredResults, regResults, vbResults, smashingResults, phoronixResults, infoqResults, mittrResults,
+    gitlabResults, remoteokResults, ycResults, crunchbaseResults, behanceResults, designwebResults,
   ] = await Promise.all([
     run('reddit')        ? Promise.all(topics.map(kw => fetchRedditByKeyword(kw))).catch(() => []) : [],
     run('hackernews')    ? Promise.all(topics.map(kw => fetchHNByKeyword(kw))).catch(() => [])     : [],
@@ -2759,6 +2923,20 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     run('indiehackers')  ? Promise.all(topics.map(kw => fetchIndieHackers(kw))).catch(() => [])         : [],
     run('hashnode')      ? Promise.all(topics.map(kw => fetchHashnode(kw))).catch(() => [])             : [],
     run('bluesky')       ? Promise.all(topics.map(kw => fetchBlueskyByKeyword(kw))).catch(() => [])     : [],
+    run('arstechnica')   ? Promise.all(topics.map(kw => fetchArsTechnica(kw))).catch(() => [])          : [],
+    run('wired')         ? Promise.all(topics.map(kw => fetchWired(kw))).catch(() => [])                : [],
+    run('theregister')   ? Promise.all(topics.map(kw => fetchTheRegister(kw))).catch(() => [])          : [],
+    run('venturebeat')   ? Promise.all(topics.map(kw => fetchVentureBeat(kw))).catch(() => [])          : [],
+    run('smashing')      ? Promise.all(topics.map(kw => fetchSmashingMagazine(kw))).catch(() => [])     : [],
+    run('phoronix')      ? Promise.all(topics.map(kw => fetchPhoronix(kw))).catch(() => [])             : [],
+    run('infoq')         ? Promise.all(topics.map(kw => fetchInfoQ(kw))).catch(() => [])                : [],
+    run('mittr')         ? Promise.all(topics.map(kw => fetchMITTechReview(kw))).catch(() => [])        : [],
+    run('gitlab')        ? Promise.all(topics.map(kw => fetchGitLabByKeyword(kw))).catch(() => [])      : [],
+    run('remoteok')      ? Promise.all(topics.map(kw => fetchRemoteOKJobs(kw))).catch(() => [])         : [],
+    run('yc')            ? Promise.all(topics.map(kw => fetchYCombinator(kw))).catch(() => [])          : [],
+    run('crunchbase')    ? Promise.all(topics.map(kw => fetchCrunchbaseNews(kw))).catch(() => [])       : [],
+    run('behance')       ? Promise.all(topics.map(kw => fetchBehanceProjects(kw))).catch(() => [])      : [],
+    run('designweb')     ? Promise.all(topics.map(kw => fetchDesignWeb(kw))).catch(() => [])            : [],
   ]);
 
   return {
@@ -2779,6 +2957,20 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
     indiehackers:  ihResults.flat(),
     hashnode:      hashnodeResults.flat(),
     bluesky:       blueskyResults.flat(),
+    arstechnica:   arsResults.flat(),
+    wired:         wiredResults.flat(),
+    theregister:   regResults.flat(),
+    venturebeat:   vbResults.flat(),
+    smashing:      smashingResults.flat(),
+    phoronix:      phoronixResults.flat(),
+    infoq:         infoqResults.flat(),
+    mittr:         mittrResults.flat(),
+    gitlab:        gitlabResults.flat(),
+    remoteok:      remoteokResults.flat(),
+    yc:            ycResults.flat(),
+    crunchbase:    crunchbaseResults.flat(),
+    behance:       behanceResults.flat(),
+    designweb:     designwebResults.flat(),
   };
 }
 
@@ -3146,8 +3338,8 @@ function startContinuousWorkers() {
   const lob = t => LOBSTERS_TAGS[t];
   const arx = t => INTEREST_TO_ARXIV[t];
 
-  // 16 independent topic-cycler agents — each fetches one topic at a time, continuously.
-  // Start times are staggered so the initial burst is spread across 16 seconds.
+  // Independent topic-cycler agents fetch one mapped topic at a time.
+  // Start times are staggered so the initial burst is spread out.
   const SOURCES = [
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
     ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     kw,      0],
@@ -3175,6 +3367,12 @@ function startContinuousWorkers() {
     ['phoronix',      '🐧', '#2B7BB9', fetchPhoronix,            kw,  22000],
     ['infoq',         '🏗️', '#67B346', fetchInfoQ,               kw,  23000],
     ['mittr',         '🔬', '#A31F34', fetchMITTechReview,       kw,  24000],
+    ['gitlab',        'GL', '#FC6D26', fetchGitLabByKeyword,     kw,  25000],
+    ['remoteok',      'RO', '#10B981', fetchRemoteOKJobs,        kw,  26000],
+    ['yc',            'YC', '#FF6600', fetchYCombinator,         kw,  27000],
+    ['crunchbase',    'CB', '#146AFF', fetchCrunchbaseNews,      kw,  28000],
+    ['behance',       'Be', '#053EFF', fetchBehanceProjects,     kw,  29000],
+    ['designweb',     'UX', '#DB2777', fetchDesignWeb,           kw,  30000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -3183,7 +3381,7 @@ function startContinuousWorkers() {
   }
 
   calculateExpectedLoad();
-  logAgentAction('feed', '🔄', 'All 25 source agents started — parallel sharded topic cycling active', '#4ADE80');
+  logAgentAction('feed', '🔄', `All ${SOURCES.length} source agents started — parallel sharded topic cycling active`, '#4ADE80');
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
@@ -4523,19 +4721,21 @@ startContinuousWorkers();
 
 // Pre-seed agentSourceCache with curated posts so office cards and health status
 // reflect real content immediately — workers accumulate live posts on top over time.
-for (const id of Object.keys(SOURCE_CONFIG)) {
-  if (agentSourceCache.has(id)) continue;
-  const curated = buildCuratedSourcePosts(id);
-  if (!curated.length) continue;
-  const def = AGENT_DEFS[id];
-  agentSourceCache.set(id, {
-    posts:     curated.slice(0, SOURCE_FEED_CACHE_LIMIT),
-    lastFetch: null,
-    totalSeen: curated.length,
-    emoji:     def?.emoji,
-    color:     def?.color,
-  });
-}
+setImmediate(() => {
+  for (const id of Object.keys(SOURCE_CONFIG)) {
+    if (agentSourceCache.has(id)) continue;
+    const curated = buildCuratedSourcePosts(id);
+    if (!curated.length) continue;
+    const def = AGENT_DEFS[id];
+    agentSourceCache.set(id, {
+      posts:     curated.slice(0, SOURCE_FEED_CACHE_LIMIT),
+      lastFetch: null,
+      totalSeen: curated.length,
+      emoji:     def?.emoji,
+      color:     def?.color,
+    });
+  }
+});
 
 if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
   setTimeout(() => {
@@ -4602,6 +4802,16 @@ const PLATFORMS = {
     setupUrl: 'https://github.com/settings/apps',
     reviewRequired: false,
     note: null,
+  },
+  gitlab: {
+    name: 'GitLab', color: '#FC6D26', icon: 'gitlab',
+    description: 'Showcase your GitLab projects, CI/CD work, and open-source portfolio.',
+    scopes: ['read_user'],
+    authUrl: 'https://gitlab.com/oauth/authorize',
+    loginUrl: 'https://gitlab.com/users/sign_in',
+    setupUrl: 'https://gitlab.com/-/profile/applications',
+    reviewRequired: false,
+    note: 'Handle connection works instantly. OAuth can be added later for private profile data.',
   },
   twitter: {
     name: 'X (Twitter)', color: '#000000', icon: 'twitter',
@@ -4728,7 +4938,7 @@ const PLATFORMS = {
 
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'instagram', 'facebook',
-  'github', 'discord', 'youtube', 'reddit',
+  'github', 'gitlab', 'discord', 'youtube', 'reddit',
   'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
 ]);
 
@@ -4736,7 +4946,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
 // Platforms connected by typing a username — no OAuth app registration needed
-const HANDLE_PLATFORMS = new Set(['github', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+const HANDLE_PLATFORMS = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -4939,6 +5149,36 @@ const CURATED_SOURCE_POSTS = {
     { id: 'vbfb6', source: 'VentureBeat', author: 'VentureBeat', topic: 'productivity', title: 'Agentic work tools compete on memory, permissions, and handoff', content: 'Business users are gravitating toward systems that can explain what they did and ask for approval at the right moments.', url: 'https://venturebeat.com/', time: ago(1*D), likes: 198, comments: 18 },
     { id: 'vbfb7', source: 'VentureBeat', author: 'VentureBeat', topic: 'developer tools', title: 'Developer platforms add AI review without removing ownership', content: 'Teams want suggestions, test plans, and release summaries while keeping final code decisions in the engineering workflow.', url: 'https://venturebeat.com/programming-development/', time: ago(1.4*D), likes: 169, comments: 11 },
     { id: 'vbfb8', source: 'VentureBeat', author: 'VentureBeat', topic: 'enterprise', title: 'Enterprise software budgets shift toward measurable automation', content: 'Executives are asking for time saved, error reduction, and adoption metrics before expanding AI software contracts.', url: 'https://venturebeat.com/business/', time: ago(2*D), likes: 156, comments: 9 },
+  ],
+  gitlab: [
+    { id: 'gitlabfb1', source: 'GitLab', author: 'Open Source Maintainers', topic: 'open source', title: 'Public GitLab projects trending across developer workflows', content: 'Explore active repositories, CI/CD examples, self-hosted tools, and engineering portfolios published on GitLab.', url: 'https://gitlab.com/explore/projects/trending', time: ago(2*H), likes: 188, comments: 18 },
+    { id: 'gitlabfb2', source: 'GitLab', author: 'DevOps Teams', topic: 'devops', title: 'CI/CD templates teams are reusing for faster releases', content: 'Reusable pipelines, deployment checks, security scans, and package publishing workflows are showing up across public projects.', url: 'https://gitlab.com/explore/projects', time: ago(6*H), likes: 141, comments: 12 },
+    { id: 'gitlabfb3', source: 'GitLab', author: 'Platform Engineers', topic: 'developer tools', title: 'Self-hosted platform tooling gains momentum', content: 'Infrastructure dashboards, build agents, and internal developer portals continue to grow in public GitLab ecosystems.', url: 'https://gitlab.com/explore/projects', time: ago(12*H), likes: 117, comments: 9 },
+  ],
+  remoteok: [
+    { id: 'remoteokfb1', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'remote work', title: 'Remote engineering roles are clustering around product velocity', content: 'Full-stack, infrastructure, AI tooling, and security teams are hiring for operators who can ship across distributed teams.', url: 'https://remoteok.com/remote-dev-jobs', time: ago(2*H), likes: 96, comments: 8 },
+    { id: 'remoteokfb2', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'career growth', title: 'Product and growth roles keep moving remote-first', content: 'Teams are looking for people who can combine async communication, experiments, analytics, and customer context.', url: 'https://remoteok.com/', time: ago(7*H), likes: 84, comments: 6 },
+    { id: 'remoteokfb3', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'developer tools', title: 'Developer-tool companies post remote roles for infrastructure skills', content: 'Kubernetes, observability, TypeScript, Python, and platform engineering skills continue to appear across remote listings.', url: 'https://remoteok.com/remote-dev-jobs', time: ago(14*H), likes: 73, comments: 5 },
+  ],
+  yc: [
+    { id: 'ycfb1', source: 'Y Combinator', author: 'Y Combinator', topic: 'startups', title: 'Founder lessons for building with sharper distribution', content: 'YC essays and founder notes continue to focus on customer discovery, launch discipline, recruiting, and resilient execution.', url: 'https://www.ycombinator.com/blog', time: ago(3*H), likes: 204, comments: 22 },
+    { id: 'ycfb2', source: 'Y Combinator', author: 'Y Combinator', topic: 'fundraising', title: 'Early-stage teams refine metrics before raising', content: 'The strongest startup updates connect product usage, revenue quality, customer urgency, and a clear path to repeatable growth.', url: 'https://www.ycombinator.com/blog', time: ago(8*H), likes: 168, comments: 15 },
+    { id: 'ycfb3', source: 'Y Combinator', author: 'Y Combinator', topic: 'career growth', title: 'Startup operators are becoming more technical', content: 'Founders increasingly want generalists who can use automation, data, and product instincts to compress learning loops.', url: 'https://www.ycombinator.com/blog', time: ago(1*D), likes: 137, comments: 11 },
+  ],
+  crunchbase: [
+    { id: 'crunchbasefb1', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'venture capital', title: 'Funding signals show where business software is moving', content: 'Investors are watching AI operations, security, vertical SaaS, and automation infrastructure for durable enterprise demand.', url: 'https://news.crunchbase.com/', time: ago(4*H), likes: 143, comments: 12 },
+    { id: 'crunchbasefb2', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'startups', title: 'Startup market maps help professionals track emerging categories', content: 'Company formation, funding rounds, and hiring patterns reveal which markets are gaining momentum before they become obvious.', url: 'https://news.crunchbase.com/', time: ago(9*H), likes: 129, comments: 10 },
+    { id: 'crunchbasefb3', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'fintech', title: 'Fintech infrastructure keeps drawing focused capital', content: 'Compliance, payments orchestration, fraud tooling, and embedded finance remain active areas for early-stage companies.', url: 'https://news.crunchbase.com/', time: ago(1.5*D), likes: 111, comments: 8 },
+  ],
+  behance: [
+    { id: 'behancefb1', source: 'Behance', author: 'Creative Teams', topic: 'ui/ux design', title: 'Portfolio projects highlight richer product storytelling', content: 'Designers are publishing case studies that show research, systems, prototypes, and business results instead of isolated screens.', url: 'https://www.behance.net/', time: ago(2*H), likes: 221, comments: 24 },
+    { id: 'behancefb2', source: 'Behance', author: 'Brand Designers', topic: 'brand identity', title: 'Identity systems become more motion-aware and modular', content: 'Creative portfolios are emphasizing flexible systems that work across apps, social video, packaging, and launch campaigns.', url: 'https://www.behance.net/search/projects?search=brand%20identity', time: ago(6*H), likes: 187, comments: 17 },
+    { id: 'behancefb3', source: 'Behance', author: 'Product Designers', topic: 'design systems', title: 'Design-system work is becoming a portfolio differentiator', content: 'Strong case studies connect component strategy, accessibility, tokens, documentation, and engineering collaboration.', url: 'https://www.behance.net/search/projects?search=design%20system', time: ago(13*H), likes: 166, comments: 14 },
+  ],
+  designweb: [
+    { id: 'designwebfb1', source: 'Design Web', author: 'Design Editors', topic: 'design', title: 'Design and product craft sources merge into one discovery lane', content: 'UX, CSS, architecture, product strategy, and creative technology updates are bundled into one professional design feed.', url: 'https://www.awwwards.com/blog/', time: ago(3*H), likes: 154, comments: 13 },
+    { id: 'designwebfb2', source: 'Design Web', author: 'Frontend Designers', topic: 'frontend dev', title: 'Modern CSS patterns keep reshaping interface systems', content: 'Container queries, accessibility-first components, stable layout sizing, and motion restraint are driving better product UIs.', url: 'https://css-tricks.com/', time: ago(7*H), likes: 138, comments: 11 },
+    { id: 'designwebfb3', source: 'Design Web', author: 'Product Teams', topic: 'productivity', title: 'Business and creative strategy increasingly overlap', content: 'Professional design coverage now blends brand, operations, workplace tools, AI workflows, and product-market positioning.', url: 'https://www.fastcompany.com/', time: ago(1*D), likes: 121, comments: 9 },
   ],
 };
 
@@ -6349,6 +6589,9 @@ app.get('/feed', authenticate, async (req, res) => {
     stackoverflow: [], mastodon: [], lobsters: [], arxiv: [], indeed: [],
     producthunt: [], techcrunch: [], theverge: [], indiehackers: [],
     hashnode: [], bluesky: [],
+    arstechnica: [], wired: [], theregister: [], venturebeat: [],
+    smashing: [], phoronix: [], infoq: [], mittr: [],
+    gitlab: [], remoteok: [], yc: [], crunchbase: [], behance: [], designweb: [],
   };
 
   // Default feed responses should be fast and cache-first. The continuous
@@ -6456,13 +6699,20 @@ app.get('/feed', authenticate, async (req, res) => {
           stackoverflow: soRaw, mastodon: mastoRaw, lobsters: lobRaw, arxiv: arxivRaw,
           indeed: indeedRaw = [], producthunt: phRaw = [], techcrunch: tcRaw = [],
           theverge: vergeRaw = [], indiehackers: ihRaw = [],
-          hashnode: hashnodeRaw = [], bluesky: blueskyRaw = [] } = liveResult;
+          hashnode: hashnodeRaw = [], bluesky: blueskyRaw = [],
+          arstechnica: arsRaw = [], wired: wiredRaw = [], theregister: regRaw = [],
+          venturebeat: vbRaw = [], smashing: smashingRaw = [], phoronix: phoronixRaw = [],
+          infoq: infoqRaw = [], mittr: mittrRaw = [],
+          gitlab: gitlabRaw = [], remoteok: remoteokRaw = [], yc: ycRaw = [],
+          crunchbase: crunchbaseRaw = [], behance: behanceRaw = [], designweb: designwebRaw = [] } = liveResult;
 
   // Persist new posts to DB in background (non-blocking)
   const allLive = [
     ...redditRaw, ...hnRaw, ...githubRaw, ...devtoRaw, ...mediumRaw, ...youtubeRaw,
     ...soRaw, ...mastoRaw, ...lobRaw, ...arxivRaw,
     ...indeedRaw, ...phRaw, ...tcRaw, ...vergeRaw, ...ihRaw, ...hashnodeRaw, ...blueskyRaw,
+    ...arsRaw, ...wiredRaw, ...regRaw, ...vbRaw, ...smashingRaw, ...phoronixRaw, ...infoqRaw, ...mittrRaw,
+    ...gitlabRaw, ...remoteokRaw, ...ycRaw, ...crunchbaseRaw, ...behanceRaw, ...designwebRaw,
   ];
   savePostsToDB(allLive).catch(() => {});
 
@@ -6491,6 +6741,20 @@ app.get('/feed', authenticate, async (req, res) => {
   const ihPosts        = ihRaw.map(p => mapExternalPost(p, 'indiehackers'));
   const hashnodePosts  = hashnodeRaw.map(p => mapExternalPost(p, 'hashnode'));
   const blueskyPosts   = blueskyRaw.map(p => mapExternalPost(p, 'bluesky'));
+  const arsPosts       = arsRaw.map(p => mapExternalPost(p, 'arstechnica'));
+  const wiredPosts     = wiredRaw.map(p => mapExternalPost(p, 'wired'));
+  const regPosts       = regRaw.map(p => mapExternalPost(p, 'theregister'));
+  const vbPosts        = vbRaw.map(p => mapExternalPost(p, 'venturebeat'));
+  const smashingPosts  = smashingRaw.map(p => mapExternalPost(p, 'smashing'));
+  const phoronixPosts  = phoronixRaw.map(p => mapExternalPost(p, 'phoronix'));
+  const infoqPosts     = infoqRaw.map(p => mapExternalPost(p, 'infoq'));
+  const mittrPosts     = mittrRaw.map(p => mapExternalPost(p, 'mittr'));
+  const gitlabPosts    = gitlabRaw.map(p => mapExternalPost(p, 'gitlab'));
+  const remoteokPosts  = remoteokRaw.map(p => mapExternalPost(p, 'remoteok'));
+  const ycPosts        = ycRaw.map(p => mapExternalPost(p, 'yc'));
+  const crunchbasePosts = crunchbaseRaw.map(p => mapExternalPost(p, 'crunchbase'));
+  const behancePosts   = behanceRaw.map(p => mapExternalPost(p, 'behance'));
+  const designwebPosts = designwebRaw.map(p => mapExternalPost(p, 'designweb'));
 
   // Social platform posts — shown for all users, topic-matched
   const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
@@ -6629,6 +6893,8 @@ app.get('/feed', authenticate, async (req, res) => {
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts,
     ...indeedPosts2, ...phPosts, ...tcPosts, ...vergePosts, ...ihPosts, ...hashnodePosts, ...blueskyPosts,
+    ...arsPosts, ...wiredPosts, ...regPosts, ...vbPosts, ...smashingPosts, ...phoronixPosts, ...infoqPosts, ...mittrPosts,
+    ...gitlabPosts, ...remoteokPosts, ...ycPosts, ...crunchbasePosts, ...behancePosts, ...designwebPosts,
     ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
   ], 'main-feed-response', {
     limit: Math.max(feedLimit + 1, sortAgentLimit()),
@@ -6650,6 +6916,27 @@ app.get('/feed', authenticate, async (req, res) => {
       mastodon:      mastoPosts.length,
       lobsters:      lobPosts.length,
       arxiv:         arxivPosts.length,
+      indeed:        indeedPosts2.length,
+      producthunt:   phPosts.length,
+      techcrunch:    tcPosts.length,
+      theverge:      vergePosts.length,
+      indiehackers:  ihPosts.length,
+      hashnode:      hashnodePosts.length,
+      bluesky:       blueskyPosts.length,
+      arstechnica:   arsPosts.length,
+      wired:         wiredPosts.length,
+      theregister:   regPosts.length,
+      venturebeat:   vbPosts.length,
+      smashing:      smashingPosts.length,
+      phoronix:      phoronixPosts.length,
+      infoq:         infoqPosts.length,
+      mittr:         mittrPosts.length,
+      gitlab:        gitlabPosts.length,
+      remoteok:      remoteokPosts.length,
+      yc:            ycPosts.length,
+      crunchbase:    crunchbasePosts.length,
+      behance:       behancePosts.length,
+      designweb:     designwebPosts.length,
       db:            dbPosts.length,
       cached:       cachedMapped.length,
       joinedGroups: joinedGroupPosts.length,
@@ -6898,6 +7185,12 @@ function _sourceFromPostId(id) {
   if (/^tcfb\d/.test(base))     return 'techcrunch';
   if (/^vergefb\d/.test(base))  return 'theverge';
   if (/^hashfb\d/.test(base))   return 'hashnode';
+  if (/^gitlabfb\d/.test(base)) return 'gitlab';
+  if (/^remoteokfb\d/.test(base)) return 'remoteok';
+  if (/^ycfb\d/.test(base))     return 'yc';
+  if (/^crunchbasefb\d/.test(base)) return 'crunchbase';
+  if (/^behancefb\d/.test(base)) return 'behance';
+  if (/^designwebfb\d/.test(base)) return 'designweb';
   const prefix = base.split('_')[0];
   const map = {
     reddit:'reddit', hn:'hackernews', devto:'devto', github:'github',
@@ -6907,6 +7200,8 @@ function _sourceFromPostId(id) {
     indiehackers:'indiehackers', hashnode:'hashnode', stackoverflow:'stackoverflow',
     ars:'arstechnica', wired:'wired', reg:'theregister', vb:'venturebeat',
     smash:'smashing', phor:'phoronix', infoq:'infoq', mittr:'mittr',
+    gitlab:'gitlab', remoteok:'remoteok', yc:'yc', crunchbase:'crunchbase',
+    behance:'behance', designweb:'designweb',
     twitter:'twitter', linkedin:'linkedin', instagram:'instagram',
     facebook:'facebook', tiktok:'tiktok',
   };
@@ -7084,6 +7379,30 @@ const AGENT_DEFS = {
   mittr: {
     name: 'MIT Tech Review Agent', emoji: '🔬', color: '#A31F34', interval: '20s / 2 shards',
     description: 'Pulls deep tech, AI policy, and science coverage from MIT Technology Review RSS. 2 parallel shards cover all topic keywords.',
+  },
+  gitlab: {
+    name: 'GitLab Agent', emoji: 'GL', color: '#FC6D26', interval: '45s / 1 shard',
+    description: 'Searches GitLab public projects by topic keyword. Covers open-source repos, libraries, and engineering portfolios without requiring user auth.',
+  },
+  remoteok: {
+    name: 'Remote OK Agent', emoji: 'RO', color: '#10B981', interval: '45s / 1 shard',
+    description: 'Fetches remote professional job listings from Remote OK RSS and filters them against user interests, roles, and skills.',
+  },
+  yc: {
+    name: 'Y Combinator Agent', emoji: 'YC', color: '#FF6600', interval: '45s / 1 shard',
+    description: 'Pulls startup, founder, and company-building posts from Y Combinator RSS for professional and startup-focused feeds.',
+  },
+  crunchbase: {
+    name: 'Crunchbase News Agent', emoji: 'CB', color: '#146AFF', interval: '45s / 1 shard',
+    description: 'Pulls funding, company, market, and startup news from Crunchbase News RSS for business-focused discovery.',
+  },
+  behance: {
+    name: 'Behance Agent', emoji: 'Be', color: '#053EFF', interval: '45s / 1 shard',
+    description: 'Fetches public creative portfolio projects from Behance RSS for design, branding, and visual professional feeds.',
+  },
+  designweb: {
+    name: 'Design Web Agent', emoji: 'UX', color: '#DB2777', interval: '45s / 1 shard',
+    description: 'Aggregates public design, UX, CSS, and product craft feeds from Designboom, Awwwards, CSS-Tricks, and Fast Company.',
   },
   tiktok: {
     name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'curated',

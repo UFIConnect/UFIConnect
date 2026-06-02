@@ -15,6 +15,7 @@ const SOCIAL_PLATFORMS = [
   { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from the creators and brands you follow' },
   { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'Updates from friends, pages, and groups you follow' },
   { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Your repos, contributions, and open-source work' },
+  { id: 'gitlab',    emoji: 'GL', name: 'GitLab',      color: '#FC6D26', desc: 'Your GitLab projects, CI/CD work, and open-source portfolio' },
   { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
   { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Channels and video content in your areas' },
   { id: 'reddit',    emoji: '🤖', name: 'Reddit',      color: '#FF4500', desc: 'Posts from subreddits matching your interests' },
@@ -28,6 +29,7 @@ const SOCIAL_PLATFORMS = [
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
   { key: 'github',    label: 'GitHub',         icon: '🐙', placeholder: 'https://github.com/yourname' },
+  { key: 'gitlab',    label: 'GitLab',         icon: 'GL', placeholder: 'https://gitlab.com/yourname' },
   { key: 'portfolio', label: 'Portfolio',      icon: '🌐', placeholder: 'https://yourwebsite.com' },
   { key: 'resume',    label: 'Resume / CV',    icon: '📄', placeholder: 'https://drive.google.com/...' },
   { key: 'twitter',   label: 'X / Twitter',   icon: '🐦', placeholder: 'https://x.com/yourhandle' },

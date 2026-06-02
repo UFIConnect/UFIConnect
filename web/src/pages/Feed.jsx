@@ -28,6 +28,7 @@ const SOURCE_META = {
   instagram:     { label: 'Instagram',     color: '#E1306C', icon: '📸' },
   tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
   github:        { label: 'GitHub',        color: '#24292F', icon: '🐙' },
+  gitlab:        { label: 'GitLab',        color: '#FC6D26', icon: 'GL' },
   youtube:       { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
   medium:        { label: 'Medium',        color: '#1A8917', icon: '📝' },
   stackoverflow: { label: 'Stack Overflow',color: '#F48024', icon: '📚' },
@@ -49,6 +50,11 @@ const SOURCE_META = {
   phoronix:      { label: 'Phoronix',        color: '#2B7BB9', icon: '🐧' },
   infoq:         { label: 'InfoQ',           color: '#67B346', icon: '🏗️' },
   mittr:         { label: 'MIT Tech Review', color: '#A31F34', icon: '🔬' },
+  remoteok:      { label: 'Remote OK',       color: '#10B981', icon: 'RO' },
+  yc:            { label: 'Y Combinator',    color: '#FF6600', icon: 'YC' },
+  crunchbase:    { label: 'Crunchbase',      color: '#146AFF', icon: 'CB' },
+  behance:       { label: 'Behance',         color: '#053EFF', icon: 'Be' },
+  designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
   uficonnect:    { label: 'UFIConnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -60,7 +66,13 @@ const SOURCE_TABS = [
   { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
+  { key: 'gitlab',     label: 'GitLab',      icon: 'GL' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
+  { key: 'remoteok',   label: 'Remote OK',   icon: 'RO' },
+  { key: 'yc',         label: 'YC',          icon: 'YC' },
+  { key: 'crunchbase', label: 'Crunchbase',  icon: 'CB' },
+  { key: 'behance',    label: 'Behance',     icon: 'Be' },
+  { key: 'designweb',  label: 'Design Web',  icon: 'UX' },
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
@@ -68,11 +80,12 @@ const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'face
 const FEED_PAGE_SIZE = 250;
 
 const ALL_FILTER_SOURCES = [
-  'reddit', 'github', 'devto', 'medium', 'youtube',
+  'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
+  'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
 ];
 
 const CATEGORY_COLORS = {
@@ -949,7 +962,7 @@ export default function Feed() {
     <Layout>
       <Helmet>
         <title>Feed | UFIConnect</title>
-        <meta name="description" content="Your live professional feed — top stories from Reddit, GitHub, HN, YouTube, DEV, and 17+ more sources, filtered to your interests." />
+        <meta name="description" content="Your live professional feed — top stories from Reddit, GitHub, GitLab, HN, YouTube, DEV, Remote OK, YC, Crunchbase, Behance, and 30+ sources, filtered to your interests." />
       </Helmet>
       {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
 

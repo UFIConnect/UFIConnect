@@ -7,6 +7,7 @@ import client from '../api/client';
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
+  gitlab:    ['Showcase GitLab projects', 'Display CI/CD and open-source work', 'Find developer collaborators'],
   twitter:   ['Surface relevant tech threads', 'Share posts across platforms', 'Follow industry conversations'],
   instagram: ['Display your creative portfolio', 'Import content to your profile', 'Connect with visual designers'],
   facebook:  ['Join professional Facebook Groups', 'Surface industry discussions', 'Expand your network'],
@@ -20,10 +21,11 @@ const PLATFORM_BENEFITS = {
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 
-const HANDLE_PLATFORMS = new Set(['github', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+const HANDLE_PLATFORMS = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
 
 const HANDLE_PLACEHOLDER = {
   github:   'your-github-username',
+  gitlab:   'your-gitlab-username',
   reddit:   'your-reddit-username',
   youtube:  'your-channel-handle',
   medium:   'your-medium-username',
