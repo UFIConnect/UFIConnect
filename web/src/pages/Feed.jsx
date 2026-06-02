@@ -17,6 +17,23 @@ function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+function feedPostTime(post) {
+  const time = new Date(post?.createdAt || post?.time || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeFeedPosts(list = []) {
+  const byId = new Map();
+  for (const post of list) {
+    if (!post) continue;
+    const key = post.id || `${post.source || 'feed'}:${post.sourceUrl || post.title || post.content || ''}:${post.createdAt || ''}`;
+    if (!key) continue;
+    const previous = byId.get(key);
+    if (!previous || feedPostTime(post) >= feedPostTime(previous)) byId.set(key, post);
+  }
+  return [...byId.values()].sort((a, b) => feedPostTime(b) - feedPostTime(a));
+}
+
 const SOURCE_META = {
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
   hackernews:    { label: 'News',          color: '#FF6600', icon: '🗞' },
@@ -66,18 +83,23 @@ const SOURCE_TABS = [
   { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
-  { key: 'gitlab',     label: 'GitLab',      icon: 'GL' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
-  { key: 'remoteok',   label: 'Remote OK',   icon: 'RO' },
-  { key: 'yc',         label: 'YC',          icon: 'YC' },
-  { key: 'crunchbase', label: 'Crunchbase',  icon: 'CB' },
-  { key: 'behance',    label: 'Behance',     icon: 'Be' },
-  { key: 'designweb',  label: 'Design Web',  icon: 'UX' },
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
 const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 const FEED_PAGE_SIZE = 250;
+const FEED_AUTO_REFRESH_MS = 90 * 1000;
+
+const EXTRA_SOURCE_GROUPS = [
+  { label: 'Social',    sources: ['tiktok', 'bluesky', 'mastodon'] },
+  { label: 'Dev',       sources: ['devto', 'stackoverflow', 'medium', 'hashnode', 'gitlab', 'lobsters'] },
+  { label: 'News',      sources: ['techcrunch', 'theverge', 'arstechnica', 'wired', 'theregister', 'venturebeat', 'indiehackers', 'phoronix', 'infoq', 'mittr'] },
+  { label: 'Design',    sources: ['smashing', 'behance', 'designweb'] },
+  { label: 'Science',   sources: ['arxiv'] },
+  { label: 'Jobs',      sources: ['indeed', 'usajobs', 'remoteok'] },
+  { label: 'Startups',  sources: ['producthunt', 'yc', 'crunchbase'] },
+];
 
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
@@ -402,6 +424,7 @@ function YouTubeCard({ post }) {
 
 // Sources that have an inline comment/review section
 const COMMENT_SOURCES = new Set([
+  'uficonnect',
   'reddit','hackernews','devto','github','medium','stackoverflow',
   'mastodon','bluesky','lobsters','producthunt','techcrunch','theverge',
   'indiehackers','hashnode','arstechnica','wired','theregister','venturebeat',
@@ -713,15 +736,21 @@ export default function Feed() {
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
+  const [pinnedSources, setPinnedSources] = useState(
+    () => JSON.parse(localStorage.getItem('feed_pinned_sources') || '[]')
+  );
+  const [pickerOpen,    setPickerOpen]    = useState(false);
 
   const [pendingCount, setPendingCount] = useState(0);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
+  const pickerRef     = useRef(null);
   const knownIds      = useRef(new Set());
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
   const postsRef      = useRef([]);
+  const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
   const pendingRef    = useRef([]);   // SSE posts buffered until user loads them
   const flushTimerRef = useRef(null); // 2-minute auto-flush timer
   // Updated each render so the SSE closure always calls the current version
@@ -729,50 +758,68 @@ export default function Feed() {
   flushPendingRef.current = () => {
     if (!pendingRef.current.length) return;
     clearTimeout(flushTimerRef.current);
+    const buffered = pendingRef.current;
     setPosts(prev => {
-      const merged = [...pendingRef.current, ...prev];
-      const seen = new Set();
-      return merged
-        .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
-        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      const next = mergeFeedPosts([...buffered, ...prev]);
+      knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
+      return next;
     });
     pendingRef.current = [];
     setPendingCount(0);
     setLastRefresh(new Date());
   };
 
-  const loadFeed = useCallback(async (manual = false, tabs = []) => {
+  const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
+    const {
+      silent = false,
+      live = manual,
+      preserveScroll = silent,
+    } = options || {};
+    const buffered = pendingRef.current;
     // Clear any buffered SSE posts — a full load supersedes them
     clearTimeout(flushTimerRef.current);
     pendingRef.current = [];
     setPendingCount(0);
-    if (manual) setRefreshing(true);
-    else setLoading(true);
+    if (!silent) {
+      if (manual) setRefreshing(true);
+      else setLoading(true);
+    }
     try {
       const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
       if (tabs.length === 1) params.set('source', tabs[0]);
       else if (tabs.length > 1) params.set('sources', tabs.join(','));
       if (manual) {
         params.set('bust', '1');
+      }
+      if (live || manual || buffered.length > 0) {
         params.set('live', '1');
       }
       const url = `/feed?${params.toString()}`;
       const { data } = await client.get(url);
       const incoming = data.posts || [];
-      if (manual) {
-        if (incoming.length === 0 && postsRef.current.length > 0) {
-          setNewPostsCount(0);
-          setLastRefresh(new Date());
-          return;
-        }
-        const prevIds = new Set(postsRef.current.map(p => p.id));
-        const fresh = incoming.filter(p => !prevIds.has(p.id)).length;
-        setNewPostsCount(fresh);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      const previous = postsRef.current;
+      const shouldMerge = manual || live || buffered.length > 0;
+      const nextPosts = shouldMerge
+        ? mergeFeedPosts([...buffered, ...incoming, ...previous])
+        : mergeFeedPosts(incoming);
+
+      if (shouldMerge) {
+        const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
+        const fresh = nextPosts.filter(p => p?.id && !prevIds.has(p.id)).length;
+        if (fresh > 0 || manual) setNewPostsCount(fresh);
+        if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (manual) {
+        setNewPostsCount(0);
       }
-      knownIds.current = new Set(incoming.map(p => p.id));
-      setPosts(incoming);
-      setRemotePage(2);
+
+      if (manual && nextPosts.length === 0 && previous.length > 0) {
+        setNewPostsCount(0);
+        setLastRefresh(new Date());
+        return;
+      }
+      knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
+      setPosts(nextPosts);
+      if (!shouldMerge || previous.length === 0) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
@@ -781,6 +828,9 @@ export default function Feed() {
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
+  useEffect(() => {
+    loadStateRef.current = { loading, refreshing, loadingMore };
+  }, [loading, refreshing, loadingMore]);
 
   const toggleTab = useCallback((key) => {
     setSearch('');
@@ -818,6 +868,23 @@ export default function Feed() {
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
+
+  useEffect(() => {
+    const refreshQuietly = () => {
+      const state = loadStateRef.current;
+      if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
+      loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
+    };
+    const intervalId = window.setInterval(refreshQuietly, FEED_AUTO_REFRESH_MS);
+    const handleVisibility = () => { if (!document.hidden) refreshQuietly(); };
+    window.addEventListener('focus', refreshQuietly);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', refreshQuietly);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [loadFeed]);
 
   // Fetch social connection status for personalisation banners
   useEffect(() => {
@@ -951,20 +1018,28 @@ export default function Feed() {
     return () => obs.disconnect();
   }, [loadMoreRemote]);
 
-  // Close filter panel on outside click
+  // Close filter panel and source picker on outside click
   useEffect(() => {
     function handleClick(e) {
       if (
         filterOpen &&
         panelRef.current && !panelRef.current.contains(e.target) &&
         filterBtnRef.current && !filterBtnRef.current.contains(e.target)
-      ) {
-        setFilterOpen(false);
-      }
+      ) setFilterOpen(false);
+      if (pickerOpen && pickerRef.current && !pickerRef.current.contains(e.target))
+        setPickerOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [filterOpen]);
+  }, [filterOpen, pickerOpen]);
+
+  function togglePinned(key) {
+    setPinnedSources(prev => {
+      const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+      localStorage.setItem('feed_pinned_sources', JSON.stringify(next));
+      return next;
+    });
+  }
 
   // Compute active source list from actual posts
   const activeSources = useMemo(
@@ -1072,76 +1147,113 @@ export default function Feed() {
         </button>
       </div>
 
-      {/* Source tabs: fixed (All + active chips) + scrollable tab buttons */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center' }}>
-
-        {/* Always-visible: All button */}
-        <button
-          onClick={() => toggleTab('all')}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-            padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-            border: `1.5px solid ${activeTabs.length === 0 ? 'var(--primary)' : 'var(--border)'}`,
-            background: activeTabs.length === 0 ? 'var(--primary)' : 'var(--surface)',
-            color: activeTabs.length === 0 ? '#fff' : 'var(--text)',
-            fontWeight: activeTabs.length === 0 ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-          }}
-        >
-          <span style={{ fontSize: '.85rem' }}>⚡</span> All
-        </button>
-
-        {/* Active-filter chips — one per selected tab, always visible */}
-        {activeTabs.map(key => {
-          const meta  = SOURCE_META[key] || {};
-          const color = meta.color || 'var(--primary)';
+      {/* Source tabs — single scrollable row */}
+      <div style={{
+        display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
+        paddingBottom: 4, scrollbarWidth: 'none',
+        WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
+      }}>
+        {SOURCE_TABS.map(tab => {
+          const meta  = SOURCE_META[tab.key];
+          const color = meta?.color || 'var(--primary)';
+          const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
+          const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
           return (
-            <div key={key} style={{
-              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              padding: '5px 8px 5px 11px', borderRadius: 20, whiteSpace: 'nowrap',
-              background: color, color: '#fff', fontWeight: 700, fontSize: '.8rem',
-            }}>
-              <span style={{ fontSize: '.82rem' }}>{meta.icon || ''}</span>
-              <span>{meta.label || key}</span>
-              <button
-                onClick={() => toggleTab(key)}
-                style={{
-                  marginLeft: 2, background: 'rgba(255,255,255,.28)', border: 'none',
-                  borderRadius: '50%', width: 16, height: 16, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '.7rem', fontWeight: 900, padding: 0, lineHeight: 1,
-                }}
-              >×</button>
-            </div>
+            <button
+              key={tab.key}
+              onClick={() => toggleTab(tab.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+                border: `1.5px solid ${active ? activeColor : 'var(--border)'}`,
+                background: active ? activeColor : 'var(--surface)',
+                color: active ? '#fff' : 'var(--text)',
+                fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
+              }}
+            >
+              <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
+              {tab.label}
+            </button>
           );
         })}
 
-        {/* Scrollable: all tab buttons, highlighted when active */}
-        <div style={{
-          display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4, minWidth: 0,
-          scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
-        }}>
-          {SOURCE_TABS.filter(t => t.key !== 'all').map(tab => {
-            const meta  = SOURCE_META[tab.key];
-            const color = meta?.color || 'var(--primary)';
-            const active = activeTabs.includes(tab.key);
-            return (
-              <button
-                key={tab.key}
-                onClick={() => toggleTab(tab.key)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                  padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-                  border: `1.5px solid ${active ? color : 'var(--border)'}`,
-                  background: active ? color : 'var(--surface)',
-                  color: active ? '#fff' : 'var(--text)',
-                  fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-                }}
-              >
-                <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
-                {tab.label}
-              </button>
-            );
-          })}
+        {pinnedSources.map(key => {
+          const meta = SOURCE_META[key] || {};
+          const color = meta.color || 'var(--primary)';
+          const active = activeTabs.includes(key);
+          return (
+            <button key={key} onClick={() => toggleTab(key)} style={{
+              display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+              padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+              border: `1.5px solid ${active ? color : 'var(--border)'}`,
+              background: active ? color : 'var(--surface)',
+              color: active ? '#fff' : 'var(--text)',
+              fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
+            }}>
+              <span style={{ fontSize: '.85rem' }}>{meta.icon || ''}</span>
+              {meta.label || key}
+            </button>
+          );
+        })}
+
+        <div style={{ position: 'relative', flexShrink: 0 }} ref={pickerRef}>
+          <button onClick={() => setPickerOpen(o => !o)} style={{
+            display: 'flex', alignItems: 'center', gap: 4,
+            padding: '6px 12px', borderRadius: 20, whiteSpace: 'nowrap',
+            border: `1.5px solid ${pickerOpen ? 'var(--primary)' : 'var(--border)'}`,
+            background: pickerOpen ? 'var(--primary-light, #EEF2FF)' : 'var(--surface)',
+            color: pickerOpen ? 'var(--primary)' : 'var(--muted)',
+            fontWeight: 600, fontSize: '.8rem', cursor: 'pointer',
+          }}>
+            + More
+          </button>
+          {pickerOpen && (
+            <div style={{
+              position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 400,
+              background: 'var(--surface)', border: '1.5px solid var(--border)',
+              borderRadius: 16, padding: '14px 16px', width: 280,
+              boxShadow: '0 8px 32px rgba(0,0,0,.12)', maxHeight: '70vh', overflowY: 'auto',
+            }}>
+              <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>
+                Add to tab bar
+              </div>
+              {EXTRA_SOURCE_GROUPS.map(group => (
+                <div key={group.label} style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: '.68rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 6 }}>
+                    {group.label}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    {group.sources.map(key => {
+                      const meta = SOURCE_META[key] || {};
+                      const pinned = pinnedSources.includes(key);
+                      return (
+                        <button key={key} onClick={() => togglePinned(key)} style={{
+                          display: 'flex', alignItems: 'center', gap: 4,
+                          padding: '4px 10px', borderRadius: 16, fontSize: '.75rem', fontWeight: 600,
+                          border: `1.5px solid ${pinned ? (meta.color || 'var(--primary)') : 'var(--border)'}`,
+                          background: pinned ? `${meta.color || 'var(--primary)'}22` : 'var(--surface)',
+                          color: pinned ? (meta.color || 'var(--primary)') : 'var(--text)',
+                          cursor: 'pointer',
+                        }}>
+                          <span>{meta.icon || ''}</span>
+                          {meta.label || key}
+                          {pinned && <span style={{ marginLeft: 2, fontSize: '.65rem' }}>✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {pinnedSources.length > 0 && (
+                <button
+                  onClick={() => { setPinnedSources([]); localStorage.removeItem('feed_pinned_sources'); }}
+                  style={{ marginTop: 4, fontSize: '.72rem', color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
