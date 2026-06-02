@@ -5513,13 +5513,69 @@ const ALL_GROUPS_SEED = [
 ];
 
 // Live in-memory groups list — populated from DB at startup, falls back to seed
-let groups = ALL_GROUPS_SEED.map(g => ({
+const INTERNAL_GROUPS_SEED = [
+  {
+    id: 'ufi-general',
+    category: 'Community',
+    name: 'General',
+    description: 'Open discussion for UFIConnect members.',
+    members: 0,
+    isExternal: false,
+  },
+  {
+    id: 'ufi-tech',
+    category: 'Engineering',
+    name: 'Tech Builders',
+    description: 'Build logs, technical questions, launches, and engineering notes.',
+    members: 0,
+    isExternal: false,
+  },
+  {
+    id: 'ufi-business',
+    category: 'Startups',
+    name: 'Business & Founders',
+    description: 'Founder updates, sales notes, funding questions, and growth ideas.',
+    members: 0,
+    isExternal: false,
+  },
+  {
+    id: 'ufi-creative',
+    category: 'Design',
+    name: 'Creative Studio',
+    description: 'Design, content, brand, portfolio, and creative work feedback.',
+    members: 0,
+    isExternal: false,
+  },
+  {
+    id: 'ufi-career',
+    category: 'Career Growth',
+    name: 'Career Lounge',
+    description: 'Jobs, resumes, interviews, mentorship, and professional development.',
+    members: 0,
+    isExternal: false,
+  },
+  {
+    id: 'ufi-wellness',
+    category: 'Health',
+    name: 'Wellness',
+    description: 'Healthy work, balance, routines, and personal growth.',
+    members: 0,
+    isExternal: false,
+  },
+];
+
+const GROUPS_SEED = [...INTERNAL_GROUPS_SEED, ...ALL_GROUPS_SEED];
+
+let groups = GROUPS_SEED.map(g => ({
   ...g,
   platform: g.platform || (g.subreddit ? 'reddit' : null),
 }));
 
 // Real posts — user-created, stored in community_posts table and kept in memory
 let posts = [];
+
+// Real comments for first-party posts
+let postComments = [];
 
 // Real connections — user-created
 let connections = [];
@@ -5553,7 +5609,7 @@ function serializeCommunityPost(post, viewerId = null) {
     group:       group ? { id: group.id, name: group.name, category: cat } : null,
     likedByMe:   viewerId ? (post.likes || []).includes(viewerId) : false,
     likesCount:  (post.likes || []).length,
-    commentsCount: post.commentsCount || 0,
+    commentsCount: Math.max(post.commentsCount || 0, postComments.filter(c => c.postId === post.id).length),
     source:      post.source || 'uficonnect',
     sourceLabel: post.sourceLabel || 'UFIConnect',
     sourceUrl:   post.sourceUrl || null,
@@ -5574,6 +5630,126 @@ function dbCommunityPostToMemPost(row) {
     sourceLabel: row.source_label || 'UFIConnect',
     url: row.url,
   };
+}
+
+function boundedLimit(raw, fallback = 50, max = 100) {
+  const parsed = parseInt(raw || `${fallback}`, 10);
+  return Math.min(Math.max(parsed || fallback, 1), max);
+}
+
+async function getCommunityPostById(postId) {
+  let post = posts.find((p) => p.id === postId && (p.source || 'uficonnect') === 'uficonnect');
+  if (post) return post;
+
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT * FROM community_posts
+         WHERE id=$1 AND COALESCE(source,'uficonnect')='uficonnect'
+         LIMIT 1`,
+        [postId]
+      );
+      if (rows[0]) {
+        post = dbCommunityPostToMemPost(rows[0]);
+        posts.unshift(post);
+        return post;
+      }
+    } catch (e) {
+      console.error('community post lookup DB:', e.message);
+    }
+  }
+
+  return null;
+}
+
+function serializePostComment(comment) {
+  const author = users.find((u) => u.id === comment.authorId);
+  return {
+    id: comment.id,
+    postId: comment.postId,
+    content: comment.content,
+    createdAt: comment.createdAt,
+    author: author ? sanitizeUser(author) : { id: comment.authorId, name: 'Member', title: '', organization: '' },
+  };
+}
+
+function dbPostCommentToMemComment(row) {
+  return {
+    id: row.id,
+    postId: row.post_id,
+    authorId: row.author_id,
+    content: row.content,
+    createdAt: row.created_at,
+  };
+}
+
+async function getCommentsForPost(postId, limit = 50) {
+  let result = postComments.filter((c) => c.postId === postId);
+
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT * FROM post_comments
+         WHERE post_id=$1
+         ORDER BY created_at ASC
+         LIMIT $2`,
+        [postId, limit]
+      );
+      result = [...result, ...rows.map(dbPostCommentToMemComment)];
+    } catch (e) {
+      console.error('post comments DB:', e.message);
+    }
+  }
+
+  const seen = new Set();
+  return result
+    .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    .filter((comment) => {
+      if (seen.has(comment.id)) return false;
+      seen.add(comment.id);
+      return true;
+    })
+    .slice(0, limit)
+    .map(serializePostComment);
+}
+
+async function getCommunityPosts({ viewerId = null, authorId = null, limit = 50 } = {}) {
+  let result = posts.filter((p) =>
+    (p.source || 'uficonnect') === 'uficonnect' && (!authorId || p.authorId === authorId)
+  );
+
+  if (db.isConnected()) {
+    try {
+      const clauses = [`COALESCE(source,'uficonnect')='uficonnect'`];
+      const params = [];
+      if (authorId) {
+        params.push(authorId);
+        clauses.push(`author_id=$${params.length}`);
+      }
+      params.push(limit);
+      const { rows } = await db.query(
+        `SELECT * FROM community_posts
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY created_at DESC
+         LIMIT $${params.length}`,
+        params
+      );
+      result = [...result, ...rows.map(dbCommunityPostToMemPost)];
+    } catch (e) {
+      console.error('community posts DB:', e.message);
+    }
+  }
+
+  const seen = new Set();
+  return result
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .filter((p) => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    })
+    .slice(0, limit)
+    .map((p) => serializeCommunityPost(p, viewerId));
 }
 
 function fullProfile(user) {
@@ -5751,6 +5927,17 @@ async function migrateDB() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS post_comments (
+        id TEXT PRIMARY KEY,
+        post_id TEXT NOT NULL,
+        author_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS post_comments_post_idx ON post_comments(post_id, created_at)`);
 
     // Feed post cache — stores fetched external posts across restarts
     await db.query(`
@@ -6002,7 +6189,7 @@ async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
     // Upsert all seeded groups — never DELETE so existing data is never wiped
-    for (const g of ALL_GROUPS_SEED) {
+    for (const g of GROUPS_SEED) {
       await db.query(`
         INSERT INTO community_groups
           (id,name,category,description,member_count,platform,platform_url,external_url,subreddit,is_external,related_groups)
@@ -6015,13 +6202,13 @@ async function seedAndLoadGroups() {
           platform_url=EXCLUDED.platform_url,
           external_url=EXCLUDED.external_url,
           subreddit=EXCLUDED.subreddit,
-          is_external=true
+          is_external=EXCLUDED.is_external
       `, [
         g.id, g.name, g.category, g.description || '',
         g.members || g.member_count || 0,
         g.platform || null, g.platformUrl || null,
         g.externalUrl || null, g.subreddit || null,
-        true,
+        g.isExternal !== false,
         g.relatedGroups || [],
       ]);
     }
@@ -6045,7 +6232,7 @@ async function seedAndLoadGroups() {
     console.warn('seedAndLoadGroups:', err.message);
     // If groups is somehow empty, restore from seed
     if (groups.length === 0) {
-      ALL_GROUPS_SEED.forEach(g => groups.push({ ...g, platform: g.platform || (g.subreddit ? 'reddit' : null) }));
+      GROUPS_SEED.forEach(g => groups.push({ ...g, platform: g.platform || (g.subreddit ? 'reddit' : null) }));
       console.log(`⚠️  Restored ${groups.length} groups from seed (DB unavailable)`);
     }
   }
@@ -6434,10 +6621,14 @@ app.delete('/profile', authenticate, async (req, res) => {
   // Remove from in-memory store
   const idx = users.findIndex(u => u.id === uid);
   if (idx > -1) users.splice(idx, 1);
+  const authoredPostIds = new Set(posts.filter(p => p.authorId === uid).map(p => p.id));
+  postComments = postComments.filter(c => c.authorId !== uid && !authoredPostIds.has(c.postId));
+  posts = posts.filter(p => p.authorId !== uid);
   // Remove from DB (cascade: social_accounts, community_posts, then users)
   if (db.isConnected() && isDBId(uid)) {
     try {
       await db.query('DELETE FROM social_accounts WHERE user_id=$1', [uid]);
+      await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
       await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
       await db.query('DELETE FROM users WHERE id=$1', [uid]);
     } catch (e) { console.error('delete account DB:', e.message); }
@@ -6453,6 +6644,10 @@ app.get('/groups', async (req, res) => {
   const { category } = req.query;
   const result = category ? groups.filter((g) => g.category === category) : groups;
   res.json({ groups: result });
+});
+
+app.get('/groups/internal', authenticate, (req, res) => {
+  res.json({ groups: groups.filter((g) => !g.isExternal) });
 });
 
 app.get('/groups/categories', (req, res) => {
@@ -7249,6 +7444,24 @@ function _sourceFromPostId(id) {
 // ─── Unified comments endpoint — live for Reddit / HN / DEV.to, curated for rest ─
 app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   const { postId } = req.params;
+
+  const communityPost = await getCommunityPostById(postId);
+  if (communityPost) {
+    const limit = boundedLimit(req.query.limit, 50, 100);
+    const comments = await getCommentsForPost(communityPost.id, limit);
+    return res.json({
+      comments: comments.map(comment => ({
+        id: comment.id,
+        author: comment.author?.name || 'Member',
+        body: comment.content,
+        score: 0,
+        created: comment.createdAt,
+      })),
+      commentsCount: comments.length,
+      source: 'uficonnect',
+      live: true,
+    });
+  }
 
   // ── Reddit ──────────────────────────────────────────────────────────────────
   if (postId.startsWith('reddit_')) {
@@ -8138,6 +8351,82 @@ app.post('/hq/trigger/:agentId', (req, res) => {
 });
 
 // Create a post in a group
+app.get('/posts', authenticate, async (req, res) => {
+  const limit = boundedLimit(req.query.limit, 50, 100);
+  const communityPosts = await getCommunityPosts({ viewerId: req.user.id, limit });
+  res.json({ posts: communityPosts });
+});
+
+async function toggleCommunityPostLike(req, res) {
+  const post = await getCommunityPostById(req.params.postId);
+  if (!post) return res.status(404).json({ message: 'Post not found.' });
+  if (!Array.isArray(post.likes)) post.likes = [];
+
+  const idx = post.likes.indexOf(req.user.id);
+  if (idx > -1) post.likes.splice(idx, 1);
+  else post.likes.push(req.user.id);
+
+  if (db.isConnected()) {
+    db.query(
+      `UPDATE community_posts SET likes=$1 WHERE id=$2`,
+      [post.likes, post.id]
+    ).catch(e => console.error('post like DB:', e.message));
+  }
+
+  res.json({
+    likedByMe: post.likes.includes(req.user.id),
+    likesCount: post.likes.length,
+    post: serializeCommunityPost(post, req.user.id),
+  });
+}
+
+app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
+
+app.get('/posts/:postId/comments', authenticate, async (req, res) => {
+  const post = await getCommunityPostById(req.params.postId);
+  if (!post) return res.status(404).json({ message: 'Post not found.' });
+  const limit = boundedLimit(req.query.limit, 50, 100);
+  const comments = await getCommentsForPost(post.id, limit);
+  res.json({ comments, commentsCount: comments.length });
+});
+
+app.post('/posts/:postId/comments', authenticate, async (req, res) => {
+  const post = await getCommunityPostById(req.params.postId);
+  if (!post) return res.status(404).json({ message: 'Post not found.' });
+
+  const content = (req.body.content || '').trim();
+  if (!content) return res.status(400).json({ message: 'Comment is required.' });
+  if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+
+  const comment = {
+    id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    postId: post.id,
+    authorId: req.user.id,
+    content,
+    createdAt: new Date().toISOString(),
+  };
+  postComments.push(comment);
+  post.commentsCount = (post.commentsCount || 0) + 1;
+
+  if (db.isConnected()) {
+    db.query(
+      `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
+       VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
+    ).catch(e => console.error('post comment DB:', e.message));
+    db.query(
+      `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
+      [post.id]
+    ).catch(e => console.error('post comment count DB:', e.message));
+  }
+
+  res.status(201).json({
+    comment: serializePostComment(comment),
+    commentsCount: post.commentsCount,
+    post: serializeCommunityPost(post, req.user.id),
+  });
+});
+
 app.post('/groups/:id/posts', authenticate, async (req, res) => {
   const user  = await getUser(req.user.id);
   const group = groups.find((g) => g.id === req.params.id);
@@ -8161,17 +8450,10 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       [id, group.id, user.id, user.name, content.trim(), post.createdAt]
     ).catch(e => console.error('create post DB:', e.message));
   }
-  res.status(201).json({ post });
+  res.status(201).json({ post: serializeCommunityPost(post, req.user.id) });
 });
 
-app.post('/feed/:postId/like', authenticate, (req, res) => {
-  const post = posts.find((p) => p.id === req.params.postId);
-  if (!post) return res.status(404).json({ message: 'Post not found.' });
-  const idx = post.likes.indexOf(req.user.id);
-  if (idx > -1) { post.likes.splice(idx, 1); }
-  else { post.likes.push(req.user.id); }
-  res.json({ likedByMe: post.likes.includes(req.user.id), likesCount: post.likes.length });
-});
+app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
 
 // ─── People search & public profiles ─────────────────────────────────────────
 app.get('/users/search', authenticate, (req, res) => {
@@ -8277,37 +8559,9 @@ app.get('/users/:id', authenticate, async (req, res) => {
 app.get('/users/:id/posts', authenticate, async (req, res) => {
   const user = await getUser(req.params.id);
   if (!user) return res.status(404).json({ message: 'User not found.' });
-
-  let userPosts = posts.filter((p) =>
-    p.authorId === user.id && (p.source || 'uficonnect') === 'uficonnect'
-  );
-
-  if (db.isConnected()) {
-    try {
-      const { rows } = await db.query(
-        `SELECT * FROM community_posts
-         WHERE author_id=$1 AND COALESCE(source,'uficonnect')='uficonnect'
-         ORDER BY created_at DESC
-         LIMIT 100`,
-        [user.id]
-      );
-      userPosts = [...userPosts, ...rows.map(dbCommunityPostToMemPost)];
-    } catch (e) {
-      console.error('user posts DB:', e.message);
-    }
-  }
-
-  const seen = new Set();
-  const serialized = userPosts
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    })
-    .map((p) => serializeCommunityPost(p, req.user.id));
-
-  res.json({ posts: serialized });
+  const limit = boundedLimit(req.query.limit, 50, 100);
+  const userPosts = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit });
+  res.json({ posts: userPosts });
 });
 
 app.post('/users/:id/follow', authenticate, async (req, res) => {
@@ -8768,6 +9022,89 @@ const ROLE_OP_TYPES = {
   'Real Estate Pro':         new Set(['job','event','learning']),
 };
 
+// Maps onboarding interest categories → concrete skill/tag words found in opportunity listings.
+// Bridges the conceptual gap: users pick "AI & Machine Learning" but opp tags say "Python","LLMs".
+const INTEREST_TAG_MAP = {
+  'AI & Machine Learning':    ['ai','ml','machine learning','python','pytorch','tensorflow','llms','nlp','deep learning','openai'],
+  'Generative AI':            ['llms','generative ai','ai','python','prompting','openai'],
+  'LLMs & Chatbots':          ['llms','nlp','ai','python','chatbot'],
+  'Computer Vision':          ['computer vision','python','pytorch','ml','opencv'],
+  'Data Science':             ['python','sql','data','statistics','ml','spark','analytics'],
+  'Developer Tools':          ['developer tools','devrel','api','open source','typescript'],
+  'Open Source':              ['oss','open source','github','typescript','python'],
+  'Cybersecurity':            ['security','cybersecurity','go','rust','penetration'],
+  'Cloud & DevOps':           ['kubernetes','terraform','devops','infrastructure','docker','aws','gcp','azure','ci/cd'],
+  'Frontend Dev':             ['react','vue','angular','typescript','javascript','next.js','css','html','frontend'],
+  'Backend Dev':              ['node','python','go','rust','java','kotlin','api','postgresql','backend'],
+  'Mobile Dev':               ['swift','ios','kotlin','android','react native','flutter','mobile'],
+  'Web3 / Crypto':            ['web3','solidity','ethereum','blockchain','smart contract'],
+  'Blockchain':               ['blockchain','solidity','ethereum','web3','crypto'],
+  'Game Dev':                 ['unity','unreal','game','c++','gaming'],
+  'No-Code / Low-Code':       ['no-code','low-code','webflow','bubble'],
+  'SaaS':                     ['saas','b2b','product','startup','subscription'],
+  'B2B / Enterprise':         ['b2b','enterprise','saas','sales','crm'],
+  'Growth Marketing':         ['growth','marketing','analytics','seo','gtm','b2b','acquisition'],
+  'SEO & Content':            ['seo','content','analytics','marketing','writing'],
+  'Venture Capital':          ['venture capital','vc','investment','startup','seed'],
+  'Angel Investing':          ['angel','investment','startup','seed','funding'],
+  'Fundraising':              ['fundraising','startup','funding','investment','grants'],
+  'Bootstrapping':            ['bootstrapping','saas','startup','indie','founder'],
+  'Product-Led Growth':       ['product','growth','plg','saas','b2c'],
+  'UI/UX Design':             ['ux','design','figma','prototyping','product','user research'],
+  'Design Systems':           ['design systems','figma','design','react','components'],
+  'Brand Identity':           ['branding','design','figma','logo','brand'],
+  'Motion Design':            ['motion','design','animation','after effects'],
+  '3D & CGI':                 ['3d','cgi','blender','cinema 4d','unity'],
+  'Photography':              ['photography','visual','design','lightroom'],
+  'Film & Video':             ['video','film','youtube','content','production'],
+  'Music Production':         ['music production','audio','mixing','daw','ableton'],
+  'Visual Storytelling':      ['design','branding','motion','visual','storytelling'],
+  'FinTech':                  ['fintech','finance','payments','blockchain','saas'],
+  'Corporate Finance':        ['finance','analytics','sql','corporate finance','strategy'],
+  'Personal Finance':         ['personal finance','fintech','analytics'],
+  'Real Estate':              ['real estate','property','investment','cbre'],
+  'Health Tech':              ['healthtech','healthcare','health','ml','data','telemedicine'],
+  'BioTech':                  ['biotech','biology','research','data','ml','pharma'],
+  'Climate Tech':             ['climate','carbon','sustainability','gis','data'],
+  'EdTech':                   ['edtech','education','learning','content','lms'],
+  'Creator Economy':          ['content','creator','social','youtube','tiktok','brand'],
+  'Podcasting':               ['podcast','audio','content','creator'],
+  'Newsletter & Writing':     ['writing','newsletter','content','seo','blog'],
+  'YouTube & Video':          ['youtube','video','creator','content','editing'],
+  'Social Media':             ['social','marketing','content','creator','instagram'],
+  'Leadership':               ['leadership','management','strategy','director','vp'],
+  'Productivity':             ['productivity','operations','tools','saas'],
+  'Remote Work':              ['remote','async','distributed','remote-first'],
+  'Side Projects':            ['startup','oss','open source','indie','side project'],
+  'Career Growth':            ['career','growth','leadership','learning','mentorship'],
+  'Freelancing':              ['freelance','gig','contract','upwork','toptal'],
+  'Fitness & Gym':            ['fitness','strength','personal trainer','gym','wellness'],
+  'Sports & Athletics':       ['sports','athletic','performance','coaching','nba','training'],
+  'Music Discovery':          ['music','artist','creator','playlist','streaming'],
+  'Cooking & Recipes':        ['culinary','chef','recipe','food','kitchen'],
+  'Restaurant Culture':       ['restaurant','chef','culinary','hospitality'],
+  'Baking & Pastry':          ['pastry','baking','chef','culinary'],
+  'Nonprofit Impact':         ['nonprofit','social impact','grant','community'],
+  'Sustainability':           ['sustainability','climate','carbon','impact'],
+  'Mental Health & Wellness': ['wellness','mental health','coaching','mindfulness'],
+  'Community':                ['community','discord','social','manager'],
+  'Diversity & Inclusion':    ['diversity','inclusion','dei','community'],
+};
+
+// Maps onboarding goals → opportunity types to give a score bonus.
+const GOAL_TYPE_BOOST = {
+  'jobs':        new Set(['job', 'gig']),
+  'learning':    new Set(['learning', 'hackathon', 'opensource']),
+  'funding':     new Set(['grant']),
+  'events':      new Set(['event', 'hackathon']),
+  'networking':  new Set(['event']),
+  'build':       new Set(['hackathon', 'opensource', 'gig']),
+  'mentorship':  new Set(['learning', 'event']),
+  'sideproject': new Set(['hackathon', 'opensource', 'grant', 'gig']),
+  'hiring':      new Set([]),
+  'expertise':   new Set(['event', 'learning']),
+};
+
 app.get('/opportunities', authenticate, async (req, res) => {
   if (req.query.bust === '1') { remotiveCache.clear(); museCache.clear(); }
   const { type, remote, search } = req.query;
@@ -8776,14 +9113,23 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
   const experience = user?.preferences?.experience || 'mid';
   const skills     = new Set((user?.skills || []).map((s) => s.toLowerCase()));
-  const interests  = new Set((user?.preferences?.interests || []).map((s) => s.toLowerCase()));
+  const rawInterests = (user?.preferences?.interests || []);
+  const goals      = (user?.preferences?.goals || []);
   const roleTypes  = ROLE_OP_TYPES[role] || new Set();
 
+  // Build the set of goal-boosted op types from this user's goals
+  const goalBoostedTypes = new Set(goals.flatMap(g => [...(GOAL_TYPE_BOOST[g] || [])]));
+
   // Build keyword list from specific title first, then macro role fallback
-  // e.g. "Senior Frontend Engineer" → ['senior','frontend','engineer']
   const titleKeywords = userTitle.toLowerCase().split(/[\s\/,]+/).filter(w => w.length > 3);
   const roleKeywords  = (ROLE_JOB_QUERIES[role] || role).toLowerCase().split(' ').filter(w => w.length > 3);
-  const allKeywords   = [...new Set([...titleKeywords, ...roleKeywords])];
+
+  // Expand interests into concrete skill/tag terms via INTEREST_TAG_MAP
+  const interestTagSet = new Set(
+    rawInterests.flatMap(i => INTEREST_TAG_MAP[i] || [i.toLowerCase()])
+  );
+  // Also keep raw interest names for direct string matches
+  const interestNames = new Set(rawInterests.map(i => i.toLowerCase()));
 
   // Fetch live jobs from Remotive + Muse (non-blocking, 6s timeout)
   let liveJobs = [];
@@ -8817,27 +9163,38 @@ app.get('/opportunities', authenticate, async (req, res) => {
   results = results.map((o) => {
     let score = 0;
     const reasons = [];
+    const oppTitleLower = o.title.toLowerCase();
+    const tagTokens     = (o.tags || []).map(t => t.toLowerCase());
+    const tagStr        = tagTokens.join(' ');
 
-    // Skill match — highest weight
-    const skillMatches = (o.tags || []).filter(t => skills.has(t.toLowerCase()));
+    // 1. Profile skills → exact tag match (highest weight; rare unless user filled skills section)
+    const skillMatches = tagTokens.filter(t => skills.has(t));
     if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
 
-    // Title/role keyword match — uses specific title first (all 500+ roles), falls back to macro
-    const oppTitleLower = o.title.toLowerCase();
-    const tagStr        = (o.tags || []).join(' ').toLowerCase();
+    // 2. Specific job title keywords → opp title / tags (strong signal from onboarding)
     const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
     const roleMatchCount  = roleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
     if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
     else if (roleMatchCount > 0) { score += roleMatchCount * 5; reasons.push('Matches your role'); }
 
-    // Role-type match
+    // 3. Interest → expanded tags (bridges "AI & Machine Learning" → "Python","LLMs","PyTorch")
+    const interestTagMatches = tagTokens.filter(t =>
+      interestTagSet.has(t) || [...interestTagSet].some(tag => t.includes(tag) || tag.includes(t))
+    ).length;
+    if (interestTagMatches > 0) { score += interestTagMatches * 3; reasons.push('Matches your interests'); }
+    // Also check raw interest names against opp title (e.g. interest "Data Science" hits "Data Scientist" title)
+    else {
+      const titleInterestMatch = [...interestNames].some(i => oppTitleLower.includes(i) || i.includes(oppTitleLower.split(' ')[0]));
+      if (titleInterestMatch) { score += 2; reasons.push('Matches your interests'); }
+    }
+
+    // 4. Goal → type boost (user said they want jobs, grants, events, etc.)
+    if (goalBoostedTypes.has(o.type)) { score += 3; reasons.push('Matches your goals'); }
+
+    // 5. Role preferred types
     if (roleTypes.has(o.type)) score += 2;
 
-    // Interest keyword match against tags
-    const interestMatches = (o.tags || []).filter(t => interests.has(t.toLowerCase()));
-    if (interestMatches.length > 0) { score += interestMatches.length * 2; reasons.push('Matches your interests'); }
-
-    // Live boost
+    // 6. Live recency bonus
     if (o.isLive) score += 1;
 
     return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
@@ -8931,11 +9288,10 @@ async function getDirectMessageSummariesFromDB(userId) {
       grouped.set(key, existing);
     });
 
-    const summaries = [];
-    for (const [conversationId, group] of grouped.entries()) {
+    const summaries = await Promise.all([...grouped.entries()].map(async ([conversationId, group]) => {
       const otherId = group.last.sender_id === userId ? group.last.receiver_id : group.last.sender_id;
       const other = await getUser(otherId);
-      summaries.push({
+      return {
         id: conversationId,
         participant: other ? sanitizeUser(other) : null,
         lastMessage: {
@@ -8944,8 +9300,8 @@ async function getDirectMessageSummariesFromDB(userId) {
           isMe: group.last.sender_id === userId,
         },
         unreadCount: group.unreadCount,
-      });
-    }
+      };
+    }));
     return summaries;
   } catch (e) {
     console.error('direct messages summary DB:', e.message);
