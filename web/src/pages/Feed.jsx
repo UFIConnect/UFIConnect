@@ -1055,7 +1055,7 @@ export default function Feed() {
 
         {/* Refresh button */}
         <button
-          onClick={() => { flushPendingRef.current(); loadFeed(true, activeTabsRef.current); }}
+          onClick={() => loadFeed(true, activeTabsRef.current)}
           disabled={refreshing}
           style={{
             display: 'flex', alignItems: 'center', gap: 5,
