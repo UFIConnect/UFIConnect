@@ -6710,6 +6710,7 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
 app.get('/feed', authenticate, async (req, res) => {
+  try {
   // Manual refresh is stale-while-revalidate: serve the best current feed now, then
   // ask the workers to refresh in the background so a slow source cannot blank a tab.
   if (req.query.bust === '1') {
@@ -7176,6 +7177,10 @@ app.get('/feed', authenticate, async (req, res) => {
       internal:     internal.length,
     },
   });
+  } catch (e) {
+    console.error('[/feed] unhandled error:', e.message || e);
+    if (!res.headersSent) res.json({ posts: [], hasMore: false, totalAvailable: 0, error: true });
+  }
 });
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──

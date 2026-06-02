@@ -91,7 +91,7 @@ export default function PublicProfile() {
 
   useEffect(() => {
     setPostsLoading(true);
-    client.get(`/users/${id}/posts`)
+    client.get(`/users/${id}/posts`, { params: { limit: 50 } })
       .then(({ data }) => setPosts(data.posts || []))
       .catch(() => setPosts([]))
       .finally(() => setPostsLoading(false));

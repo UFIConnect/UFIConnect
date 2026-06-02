@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Component } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -478,6 +478,8 @@ function PostCard({ post, onVideoOpen }) {
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentsError,   setCommentsError]   = useState(false);
 
+  if (!post || typeof post !== 'object') return null;
+
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
@@ -705,6 +707,28 @@ function PostCard({ post, onVideoOpen }) {
       )}
     </div>
   );
+}
+
+class FeedErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(err) { return { error: err }; }
+  componentDidCatch(err, info) { console.error('[Feed] render error:', err, info?.componentStack); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="empty-state">
+          <div className="empty-icon">⚠️</div>
+          <div className="empty-title">Some posts couldn't be displayed</div>
+          <div className="empty-desc">
+            <button className="btn btn-ghost btn-sm" onClick={() => this.setState({ error: null })}>
+              Try again
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function Feed() {
@@ -1326,11 +1350,13 @@ export default function Feed() {
         </div>
       ) : (
         <>
+          <FeedErrorBoundary>
           <div>
             {displayed.map(post => (
-              <PostCard key={post.id} post={post} onVideoOpen={setVideoPost} />
+              <PostCard key={post.id || String(Math.random())} post={post} onVideoOpen={setVideoPost} />
             ))}
           </div>
+          </FeedErrorBoundary>
 
           {/* Infinite scroll sentinel */}
           <div ref={sentinelRef} style={{ height: 1 }} />

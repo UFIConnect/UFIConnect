@@ -1,16 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import PostList from '../components/PostList';
 import client from '../api/client';
-
-function timeAgo(iso) {
-  const diff = (Date.now() - new Date(iso)) / 1000;
-  if (diff < 60)    return 'just now';
-  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -36,7 +28,6 @@ const COMMUNITY_ICONS = {
 
 export default function Post() {
   const { profile } = useAuth();
-  const navigate = useNavigate();
   const textareaRef = useRef(null);
 
   const [groups,   setGroups]   = useState([]);
@@ -53,9 +44,9 @@ export default function Post() {
 
   useEffect(() => {
     // Load internal communities
-    client.get('/groups')
+    client.get('/groups/internal')
       .then(({ data }) => {
-        const internal = (data.groups || []).filter(g => !g.isExternal);
+        const internal = data.groups || [];
         setGroups(internal);
         if (internal.length > 0) {
           const gen = internal.find(g => g.id === 'ufi-general');
@@ -64,12 +55,11 @@ export default function Post() {
       })
       .catch(() => {});
 
-    // Load recent community posts from the main feed (internal only)
+    // Load recent community posts without calling the full live feed.
     setFeedLoading(true);
-    client.get('/feed')
+    client.get('/posts', { params: { limit: 40 } })
       .then(({ data }) => {
-        const internalPosts = (data.posts || []).filter(p => p.source === 'uficonnect');
-        setFeed(internalPosts.slice(0, 20));
+        setFeed(data.posts || []);
       })
       .catch(() => {})
       .finally(() => setFeedLoading(false));
@@ -97,8 +87,6 @@ export default function Post() {
       setLoading(false);
     }
   }
-
-  const selectedGroup = groups.find(g => g.id === groupId);
 
   return (
     <Layout>
@@ -206,58 +194,13 @@ export default function Post() {
 
       {/* ── Community feed ── */}
       <div style={{ maxWidth: 640 }}>
-        {feedLoading ? (
-          <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading posts…</div>
-        ) : feed.length === 0 ? (
-          <div className="card" style={{ textAlign: 'center', padding: '32px 24px' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>✍️</div>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>Nothing here yet</div>
-            <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 16px' }}>
-              Be the first to post to the UFIConnect community.
-            </p>
-            <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post →</button>
-          </div>
-        ) : (
-          feed.map(post => (
-            <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
-              {/* Author row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>
-                    {post.author?.title || ''}{post.group ? ` · ${post.group.name}` : ''}
-                  </div>
-                </div>
-                <span style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
-              </div>
-
-              {/* Content */}
-              <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)' }}>
-                {post.content}
-              </p>
-
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
-                  🤍 {post.likesCount || 0}
-                </span>
-                <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
-                  💬 {post.commentsCount || 0}
-                </span>
-                {post.group && (
-                  <span style={{
-                    fontSize: '.72rem', fontWeight: 600, marginLeft: 'auto',
-                    color: 'var(--primary)', background: 'var(--primary-light)',
-                    padding: '2px 8px', borderRadius: 10,
-                  }}>
-                    {COMMUNITY_ICONS[post.group.id] || '💬'} {post.group.name}
-                  </span>
-                )}
-              </div>
-            </div>
-          ))
-        )}
+        <PostList
+          posts={feed}
+          loading={feedLoading}
+          emptyTitle="Nothing here yet"
+          emptyDesc="Be the first to post to the UFIConnect community."
+          emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
+        />
       </div>
     </Layout>
   );
