@@ -743,9 +743,9 @@ export default function Feed() {
   const [remotePage,    setRemotePage]   = useState(2);
   const [remoteHasMore, setRemoteHasMore]= useState(true);
   const [search,        setSearch]       = useState('');
+  const [searchInput,   setSearchInput]  = useState('');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [videoPost,     setVideoPost]    = useState(null);
-  const [newPostsCount, setNewPostsCount]= useState(0);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
   const [liveActive,    setLiveActive]    = useState(false);
@@ -780,6 +780,7 @@ export default function Feed() {
       silent = false,
       live = manual,
       preserveScroll = silent,
+      q = '',
     } = options || {};
     const buffered = pendingRef.current;
     // Clear any buffered SSE posts — a full load supersedes them
@@ -791,8 +792,12 @@ export default function Feed() {
     }
     try {
       const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
-      if (tabs.length === 1) params.set('source', tabs[0]);
-      else if (tabs.length > 1) params.set('sources', tabs.join(','));
+      if (q) {
+        params.set('q', q);
+      } else {
+        if (tabs.length === 1) params.set('source', tabs[0]);
+        else if (tabs.length > 1) params.set('sources', tabs.join(','));
+      }
       if (manual) {
         params.set('bust', '1');
       }
@@ -811,14 +816,10 @@ export default function Feed() {
       if (shouldMerge) {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
         const fresh = nextPosts.filter(p => p?.id && !prevIds.has(p.id)).length;
-        if (fresh > 0 || manual) setNewPostsCount(fresh);
         if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else if (manual) {
-        setNewPostsCount(0);
       }
 
       if (manual && nextPosts.length === 0 && previous.length > 0) {
-        setNewPostsCount(0);
         setLastRefresh(new Date());
         return;
       }
@@ -839,7 +840,7 @@ export default function Feed() {
 
   const toggleTab = useCallback((key) => {
     setSearch('');
-    setNewPostsCount(0);
+    setSearchInput('');
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
@@ -1080,19 +1081,35 @@ export default function Feed() {
       {/* Toolbar: search + filter + refresh */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
         {/* Search */}
-        <div style={{ flex: 1, position: 'relative' }}>
-          <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.85rem', opacity: 0.4, pointerEvents: 'none' }}>🔍</span>
-          <input
-            className="form-input"
-            placeholder="Search posts…"
-            value={search}
-            onChange={e => { setSearch(e.target.value); setNewPostsCount(0); }}
-            style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
-          />
-          {search && (
-            <button type="button" onClick={() => { setSearch(''); setNewPostsCount(0); }}
-              style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
-          )}
+        <div style={{ flex: 1, position: 'relative', display: 'flex', gap: 6 }}>
+          <div style={{ flex: 1, position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.85rem', opacity: 0.4, pointerEvents: 'none' }}>🔍</span>
+            <input
+              className="form-input"
+              placeholder="Search posts…"
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { const q = searchInput.trim(); setSearch(q); setNewPostsCount(0); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); } }}
+              style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
+            />
+            {searchInput && (
+              <button type="button" onClick={() => { setSearchInput(''); setSearch(''); setNewPostsCount(0); loadFeed(false, activeTabsRef.current); }}
+                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => { const q = searchInput.trim(); setSearch(q); setNewPostsCount(0); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); }}
+            style={{
+              padding: '9px 16px', borderRadius: 22, border: '1.5px solid var(--border)',
+              background: searchInput.trim() ? 'var(--primary)' : 'var(--surface)',
+              color: searchInput.trim() ? '#fff' : 'var(--muted)',
+              fontWeight: 600, fontSize: '.875rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+              transition: 'background .15s, color .15s',
+            }}
+          >
+            Search
+          </button>
         </div>
 
         {/* Filter button */}
@@ -1246,7 +1263,7 @@ export default function Feed() {
           })}
 
           <button
-            onClick={() => { setActiveTabs([]); activeTabsRef.current = []; setFilters({ sort: 'newest', sources: [], timeRange: 'all' }); loadFeed(false, []); }}
+            onClick={() => { setActiveTabs([]); activeTabsRef.current = []; setFilters({ sort: 'newest', sources: [], timeRange: 'all' }); setSearch(''); setSearchInput(''); loadFeed(false, []); }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.75rem', fontWeight: 600, padding: '2px 4px', textDecoration: 'underline' }}
           >
             Clear all
@@ -1272,20 +1289,6 @@ export default function Feed() {
             style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#92400E', fontSize: '.9rem', opacity: 0.7, padding: '0 2px' }}
             aria-label="Dismiss"
           >×</button>
-        </div>
-      )}
-
-      {/* New-posts banner — shown after manual refresh */}
-      {newPostsCount > 0 && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
-          padding: '8px 14px', borderRadius: 12,
-          background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
-          fontSize: '.8rem', fontWeight: 600, color: 'var(--primary)',
-        }}>
-          <span>✨</span>
-          <span>{newPostsCount} new post{newPostsCount !== 1 ? 's' : ''} loaded</span>
-          <button onClick={() => setNewPostsCount(0)} style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.9rem' }}>×</button>
         </div>
       )}
 

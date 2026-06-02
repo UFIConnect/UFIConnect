@@ -6743,6 +6743,39 @@ app.get('/feed', authenticate, async (req, res) => {
     1
   );
 
+  // ── Full-text search across all sources ──────────────────────────────────
+  const searchQuery = (req.query.q || '').trim().toLowerCase();
+  if (searchQuery) {
+    const allCached = dedupeAndSortFeedPosts([
+      ...globalFeedCache.posts,
+      ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
+    ]);
+    const memMatches = allCached.filter(p => {
+      const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
+      return text.includes(searchQuery);
+    });
+    let dbMatches = [];
+    if (db.isConnected()) {
+      try {
+        const { rows } = await db.query(
+          `SELECT * FROM feed_posts_cache
+           WHERE title ILIKE $1 OR content ILIKE $1
+           ORDER BY post_created_at DESC, likes_count DESC
+           LIMIT $2`,
+          [`%${searchQuery}%`, feedLimit * 3]
+        );
+        dbMatches = rows.map(r => ({
+          id: r.id, source: r.source, title: r.title, content: r.content,
+          sourceUrl: r.source_url, mediaUrl: r.media_url, mediaType: r.media_type,
+          topic: r.topic, likesCount: r.likes_count, commentsCount: r.comments_count,
+          createdAt: r.post_created_at, author: { name: r.author_name }, isExternal: true,
+        }));
+      } catch {}
+    }
+    const merged = dedupeAndSortFeedPosts([...memMatches, ...dbMatches]);
+    return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery });
+  }
+
   // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
   const reqPage = parseInt(req.query.page || '1', 10);
   if (reqPage > 1) {
