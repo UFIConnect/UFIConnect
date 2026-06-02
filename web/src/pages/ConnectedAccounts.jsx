@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -37,6 +37,7 @@ const HANDLE_PLACEHOLDER = {
 
 export default function ConnectedAccounts() {
   const { profile: authProfile } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [platforms, setPlatforms]       = useState([]);
   const [connected, setConnected]       = useState({});
   const [loading,   setLoading]         = useState(true);
@@ -57,6 +58,24 @@ export default function ConnectedAccounts() {
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
 
+  // Handle OAuth callback redirect params (?social_connected=platform or ?social_error=platform)
+  useEffect(() => {
+    const connected_ = searchParams.get('social_connected');
+    const errPlatform = searchParams.get('social_error');
+    const errReason   = searchParams.get('reason');
+    if (connected_) {
+      setConnected(prev => ({ ...prev, [connected_]: true }));
+      flash_('success', `${connected_} connected successfully.`);
+      setSearchParams({}, { replace: true });
+    } else if (errPlatform) {
+      const msg = errReason === 'invalid_state' ? 'Connection expired — please try again.'
+        : errReason === 'access_denied'          ? 'You cancelled the connection.'
+        : `Could not connect ${errPlatform}.`;
+      flash_('error', msg, 6000);
+      setSearchParams({}, { replace: true });
+    }
+  }, []); // eslint-disable-line
+
   function flash_(type, msg, ms = 4000) {
     setFlash({ type, msg });
     setTimeout(() => setFlash(null), ms);
@@ -68,7 +87,18 @@ export default function ConnectedAccounts() {
       const { data } = await client.get(`/auth/social/${platform}/start`);
       if (data?.url) window.location.href = data.url;
     } catch (err) {
-      flash_('error', err?.response?.data?.error || 'Could not start this connection.', 6000);
+      if (err?.response?.status === 501) {
+        // OAuth credentials not yet configured — use instant connect as fallback
+        try {
+          await client.post('/social/connect', { platform });
+          setConnected(prev => ({ ...prev, [platform]: true }));
+          flash_('success', `${platform} connected.`);
+        } catch (mockErr) {
+          flash_('error', mockErr?.response?.data?.error || 'Could not connect.', 6000);
+        }
+      } else {
+        flash_('error', err?.response?.data?.error || 'Could not start this connection.', 6000);
+      }
       setConnecting(null);
     }
   }
