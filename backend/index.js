@@ -6912,13 +6912,18 @@ app.get('/feed', authenticate, async (req, res) => {
   // ── Multi-source: merge posts from each requested source ────────────────────
   if (sourcesParam.length > 1) {
     const allSourcePosts = [];
+    const liveSourcePostsForCache = [];
     for (const src of sourcesParam) {
       const agentKey = feedWorkerKey(src);
+      const liveRaw = shouldFetchLive ? (liveResult[agentKey] || []) : [];
+      const livePosts = liveRaw.map(p => mapExternalPost(p, src));
       const workerPosts  = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, src));
       const globalPosts  = globalFeedCache.posts.filter(p => p.source === src).map(p => mapExternalPost(p, src));
       const curated      = buildCuratedSourcePosts(src);
-      allSourcePosts.push(...workerPosts, ...globalPosts, ...curated);
+      liveSourcePostsForCache.push(...liveRaw);
+      allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts, ...curated);
     }
+    if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
     const dbRows = sourcesParam.length > 0
       ? await getPostsFromDB([], feedLimit + 1, 0, null).then(rows => rows.filter(r => sourcesParam.includes(r.source)))
       : [];
@@ -6932,6 +6937,11 @@ app.get('/feed', authenticate, async (req, res) => {
       sources: sourcesParam,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
+      refresh: {
+        live: shouldFetchLive,
+        liveCount: liveSourcePostsForCache.length,
+        cacheRefreshedAt: globalFeedCache.refreshedAt || null,
+      },
     });
   }
 
@@ -6944,10 +6954,11 @@ app.get('/feed', authenticate, async (req, res) => {
       .filter(p => p.source === sourceFilter)
       .map(p => mapExternalPost(p, sourceFilter));
     const curatedSourcePosts = buildCuratedSourcePosts(sourceFilter);
-    const livePosts   = (liveResult[agentKey] || []).map(p => mapExternalPost(p, sourceFilter));
+    const liveRaw     = liveResult[agentKey] || [];
+    const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
     const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
-    savePostsToDB(livePosts).catch(() => {});
+    if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
     const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts], `source-tab-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
@@ -6958,6 +6969,11 @@ app.get('/feed', authenticate, async (req, res) => {
       source: sourceFilter,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
+      refresh: {
+        live: shouldFetchLive,
+        liveCount: liveRaw.length,
+        cacheRefreshedAt: globalFeedCache.refreshedAt || null,
+      },
     });
   }
 
@@ -6981,7 +6997,7 @@ app.get('/feed', authenticate, async (req, res) => {
     ...arsRaw, ...wiredRaw, ...regRaw, ...vbRaw, ...smashingRaw, ...phoronixRaw, ...infoqRaw, ...mittrRaw,
     ...gitlabRaw, ...remoteokRaw, ...ycRaw, ...crunchbaseRaw, ...behanceRaw, ...designwebRaw,
   ];
-  savePostsToDB(allLive).catch(() => {});
+  const liveFreshCount = shouldFetchLive && allLive.length ? addAndBroadcast(allLive) : 0;
 
   // Fetch live posts from all joined Reddit groups only for explicit live requests.
   const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
@@ -7173,6 +7189,12 @@ app.get('/feed', authenticate, async (req, res) => {
     posts: responsePosts,
     hasMore: all.length > responsePosts.length,
     totalAvailable: all.length,
+    refresh: {
+      live: shouldFetchLive,
+      liveCount: allLive.length,
+      freshCount: liveFreshCount,
+      cacheRefreshedAt: globalFeedCache.refreshedAt || null,
+    },
     sources: {
       reddit:        redditPosts.length,
       github:        githubPosts.length,

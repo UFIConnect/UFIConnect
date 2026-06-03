@@ -22,6 +22,7 @@ const PLATFORM_BENEFITS = {
 };
 
 const HANDLE_PLATFORMS = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
 
 const HANDLE_PLACEHOLDER = {
   github:   'your-github-username',
@@ -85,22 +86,22 @@ export default function ConnectedAccounts() {
     setConnecting(platform);
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);
-      if (data?.url) window.location.href = data.url;
+      if (data?.url) { window.location.href = data.url; return; }
     } catch (err) {
       if (err?.response?.status === 501) {
-        // OAuth credentials not yet configured — use instant connect as fallback
+        // Handle-based platforms — instant mock connect; handle is optional afterwards
         try {
           await client.post('/social/connect', { platform });
           setConnected(prev => ({ ...prev, [platform]: true }));
-          flash_('success', `${platform} connected.`);
+          flash_('success', `${platform} connected. You can add your username in the Details panel.`);
         } catch (mockErr) {
           flash_('error', mockErr?.response?.data?.error || 'Could not connect.', 6000);
         }
       } else {
         flash_('error', err?.response?.data?.error || 'Could not start this connection.', 6000);
       }
-      setConnecting(null);
     }
+    setConnecting(null);
   }
 
   async function handleDisconnect(platform) {
@@ -132,8 +133,9 @@ export default function ConnectedAccounts() {
     }
   }
 
-  const connectedList = platforms.filter(([k]) => connected[k]);
-  const availableList = platforms.filter(([k]) => !connected[k]);
+  const connectedList  = platforms.filter(([k]) =>  connected[k]);
+  const readyList      = platforms.filter(([k]) => !connected[k] && !SOCIAL_OAUTH_ONLY.has(k));
+  const comingSoonList = platforms.filter(([k]) => !connected[k] &&  SOCIAL_OAUTH_ONLY.has(k));
 
   return (
     <Layout>
@@ -146,7 +148,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Connect your social accounts to personalise your feed. Handle-based platforms connect instantly — OAuth platforms redirect you to the app and back.
+          Connect your social accounts to personalise your feed. Handle-based platforms connect instantly — full OAuth for LinkedIn, Twitter and others is coming soon.
         </p>
       </div>
 
@@ -159,9 +161,9 @@ export default function ConnectedAccounts() {
           {flash && (
             <div style={{
               marginBottom: 16, padding: '10px 14px', borderRadius: 8, fontSize: '.85rem', fontWeight: 600,
-              background: flash.type === 'success' ? '#ECFDF5' : '#FEF2F2',
-              color: flash.type === 'success' ? '#059669' : '#DC2626',
-              border: `1px solid ${flash.type === 'success' ? '#A7F3D0' : '#FECACA'}`,
+              background: flash.type === 'success' ? '#ECFDF5' : flash.type === 'info' ? '#EFF6FF' : '#FEF2F2',
+              color:      flash.type === 'success' ? '#059669' : flash.type === 'info' ? '#2563EB' : '#DC2626',
+              border: `1px solid ${flash.type === 'success' ? '#A7F3D0' : flash.type === 'info' ? '#BFDBFE' : '#FECACA'}`,
             }}>
               {flash.msg}
             </div>
@@ -228,13 +230,13 @@ export default function ConnectedAccounts() {
             </div>
           )}
 
-          {/* Available section */}
-          {availableList.length > 0 && (
-            <div>
+          {/* Available to connect */}
+          {readyList.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
                 Available to Connect
               </div>
-              {availableList.map(([key, p]) => (
+              {readyList.map(([key, p]) => (
                 <PlatformCard
                   key={key}
                   platformKey={key}
@@ -243,16 +245,36 @@ export default function ConnectedAccounts() {
                   handle={null}
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
-                  disconnecting={disconnecting === key}
                   isHandlePlatform={HANDLE_PLATFORMS.has(key)}
                   handleInput={handleInputs[key] || ''}
                   onHandleChange={v => setHandleInputs(prev => ({ ...prev, [key]: v }))}
                   onHandleSave={() => saveHandle(key)}
                   savingHandle={savingHandle === key}
                   placeholder={HANDLE_PLACEHOLDER[key] || 'your-username'}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Coming soon — OAuth not yet configured */}
+          {comingSoonList.length > 0 && (
+            <div>
+              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
+                Coming Soon
+              </div>
+              {comingSoonList.map(([key, p]) => (
+                <PlatformCard
+                  key={key}
+                  platformKey={key}
+                  p={p}
+                  isConnected={false}
+                  handle={null}
+                  expanded={expanded === key}
+                  onToggle={() => setExpanded(expanded === key ? null : key)}
+                  comingSoon
+                  isHandlePlatform={false}
                 />
               ))}
             </div>
@@ -267,11 +289,12 @@ function PlatformCard({
   platformKey, p, isConnected, handle, expanded, onToggle,
   onDisconnect, onConnect, connecting, disconnecting,
   isHandlePlatform, handleInput, onHandleChange, onHandleSave, savingHandle, placeholder,
+  comingSoon = false,
 }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px', opacity: comingSoon ? 0.72 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {/* Platform icon */}
         <div style={{
@@ -296,6 +319,15 @@ function PlatformCard({
                 ✓ {handle ? `@${handle}` : 'Connected'}
               </span>
             )}
+            {comingSoon && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 700, color: '#6B7280',
+                background: 'var(--bg-secondary)', padding: '1px 7px', borderRadius: 4,
+                border: '1px solid var(--border)',
+              }}>
+                Coming Soon
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
@@ -307,13 +339,13 @@ function PlatformCard({
           <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
-          {isConnected ? (
+          {comingSoon ? (
+            <button className="btn btn-sm" disabled style={{ color: 'var(--muted)', borderColor: 'var(--border)', background: 'var(--bg-secondary)', cursor: 'not-allowed', minWidth: 90 }}>
+              Coming Soon
+            </button>
+          ) : isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
-            </button>
-          ) : isHandlePlatform ? (
-            <button className="btn btn-sm btn-outline" onClick={onToggle} style={{ borderColor: p.color, color: p.color }}>
-              Connect
             </button>
           ) : (
             <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
@@ -323,63 +355,51 @@ function PlatformCard({
         </div>
       </div>
 
-      {/* Handle input — shown inline when expanded for handle platforms not yet connected */}
-      {expanded && isHandlePlatform && !isConnected && (
+      {/* Expanded details */}
+      {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '.78rem', fontWeight: 600, marginBottom: 8 }}>
-            Enter your {p.name} username
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
-              className="input"
-              value={handleInput}
-              onChange={e => onHandleChange(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && onHandleSave()}
-              placeholder={placeholder}
-              style={{ flex: 1, fontSize: '.85rem' }}
-              autoFocus
-            />
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={onHandleSave}
-              disabled={savingHandle || !handleInput.trim()}
-            >
-              {savingHandle ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Save'}
-            </button>
-          </div>
-        </div>
-      )}
+          {/* Optional handle input shown after connecting (handle platforms only) */}
+          {isConnected && isHandlePlatform && (
+            <div style={{ marginBottom: benefits.length ? 14 : 0 }}>
+              <div style={{ fontSize: '.78rem', fontWeight: 600, marginBottom: 8 }}>
+                {handle ? 'Update your username' : 'Add your username (optional)'}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  className="input"
+                  value={handleInput}
+                  onChange={e => onHandleChange(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && onHandleSave()}
+                  placeholder={placeholder}
+                  style={{ flex: 1, fontSize: '.85rem' }}
+                />
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={onHandleSave}
+                  disabled={savingHandle || !handleInput.trim()}
+                >
+                  {savingHandle ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Save'}
+                </button>
+              </div>
+            </div>
+          )}
 
-      {/* Benefits */}
-      {expanded && (benefits.length > 0) && (isConnected || !isHandlePlatform) && (
-        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-          <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
-            What you unlock
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
-            {benefits.map((b, i) => (
-              <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
-                <span style={{ color: p.color }}>✦</span> {b}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Benefits after handle input when expanded (show both) */}
-      {expanded && isHandlePlatform && !isConnected && benefits.length > 0 && (
-        <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
-            What you unlock
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
-            {benefits.map((b, i) => (
-              <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
-                <span style={{ color: p.color }}>✦</span> {b}
-              </li>
-            ))}
-          </ul>
+          {/* Benefits */}
+          {benefits.length > 0 && (
+            <>
+              <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                What you unlock
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
+                {benefits.map((b, i) => (
+                  <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
+                    <span style={{ color: p.color }}>✦</span> {b}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </div>

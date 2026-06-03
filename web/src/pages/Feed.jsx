@@ -758,22 +758,6 @@ export default function Feed() {
   const activeTabsRef = useRef([]);
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
-  const pendingRef    = useRef([]);   // SSE posts buffered until user loads them
-  const flushTimerRef = useRef(null); // 2-minute auto-flush timer
-  // Updated each render so the SSE closure always calls the current version
-  const flushPendingRef = useRef(null);
-  flushPendingRef.current = () => {
-    if (!pendingRef.current.length) return;
-    clearTimeout(flushTimerRef.current);
-    const buffered = pendingRef.current;
-    setPosts(prev => {
-      const next = mergeFeedPosts([...buffered, ...prev]);
-      knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
-      return next;
-    });
-    pendingRef.current = [];
-    setLastRefresh(new Date());
-  };
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
     const {
@@ -782,10 +766,6 @@ export default function Feed() {
       preserveScroll = silent,
       q = '',
     } = options || {};
-    const buffered = pendingRef.current;
-    // Clear any buffered SSE posts — a full load supersedes them
-    clearTimeout(flushTimerRef.current);
-    pendingRef.current = [];
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
@@ -801,16 +781,16 @@ export default function Feed() {
       if (manual) {
         params.set('bust', '1');
       }
-      if (live || manual || buffered.length > 0) {
+      if (live || manual) {
         params.set('live', '1');
       }
       const url = `/feed?${params.toString()}`;
       const { data } = await client.get(url);
       const incoming = data.posts || [];
       const previous = postsRef.current;
-      const shouldMerge = manual || live || buffered.length > 0;
+      const shouldMerge = manual || live;
       const nextPosts = shouldMerge
-        ? mergeFeedPosts([...buffered, ...incoming, ...previous])
+        ? mergeFeedPosts([...incoming, ...previous])
         : mergeFeedPosts(incoming);
 
       if (shouldMerge) {
@@ -921,27 +901,18 @@ export default function Feed() {
         const tabs = activeTabsRef.current;
         const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
         if (!tabFresh.length) return;
-        // Community posts (user-authored) appear immediately.
-        // External posts are buffered and merged on the next auto/manual refresh.
-        const communityPosts = tabFresh.filter(p => p.source === 'uficonnect');
-        const externalPosts  = tabFresh.filter(p => p.source !== 'uficonnect');
-        if (communityPosts.length) {
-          setPosts(prev => {
-            const next = mergeFeedPosts([...communityPosts, ...prev]);
-            knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
-            return next;
-          });
-          setLastRefresh(new Date());
-        }
-        if (externalPosts.length) {
-          pendingRef.current = [...externalPosts, ...pendingRef.current].slice(0, 200);
-        }
+        setPosts(prev => {
+          const next = mergeFeedPosts([...tabFresh, ...prev]);
+          knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
+          return next;
+        });
+        setLastRefresh(new Date());
       } catch {}
     };
 
     es.onerror = () => { setLiveActive(false); };
 
-    return () => { es.close(); setLiveActive(false); clearTimeout(flushTimerRef.current); };
+    return () => { es.close(); setLiveActive(false); };
   }, []);
 
   // Time range cutoff helper
@@ -970,12 +941,12 @@ export default function Feed() {
       );
     }
 
-    // Source filter — skip when a search is active (backend returns cross-source results)
-    if (!search && activeTabs.length > 0) {
+    // Source filter
+    if (activeTabs.length > 0) {
       result = result.filter(p => activeTabs.includes(p.source));
     }
 
-    if (!search && filters.sources.length > 0) {
+    if (filters.sources.length > 0) {
       result = result.filter(p => filters.sources.includes(p.source));
     }
 
@@ -1100,17 +1071,17 @@ export default function Feed() {
               placeholder="Search posts…"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { const q = searchInput.trim(); setSearch(q); setNewPostsCount(0); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); } }}
+              onKeyDown={e => { if (e.key === 'Enter') { const q = searchInput.trim(); setSearch(q); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); } }}
               style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
             />
             {searchInput && (
-              <button type="button" onClick={() => { setSearchInput(''); setSearch(''); setNewPostsCount(0); loadFeed(false, activeTabsRef.current); }}
+              <button type="button" onClick={() => { setSearchInput(''); setSearch(''); loadFeed(false, activeTabsRef.current); }}
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
             )}
           </div>
           <button
             type="button"
-            onClick={() => { const q = searchInput.trim(); setSearch(q); setNewPostsCount(0); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); }}
+            onClick={() => { const q = searchInput.trim(); setSearch(q); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); }}
             style={{
               padding: '9px 16px', borderRadius: 22, border: '1.5px solid var(--border)',
               background: searchInput.trim() ? 'var(--primary)' : 'var(--surface)',
