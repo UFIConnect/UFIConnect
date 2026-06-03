@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
+const PUBLIC_API_URL = import.meta.env.VITE_API_URL || 'https://api.uficonnect.org';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -322,10 +323,10 @@ function DeployView({ triggerDeploy, deploying, log }) {
       slug: 'api',
       name: 'Backend API',
       desc: 'Node.js Express — REST API + agent system',
-      url: 'https://uficonnect-api.onrender.com',
-      health: 'https://uficonnect-api.onrender.com/health',
+      url: PUBLIC_API_URL,
+      health: `${PUBLIC_API_URL.replace(/\/$/, '')}/health`,
       icon: '⚙️',
-      hook: 'RENDER_HOOK_API',
+      hook: 'RAILWAY_TOKEN',
     },
     {
       slug: 'web',
@@ -333,15 +334,15 @@ function DeployView({ triggerDeploy, deploying, log }) {
       desc: 'React SPA — main user-facing app',
       url: 'https://uficonnect.org',
       icon: '🌐',
-      hook: 'RENDER_HOOK_WEB',
+      hook: 'GitHub Pages',
     },
     {
       slug: 'office',
       name: 'Office',
       desc: 'This dashboard — operations & monitoring',
-      url: 'https://office.uficonnect.org',
+      url: 'https://yosufkaka99-alt.github.io/proconnect/office/',
       icon: '🏢',
-      hook: 'RENDER_HOOK_OFFICE',
+      hook: 'GitHub Pages',
     },
   ];
 
@@ -385,13 +386,13 @@ function DeployView({ triggerDeploy, deploying, log }) {
           Auto-Deploy is Active
         </div>
         <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.8 }}>
-          Every push to <code style={CODE}>main</code> automatically triggers a rebuild and deploy via Render's GitHub integration — typically live within 2–3 minutes.
+          Every push to <code style={CODE}>main</code> deploys the API to Railway and publishes web + office to GitHub Pages.
           <br />
-          For the <em>Deploy Now</em> buttons to work, add deploy hooks or Render API credentials to the backend env vars:
+          For API deploys, add a Railway project token to GitHub Actions:
           <br />
-          <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code>
+          <code style={CODE}>RAILWAY_TOKEN</code>
           <br />
-          Find your deploy hooks under each service → <em>Settings → Deploy Hook</em> in the Render dashboard.
+          Auth0 remains the login provider; hosting runs through Railway and GitHub Pages.
         </div>
       </Card>
 
@@ -506,11 +507,11 @@ function VersionsView({ versions }) {
           <li>Make your code changes locally in the repo</li>
           <li>Commit: <code style={CODE}>git commit -m "your change"</code></li>
           <li>Push: <code style={CODE}>git push origin main</code></li>
-          <li>Render detects the push and auto-deploys within ~2 minutes</li>
+          <li>Railway deploys the API and GitHub Pages publishes the static apps</li>
           <li>Or use the Deploy Center tab for an instant manual redeploy</li>
         </ol>
         <div style={{ marginTop: 12, fontSize: 11, color: '#334155' }}>
-          Each service (API, Web, Office) has its own Render build — pushing once redeploys all three simultaneously.
+          The API is deployed through Railway; web and office are published together to GitHub Pages.
         </div>
       </Card>
     </>
@@ -810,7 +811,7 @@ export default function App() {
               uficonnect.org ↗
             </a>
             <a
-              href="https://uficonnect-api.onrender.com/health"
+              href={`${PUBLIC_API_URL.replace(/\/$/, '')}/health`}
               target="_blank"
               rel="noreferrer"
               style={{ fontSize: 10, color: '#334155', display: 'block' }}

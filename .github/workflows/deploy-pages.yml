@@ -1,18 +1,22 @@
-name: Deploy Agent Office to GitHub Pages
+name: Deploy Web and Office to GitHub Pages
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:   # lets you trigger manually from the GitHub Actions tab
+  workflow_dispatch:
 
 permissions:
-  contents: write      # needed to push to gh-pages branch
+  contents: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
       NODE_OPTIONS: --max-old-space-size=6144
+      VITE_API_URL: ${{ vars.VITE_API_URL || 'https://api.uficonnect.org' }}
+      VITE_AUTH0_DOMAIN: ${{ vars.VITE_AUTH0_DOMAIN }}
+      VITE_AUTH0_CLIENT_ID: ${{ vars.VITE_AUTH0_CLIENT_ID }}
+      VITE_AUTH0_AUDIENCE: ${{ vars.VITE_AUTH0_AUDIENCE }}
 
     steps:
       - name: Checkout
@@ -23,19 +27,37 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install web dependencies
         run: npm install
         working-directory: web
 
-      - name: Build (GitHub Pages base path)
+      - name: Build web
         run: npm run build
         working-directory: web
         env:
           GH_PAGES: "true"
 
+      - name: Install office dependencies
+        run: npm install
+        working-directory: office
+
+      - name: Build office
+        run: npm run build
+        working-directory: office
+        env:
+          GH_PAGES: "true"
+
+      - name: Assemble Pages artifact
+        run: |
+          mkdir -p public_dist/office
+          cp -R web/dist/. public_dist/
+          cp -R office/dist/. public_dist/office/
+          cp web/public/404.html public_dist/404.html
+          touch public_dist/.nojekyll
+
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./web/dist
-          commit_message: "🤖 Deploy agent office to GitHub Pages"
+          publish_dir: ./public_dist
+          commit_message: "Deploy web and office to GitHub Pages"

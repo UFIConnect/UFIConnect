@@ -943,7 +943,7 @@ export default function AgentDashboard() {
 
   const sessionTime = `${String(Math.floor(sessionSeconds / 60)).padStart(2, '0')}:${String(sessionSeconds % 60).padStart(2, '0')}`;
 
-  /* ── Render ────────────────────────────────────────────────────────────────── */
+  /* ── Runtime view ───────────────────────────────────────────────────────────── */
 
   const techAgents   = SOURCE_AGENTS.filter(a => !a.needsAuth);
   const socialAgents = SOURCE_AGENTS.filter(a => a.needsAuth);

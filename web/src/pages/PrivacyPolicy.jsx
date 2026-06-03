@@ -153,7 +153,7 @@ export default function PrivacyPolicy() {
         <Section title="6. Data sharing">
           <P>We share data only in the following limited circumstances:</P>
           <UL items={[
-            'Service providers: our hosting provider (Render) and database (PostgreSQL on Render) process data to operate the platform. They are contractually bound to keep it confidential.',
+            'Service providers: our hosting providers (Railway and GitHub Pages) and database provider process data to operate the platform. They are contractually bound to keep it confidential.',
             'Legal requirements: if required by law, court order, or to protect our rights and users\' safety.',
             'Business transfer: if UFIConnect is acquired or merges, data may transfer to the new entity under the same policy.',
           ]} />

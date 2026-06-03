@@ -3437,8 +3437,8 @@ const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIM
 const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
-const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
-const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api.onrender.com';
+const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://yosufkaka99-alt.github.io/proconnect/office/';
+const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://api.uficonnect.org';
 const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
 const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
 const WEB_STORAGE_BATCH_LIMIT = envNumber('WEB_STORAGE_BATCH_LIMIT', 2500, 100, 15000);
@@ -4547,9 +4547,9 @@ async function runDeployCheck() {
 }
 async function runDeployCheckAll() {
   const targets = [
-    { name: 'API',    url: 'https://uficonnect-api.onrender.com/health' },
+    { name: 'API',    url: WEB_OPTIMIZER_API_URL.replace(/\/$/, '') + '/health' },
     { name: 'Web',    url: 'https://uficonnect.org' },
-    { name: 'Office', url: 'https://office.uficonnect.org' },
+    { name: 'Office', url: WEB_OPTIMIZER_OFFICE_URL },
   ];
   for (const target of targets) {
     const start = Date.now();
@@ -8343,7 +8343,93 @@ app.post('/office/agents/:id/trigger', (req, res) => {
   res.json({ ok: true, triggered: req.params.id });
 });
 
-// Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
+// Trigger deployment workflows without depending on Render.
+function requestDeploymentProvider(options, body = null) {
+  return new Promise((resolve, reject) => {
+    const request = https.request(options, (response) => {
+      let raw = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { raw += chunk; });
+      response.on('end', () => {
+        let data = raw;
+        try { data = raw ? JSON.parse(raw) : null; } catch {}
+        resolve({ statusCode: response.statusCode || 0, data });
+      });
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('Deployment request timed out')));
+    request.on('error', reject);
+    if (body) request.write(JSON.stringify(body));
+    request.end();
+  });
+}
+
+async function triggerGithubDeployWorkflow(service) {
+  const token = process.env.GITHUB_DEPLOY_TOKEN || process.env.GH_DEPLOY_TOKEN;
+  const repo = process.env.GITHUB_DEPLOY_REPO || 'yosufkaka99-alt/proconnect';
+  if (!token || !repo.includes('/')) return null;
+  const workflows = {
+    api: 'deploy-railway-api.yml',
+    web: 'deploy-pages.yml',
+    office: 'deploy-pages.yml',
+  };
+  const workflow = workflows[service];
+  if (!workflow) return null;
+  const [owner, name] = repo.split('/');
+  return {
+    method: 'github-actions',
+    workflow,
+    ...(await requestDeploymentProvider({
+      method: 'POST',
+      hostname: 'api.github.com',
+      path: `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'UFIConnect-Office/1.0',
+      },
+    }, { ref: process.env.GITHUB_DEPLOY_REF || 'main' })),
+  };
+}
+
+app.post('/office/deploy/:service', async (req, res) => {
+  const service = req.params.service;
+  if (!['api', 'web', 'office'].includes(service)) {
+    return res.status(404).json({ ok: false, msg: `Unknown deploy service "${service}"` });
+  }
+
+  try {
+    const result = await triggerGithubDeployWorkflow(service);
+    if (!result) {
+      logAgentAction('deploy', 'WARN',
+        `Manual deploy for "${service}" needs GITHUB_DEPLOY_TOKEN with workflow dispatch access`, '#FBBF24');
+      return res.json({
+        ok: false,
+        msg: 'No deploy config - set GITHUB_DEPLOY_TOKEN and optional GITHUB_DEPLOY_REPO',
+      });
+    }
+
+    const ok = result.statusCode === 204 || (result.statusCode >= 200 && result.statusCode < 300);
+    logAgentAction('deploy',
+      ok ? 'OK' : 'FAIL',
+      `Deploy "${service}" via ${result.workflow}: HTTP ${result.statusCode}`,
+      ok ? '#4ADE80' : '#F87171'
+    );
+    return res.status(ok ? 200 : 502).json({
+      ok,
+      service,
+      method: result.method,
+      workflow: result.workflow,
+      statusCode: result.statusCode,
+    });
+  } catch (e) {
+    logAgentAction('deploy', 'FAIL', `Deploy "${service}" failed: ${e.message}`, '#F87171');
+    return res.status(502).json({ ok: false, service, msg: e.message });
+  }
+});
+
+// Legacy Render deploy hooks retained under explicit legacy routes only.
 function requestRenderDeploy(options, body = null) {
   return new Promise((resolve, reject) => {
     const request = https.request(options, (response) => {
@@ -8401,7 +8487,7 @@ async function triggerRenderServiceDeploy(service, hook) {
   };
 }
 
-app.post('/office/deploy/:service', async (req, res) => {
+app.post('/office/deploy-render/:service', async (req, res) => {
   const service = req.params.service;
   if (!['api', 'web', 'office'].includes(service)) {
     return res.status(404).json({ ok: false, msg: `Unknown deploy service "${service}"` });
@@ -8445,7 +8531,7 @@ app.post('/office/deploy/:service', async (req, res) => {
   }
 });
 
-app.post('/office/deploy-legacy/:service', (req, res) => {
+app.post('/office/deploy-render-legacy/:service', (req, res) => {
   const hooks = {
     api:    process.env.RENDER_HOOK_API,
     web:    process.env.RENDER_HOOK_WEB,
@@ -8471,12 +8557,15 @@ app.post('/office/deploy-legacy/:service', (req, res) => {
 
 app.get('/office/versions', (req, res) => {
   const pkg = require('./package.json');
+  const apiUrl = WEB_OPTIMIZER_API_URL.replace(/\/$/, '');
+  const webUrl = WEB_OPTIMIZER_URL.replace(/\/$/, '');
+  const officeUrl = WEB_OPTIMIZER_OFFICE_URL.replace(/\/$/, '');
   res.json({
     backend: { version: pkg.version, name: pkg.name, node: process.version },
     services: [
-      { name: 'Backend API',  slug: 'api',    url: 'https://uficonnect-api.onrender.com', domain: 'uficonnect-api.onrender.com' },
-      { name: 'Web Frontend', slug: 'web',    url: 'https://uficonnect.org',              domain: 'uficonnect.org' },
-      { name: 'Office',       slug: 'office', url: 'https://office.uficonnect.org',        domain: 'office.uficonnect.org' },
+      { name: 'Backend API',  slug: 'api',    url: apiUrl,    domain: new URL(apiUrl).hostname },
+      { name: 'Web Frontend', slug: 'web',    url: webUrl,    domain: new URL(webUrl).hostname },
+      { name: 'Office',       slug: 'office', url: officeUrl, domain: new URL(officeUrl).hostname },
     ],
   });
 });
