@@ -31,6 +31,13 @@ services:
         value: https://uficonnect-api.onrender.com
       - key: FRONTEND_URL
         value: https://uficonnect.org
+      # Auth0 API verifier. AUTH0_AUDIENCE must match the API Identifier in Auth0.
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: AUTH0_ISSUER
+        sync: false
       # Manual deploy triggers for the Office Deploy Center.
       # Use either service deploy hook URLs or RENDER_API_KEY with service IDs.
       - key: RENDER_HOOK_API
@@ -122,6 +129,12 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
+      - key: VITE_AUTH0_DOMAIN
+        sync: false
+      - key: VITE_AUTH0_CLIENT_ID
+        sync: false
+      - key: VITE_AUTH0_AUDIENCE
+        sync: false
       - key: NODE_OPTIONS
         value: --max-old-space-size=6144
 

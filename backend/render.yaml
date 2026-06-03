@@ -15,6 +15,12 @@ services:
         generateValue: true
       - key: PORT
         value: 10000
+      - key: AUTH0_DOMAIN
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: AUTH0_ISSUER
+        sync: false
       - key: RENDER_HOOK_API
         sync: false
       - key: RENDER_HOOK_WEB

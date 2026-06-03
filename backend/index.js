@@ -33,6 +33,15 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() 
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
+const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
+  .replace(/^https?:\/\//, '')
+  .replace(/\/+$/, '');
+const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE || '';
+const AUTH0_ISSUER = (process.env.AUTH0_ISSUER || (AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}/` : ''))
+  .replace(/\/?$/, '/');
+const auth0Enabled = Boolean(AUTH0_DOMAIN && AUTH0_AUDIENCE && AUTH0_ISSUER);
+let auth0Jwks = null;
+const joseModulePromise = import('jose');
 
 // ─── Time helpers ─────────────────────────────────────────────────────────────
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
@@ -5770,6 +5779,8 @@ function fullProfile(user) {
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
     bio: user.bio, skills: user.skills, organization: user.organization,
+    avatarUrl: user.avatarUrl || '',
+    authProvider: user.authProvider || 'local',
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
     profileHidden: false,
     preferences: user.preferences,
@@ -5794,6 +5805,9 @@ function dbRowToMemUser(row) {
     name: row.name,
     email: row.email,
     passwordHash: row.password_hash,
+    authProvider: row.auth_provider || 'local',
+    authSubject: row.auth_subject || null,
+    avatarUrl: row.avatar_url || '',
     title: row.title || '',
     bio: row.bio || '',
     skills: row.skills || [],
@@ -5834,11 +5848,114 @@ async function fetchAndSyncUserByEmail(email) {
   } catch (err) { console.error('fetchAndSyncUserByEmail:', err.message); return null; }
 }
 
+async function fetchAndSyncUserByAuthSubject(provider, subject) {
+  if (!db.isConnected() || !provider || !subject) return null;
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM users WHERE auth_provider=$1 AND auth_subject=$2 LIMIT 1',
+      [provider, subject]
+    );
+    if (!rows[0]) return null;
+    return syncToMemory(dbRowToMemUser(rows[0]));
+  } catch (err) { console.error('fetchAndSyncUserByAuthSubject:', err.message); return null; }
+}
+
 // Get user from memory (syncing from DB if needed)
 async function getUser(id) {
   const mem = users.find(u => u.id === id);
   if (mem) return mem;
   return fetchAndSyncUser(id);
+}
+
+async function verifyAuth0Token(token) {
+  if (!auth0Enabled) throw new Error('Auth0 is not configured');
+  const { jwtVerify, createRemoteJWKSet } = await joseModulePromise;
+  if (!auth0Jwks) {
+    auth0Jwks = createRemoteJWKSet(new URL(`${AUTH0_ISSUER}.well-known/jwks.json`));
+  }
+  const { payload } = await jwtVerify(token, auth0Jwks, {
+    issuer: AUTH0_ISSUER,
+    audience: AUTH0_AUDIENCE,
+  });
+  if (!payload.sub) throw new Error('Auth0 token missing subject');
+  return payload;
+}
+
+async function provisionAuth0User(payload) {
+  const subject = payload.sub;
+  const email = (payload.email || `${subject.replace(/[^a-z0-9_-]/gi, '_')}@auth0.local`).toLowerCase();
+  const name = payload.name || payload.nickname || email.split('@')[0] || 'UFIConnect Member';
+  const avatarUrl = payload.picture || '';
+
+  const existingBySubject = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
+  if (existingBySubject) return existingBySubject;
+
+  if (db.isConnected()) {
+    const linked = await fetchAndSyncUserByAuthSubject('auth0', subject);
+    if (linked) return linked;
+
+    const byEmail = await fetchAndSyncUserByEmail(email);
+    if (byEmail) {
+      byEmail.authProvider = byEmail.authProvider || 'auth0';
+      byEmail.authSubject = subject;
+      byEmail.avatarUrl = byEmail.avatarUrl || avatarUrl;
+      db.query(
+        `UPDATE users
+         SET auth_provider='auth0', auth_subject=$1, avatar_url=COALESCE(NULLIF(avatar_url,''), $2)
+         WHERE id=$3`,
+        [subject, avatarUrl, byEmail.id]
+      ).catch(e => console.error('link Auth0 user:', e.message));
+      return byEmail;
+    }
+
+    try {
+      const syntheticHash = bcrypt.hashSync(crypto.randomUUID(), 10);
+      const { rows } = await db.query(
+        `INSERT INTO users (name, email, password_hash, auth_provider, auth_subject, avatar_url)
+         VALUES ($1,$2,$3,'auth0',$4,$5)
+         RETURNING *`,
+        [name, email, syntheticHash, subject, avatarUrl]
+      );
+      return syncToMemory(dbRowToMemUser(rows[0]));
+    } catch (err) {
+      console.error('provisionAuth0User DB:', err.message);
+      const fallback = await fetchAndSyncUserByEmail(email);
+      if (fallback) return fallback;
+    }
+  }
+
+  const existingByEmail = users.find(u => u.email === email);
+  if (existingByEmail) {
+    existingByEmail.authProvider = 'auth0';
+    existingByEmail.authSubject = subject;
+    existingByEmail.avatarUrl = existingByEmail.avatarUrl || avatarUrl;
+    filestore.saveUsers(users);
+    return existingByEmail;
+  }
+
+  const newUser = {
+    id: `u${Date.now()}`,
+    name,
+    email,
+    passwordHash: bcrypt.hashSync(crypto.randomUUID(), 10),
+    authProvider: 'auth0',
+    authSubject: subject,
+    avatarUrl,
+    title: '',
+    bio: '',
+    skills: [],
+    organization: '',
+    joinedGroups: [],
+    onboardingComplete: false,
+    preferences: null,
+    socialAccounts: {},
+    links: {},
+    socialTokens: {},
+    plan: 'free',
+  };
+  users.push(newUser);
+  filestore.saveUsers(users);
+  return newUser;
 }
 
 async function migrateDB() {
@@ -5851,6 +5968,9 @@ async function migrateDB() {
         name                TEXT NOT NULL,
         email               TEXT UNIQUE NOT NULL,
         password_hash       TEXT NOT NULL,
+        auth_provider       TEXT DEFAULT 'local',
+        auth_subject        TEXT,
+        avatar_url          TEXT DEFAULT '',
         title               TEXT DEFAULT '',
         bio                 TEXT DEFAULT '',
         organization        TEXT DEFAULT '',
@@ -5877,6 +5997,10 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_tokens JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -6280,15 +6404,45 @@ function pickOnboardingGroups(prefs, count = 5) {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ message: 'Authorization header missing.' });
   const token = authHeader.split(' ')[1];
-  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
-  catch { return res.status(401).json({ message: 'Invalid or expired token.' }); }
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    return next();
+  } catch {
+    // Not a local UFIConnect JWT; try Auth0 when configured.
+  }
+
+  try {
+    const payload = await verifyAuth0Token(token);
+    const user = await provisionAuth0User(payload);
+    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    return next();
+  } catch {
+    return res.status(401).json({ message: 'Invalid or expired token.' });
+  }
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
+app.get('/auth/config', (_req, res) => {
+  res.json({
+    auth0: {
+      enabled: auth0Enabled,
+      domain: auth0Enabled ? AUTH0_DOMAIN : '',
+      audience: auth0Enabled ? AUTH0_AUDIENCE : '',
+      issuer: auth0Enabled ? AUTH0_ISSUER : '',
+    },
+  });
+});
+
+app.get('/auth/me', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(401).json({ message: 'User not found.' });
+  res.json({ profile: fullProfile(user) });
+});
+
 app.post('/auth/register', async (req, res) => {
   const { name, email, password, title } = req.body;
   if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields.' });
@@ -6311,7 +6465,7 @@ app.post('/auth/register', async (req, res) => {
 
   // In-memory + filestore fallback
   if (users.find((u) => u.email === emailLc)) return res.status(409).json({ message: 'Email already registered.' });
-  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {}, plan: 'free' };
+  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), authProvider: 'local', authSubject: null, avatarUrl: '', title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {}, plan: 'free' };
   users.push(newUser);
   filestore.saveUsers(users);
   const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
@@ -6325,7 +6479,7 @@ app.post('/auth/login', async (req, res) => {
   // Check DB first (persisted users)
   if (db.isConnected()) {
     const dbUser = await fetchAndSyncUserByEmail(emailLc);
-    if (dbUser && bcrypt.compareSync(password, dbUser.passwordHash)) {
+    if (dbUser && dbUser.passwordHash && bcrypt.compareSync(password, dbUser.passwordHash)) {
       const token = jwt.sign({ id: dbUser.id, email: dbUser.email }, JWT_SECRET, { expiresIn: '7d' });
       return res.json({ token, profile: fullProfile(dbUser) });
     }
@@ -6333,7 +6487,7 @@ app.post('/auth/login', async (req, res) => {
 
   // Fall back to in-memory cache (users synced from DB at login)
   const user = users.find((u) => u.email === emailLc || u.email === email);
-  if (!user || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
+  if (!user || !user.passwordHash || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, profile: fullProfile(user) });
 });

@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, auth0Enabled, loginWithAuth0 } = useAuth();
   const navigate  = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
@@ -52,6 +52,33 @@ export default function Login() {
         <p className="auth-sub">Sign in to your account to continue.</p>
 
         {error && <div className="auth-error">{error}</div>}
+
+        {auth0Enabled && (
+          <>
+            <button
+              className="btn btn-primary btn-full btn-lg"
+              type="button"
+              onClick={() => loginWithAuth0()}
+              style={{ marginBottom: 14 }}
+            >
+              Continue with Auth0
+            </button>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              color: 'var(--muted)',
+              fontSize: '.78rem',
+              fontWeight: 700,
+              margin: '0 0 14px',
+              textTransform: 'uppercase',
+            }}>
+              <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              Or
+              <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+            </div>
+          </>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
