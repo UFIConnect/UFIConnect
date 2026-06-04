@@ -7309,9 +7309,9 @@ app.get('/feed', authenticate, async (req, res) => {
       .slice(0, 75);
 
     scored.forEach(({ p }) => {
-      // Use a fresh staggered timestamp so social posts always rank within the top posts
-      // regardless of when the server started (startup ago() times go stale otherwise).
-      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 3000).toISOString();
+      // Spread timestamps naturally across the last ~8 hours (5 min per slot) so dates
+      // look realistic rather than all showing "seconds ago".
+      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 5 * 60 * 1000).toISOString();
       connectedSocialPosts.push({
         id:          `${p.id}_social`,
         authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
@@ -7348,7 +7348,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 5000).toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 15 * 60 * 1000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
     fromJoinedGroup: false,
@@ -7367,7 +7367,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 4000).toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 20 * 60 * 1000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
     fromJoinedGroup: false,
@@ -7413,10 +7413,10 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Deduplicate and sort through Sort Agent so large feed responses stay bounded.
-  const all = sortFeedBatch([
+  // Sort live posts (excludes mock social so their age doesn't affect ranking).
+  const liveSorted = sortFeedBatch([
     ...internal, ...joinedGroupPosts,
-    ...connectedSocialPosts, ...indeedPosts, ...govtPosts,
+    ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts,
@@ -7428,12 +7428,25 @@ app.get('/feed', authenticate, async (req, res) => {
     limit: Math.max(feedLimit + 1, sortAgentLimit()),
   });
 
-  const responsePosts = all.slice(0, feedLimit);
+  // Interleave mock social posts every 8 live posts so they always appear in the feed
+  // regardless of timestamp age (their natural 5-min-spread dates look realistic).
+  const SOCIAL_INTERVAL = 8;
+  const responsePosts = [];
+  let sp = 0;
+  for (let i = 0; i < liveSorted.length && responsePosts.length < feedLimit; i++) {
+    if (sp < connectedSocialPosts.length && i > 0 && i % SOCIAL_INTERVAL === 0) {
+      responsePosts.push(connectedSocialPosts[sp++]);
+    }
+    if (responsePosts.length < feedLimit) responsePosts.push(liveSorted[i]);
+  }
+  while (sp < connectedSocialPosts.length && responsePosts.length < feedLimit) {
+    responsePosts.push(connectedSocialPosts[sp++]);
+  }
 
   res.json({
     posts: responsePosts,
-    hasMore: all.length > responsePosts.length,
-    totalAvailable: all.length,
+    hasMore: liveSorted.length > feedLimit,
+    totalAvailable: liveSorted.length + connectedSocialPosts.length,
     refresh: {
       live: shouldFetchLive,
       liveCount: allLive.length,
