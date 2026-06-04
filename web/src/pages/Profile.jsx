@@ -126,7 +126,7 @@ export default function Profile() {
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (e) {
-      const msg = e?.response?.data?.error || `Could not connect ${platform}. Please try again.`;
+      const msg = e?.response?.data?.detail || e?.response?.data?.error || e.message || `Could not connect ${platform}. Please try again.`;
       setSocialFlash({ type: 'error', platform, msg });
       setTimeout(() => setSocialFlash(null), 5000);
       setSocialConnecting(null);

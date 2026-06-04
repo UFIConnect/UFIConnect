@@ -4962,7 +4962,6 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Feed tabs that gate content behind an OAuth token (pure social APIs with no public fallback)
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
-// Platforms connected by typing a username — no OAuth app registration needed
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
   const author = post.author || '';
