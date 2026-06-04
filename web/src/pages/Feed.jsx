@@ -798,33 +798,13 @@ class FeedErrorBoundary extends Component {
   }
 }
 
-const FEED_CACHE_KEY = 'ufi_feed_v1';
-const FEED_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
-
-function readFeedCache() {
-  try {
-    const raw = localStorage.getItem(FEED_CACHE_KEY);
-    if (!raw) return null;
-    const { posts, ts } = JSON.parse(raw);
-    if (!Array.isArray(posts) || Date.now() - ts > FEED_CACHE_MAX_AGE_MS) return null;
-    return posts;
-  } catch { return null; }
-}
-
-function writeFeedCache(posts) {
-  try {
-    localStorage.setItem(FEED_CACHE_KEY, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
-  } catch {}
-}
-
 export default function Feed() {
   const { profile } = useAuth();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
-  const cachedPosts = readFeedCache();
-  const [posts,         setPosts]        = useState(cachedPosts || []);
-  const [loading,       setLoading]      = useState(!cachedPosts);
+  const [posts,         setPosts]        = useState([]);
+  const [loading,       setLoading]      = useState(true);
   const [refreshing,    setRefreshing]   = useState(false);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
@@ -840,7 +820,7 @@ export default function Feed() {
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
-  const knownIds      = useRef(new Set((cachedPosts || []).map(p => p.id).filter(Boolean)));
+  const knownIds      = useRef(new Set());
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
   const postsRef      = useRef([]);
@@ -892,7 +872,6 @@ export default function Feed() {
       }
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
       setPosts(nextPosts);
-      writeFeedCache(nextPosts);
       if (!shouldMerge || previous.length === 0) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
@@ -947,11 +926,8 @@ export default function Feed() {
     ));
   }, []);
 
-  // Load initial feed — silent if cache already populated so posts show instantly
-  useEffect(() => {
-    const hasCached = readFeedCache() !== null;
-    loadFeed(false, [], { silent: hasCached, live: false });
-  }, [loadFeed]); // eslint-disable-line
+  // Load initial feed
+  useEffect(() => { loadFeed(); }, [loadFeed]);
 
   useEffect(() => {
     const refreshQuietly = () => {
