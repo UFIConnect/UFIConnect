@@ -192,9 +192,14 @@ export default function Messages() {
           <div className="empty-icon">✉️</div>
           <div className="empty-title">No conversations yet</div>
           <div className="empty-desc">Start a conversation with someone in your network.</div>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)} style={{ marginTop: 14 }}>
-            New Message
-          </button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>
+              New Message
+            </button>
+            <Link to="/search" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+              Find people
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="conv-list">
