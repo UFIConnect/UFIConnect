@@ -493,6 +493,40 @@ const SOCIAL_CFG = {
   },
 };
 
+const SOCIAL_ENV_KEYS = {
+  linkedin:  ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
+  twitter:   ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET'],
+  instagram: ['INSTAGRAM_APP_ID', 'INSTAGRAM_APP_SECRET'],
+  facebook:  ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
+  github:    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
+  gitlab:    ['GITLAB_CLIENT_ID', 'GITLAB_CLIENT_SECRET'],
+  discord:   ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
+  youtube:   ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
+  reddit:    ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
+  medium:    ['MEDIUM_CLIENT_ID', 'MEDIUM_CLIENT_SECRET'],
+  dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
+  behance:   ['BEHANCE_CLIENT_ID', 'BEHANCE_CLIENT_SECRET'],
+  tiktok:    ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
+  bluesky:   ['BLUESKY_CLIENT_ID', 'BLUESKY_CLIENT_SECRET'],
+};
+
+function socialCredentialStatus(platform) {
+  const cfg = SOCIAL_CFG[platform];
+  const requiredEnv = SOCIAL_ENV_KEYS[platform] || [];
+  const values = requiredEnv.map((key, i) => {
+    if (i === 0) return cfg?.clientId?.();
+    if (i === 1) return cfg?.clientSecret?.();
+    return process.env[key];
+  });
+  const missingEnv = requiredEnv.filter((_key, i) => !values[i]);
+  return {
+    configured: missingEnv.length === 0,
+    requiredEnv,
+    missingEnv,
+    callbackUrl: oauthCallbackUrl(platform),
+  };
+}
+
 function oauthCallbackUrl(platform) {
   return `${API_BASE}/auth/social/${platform}/callback`;
 }
@@ -6510,6 +6544,26 @@ async function removeSocialToken(userId, platform) {
 }
 
 // ─── Social OAuth: initiate (returns URL so the SPA can navigate) ────────────
+app.get('/auth/social/config', authenticate, async (_req, res) => {
+  const platforms = Object.fromEntries(Object.keys(SOCIAL_CFG).map(platform => {
+    const cfg = SOCIAL_CFG[platform];
+    const status = socialCredentialStatus(platform);
+    return [platform, {
+      configured: status.configured,
+      requiredEnv: status.requiredEnv,
+      missingEnv: status.missingEnv,
+      callbackUrl: status.callbackUrl,
+      authUrl: cfg.authUrl,
+      scope: cfg.scope,
+    }];
+  }));
+  res.json({
+    apiBaseUrl: API_BASE,
+    frontendUrl: FRONTEND_BASE,
+    platforms,
+  });
+});
+
 app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
   const cfg = SOCIAL_CFG[platform];
@@ -6517,12 +6571,16 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
 
-  const clientId = cfg.clientId();
-  if (!clientId) return res.status(501).json({
+  const status = socialCredentialStatus(platform);
+  if (!status.configured) return res.status(501).json({
     error: `${platform} OAuth not configured`,
-    detail: `Set ${platform.toUpperCase()}_CLIENT_ID and ${platform.toUpperCase()}_CLIENT_SECRET in your server environment variables.`,
+    detail: `Set ${status.missingEnv.join(' and ')} in your server environment variables.`,
+    requiredEnv: status.requiredEnv,
+    missingEnv: status.missingEnv,
+    callbackUrl: status.callbackUrl,
   });
 
+  const clientId = cfg.clientId();
   const redirectUri = oauthCallbackUrl(platform);
   let codeVerifier;
 
