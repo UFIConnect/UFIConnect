@@ -171,9 +171,6 @@ export default function Search() {
       </Helmet>
       <div className="page-header">
         <h1 className="page-title">Search</h1>
-        <p className="page-subtitle">
-          Find professionals and communities on UFIConnect.
-        </p>
       </div>
 
       {/* Tab switcher */}
