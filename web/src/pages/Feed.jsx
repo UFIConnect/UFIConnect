@@ -1143,7 +1143,6 @@ export default function Feed() {
               className="form-input"
               placeholder="Search posts…"
               value={searchInput}
-              autoComplete="off"
               onChange={e => setSearchInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { const q = searchInput.trim(); setSearch(q); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); } }}
               style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
