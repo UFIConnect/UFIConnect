@@ -415,6 +415,14 @@ const SOCIAL_CFG = {
     scope: 'read:user public_repo',
     pkce: false,
   },
+  gitlab: {
+    authUrl:  'https://gitlab.com/oauth/authorize',
+    tokenUrl: 'https://gitlab.com/oauth/token',
+    clientId:     () => process.env.GITLAB_CLIENT_ID,
+    clientSecret: () => process.env.GITLAB_CLIENT_SECRET,
+    scope: 'read_user',
+    pkce: false,
+  },
   discord: {
     authUrl:  'https://discord.com/api/oauth2/authorize',
     tokenUrl: 'https://discord.com/api/oauth2/token',
@@ -4820,7 +4828,7 @@ const PLATFORMS = {
     loginUrl: 'https://gitlab.com/users/sign_in',
     setupUrl: 'https://gitlab.com/-/profile/applications',
     reviewRequired: false,
-    note: 'Handle connection works instantly. OAuth can be added later for private profile data.',
+    note: 'OAuth connection routes to GitLab for permission before importing profile data.',
   },
   twitter: {
     name: 'X (Twitter)', color: '#000000', icon: 'twitter',
@@ -4955,8 +4963,6 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 
 // Platforms connected by typing a username — no OAuth app registration needed
-const HANDLE_PLATFORMS = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
-
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
   const author = post.author || '';
@@ -5194,7 +5200,7 @@ const CURATED_SOURCE_POSTS = {
 // ─── Curated social-source fallback posts ─────────────────────────────────────
 function buildCuratedSourcePosts(source) {
   if (source === 'usajobs') {
-    return GOVT_JOBS.map(j => ({
+    return GOVT_JOBS.map((j, i) => ({
       id:          `usajobs_${j.id}_fallback`,
       authorId:    'usajobs',
       groupId:     'ext_usajobs',
@@ -5208,7 +5214,7 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   j.posted || new Date().toISOString(),
+      createdAt:   new Date(Date.now() - (i + 1) * 11 * 60 * 1000).toISOString(),
       isExternal:  true,
       group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
       fromJoinedGroup: false,
@@ -5216,7 +5222,7 @@ function buildCuratedSourcePosts(source) {
   }
 
   if (source === 'indeed') {
-    return INDEED_JOBS.map(j => ({
+    return INDEED_JOBS.map((j, i) => ({
       id:          `indeed_${j.id}_fallback`,
       authorId:    'indeed_jobs',
       groupId:     'ext_indeed',
@@ -5230,14 +5236,14 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   j.posted || new Date().toISOString(),
+      createdAt:   new Date(Date.now() - (i + 1) * 9 * 60 * 1000).toISOString(),
       isExternal:  true,
       group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
       fromJoinedGroup: false,
     }));
   }
 
-  return [...(SOCIAL_POSTS[source] || []), ...(CURATED_SOURCE_POSTS[source] || [])].map(p => ({
+  return [...(SOCIAL_POSTS[source] || []), ...(CURATED_SOURCE_POSTS[source] || [])].map((p, i) => ({
     id:          `${p.id}_social`,
     authorId:    `${source}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
     groupId:     `ext_${source}`,
@@ -5251,7 +5257,7 @@ function buildCuratedSourcePosts(source) {
     mediaType:   p.mediaType || null,
     author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
     likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-    createdAt:   p.time || p.createdAt || new Date().toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 8 * 60 * 1000).toISOString(),
     isExternal:  false,
     group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
     fromJoinedGroup: false,
@@ -6631,11 +6637,9 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // ─── Profile: social connection status + disconnect ───────────────────────────
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  // For handle platforms return the handle string; for OAuth platforms return true/false
   const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => {
     const token = user?.socialTokens?.[p];
-    if (!token) return [p, false];
-    return [p, HANDLE_PLATFORMS.has(p) ? token : true];
+    return [p, Boolean(token)];
   }));
   const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => [
     key,
@@ -6653,30 +6657,25 @@ app.get('/profile/social', authenticate, async (req, res) => {
   const platforms = [...CONNECTED_SOCIAL_PLATFORMS];
   const connected = Object.fromEntries(platforms.map(p => {
     const token = user?.socialTokens?.[p];
-    if (!token) return [p, false];
-    return [p, HANDLE_PLATFORMS.has(p) ? token : true];
+    return [p, Boolean(token)];
   }));
   res.json({ connected });
 });
 
 app.post('/social/connect/handle', authenticate, async (req, res) => {
-  const { platform, handle } = req.body;
-  if (!HANDLE_PLATFORMS.has(platform)) return res.status(400).json({ error: 'Not a handle-based platform' });
-  const clean = (handle || '').replace(/^@/, '').trim();
-  if (!clean) return res.status(400).json({ error: 'Handle is required' });
-  await saveSocialToken(req.user.id, platform, clean);
-  logAgentAction('cache_helper', '🔗', `User connected ${platform} as @${clean}`, '#6366F1');
-  res.json({ ok: true, platform, handle: clean });
+  const { platform } = req.body || {};
+  return res.status(410).json({
+    error: 'Username-only connections have been removed. Connect through the original provider authorization flow.',
+    startPath: platform ? `/auth/social/${platform}/start` : '/auth/social/:platform/start',
+  });
 });
 
-// One-button mock connect — instantly marks a platform as connected without real OAuth.
-// Replace mock_token with a real OAuth exchange when you have API credentials.
 app.post('/social/connect', authenticate, async (req, res) => {
-  const { platform } = req.body;
-  if (!CONNECTED_SOCIAL_PLATFORMS.has(platform)) return res.status(400).json({ error: 'Unknown platform' });
-  await saveSocialToken(req.user.id, platform, `mock_token_${platform}_${Date.now()}`);
-  logAgentAction('cache_helper', '🔗', `User connected ${platform}`, '#6366F1');
-  res.json({ ok: true, platform, connected: true });
+  const { platform } = req.body || {};
+  res.status(410).json({
+    error: 'Direct mock connections have been removed. Connect through the original provider authorization flow.',
+    startPath: platform ? `/auth/social/${platform}/start` : '/auth/social/:platform/start',
+  });
 });
 
 app.delete('/profile/social/:platform', authenticate, async (req, res) => {
@@ -7205,6 +7204,7 @@ app.get('/feed', authenticate, async (req, res) => {
   };
   const ALL_SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter', 'tiktok', 'reddit'];
   const connectedSocialPosts = [];
+  let _socialIdx = 0; // global stagger counter so posts spread across all platforms
 
   for (const platform of ALL_SOCIAL_PLATFORMS) {
     const platformPosts = SOCIAL_POSTS[platform] || [];
@@ -7221,6 +7221,9 @@ app.get('/feed', authenticate, async (req, res) => {
       .slice(0, 75);
 
     scored.forEach(({ p }) => {
+      // Use a fresh staggered timestamp so social posts always rank within the top posts
+      // regardless of when the server started (startup ago() times go stale otherwise).
+      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 7 * 60 * 1000).toISOString();
       connectedSocialPosts.push({
         id:          `${p.id}_social`,
         authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
@@ -7235,7 +7238,7 @@ app.get('/feed', authenticate, async (req, res) => {
         mediaType:   p.mediaType || null,
         author:      { id: `${platform}_${p.author}`, name: p.author || null, title: p.source, organization: platform },
         likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-        createdAt:   p.time || new Date().toISOString(),
+        createdAt:   freshCreatedAt,
         isExternal:  false,
         group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
         fromJoinedGroup: false,
@@ -7245,7 +7248,7 @@ app.get('/feed', authenticate, async (req, res) => {
   }
 
   // ── Indeed job posts in feed ───────────────────────────────────────────────
-  const indeedPosts = INDEED_JOBS.slice(0, 75).map(j => ({
+  const indeedPosts = INDEED_JOBS.slice(0, 75).map((j, i) => ({
     id:          `indeed_${j.id}`,
     authorId:    'indeed_jobs',
     groupId:     'ext_indeed',
@@ -7257,14 +7260,14 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   j.posted || new Date().toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 9 * 60 * 1000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
     fromJoinedGroup: false,
   }));
 
   // ── Government job posts in feed ──────────────────────────────────────────
-  const govtPosts = GOVT_JOBS.map(j => ({
+  const govtPosts = GOVT_JOBS.map((j, i) => ({
     id:          `govt_${j.id}`,
     authorId:    'usajobs',
     groupId:     'ext_usajobs',
@@ -7276,7 +7279,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   j.posted || new Date().toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 11 * 60 * 1000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
     fromJoinedGroup: false,

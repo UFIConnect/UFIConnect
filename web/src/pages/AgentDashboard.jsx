@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
@@ -742,6 +742,204 @@ function LastExecution({ entry }) {
   );
 }
 
+/* ─── useCountUp hook ────────────────────────────────────────────────────────── */
+function useCountUp(target, duration = 1400, active = true) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!active) { setValue(0); return; }
+    let start = null;
+    const raf = requestAnimationFrame(function step(ts) {
+      if (!start) start = ts;
+      const p = Math.min((ts - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setValue(Math.floor(eased * target));
+      if (p < 1) requestAnimationFrame(step);
+      else setValue(target);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration, active]);
+  return value;
+}
+
+/* ─── Animated Ring (SVG) ────────────────────────────────────────────────────── */
+function AnimatedRing({ pct, color, size = 64, stroke = 6 }) {
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const dash = circ * (pct / 100);
+  return (
+    <svg width={size} height={size} style={{ transform: 'rotate(-90deg)', flexShrink: 0 }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E2E8F0" strokeWidth={stroke} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none"
+        stroke={color} strokeWidth={stroke}
+        strokeDasharray={`${dash} ${circ}`}
+        strokeLinecap="round"
+        style={{ transition: 'stroke-dasharray 1.2s cubic-bezier(0.4,0,0.2,1)' }}
+      />
+    </svg>
+  );
+}
+
+/* ─── Overview Tab ───────────────────────────────────────────────────────────── */
+function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agentCount }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setMounted(true), 60); return () => clearTimeout(t); }, []);
+
+  const totalPosts = useMemo(() => sourceAgents.reduce((s, a) => s + (a.postCount || 0), 0), [sourceAgents]);
+  const activeNow  = useMemo(() => Object.values(agentStates).filter(s => s.status !== 'idle').length, [agentStates]);
+
+  const cAgents = useCountUp(agentCount,  1200, mounted);
+  const cEvents = useCountUp(eventsCount, 1500, mounted);
+  const cPosts  = useCountUp(totalPosts,  1600, mounted);
+  const cActive = useCountUp(activeNow,   800,  mounted);
+
+  const metrics = [
+    { label: 'Total Agents',   value: cAgents,  suffix: '',  color: '#2563EB', bg: '#EFF6FF', icon: '🤖', pct: 100 },
+    { label: 'Events Fired',   value: cEvents,  suffix: '',  color: '#7C3AED', bg: '#F3EEFF', icon: '⚡', pct: Math.min(eventsCount / 5, 100) },
+    { label: 'Posts Indexed',  value: cPosts,   suffix: '',  color: '#059669', bg: '#ECFDF5', icon: '📊', pct: Math.min(totalPosts / 200, 100) },
+    { label: 'Active Now',     value: cActive,  suffix: '',  color: '#D97706', bg: '#FFFBEB', icon: '🔄', pct: agentCount > 0 ? (activeNow / agentCount) * 100 : 0 },
+  ];
+
+  const topSources = useMemo(() =>
+    [...sourceAgents].sort((a, b) => (b.postCount || 0) - (a.postCount || 0)).slice(0, 8),
+    [sourceAgents]
+  );
+  const maxPosts = topSources[0]?.postCount || 1;
+
+  return (
+    <div style={{ animation: 'slideUp 0.35s ease' }}>
+      {/* ── Metric cards ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 }}>
+        {metrics.map((m, i) => (
+          <div key={m.label} style={{
+            background: '#fff',
+            border: `1.5px solid ${m.color}22`,
+            borderRadius: 14,
+            padding: '16px 18px',
+            display: 'flex', alignItems: 'center', gap: 14,
+            boxShadow: `0 4px 20px ${m.color}12`,
+            animation: `fadeScale 0.4s ease ${i * 80}ms both`,
+          }}>
+            <AnimatedRing pct={mounted ? m.pct : 0} color={m.color} size={56} stroke={5} />
+            <div>
+              <div style={{ fontSize: '1.55rem', fontWeight: 900, color: m.color, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                {m.value.toLocaleString()}{m.suffix}
+              </div>
+              <div style={{ fontSize: '.65rem', color: '#64748B', fontWeight: 600, marginTop: 3, textTransform: 'uppercase', letterSpacing: '.5px' }}>
+                {m.label}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Agent health grid ── */}
+      <div style={{ fontSize: '.68rem', fontWeight: 800, color: '#64748B', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 10 }}>
+        ▸ Ops Agent Health
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+        gap: 10, marginBottom: 24,
+      }}>
+        {AGENT_DEFS.map((agent, i) => {
+          const s = agentStates[agent.id];
+          const isActive = s.status !== 'idle';
+          const pct = isActive ? 100 : 30 + Math.sin(i * 1.7) * 20;
+          return (
+            <div key={agent.id} style={{
+              background: '#fff',
+              border: `1.5px solid ${isActive ? agent.color + '55' : '#E2E8F0'}`,
+              borderRadius: 12,
+              padding: '12px 14px',
+              animation: `fadeScale 0.4s ease ${i * 50}ms both`,
+              boxShadow: isActive ? `0 0 0 3px ${agent.color}18` : 'none',
+              transition: 'box-shadow 0.5s, border-color 0.5s',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <span style={{
+                  fontSize: '1.1rem',
+                  animation: isActive ? 'agentExecute 0.8s ease-in-out infinite' : 'agentIdle 3s ease-in-out infinite',
+                  display: 'inline-block',
+                }}>{agent.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '.75rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</div>
+                  <div style={{ fontSize: '.58rem', color: '#94A3B8' }}>{agent.role}</div>
+                </div>
+                <span style={{
+                  width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                  background: isActive ? '#4ADE80' : agent.color,
+                  display: 'inline-block',
+                  animation: isActive ? 'agentPulse 1s ease-out infinite' : 'none',
+                  boxShadow: isActive ? '0 0 0 0 #4ADE8055' : 'none',
+                }} />
+              </div>
+              {/* Activity bar */}
+              <div style={{ height: 3, background: '#F1F5F9', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: mounted ? `${pct}%` : '0%',
+                  background: `linear-gradient(90deg, ${agent.color}88, ${agent.color})`,
+                  borderRadius: 2,
+                  transition: 'width 1.2s cubic-bezier(0.4,0,0.2,1)',
+                  animation: isActive ? 'barPulse 1.5s ease-in-out infinite' : 'none',
+                }} />
+              </div>
+              <div style={{ fontSize: '.58rem', color: '#94A3B8', marginTop: 5 }}>
+                {s.status === 'idle' ? agent.tasks[s.taskIdx] : `● ${s.status}`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Top data sources ── */}
+      <div style={{ fontSize: '.68rem', fontWeight: 800, color: '#64748B', letterSpacing: '1.5px', textTransform: 'uppercase', marginBottom: 10 }}>
+        ▸ Top Data Sources — Posts Indexed
+      </div>
+      <div style={{
+        background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12,
+        padding: '16px 18px',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}>
+        {topSources.length === 0 && (
+          <div style={{ color: '#94A3B8', fontSize: '.8rem' }}>Fetching source data…</div>
+        )}
+        {topSources.map((src, i) => {
+          const agent = SOURCE_AGENTS.find(a => a.id === src.id);
+          const barPct = (src.postCount / maxPosts) * 100;
+          return (
+            <div key={src.id} style={{ display: 'flex', alignItems: 'center', gap: 10, animation: `slideUp 0.3s ease ${i * 40}ms both` }}>
+              <div style={{ width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+                background: `${agent?.color || '#64748B'}18`,
+                border: `1.5px solid ${agent?.color || '#64748B'}30`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '.75rem' }}>
+                {agent?.emoji || '📡'}
+              </div>
+              <div style={{ fontSize: '.72rem', fontWeight: 600, width: 100, flexShrink: 0, color: '#0F172A' }}>
+                {agent?.name || src.id}
+              </div>
+              <div style={{ flex: 1, height: 6, background: '#F1F5F9', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: mounted ? `${barPct}%` : '0%',
+                  background: `linear-gradient(90deg, ${agent?.color || '#2563EB'}88, ${agent?.color || '#2563EB'})`,
+                  borderRadius: 3,
+                  transition: `width 1s cubic-bezier(0.4,0,0.2,1) ${i * 60}ms`,
+                }} />
+              </div>
+              <div style={{ fontSize: '.68rem', fontWeight: 700, color: agent?.color || '#64748B', width: 38, textAlign: 'right', flexShrink: 0 }}>
+                {(src.postCount || 0).toLocaleString()}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Main Page ──────────────────────────────────────────────────────────────── */
 export default function AgentDashboard() {
   const [agentStates, setAgentStates] = useState(
@@ -753,6 +951,7 @@ export default function AgentDashboard() {
   const [lastExecution,  setLastExecution]  = useState(null);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [eventsCount,    setEventsCount]    = useState(0);
+  const [activeTab,      setActiveTab]      = useState('overview');
   const [sourceAgents,   setSourceAgents]   = useState([]);
   const [connectedSocial, setConnectedSocial] = useState({});
   const [workerPhases,   setWorkerPhases]   = useState(
@@ -1020,6 +1219,18 @@ export default function AgentDashboard() {
           0%   { transform: translateX(-100%); }
           100% { transform: translateX(300%); }
         }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(14px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeScale {
+          from { opacity: 0; transform: scale(0.95); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes barPulse {
+          0%,100% { opacity: 1; }
+          50%     { opacity: 0.6; }
+        }
       `}</style>
 
       <div className="page-header">
@@ -1031,148 +1242,176 @@ export default function AgentDashboard() {
 
       <StatusHeader sessionTime={sessionTime} eventsCount={eventsCount} agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length} />
 
-      {/* ── Ops Command Centre: floor plan + live activity ── */}
-      <SectionBar
-        label="Ops Command Centre"
-        right={<Badge label={`${AGENT_DEFS.length} ops agents`} />}
-      />
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start', marginBottom: 24 }}>
-        <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} />
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <LastExecution entry={lastExecution} />
-          <ActivityLog log={activityLog} maxHeight={480} />
-        </div>
+      {/* ── Tab bar ── */}
+      <div style={{
+        display: 'flex', gap: 4, marginBottom: 22,
+        background: '#F1F5F9', borderRadius: 10, padding: 4,
+        width: 'fit-content',
+      }}>
+        {[
+          { id: 'overview',  label: '📊 Overview' },
+          { id: 'floorplan', label: '🏢 Floor Plan' },
+          { id: 'dataops',   label: '📡 Data Ops' },
+          { id: 'activity',  label: '📋 Activity' },
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              padding: '7px 16px', borderRadius: 7, border: 'none',
+              fontSize: '.78rem', fontWeight: 700, cursor: 'pointer',
+              background: activeTab === tab.id ? '#fff' : 'transparent',
+              color: activeTab === tab.id ? '#0F172A' : '#64748B',
+              boxShadow: activeTab === tab.id ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      {/* ── Ops Roster: full-width responsive grid ── */}
-      <SectionBar
-        label="Ops Roster"
-        right={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ADE80', display: 'inline-block', animation: 'agentPulse 1.6s ease-out infinite' }} />
-            <span style={{ fontSize: '.62rem', fontWeight: 700, color: '#059669' }}>ALL AUTONOMOUS</span>
-          </div>
-        }
-      />
+      {/* ── Overview tab ── */}
+      {activeTab === 'overview' && (
+        <OverviewTab
+          agentStates={agentStates}
+          eventsCount={eventsCount}
+          sourceAgents={sourceAgents}
+          sessionTime={sessionTime}
+          agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length}
+        />
+      )}
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(185px, 1fr))',
-        gap: 8, marginBottom: 28,
-        background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: 12,
-      }}>
-        {AGENT_DEFS.map(agent => {
-          const s = agentStates[agent.id];
-          const statusLabel =
-            s.status === 'idle'      ? '● Monitoring'  :
-            s.status === 'walking'   ? '⚙️ Working'    :
-            s.status === 'executing' ? '🔄 Executing'  :
-            s.status === 'returning' ? '↩ Returning'   : '●';
-          const statusColor =
-            s.status === 'idle'      ? agent.color :
-            s.status === 'walking'   ? '#D97706'   :
-            s.status === 'executing' ? '#DC2626'   : '#059669';
-          return (
-            <div key={agent.id} style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '8px 10px',
-              background: s.status === 'idle' ? agent.bg : '#F8FAFC',
-              borderRadius: 8,
-              border: `1px solid ${s.status === 'idle' ? agent.color + '30' : '#E2E8F0'}`,
-              transition: 'all 0.4s',
-            }}>
-              <span style={{ fontSize: '1rem', flexShrink: 0 }}>{agent.emoji}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '.73rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</div>
-                <div style={{ fontSize: '.59rem', color: '#94A3B8' }}>{agent.role}</div>
-              </div>
-              <div style={{ fontSize: '.58rem', fontWeight: 700, color: statusColor, textAlign: 'right', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                {statusLabel}
-              </div>
+      {/* ── Floor Plan tab ── */}
+      {activeTab === 'floorplan' && (
+        <div style={{ animation: 'slideUp 0.3s ease' }}>
+          <SectionBar
+            label="Ops Command Centre"
+            right={<Badge label={`${AGENT_DEFS.length} ops agents`} />}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 18, alignItems: 'start', marginBottom: 24 }}>
+            <OfficeFloorPlan agentStates={agentStates} eventsCount={eventsCount} />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <LastExecution entry={lastExecution} />
+              <ActivityLog log={activityLog} maxHeight={480} />
             </div>
-          );
-        })}
-      </div>
-
-      {/* ── Live Data Operations ── */}
-      <SectionBar
-        label="Live Data Operations"
-        right={
-          <div style={{ display: 'flex', gap: 6 }}>
-            <Badge label={`${techAgents.length} tech & news`} color="#0284C7" bg="#F0F9FF" border="#BAE6FD" />
-            <Badge label={`${socialAgents.length} social`} color="#7C3AED" bg="#F3EEFF" border="#DDD6FE" />
           </div>
-        }
-      />
 
-      {/* Tech & News agents */}
-      <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
-        Tech &amp; News
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 20 }}>
-        {techAgents.map(agent => {
-          const stats = sourceAgents.find(s => s.id === agent.id);
-          return (
-            <LiveDataCard
-              key={agent.id}
-              agent={agent}
-              phaseData={workerPhases[agent.id]}
-              stats={stats}
-              connected={connectedSocial[agent.id]}
-              onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-              onConnect={async () => {
-                try {
-                  const { data } = await client.get(`/auth/social/${agent.id}/start`);
-                  window.location.href = data.url;
-                } catch {}
-              }}
-            />
-          );
-        })}
-      </div>
+          <SectionBar
+            label="Ops Roster"
+            right={
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4ADE80', display: 'inline-block', animation: 'agentPulse 1.6s ease-out infinite' }} />
+                <span style={{ fontSize: '.62rem', fontWeight: 700, color: '#059669' }}>ALL AUTONOMOUS</span>
+              </div>
+            }
+          />
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(185px, 1fr))',
+            gap: 8, marginBottom: 28,
+            background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12, padding: 12,
+          }}>
+            {AGENT_DEFS.map(agent => {
+              const s = agentStates[agent.id];
+              const statusLabel =
+                s.status === 'idle'      ? '● Monitoring'  :
+                s.status === 'walking'   ? '⚙️ Working'    :
+                s.status === 'executing' ? '🔄 Executing'  :
+                s.status === 'returning' ? '↩ Returning'   : '●';
+              const statusColor =
+                s.status === 'idle'      ? agent.color :
+                s.status === 'walking'   ? '#D97706'   :
+                s.status === 'executing' ? '#DC2626'   : '#059669';
+              return (
+                <div key={agent.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 10px',
+                  background: s.status === 'idle' ? agent.bg : '#F8FAFC',
+                  borderRadius: 8,
+                  border: `1px solid ${s.status === 'idle' ? agent.color + '30' : '#E2E8F0'}`,
+                  transition: 'all 0.4s',
+                }}>
+                  <span style={{ fontSize: '1rem', flexShrink: 0 }}>{agent.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '.73rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{agent.name}</div>
+                    <div style={{ fontSize: '.59rem', color: '#94A3B8' }}>{agent.role}</div>
+                  </div>
+                  <div style={{ fontSize: '.58rem', fontWeight: 700, color: statusColor, textAlign: 'right', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    {statusLabel}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* Social platform agents */}
-      <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
-        Social Platforms
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 24 }}>
-        {socialAgents.map(agent => {
-          const stats = sourceAgents.find(s => s.id === agent.id);
-          return (
-            <LiveDataCard
-              key={agent.id}
-              agent={agent}
-              phaseData={workerPhases[agent.id]}
-              stats={stats}
-              connected={connectedSocial[agent.id]}
-              onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
-              onConnect={async () => {
-                try {
-                  const { data } = await client.get(`/auth/social/${agent.id}/start`);
-                  window.location.href = data.url;
-                } catch {}
-              }}
-            />
-          );
-        })}
-      </div>
+      {/* ── Data Ops tab ── */}
+      {activeTab === 'dataops' && (
+        <div style={{ animation: 'slideUp 0.3s ease' }}>
+          <SectionBar
+            label="Live Data Operations"
+            right={
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Badge label={`${techAgents.length} tech & news`} color="#0284C7" bg="#F0F9FF" border="#BAE6FD" />
+                <Badge label={`${socialAgents.length} social`} color="#7C3AED" bg="#F3EEFF" border="#DDD6FE" />
+              </div>
+            }
+          />
+          <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
+            Tech &amp; News
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 20 }}>
+            {techAgents.map(agent => {
+              const stats = sourceAgents.find(s => s.id === agent.id);
+              return (
+                <LiveDataCard
+                  key={agent.id} agent={agent}
+                  phaseData={workerPhases[agent.id]} stats={stats}
+                  connected={connectedSocial[agent.id]}
+                  onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
+                  onConnect={async () => { try { const { data } = await client.get(`/auth/social/${agent.id}/start`); window.location.href = data.url; } catch {} }}
+                />
+              );
+            })}
+          </div>
+          <div style={{ fontSize: '.62rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '.6px', textTransform: 'uppercase', marginBottom: 8 }}>
+            Social Platforms
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: 10, marginBottom: 24 }}>
+            {socialAgents.map(agent => {
+              const stats = sourceAgents.find(s => s.id === agent.id);
+              return (
+                <LiveDataCard
+                  key={agent.id} agent={agent}
+                  phaseData={workerPhases[agent.id]} stats={stats}
+                  connected={connectedSocial[agent.id]}
+                  onTrigger={() => client.post(`/office/agents/${agent.id}/trigger`).catch(() => {})}
+                  onConnect={async () => { try { const { data } = await client.get(`/auth/social/${agent.id}/start`); window.location.href = data.url; } catch {} }}
+                />
+              );
+            })}
+          </div>
+          <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 10, border: '1px solid #E2E8F0', fontSize: '.72rem', color: '#64748B', display: 'flex', gap: 8, alignItems: 'center' }}>
+            <span>ℹ️</span>
+            <span>
+              {techAgents.length} tech & news agents cycle topics continuously.{' '}
+              {socialAgents.length} social agents require OAuth connection to activate personalised feeds.
+            </span>
+          </div>
+        </div>
+      )}
 
-      <div style={{
-        padding: '10px 14px',
-        background: '#F8FAFC', borderRadius: 10,
-        border: '1px solid #E2E8F0',
-        fontSize: '.72rem', color: '#64748B',
-        display: 'flex', gap: 8, alignItems: 'center',
-      }}>
-        <span>ℹ️</span>
-        <span>
-          {techAgents.length} tech & news agents cycle topics continuously.{' '}
-          {socialAgents.length} social agents require OAuth connection to activate personalised feeds.{' '}
-          {AGENT_DEFS.length} ops agents handle curation, SEO, security, performance, cache coordination, and public-domain optimisation.
-        </span>
-      </div>
+      {/* ── Activity tab ── */}
+      {activeTab === 'activity' && (
+        <div style={{ animation: 'slideUp 0.3s ease' }}>
+          <SectionBar label="Full Activity Log" right={<Badge label={`${eventsCount} events`} />} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 18, alignItems: 'start' }}>
+            <ActivityLog log={activityLog} maxHeight={640} />
+            <LastExecution entry={lastExecution} />
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }

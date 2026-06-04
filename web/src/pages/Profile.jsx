@@ -61,9 +61,6 @@ export default function Profile() {
   const [connectedSocial, setConnectedSocial] = useState({});
   const [socialFlash,     setSocialFlash]     = useState(null); // { type: 'success'|'error', platform }
   const [socialConnecting, setSocialConnecting] = useState(null);
-  const [handleInputs, setHandleInputs] = useState({});
-  const [savingHandle, setSavingHandle] = useState(null);
-  const [handleExpanded, setHandleExpanded] = useState(null);
   const location = useLocation();
 
   // Sync skills from profile when profile loads or tab changes
@@ -126,7 +123,8 @@ export default function Profile() {
     setSocialConnecting(platform);
     try {
       const { data } = await client.get(`/auth/social/${platform}/start`);
-      if (data?.url) window.location.href = data.url;
+      if (data?.url) { window.location.href = data.url; return; }
+      throw new Error('Missing provider authorization URL.');
     } catch (e) {
       const msg = e?.response?.data?.error || `Could not connect ${platform}. Please try again.`;
       setSocialFlash({ type: 'error', platform, msg });
@@ -140,25 +138,6 @@ export default function Profile() {
       await client.delete(`/profile/social/${platform}`);
       setConnectedSocial(prev => ({ ...prev, [platform]: false }));
     } catch {}
-  }
-
-  async function saveHandle(platform) {
-    const raw = (handleInputs[platform] || '').replace(/^@/, '').trim();
-    if (!raw) return;
-    setSavingHandle(platform);
-    try {
-      await client.post('/social/connect/handle', { platform, handle: raw });
-      setConnectedSocial(prev => ({ ...prev, [platform]: raw }));
-      setHandleInputs(prev => ({ ...prev, [platform]: '' }));
-      setHandleExpanded(null);
-      setSocialFlash({ type: 'success', msg: `Connected as @${raw}`, platform });
-      setTimeout(() => setSocialFlash(null), 4000);
-    } catch (e) {
-      setSocialFlash({ type: 'error', platform, msg: e?.response?.data?.error || 'Could not save handle.' });
-      setTimeout(() => setSocialFlash(null), 5000);
-    } finally {
-      setSavingHandle(null);
-    }
   }
 
   async function saveSkills() {
@@ -360,10 +339,7 @@ export default function Profile() {
               {SOCIAL_PLATFORMS.map(platform => {
                 const connVal = connectedSocial[platform.id];
                 const isConnected = !!connVal;
-                const handle = typeof connVal === 'string' ? connVal : null;
                 const isConnecting = socialConnecting === platform.id;
-                const isHandle = ['github','reddit','youtube','medium','dribbble','behance','tiktok','bluesky'].includes(platform.id);
-                const isInputOpen = handleExpanded === platform.id;
                 return (
                   <div key={platform.id} style={{
                     borderRadius:10,
@@ -384,7 +360,7 @@ export default function Profile() {
                           <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
                           {isConnected && (
                             <span style={{ fontSize:'.62rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'1px 5px', borderRadius:4 }}>
-                              ✓ {handle ? `@${handle}` : 'Connected'}
+                              ✓ Connected
                             </span>
                           )}
                         </div>
@@ -393,14 +369,6 @@ export default function Profile() {
                       {isConnected ? (
                         <button className="btn btn-danger btn-sm" style={{ flexShrink:0, fontSize:'.72rem' }} onClick={() => disconnectSocial(platform.id)}>
                           Disconnect
-                        </button>
-                      ) : isHandle ? (
-                        <button
-                          className="btn btn-sm btn-outline"
-                          style={{ flexShrink:0, fontSize:'.72rem', borderColor: platform.color, color: platform.color }}
-                          onClick={() => setHandleExpanded(isInputOpen ? null : platform.id)}
-                        >
-                          Connect
                         </button>
                       ) : (
                         <button
@@ -413,27 +381,6 @@ export default function Profile() {
                         </button>
                       )}
                     </div>
-                    {isHandle && !isConnected && isInputOpen && (
-                      <div style={{ padding:'0 14px 12px', display:'flex', gap:8 }}>
-                        <input
-                          type="text"
-                          className="input"
-                          value={handleInputs[platform.id] || ''}
-                          onChange={e => setHandleInputs(prev => ({ ...prev, [platform.id]: e.target.value }))}
-                          onKeyDown={e => e.key === 'Enter' && saveHandle(platform.id)}
-                          placeholder={`your ${platform.name.toLowerCase()} username`}
-                          style={{ flex:1, fontSize:'.82rem' }}
-                          autoFocus
-                        />
-                        <button
-                          className="btn btn-primary btn-sm"
-                          onClick={() => saveHandle(platform.id)}
-                          disabled={savingHandle === platform.id || !(handleInputs[platform.id] || '').trim()}
-                        >
-                          {savingHandle === platform.id ? '...' : 'Save'}
-                        </button>
-                      </div>
-                    )}
                   </div>
                 );
               })}
