@@ -65,7 +65,7 @@ export default function Profile() {
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
-    if (profile?.skills) setSkills(profile.skills);
+    if (Array.isArray(profile?.skills)) setSkills(profile.skills);
   }, [profile, tab]);
 
   // Load follow counts
@@ -284,7 +284,7 @@ export default function Profile() {
           </div>
 
           {/* Skills */}
-          {profile.skills?.length > 0 && (
+          {Array.isArray(profile.skills) && profile.skills.length > 0 && (
             <div className="card">
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:10 }}>Skills</h3>
               <div className="tags">

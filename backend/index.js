@@ -48,6 +48,38 @@ const ago = (ms) => new Date(Date.now() - ms).toISOString();
 const H = 3600000;
 const D = 86400000;
 const MAX_TIMER_DELAY = 2_147_483_647;
+const SOURCE_TIME_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function parseTimestampMs(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) {
+    const ms = value.getTime();
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
+  }
+  if (typeof value === 'number') {
+    const ms = value < 10_000_000_000 ? value * 1000 : value;
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
+  }
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d+(\.\d+)?$/.test(text)) return parseTimestampMs(Number(text));
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
+function normalizeTimestamp(value, fallback = Date.now()) {
+  const fallbackMs = parseTimestampMs(fallback) || Date.now();
+  const parsed = parseTimestampMs(value);
+  const now = Date.now();
+  const safeMs = parsed === null
+    ? fallbackMs
+    : Math.min(parsed, now + SOURCE_TIME_FUTURE_SKEW_MS);
+  return new Date(safeMs).toISOString();
+}
+
+function fallbackTimestamp(index = 0, unitMs = H) {
+  return new Date(Date.now() - Math.max(1, index + 1) * unitMs).toISOString();
+}
 
 function scheduleRecurring(fn, intervalMs) {
   if (intervalMs <= MAX_TIMER_DELAY) {
@@ -1148,7 +1180,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
       topic:       topicKeyword,
       author:      { id: `reddit_${author}`, name: `u/${author}`, title: `r/${sub}`, organization: 'Reddit' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   published || updated || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
       group:       matchedGroup
         ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
@@ -1180,7 +1212,7 @@ function parseRedditJSON(data, topicKeyword) {
         topic:       topicKeyword,
         author:      { id: `reddit_${d.author}`, name: `u/${d.author}`, title: `r/${sub}`, organization: 'Reddit' },
         likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
-        createdAt:   new Date((d.created_utc || 0) * 1000).toISOString(),
+        createdAt:   normalizeTimestamp(d.created_utc),
         isExternal:  true,
         group:       matchedGroup
           ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
@@ -1433,7 +1465,7 @@ async function fetchMediumByTag(tag) {
       topic:       tag,
       author:      { id: `medium_${a.creator}`, name: a.creator, title: 'Medium', organization: 'Medium' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   a.pubDate ? new Date(a.pubDate).toISOString() : new Date().toISOString(),
+      createdAt:   normalizeTimestamp(a.pubDate),
       isExternal:  true,
       group:       { id: 'ext_medium', name: 'Medium', category: 'Engineering', externalUrl: 'https://medium.com' },
     }));
@@ -1744,7 +1776,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
       topic:       keyword,
       author:      { id: `youtube_ch_${author.replace(/\s+/g, '_')}`, name: author, title: 'YouTube', organization: 'YouTube' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   published || updated || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
       mediaType:   'video',
       mediaUrl:    thumb,
@@ -1768,7 +1800,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     topic:       keyword,
     author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   publishedAt || new Date().toISOString(),
+    createdAt:   normalizeTimestamp(publishedAt),
     isExternal:  true,
     mediaType:   'video',
     mediaUrl:    thumbnailUrl || null,
@@ -1826,7 +1858,7 @@ async function fetchYouTubeByKeyword(keyword) {
           const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
           return mapYouTubePost(
             v.videoId, v.title, v.description, v.author, v.authorId,
-            v.published ? new Date(v.published * 1000).toISOString() : null,
+            v.published,
             thumb?.url, keyword
           );
         });
@@ -1887,7 +1919,7 @@ async function fetchStackOverflowByTag(tag) {
         topic:       tag,
         author:      { id: `so_${q.owner?.user_id}`, name: q.owner?.display_name, title: 'Stack Overflow', organization: 'Stack Exchange' },
         likes: [], likesCount: q.score || 0, commentsCount: q.answer_count || 0,
-        createdAt:   new Date((q.creation_date || 0) * 1000).toISOString(),
+        createdAt:   normalizeTimestamp(q.creation_date),
         isExternal:  true,
         group:       { id: 'ext_stackoverflow', name: 'Stack Overflow', category: 'Engineering', externalUrl: 'https://stackoverflow.com' },
       }));
@@ -2037,7 +2069,7 @@ async function fetchLobstersByTag(tag) {
         topic:       tag,
         author:      { id: `lobsters_${s.submitter_user}`, name: s.submitter_user, title: 'Lobsters', organization: 'Lobsters' },
         likes: [], likesCount: s.score || 0, commentsCount: s.comment_count || 0,
-        createdAt:   s.created_at || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(s.created_at),
         isExternal:  true,
         group:       { id: 'ext_lobsters', name: 'Lobsters', category: 'Engineering', externalUrl: 'https://lobste.rs' },
       }));
@@ -2116,7 +2148,7 @@ async function fetchArxivByKeyword(keyword) {
       topic:       keyword,
       author:      { id: `arxiv_${e.id}`, name: e.authors, title: 'Research Paper', organization: 'arXiv' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   e.published || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(e.published),
       isExternal:  true,
       group:       { id: 'ext_arxiv', name: 'arXiv Research', category: 'Engineering', externalUrl: 'https://arxiv.org' },
     }));
@@ -2148,7 +2180,7 @@ function parseRSSItems(xml) {
       title,
       link:    link.replace(/^<!\[CDATA\[|\]\]>$/g, '').trim(),
       desc:    (field('description') || field('summary') || field('content')).slice(0, 800),
-      pubDate: field('pubDate') || field('published') || field('updated') || new Date().toISOString(),
+      pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
     });
   }
@@ -2169,7 +2201,7 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     topic,
     author:      { id: `${sourceId}_author`, name: item.author || sourceLabel, title: sourceLabel, organization: sourceLabel },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   (() => { try { return new Date(item.pubDate).toISOString(); } catch { return new Date().toISOString(); } })(),
+    createdAt:   normalizeTimestamp(item.pubDate),
     isExternal:  true,
     group:       { id: groupId, name: groupName, category, externalUrl: item.link },
   };
@@ -2202,7 +2234,7 @@ async function fetchIndeedJobs(keyword) {
         topic:       keyword,
         author:      { id: 'indeed_jobs', name: j.company_name || 'Company', title: 'Employer', organization: j.company_name },
         likes: [], likesCount: 0, commentsCount: 0,
-        createdAt:   j.publication_date ? new Date(j.publication_date).toISOString() : new Date().toISOString(),
+      createdAt:   normalizeTimestamp(j.publication_date),
         isExternal:  true,
         mediaUrl:    j.company_logo_url || null,
         mediaType:   j.company_logo_url ? 'image' : null,
@@ -2307,7 +2339,7 @@ async function fetchIndieHackers(keyword) {
       topic:       keyword,
       author:      { id: `ih_${h.author}`, name: h.author, title: 'Indie Hacker', organization: 'Indie Hackers' },
       likes: [], likesCount: h.points || 0, commentsCount: h.num_comments || 0,
-      createdAt:   h.created_at || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(h.created_at),
       isExternal:  true,
       group:       { id: 'ext_indiehackers', name: 'Indie Hackers', category: 'Startups', externalUrl: 'https://www.indiehackers.com' },
     }));
@@ -2548,7 +2580,7 @@ async function fetchGitLabByKeyword(keyword) {
           organization: 'GitLab',
         },
         likes: [], likesCount: p.star_count || 0, commentsCount: p.forks_count || 0,
-        createdAt:   p.last_activity_at || p.created_at || new Date().toISOString(),
+        createdAt:   normalizeTimestamp(p.last_activity_at || p.created_at),
         isExternal:  true,
         group:       { id: 'ext_gitlab', name: 'GitLab Projects', category: 'Engineering', externalUrl: 'https://gitlab.com' },
       }));
@@ -2688,7 +2720,7 @@ async function fetchBlueskyByKeyword(keyword) {
       topic:       keyword,
       author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
-      createdAt:   p.record?.createdAt || p.indexedAt || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
       mediaUrl:    p.embed?.images?.[0]?.thumb || null,
       mediaType:   p.embed?.images ? 'image' : null,
@@ -2748,7 +2780,7 @@ async function fetchLinkedIn(keyword, userToken = null) {
       topic:       keyword,
       author:      { name: 'LinkedIn', title: 'LinkedIn Post' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   new Date(el.created?.time || Date.now()).toISOString(),
+      createdAt:   normalizeTimestamp(el.created?.time),
       isExternal:  true,
       group:       { id: 'ext_linkedin', name: 'LinkedIn', category: 'Startups' },
     }));
@@ -2787,7 +2819,7 @@ async function fetchTwitter(keyword, userToken = null) {
       topic:       keyword,
       author:      { name: 'X (Twitter)', title: 'Tweet' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   t.created_at || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(t.created_at),
       isExternal:  true,
       group:       { id: 'ext_twitter', name: 'X (Twitter)', category: 'Marketing' },
     }));
@@ -2825,7 +2857,7 @@ async function fetchInstagram(keyword, userToken = null) {
       topic:       keyword,
       author:      { name: 'Instagram', title: 'Post' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   p.timestamp || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(p.timestamp),
       isExternal:  true,
       group:       { id: 'ext_instagram', name: 'Instagram', category: 'Marketing' },
     }));
@@ -2863,7 +2895,7 @@ async function fetchFacebook(keyword, userToken = null) {
       topic:       keyword,
       author:      { name: 'Facebook', title: 'Post' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   p.created_time || new Date().toISOString(),
+      createdAt:   normalizeTimestamp(p.created_time),
       isExternal:  true,
       group:       { id: 'ext_facebook', name: 'Facebook', category: 'Marketing' },
     }));
@@ -2932,7 +2964,7 @@ function generateSocialSearchCards(interests = []) {
         author:       { name: meta.label, title: `Search on ${meta.label}` },
         group:        { name: meta.label, category: 'Social' },
         likes: [], likesCount: 0, commentsCount: 0,
-        createdAt:    new Date().toISOString(),
+        createdAt:    fallbackTimestamp(cards.length, 30 * 60 * 1000),
         mediaType:    preview.mediaType,
         mediaUrl:     `https://picsum.photos/seed/${encodeURIComponent(seed)}/800/450`,
         mediaLabel:   preview.mediaLabel,
@@ -3124,6 +3156,38 @@ function trimPostContent(p) {
   return p;
 }
 
+function normalizeCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function normalizeFeedPost(p, fallback = Date.now()) {
+  if (!p) return p;
+  return {
+    ...p,
+    createdAt:     normalizeTimestamp(p.createdAt || p.time || p.posted, fallback),
+    likesCount:    normalizeCount(p.likesCount ?? p.likes),
+    commentsCount: normalizeCount(p.commentsCount ?? p.comments),
+  };
+}
+
+function isFallbackFeedPost(p) {
+  const id = String(p?.id || '');
+  if (!id) return true;
+  return (
+    id.endsWith('_fallback') ||
+    id.endsWith('_social') ||
+    id.startsWith('social_') ||
+    /^indeed_j\d+$/i.test(id) ||
+    /^govt_g\d+$/i.test(id) ||
+    p?.isSocialCard === true
+  );
+}
+
+function realFeedPosts(posts = []) {
+  return (posts || []).filter(p => p?.id && !isFallbackFeedPost(p));
+}
+
 // SSE batch buffer: collect posts for 2s (debounce) and flush in batches of up to 10
 const SSE_BATCH_DEBOUNCE = 2000;   // 2-second debounce
 const SSE_BATCH_MAX      = 10;     // max posts per SSE message
@@ -3154,9 +3218,9 @@ function broadcastSSE(posts) {
 
 // Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE
 function addAndBroadcast(incoming) {
-  const fresh = (incoming || [])
-    .filter(p => p?.id && !seenPostIds.has(p.id))
-    .map(trimPostContent);
+  const fresh = realFeedPosts(incoming)
+    .filter(p => !seenPostIds.has(p.id))
+    .map(p => trimPostContent(normalizeFeedPost(p)));
   if (!fresh.length) return 0;
   fresh.forEach(p => addSeenId(p.id));
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
@@ -3260,7 +3324,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           health.lastAttempt = Date.now();
           health.lastSuccess = Date.now();
           health.lastError = null;
-          const fresh = (posts || []).filter(p => p?.id).map(trimPostContent);
+          const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
           if (fresh.length) {
             const n = addAndBroadcast(fresh);
             const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
@@ -3289,16 +3353,10 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
 
       if (isLastTopic) {
         if (emptyTopicsThisCycle >= shardTopics.length) {
-          const fallbackCount = buildCuratedSourcePosts(agentId).length;
-          if (fallbackCount > 0) {
-            fullCyclesEmpty = 0;
-            if (Date.now() - lastEmptyCycleLog > 15 * 60 * 1000) {
-              lastEmptyCycleLog = Date.now();
-              logAgentAction(agentId, emoji,
-                `Active - no new live posts this cycle, ${fallbackCount} fallback posts ready`, color);
-            }
-          } else {
-            fullCyclesEmpty++;
+          fullCyclesEmpty++;
+          if (Date.now() - lastEmptyCycleLog > 15 * 60 * 1000) {
+            lastEmptyCycleLog = Date.now();
+            logAgentAction(agentId, emoji, 'Active - no new live posts this cycle', color);
           }
           if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
             health.paused    = true;
@@ -3351,7 +3409,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         health.lastError = null;
       }
       if (posts.length) {
-        const trimmed = posts.filter(p => p?.id).map(trimPostContent);
+        const trimmed = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
         addAndBroadcast(trimmed);
         const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
         agentSourceCache.set(agentId, {
@@ -3631,8 +3689,7 @@ function sortAgentLimit() {
 
 function postTimestamp(post) {
   const raw = post?.createdAt || post?.time || post?.posted || 0;
-  const parsed = raw instanceof Date ? raw.getTime() : Date.parse(raw);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseTimestampMs(raw) || 0;
 }
 
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
@@ -3697,13 +3754,9 @@ function trimRuntimeCaches(level = 'pressure') {
   const postCacheLimit= critical ? Math.floor(POST_CACHE_MAX * 0.25) : Math.floor(POST_CACHE_MAX * 0.5);
   const seenLimit     = critical ? Math.floor(SEEN_IDS_MAX * 0.5) : Math.floor(SEEN_IDS_MAX * 0.75);
 
-  if (globalFeedCache.posts.length > globalLimit) {
-    globalFeedCache.posts = globalFeedCache.posts.slice(0, globalLimit);
-  }
+  globalFeedCache.posts = realFeedPosts(globalFeedCache.posts).slice(0, globalLimit);
   for (const cache of agentSourceCache.values()) {
-    if (Array.isArray(cache.posts) && cache.posts.length > sourceLimit) {
-      cache.posts = cache.posts.slice(0, sourceLimit);
-    }
+    if (Array.isArray(cache.posts)) cache.posts = realFeedPosts(cache.posts).slice(0, sourceLimit);
   }
   trimOldestMapEntries(postCache, postCacheLimit);
   // Trim the rolling seenPostIds set + its queue together
@@ -3912,11 +3965,11 @@ async function refreshGlobalFeedCache() {
     : commonInterests;
   try {
     const result = await fetchAllTopicPosts(interestsForCycle, commonRole);
-    const all = [
+    const all = realFeedPosts([
       ...result.reddit, ...result.hn, ...result.github, ...result.devto,
       ...result.medium, ...result.youtube, ...result.stackoverflow,
       ...result.mastodon, ...result.lobsters, ...result.arxiv,
-    ];
+    ]);
     if (all.length > 0) {
       globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
         limit: GLOBAL_FEED_CACHE_LIMIT,
@@ -4045,8 +4098,8 @@ function runCacheHelperCheck() {
     return;
   }
   if (agentSourceCache.size === 0) return;
-  const total = [...agentSourceCache.values()].reduce((s, v) => s + v.posts.length, 0);
-  const allSourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts);
+  const allSourcePosts = realFeedPosts([...agentSourceCache.values()].flatMap(v => v.posts || []));
+  const total = allSourcePosts.length;
   const n = addAndBroadcast(allSourcePosts);
   if (n > 0) {
     logAgentAction('cache_helper', '✅',
@@ -4066,7 +4119,7 @@ function runSortAgentCheck() {
   }
 
   const beforeGlobal = globalFeedCache.posts.length;
-  globalFeedCache.posts = sortFeedBatch(globalFeedCache.posts, 'sort-agent-global', {
+  globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
   });
 
@@ -4075,6 +4128,7 @@ function runSortAgentCheck() {
   for (const [id, cache] of agentSourceCache.entries()) {
     if (!Array.isArray(cache.posts)) continue;
     sourcePools++;
+    cache.posts = realFeedPosts(cache.posts);
     sourcePosts += cache.posts.length;
     cache.posts = sortFeedBatch(cache.posts, `sort-agent-${id}`, {
       limit: SOURCE_FEED_CACHE_LIMIT,
@@ -4112,8 +4166,9 @@ async function runSortDistribCheck() {
   const buckets = [];
   let activeSources = 0;
   for (const [, cache] of agentSourceCache.entries()) {
-    if (Array.isArray(cache.posts) && cache.posts.length > 0) {
-      buckets.push(cache.posts.slice(0, PER_SOURCE));
+    const posts = realFeedPosts(cache.posts || []);
+    if (posts.length > 0) {
+      buckets.push(posts.slice(0, PER_SOURCE));
       activeSources++;
     }
   }
@@ -4140,7 +4195,7 @@ async function runSortDistribCheck() {
 
     if (head.length > 0) {
       const existingIds = new Set(head.map(p => p.id));
-      const tail = globalFeedCache.posts.filter(p => p?.id && !existingIds.has(p.id));
+      const tail = realFeedPosts(globalFeedCache.posts).filter(p => !existingIds.has(p.id));
       globalFeedCache.posts = [...head, ...tail].slice(0, GLOBAL_FEED_CACHE_LIMIT);
       diversified = head.length;
     }
@@ -4430,8 +4485,8 @@ async function runWebStorageSubAgent() {
     dbCap: MAX_CACHED_DB_POSTS,
   });
   try {
-    const sourcePosts = [...agentSourceCache.values()].flatMap(v => v.posts || []);
-    const hotPosts = sortFeedBatch([...globalFeedCache.posts, ...sourcePosts], 'web-storage-hot-cache', {
+    const sourcePosts = realFeedPosts([...agentSourceCache.values()].flatMap(v => v.posts || []));
+    const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
     const saved = await savePostsToDBFast(hotPosts) || 0;
@@ -4693,23 +4748,22 @@ function logAgentHeartbeat(id) {
   if (!def) return false;
   const health = workerHealth.get(id);
   const cache = agentSourceCache.get(id);
-  const curatedCount = buildCuratedSourcePosts(id).length;
 
   if (health) {
     logAgentAction(id, def.emoji,
-      `Active - ${health.fetchCount.toLocaleString()} fetches, ${(cache?.totalSeen || curatedCount || 0).toLocaleString()} posts ready`, def.color);
+      `Active - ${health.fetchCount.toLocaleString()} fetches, ${(cache?.totalSeen || cache?.posts?.length || 0).toLocaleString()} real posts ready`, def.color);
     return true;
   }
 
   if (['twitter', 'linkedin', 'instagram', 'facebook'].includes(id)) {
     logAgentAction(id, def.emoji,
-      `Active on demand - OAuth connector ready, ${curatedCount.toLocaleString()} curated public posts available`, def.color);
+      'Active on demand - OAuth connector ready; posts load after account connection', def.color);
     return true;
   }
 
   if (['tiktok', 'usajobs'].includes(id)) {
     logAgentAction(id, def.emoji,
-      `Active fallback source - ${curatedCount.toLocaleString()} posts ready while live API access is gated`, def.color);
+      'Active - live source gated; no generated fallback posts served', def.color);
     return true;
   }
 
@@ -4818,6 +4872,7 @@ startContinuousWorkers();
 // Pre-seed agentSourceCache with curated posts so office cards and health status
 // reflect real content immediately — workers accumulate live posts on top over time.
 setImmediate(() => {
+  return;
   for (const id of Object.keys(SOURCE_CONFIG)) {
     if (agentSourceCache.has(id)) continue;
     const curated = buildCuratedSourcePosts(id);
@@ -4836,7 +4891,7 @@ setImmediate(() => {
 if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
   setTimeout(() => {
     refreshGlobalFeedCache()
-      .then(() => globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id)))
+      .then(() => realFeedPosts(globalFeedCache.posts).forEach(p => p?.id && seenPostIds.add(p.id)))
       .catch((e) => console.warn('Initial feed warm-up:', e.message));
   }, 15000);
 }
@@ -5278,7 +5333,7 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   j.posted || new Date(Date.now() - (i + 1) * 4 * H).toISOString(),
+      createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 4 * H)),
       isExternal:  true,
       group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
       fromJoinedGroup: false,
@@ -5300,7 +5355,7 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   j.posted || new Date(Date.now() - (i + 1) * 5 * H).toISOString(),
+      createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 5 * H)),
       isExternal:  true,
       group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
       fromJoinedGroup: false,
@@ -5321,7 +5376,7 @@ function buildCuratedSourcePosts(source) {
     mediaType:   p.mediaType || null,
     author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
     likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-    createdAt:   p.time || p.createdAt || new Date(Date.now() - (i + 1) * H).toISOString(),
+    createdAt:   normalizeTimestamp(p.time || p.createdAt, fallbackTimestamp(i, H)),
     isExternal:  false,
     group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
     fromJoinedGroup: false,
@@ -5848,7 +5903,7 @@ function fullProfile(user) {
 
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
-    bio: user.bio, skills: user.skills, organization: user.organization,
+    bio: user.bio, skills: Array.isArray(user.skills) ? user.skills : [], organization: user.organization,
     avatarUrl: user.avatarUrl || '',
     authProvider: user.authProvider || 'local',
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
@@ -6198,15 +6253,24 @@ const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000
 async function savePostsToDB(posts) {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
-  for (const p of posts) {
+  for (const rawPost of realFeedPosts(posts)) {
+    const p = normalizeFeedPost(rawPost);
     try {
       await db.query(
         `INSERT INTO feed_posts_cache
            (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          ON CONFLICT (id) DO UPDATE SET
+           title          = EXCLUDED.title,
+           content        = EXCLUDED.content,
+           author_name    = EXCLUDED.author_name,
+           source_url     = EXCLUDED.source_url,
+           media_url      = EXCLUDED.media_url,
+           media_type     = EXCLUDED.media_type,
+           topic          = EXCLUDED.topic,
            likes_count    = EXCLUDED.likes_count,
            comments_count = EXCLUDED.comments_count,
+           post_created_at= EXCLUDED.post_created_at,
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -6219,7 +6283,7 @@ async function savePostsToDB(posts) {
           p.topic || null,
           p.likesCount || 0,
           p.commentsCount || 0,
-          p.createdAt || new Date().toISOString(),
+          p.createdAt,
         ]
       );
       saved++;
@@ -6245,7 +6309,8 @@ async function savePostsToDBFast(posts) {
   };
   const seen = new Set();
   const rows = [];
-  for (const p of posts) {
+  for (const rawPost of realFeedPosts(posts)) {
+    const p = normalizeFeedPost(rawPost);
     if (!p?.id || seen.has(p.id)) continue;
     seen.add(p.id);
     rows.push({
@@ -6260,7 +6325,7 @@ async function savePostsToDBFast(posts) {
       topic: p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
-      post_created_at: clean(p.createdAt || new Date().toISOString()),
+      post_created_at: clean(p.createdAt),
     });
   }
   if (!rows.length) return 0;
@@ -6287,8 +6352,16 @@ async function savePostsToDBFast(posts) {
      SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
+       title          = EXCLUDED.title,
+       content        = EXCLUDED.content,
+       author_name    = EXCLUDED.author_name,
+       source_url     = EXCLUDED.source_url,
+       media_url      = EXCLUDED.media_url,
+       media_type     = EXCLUDED.media_type,
+       topic          = EXCLUDED.topic,
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
+       post_created_at= EXCLUDED.post_created_at,
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
@@ -6335,7 +6408,13 @@ async function saveWebsiteOptimizationRun(run) {
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null) {
   if (!db.isConnected()) return [];
   try {
-    const clauses = [];
+    const clauses = [
+      `id NOT LIKE '%\\_fallback' ESCAPE '\\'`,
+      `id NOT LIKE '%\\_social' ESCAPE '\\'`,
+      `id NOT LIKE 'social\\_%' ESCAPE '\\'`,
+      `id !~* '^indeed_j[0-9]+$'`,
+      `id !~* '^govt_g[0-9]+$'`,
+    ];
     const params = [];
     if (topics.length) {
       params.push(topics);
@@ -6369,16 +6448,34 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       mediaUrl:    r.media_url,
       mediaType:   r.media_type,
       topic:       r.topic,
-      likesCount:  r.likes_count,
-      commentsCount: r.comments_count,
-      createdAt:   r.post_created_at,
+      likesCount:  normalizeCount(r.likes_count),
+      commentsCount: normalizeCount(r.comments_count),
+      createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
       author:      { name: r.author_name },
       isExternal:  true,
-    }));
+    })).filter(p => !isFallbackFeedPost(p));
   } catch { return []; }
 }
 
 // ─── Seed groups into DB and load back into memory ────────────────────────────
+async function purgeFallbackFeedCache() {
+  if (!db.isConnected()) return 0;
+  try {
+    const result = await db.query(
+      `DELETE FROM feed_posts_cache
+       WHERE id LIKE '%\\_fallback' ESCAPE '\\'
+          OR id LIKE '%\\_social' ESCAPE '\\'
+          OR id LIKE 'social\\_%' ESCAPE '\\'
+          OR id ~* '^indeed_j[0-9]+$'
+          OR id ~* '^govt_g[0-9]+$'`
+    );
+    return result.rowCount || 0;
+  } catch (e) {
+    console.warn('purgeFallbackFeedCache:', e.message);
+    return 0;
+  }
+}
+
 async function seedAndLoadGroups() {
   if (!db.isConnected()) return;
   try {
@@ -6987,10 +7084,10 @@ app.get('/feed', authenticate, async (req, res) => {
   // ── Full-text search across all sources ──────────────────────────────────
   const searchQuery = (req.query.q || '').trim().toLowerCase();
   if (searchQuery) {
-    const allCached = dedupeAndSortFeedPosts([
+    const allCached = dedupeAndSortFeedPosts(realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
-    ]);
+    ]));
     const memMatches = allCached.filter(p => {
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
       return text.includes(searchQuery);
@@ -7000,7 +7097,12 @@ app.get('/feed', authenticate, async (req, res) => {
       try {
         const { rows } = await db.query(
           `SELECT * FROM feed_posts_cache
-           WHERE title ILIKE $1 OR content ILIKE $1
+           WHERE (title ILIKE $1 OR content ILIKE $1)
+             AND id NOT LIKE '%\\_fallback' ESCAPE '\\'
+             AND id NOT LIKE '%\\_social' ESCAPE '\\'
+             AND id NOT LIKE 'social\\_%' ESCAPE '\\'
+             AND id !~* '^indeed_j[0-9]+$'
+             AND id !~* '^govt_g[0-9]+$'
            ORDER BY post_created_at DESC, likes_count DESC
            LIMIT $2`,
           [`%${searchQuery}%`, feedLimit * 3]
@@ -7010,10 +7112,10 @@ app.get('/feed', authenticate, async (req, res) => {
           sourceUrl: r.source_url, mediaUrl: r.media_url, mediaType: r.media_type,
           topic: r.topic, likesCount: r.likes_count, commentsCount: r.comments_count,
           createdAt: r.post_created_at, author: { name: r.author_name }, isExternal: true,
-        }));
+        })).filter(p => !isFallbackFeedPost(p));
       } catch {}
     }
-    const merged = dedupeAndSortFeedPosts([...memMatches, ...dbMatches]);
+    const merged = dedupeAndSortFeedPosts(realFeedPosts([...memMatches, ...dbMatches]));
     return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery });
   }
 
@@ -7028,28 +7130,26 @@ app.get('/feed', authenticate, async (req, res) => {
 
     if (sourceFilter) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
-      const memoryRows = dedupeAndSortFeedPosts([
+      const memoryRows = dedupeAndSortFeedPosts(realFeedPosts([
         ...(agentSourceCache.get(agentKey)?.posts || []),
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
-        ...buildCuratedSourcePosts(sourceFilter),
-      ]);
+      ]));
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
     } else if (sourcesParam.length > 1) {
-      const memoryRows = dedupeAndSortFeedPosts(sourcesParam.flatMap(src => {
+      const memoryRows = dedupeAndSortFeedPosts(realFeedPosts(sourcesParam.flatMap(src => {
         const agentKey = feedWorkerKey(src);
         return [
           ...(agentSourceCache.get(agentKey)?.posts || []),
           ...globalFeedCache.posts.filter(p => p.source === src),
-          ...buildCuratedSourcePosts(src),
         ];
-      }));
+      })));
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
     } else if (!dbRows.length) {
-      pageRows = globalFeedCache.posts.slice(offset, offset + feedLimit + 1);
+      pageRows = realFeedPosts(globalFeedCache.posts).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = pageRows.slice(0, feedLimit);
     }
@@ -7081,13 +7181,14 @@ app.get('/feed', authenticate, async (req, res) => {
   });
 
   function mapExternalPost(p, source) {
-    const group = groups.find((g) => g.id === p.groupId);
-    const cat   = group?.category || p.group?.category;
+    const post = normalizeFeedPost(p);
+    const group = groups.find((g) => g.id === post.groupId);
+    const cat   = group?.category || post.group?.category;
     return {
-      ...p,
-      group:           group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : p.group,
+      ...post,
+      group:           group ? { id: group.id, name: group.name, category: cat, externalUrl: group.externalUrl } : post.group,
       likedByMe:       false,
-      fromJoinedGroup: joined.has(p.groupId),
+      fromJoinedGroup: joined.has(post.groupId),
     };
   }
 
@@ -7132,13 +7233,12 @@ app.get('/feed', authenticate, async (req, res) => {
       liveFetches,
       new Promise(resolve => setTimeout(() => resolve([]), 4500)),
     ]);
-    const livePosts = (settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    const livePosts = realFeedPosts((settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []));
     const dbRows = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
-    const curatedSourcePosts = buildCuratedSourcePosts(sourceFilter);
     savePostsToDB(livePosts).catch(() => {});
 
-    const result = sortFeedBatch([...livePosts, ...dbPosts, ...curatedSourcePosts], `connected-social-${sourceFilter}`, {
+    const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
     });
     return res.json({
@@ -7156,13 +7256,12 @@ app.get('/feed', authenticate, async (req, res) => {
     const liveSourcePostsForCache = [];
     for (const src of sourcesParam) {
       const agentKey = feedWorkerKey(src);
-      const liveRaw = shouldFetchLive ? (liveResult[agentKey] || []) : [];
+      const liveRaw = shouldFetchLive ? realFeedPosts(liveResult[agentKey] || []) : [];
       const livePosts = liveRaw.map(p => mapExternalPost(p, src));
-      const workerPosts  = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, src));
-      const globalPosts  = globalFeedCache.posts.filter(p => p.source === src).map(p => mapExternalPost(p, src));
-      const curated      = buildCuratedSourcePosts(src);
+      const workerPosts  = realFeedPosts(agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, src));
+      const globalPosts  = realFeedPosts(globalFeedCache.posts.filter(p => p.source === src)).map(p => mapExternalPost(p, src));
       liveSourcePostsForCache.push(...liveRaw);
-      allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts, ...curated);
+      allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts);
     }
     if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
     const dbRows = sourcesParam.length > 0
@@ -7190,18 +7289,17 @@ app.get('/feed', authenticate, async (req, res) => {
   if (sourceFilter) {
     const agentKey  = feedWorkerKey(sourceFilter);
 
-    const workerPosts = (agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
-    const globalSourcePosts = globalFeedCache.posts
+    const workerPosts = realFeedPosts(agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
+    const globalSourcePosts = realFeedPosts(globalFeedCache.posts)
       .filter(p => p.source === sourceFilter)
       .map(p => mapExternalPost(p, sourceFilter));
-    const curatedSourcePosts = buildCuratedSourcePosts(sourceFilter);
-    const liveRaw     = liveResult[agentKey] || [];
+    const liveRaw     = realFeedPosts(liveResult[agentKey] || []);
     const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
     const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
-    const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts, ...curatedSourcePosts], `source-tab-${sourceFilter}`, {
+    const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
     });
 
@@ -7231,13 +7329,13 @@ app.get('/feed', authenticate, async (req, res) => {
           crunchbase: crunchbaseRaw = [], behance: behanceRaw = [], designweb: designwebRaw = [] } = liveResult;
 
   // Persist new posts to DB in background (non-blocking)
-  const allLive = [
+  const allLive = realFeedPosts([
     ...redditRaw, ...hnRaw, ...githubRaw, ...devtoRaw, ...mediumRaw, ...youtubeRaw,
     ...soRaw, ...mastoRaw, ...lobRaw, ...arxivRaw,
     ...indeedRaw, ...phRaw, ...tcRaw, ...vergeRaw, ...ihRaw, ...hashnodeRaw, ...blueskyRaw,
     ...arsRaw, ...wiredRaw, ...regRaw, ...vbRaw, ...smashingRaw, ...phoronixRaw, ...infoqRaw, ...mittrRaw,
     ...gitlabRaw, ...remoteokRaw, ...ycRaw, ...crunchbaseRaw, ...behanceRaw, ...designwebRaw,
-  ];
+  ]);
   const liveFreshCount = shouldFetchLive && allLive.length ? addAndBroadcast(allLive) : 0;
 
   // Fetch live posts from all joined Reddit groups only for explicit live requests.
@@ -7247,6 +7345,7 @@ app.get('/feed', authenticate, async (req, res) => {
         joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
       )).flat()
     : [];
+  const joinedGroupPostsReal = realFeedPosts(joinedGroupPostsRaw);
 
   const redditPosts    = redditRaw.map(p => mapExternalPost(p, 'reddit'));
   const hnPosts        = (hnRaw     || []).map(p => mapExternalPost(p, 'hackernews'));
@@ -7309,9 +7408,7 @@ app.get('/feed', authenticate, async (req, res) => {
       .slice(0, 75);
 
     scored.forEach(({ p }) => {
-      // Spread timestamps naturally across the last ~8 hours (5 min per slot) so dates
-      // look realistic rather than all showing "seconds ago".
-      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 5 * 60 * 1000).toISOString();
+      const fallbackCreatedAt = fallbackTimestamp(_socialIdx++, 5 * 60 * 1000);
       connectedSocialPosts.push({
         id:          `${p.id}_social`,
         authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
@@ -7326,7 +7423,7 @@ app.get('/feed', authenticate, async (req, res) => {
         mediaType:   p.mediaType || null,
         author:      { id: `${platform}_${p.author}`, name: p.author || null, title: p.source, organization: platform },
         likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-        createdAt:   freshCreatedAt,
+        createdAt:   normalizeTimestamp(p.time || p.createdAt, fallbackCreatedAt),
         isExternal:  false,
         group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
         fromJoinedGroup: false,
@@ -7348,7 +7445,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 15 * 60 * 1000).toISOString(),
+    createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 15 * 60 * 1000)),
     isExternal:  true,
     group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
     fromJoinedGroup: false,
@@ -7367,7 +7464,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 20 * 60 * 1000).toISOString(),
+    createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 20 * 60 * 1000)),
     isExternal:  true,
     group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
     fromJoinedGroup: false,
@@ -7375,7 +7472,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // Include background-cached global posts (already fetched, mapped by source)
   // Background-cached posts (global refresh + DB)
-  const cachedMapped = globalFeedCache.posts.map(p => mapExternalPost(p, p.source || 'reddit'));
+  const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // DB-persisted posts — topic-filtered using interests + skills
   const userTopics = [
@@ -7397,12 +7494,12 @@ app.get('/feed', authenticate, async (req, res) => {
     if (socialFetches.length > 0) {
       const results = await Promise.all(socialFetches);
       const flat = results.flat();
-      flat.forEach(p => p?.id && socialPlatformPosts.push(mapExternalPost(p, p.source || 'social')));
+      realFeedPosts(flat).forEach(p => socialPlatformPosts.push(mapExternalPost(p, p.source || 'social')));
     }
   }
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
-  const joinedGroupPosts = joinedGroupPostsRaw.map(p => {
+  const joinedGroupPosts = joinedGroupPostsReal.map(p => {
     const matchedGroup = joinedRedditGroups.find(g => g.subreddit?.toLowerCase() === p.group?.name?.replace('r/','').toLowerCase());
     return {
       ...mapExternalPost(p, 'reddit'),
@@ -7416,7 +7513,6 @@ app.get('/feed', authenticate, async (req, res) => {
   // Sort live posts (excludes mock social so their age doesn't affect ranking).
   const liveSorted = sortFeedBatch([
     ...internal, ...joinedGroupPosts,
-    ...indeedPosts, ...govtPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts,
@@ -7428,25 +7524,12 @@ app.get('/feed', authenticate, async (req, res) => {
     limit: Math.max(feedLimit + 1, sortAgentLimit()),
   });
 
-  // Interleave mock social posts every 8 live posts so they always appear in the feed
-  // regardless of timestamp age (their natural 5-min-spread dates look realistic).
-  const SOCIAL_INTERVAL = 8;
-  const responsePosts = [];
-  let sp = 0;
-  for (let i = 0; i < liveSorted.length && responsePosts.length < feedLimit; i++) {
-    if (sp < connectedSocialPosts.length && i > 0 && i % SOCIAL_INTERVAL === 0) {
-      responsePosts.push(connectedSocialPosts[sp++]);
-    }
-    if (responsePosts.length < feedLimit) responsePosts.push(liveSorted[i]);
-  }
-  while (sp < connectedSocialPosts.length && responsePosts.length < feedLimit) {
-    responsePosts.push(connectedSocialPosts[sp++]);
-  }
+  const responsePosts = liveSorted.slice(0, feedLimit);
 
   res.json({
     posts: responsePosts,
     hasMore: liveSorted.length > feedLimit,
-    totalAvailable: liveSorted.length + connectedSocialPosts.length,
+    totalAvailable: liveSorted.length,
     refresh: {
       live: shouldFetchLive,
       liveCount: allLive.length,
@@ -7508,7 +7591,7 @@ app.get('/feed/stream', (req, res) => {
   sseClients.set(clientId, res);
 
   // Send the most recent posts immediately so the client has something to show
-  const initial = globalFeedCache.posts.slice(0, 200);
+  const initial = realFeedPosts(globalFeedCache.posts).slice(0, 200);
   if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
 
   // Heartbeat every 20 s to keep the connection alive through proxies
@@ -7536,18 +7619,24 @@ app.get('/feed/stats', authenticate, async (req, res) => {
     const stats = {};
     if (db.isConnected()) {
       const { rows } = await db.query(
-        `SELECT source, COUNT(*) as count FROM feed_posts_cache GROUP BY source ORDER BY count DESC`
+        `SELECT source, COUNT(*) as count FROM feed_posts_cache
+         WHERE id NOT LIKE '%\\_fallback' ESCAPE '\\'
+           AND id NOT LIKE '%\\_social' ESCAPE '\\'
+           AND id NOT LIKE 'social\\_%' ESCAPE '\\'
+           AND id !~* '^indeed_j[0-9]+$'
+           AND id !~* '^govt_g[0-9]+$'
+         GROUP BY source ORDER BY count DESC`
       );
       rows.forEach(r => { stats[r.source] = parseInt(r.count, 10); });
     }
     res.json({
       stats,
       total: Object.values(stats).reduce((a, b) => a + b, 0),
-      cachedInMemory: globalFeedCache.posts.length,
+      cachedInMemory: realFeedPosts(globalFeedCache.posts).length,
       refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
     });
   } catch (e) {
-    res.json({ stats: {}, total: 0, cachedInMemory: globalFeedCache.posts.length });
+    res.json({ stats: {}, total: 0, cachedInMemory: realFeedPosts(globalFeedCache.posts).length });
   }
 });
 
@@ -7697,7 +7786,7 @@ function _seededShuffle(arr, seed) {
   return a;
 }
 
-function _curatedComments(source, postId) {
+function _curatedComments(source, postId, postCreatedAt = null) {
   const seed = _hashPostId(postId);
   let pool;
   if (source === 'stackoverflow')                                                    pool = _CP.stackoverflow;
@@ -7712,14 +7801,21 @@ function _curatedComments(source, postId) {
 
   const shuffled = _seededShuffle(pool, seed);
   const count    = 3 + (seed % 4);  // 3-6 comments, varies per post
-  const ago = ms => new Date(Date.now() - ms).toISOString();
-  const offsets  = [H, 2*H, 3.5*H, 5*H, 7*H, 10*H, 14*H];
+  const postMs   = parseTimestampMs(postCreatedAt);
+  const baseMs   = postMs || (Date.now() - (6 * H + (seed % 48) * H));
+  const offsets  = [12 * 60000, 35 * 60000, 80 * 60000, 2.5 * H, 4 * H, 7 * H, 11 * H];
   return shuffled.slice(0, count).map((c, i) => ({
     id:      `curated_${postId}_${i}`,
     author:  c.author,
     body:    c.body,
     score:   c.score,
-    created: ago(offsets[i % offsets.length]),
+    created: normalizeTimestamp(
+      Math.min(
+        baseMs + offsets[i % offsets.length] + ((seed + i * 17) % 12) * 60000,
+        Date.now() - Math.max(2, i + 1) * 60000
+      ),
+      fallbackTimestamp(i, H)
+    ),
   }));
 }
 
@@ -7759,6 +7855,17 @@ function _sourceFromPostId(id) {
   return map[prefix] || prefix;
 }
 
+function findKnownFeedPost(postId) {
+  const memoryPost = [
+    ...globalFeedCache.posts,
+    ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
+  ].find(p => p?.id === postId);
+  if (memoryPost) return memoryPost;
+
+  const source = _sourceFromPostId(postId);
+  return buildCuratedSourcePosts(source).find(p => p?.id === postId) || null;
+}
+
 // ─── Unified comments endpoint — live for Reddit / HN / DEV.to, curated for rest ─
 app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   const { postId } = req.params;
@@ -7796,11 +7903,11 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
           author:  `u/${c.data.author}`,
           body:    c.data.body.slice(0, 500),
           score:   c.data.score,
-          created: new Date(c.data.created_utc * 1000).toISOString(),
+          created: normalizeTimestamp(c.data.created_utc),
         }));
       return res.json({ comments, source: 'reddit', live: true });
     } catch {
-      return res.json({ comments: _curatedComments('reddit', postId), source: 'reddit', live: false });
+      return res.json({ comments: [], source: 'reddit', live: false });
     }
   }
 
@@ -7817,9 +7924,9 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         score:   c.points || 0,
         created: c.created_at,
       }));
-      return res.json({ comments: comments.length ? comments : _curatedComments('hackernews', postId), source: 'hackernews', live: !!comments.length });
+      return res.json({ comments, source: 'hackernews', live: true });
     } catch {
-      return res.json({ comments: _curatedComments('hackernews', postId), source: 'hackernews', live: false });
+      return res.json({ comments: [], source: 'hackernews', live: false });
     }
   }
 
@@ -7835,15 +7942,15 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         score:   c.positive_reactions_count || 0,
         created: c.created_at,
       }));
-      return res.json({ comments: comments.length ? comments : _curatedComments('devto', postId), source: 'devto', live: !!comments.length });
+      return res.json({ comments, source: 'devto', live: true });
     } catch {
-      return res.json({ comments: _curatedComments('devto', postId), source: 'devto', live: false });
+      return res.json({ comments: [], source: 'devto', live: false });
     }
   }
 
   // ── All other sources: curated ───────────────────────────────────────────────
   const source = _sourceFromPostId(postId);
-  return res.json({ comments: _curatedComments(source, postId), source, live: false });
+  return res.json({ comments: [], source, live: false });
 });
 
 // ─── Office: agent registry ───────────────────────────────────────────────────
@@ -8184,16 +8291,16 @@ function getRuntimeHealthForAgent(id) {
     return {
       status: 'ready',
       mode: 'oauth-on-demand',
-      fetchCount: buildCuratedSourcePosts(id).length,
+      fetchCount: 0,
       totalErrors: 0,
       lastSuccess: lastLogForAgent(id)?.ts || null,
     };
   }
   if (['tiktok', 'usajobs'].includes(id)) {
     return {
-      status: 'fallback',
-      mode: 'curated',
-      fetchCount: buildCuratedSourcePosts(id).length,
+      status: 'gated',
+      mode: 'live-required',
+      fetchCount: 0,
       totalErrors: 0,
       lastSuccess: lastLogForAgent(id)?.ts || null,
     };
@@ -8208,8 +8315,7 @@ function getRuntimeHealthForAgent(id) {
 
 function getAgentPostCount(id, cache) {
   if (cache?.totalSeen != null) return cache.totalSeen;
-  const curatedCount = buildCuratedSourcePosts(id).length;
-  return curatedCount > 0 ? curatedCount : null;
+  return Array.isArray(cache?.posts) ? realFeedPosts(cache.posts).length : null;
 }
 
 // ─── Office API endpoints ─────────────────────────────────────────────────────
@@ -8218,11 +8324,11 @@ app.get('/office/status', (req, res) => {
   // Build per-source health snapshot
   const sourceHealthArr = Object.keys(SOURCE_CONFIG).map((id) => {
     const h = workerHealth.get(id);
-    const fallbackCount = buildCuratedSourcePosts(id).length;
-    const liveCount = agentSourceCache.get(id)?.totalSeen ?? 0;
+    const cache = agentSourceCache.get(id);
+    const liveCount = cache?.totalSeen ?? realFeedPosts(cache?.posts || []).length;
     const status = h
-      ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : liveCount === 0 && fallbackCount > 0 ? 'fallback' : 'healthy')
-      : (fallbackCount > 0 ? 'fallback' : 'starting');
+      ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
+      : 'starting';
     return {
       id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
       name: AGENT_DEFS[id]?.name || id,
@@ -8235,36 +8341,34 @@ app.get('/office/status', (req, res) => {
       lastError: h?.lastError ?? null,
       lastSuccess: h?.lastSuccess ?? null,
       paused: h?.paused ?? false,
-      postCount: liveCount || fallbackCount,
-      fallbackCount,
+      postCount: liveCount,
+      fallbackCount: 0,
     };
   });
-  // Append curated platform agents that are feed sources but not continuous workers.
+  // Append gated platform agents that are feed sources but not continuous workers.
   for (const id of ['tiktok', 'usajobs']) {
     const def = AGENT_DEFS[id];
-    const fallbackCount = buildCuratedSourcePosts(id).length;
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
-      status: 'fallback', consecutiveErrors: 0, totalErrors: 0,
+      status: 'gated', consecutiveErrors: 0, totalErrors: 0,
       fetchCount: 0, lastSuccess: null, paused: false,
-      postCount: fallbackCount, fallbackCount,
+      postCount: 0, fallbackCount: 0,
     });
   }
   // Append connected-account social agents (per-user OAuth, not continuous cyclers)
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     const def = AGENT_DEFS[id];
-    const fallbackCount = buildCuratedSourcePosts(id).length;
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
       status: 'ready', consecutiveErrors: 0, totalErrors: 0,
-      fetchCount: fallbackCount, lastSuccess: null, paused: false,
-      postCount: fallbackCount, fallbackCount, isConnectedSource: true,
+      fetchCount: 0, lastSuccess: null, paused: false,
+      postCount: 0, fallbackCount: 0, isConnectedSource: true,
     });
   }
 
   const pausedCount   = sourceHealthArr.filter(s => s.paused).length;
   const degradedCount = sourceHealthArr.filter(s => s.status === 'degraded').length;
-  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'fallback' || s.status === 'ready').length;
+  const healthyCount  = sourceHealthArr.filter(s => s.status === 'healthy' || s.status === 'ready' || s.status === 'gated').length;
   const startingCount = sourceHealthArr.filter(s => s.status === 'starting').length;
 
   res.json({
@@ -8277,7 +8381,7 @@ app.get('/office/status', (req, res) => {
       port:        PORT,
     },
     feed: {
-      postCount:   globalFeedCache.posts.length,
+      postCount:   realFeedPosts(globalFeedCache.posts).length,
       refreshedAt: globalFeedCache.refreshedAt || null,
       sseClients:  sseClients.size,
       seenIds:     seenPostIds.size,
@@ -8593,7 +8697,7 @@ app.get('/office/website-optimizer', (_req, res) => {
 app.get('/hq/status', (req, res) => {
   res.json({
     agentLog:     agentActionLog,
-    feedPostCount: globalFeedCache.posts.length,
+    feedPostCount: realFeedPosts(globalFeedCache.posts).length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
     agentsActive: Object.keys(AGENT_DEFS).length,
@@ -8614,16 +8718,17 @@ app.get('/hq/status', (req, res) => {
 app.get('/office/sources', (_req, res) => {
   const sources = [];
   for (const [id, d] of agentSourceCache) {
+    const posts = realFeedPosts(d.posts || []);
     sources.push({
       id,
-      postCount:  d.posts.length,
-      totalSeen:  d.totalSeen,
+      postCount:  posts.length,
+      totalSeen:  Math.min(d.totalSeen || posts.length, posts.length),
       lastFetch:  d.lastFetch,
       emoji:      d.emoji,
       color:      d.color,
     });
   }
-  res.json({ sources, globalCount: globalFeedCache.posts.length });
+  res.json({ sources, globalCount: realFeedPosts(globalFeedCache.posts).length });
 });
 
 // ─── HQ manual agent trigger (internal use) ──────────────────────────────────
@@ -9811,10 +9916,13 @@ async function preloadUsersFromDB() {
 
 db.initDB().then(async () => {
   await migrateDB();
+  const purgedFallbackPosts = await purgeFallbackFeedCache();
+  if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);
   await preloadUsersFromDB();
   await seedAndLoadGroups();
   await loadPostsFromDB();
   // Pre-populate seenPostIds so workers don't re-broadcast historical posts
+  globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
   globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
 
   // Weekly: clear opportunity caches so Remotive + Muse re-fetch fresh live jobs

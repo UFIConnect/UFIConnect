@@ -111,7 +111,7 @@ export default function Settings() {
     title:        profile?.title        || '',
     bio:          profile?.bio          || '',
     organization: profile?.organization || '',
-    skills:       (profile?.skills || []).join(', '),
+    skills:       (Array.isArray(profile?.skills) ? profile.skills : []).join(', '),
   });
   const [roleSettings, setRoleSettings] = useState({ ...(profile?.roleSettings || {}) });
   const [notifs, setNotifs] = useState({
@@ -161,8 +161,8 @@ export default function Settings() {
   // ── Preferences tab state ─────────────────────────────────────────────────
   const [prefRole,       setPrefRole]       = useState(profile?.preferences?.role       || '');
   const [prefExperience, setPrefExperience] = useState(profile?.preferences?.experience || '');
-  const [prefGoals,      setPrefGoals]      = useState(profile?.preferences?.goals      || []);
-  const [prefInterests,  setPrefInterests]  = useState(profile?.preferences?.interests  || []);
+  const [prefGoals,      setPrefGoals]      = useState(Array.isArray(profile?.preferences?.goals)     ? profile.preferences.goals     : []);
+  const [prefInterests,  setPrefInterests]  = useState(Array.isArray(profile?.preferences?.interests) ? profile.preferences.interests : []);
   const [interestSearch, setInterestSearch] = useState('');
   const [roleSearch,     setRoleSearch]     = useState('');
   const [prefSaving,     setPrefSaving]     = useState(false);
