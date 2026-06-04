@@ -10,8 +10,6 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
-
 const SOCIAL_PLATFORMS = [
   { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
   { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Tweets and threads from the people you follow' },
@@ -342,7 +340,6 @@ export default function Profile() {
                 const connVal = connectedSocial[platform.id];
                 const isConnected = !!connVal;
                 const isConnecting = socialConnecting === platform.id;
-                const isComingSoon = !isConnected && SOCIAL_OAUTH_ONLY.has(platform.id);
                 return (
                   <div key={platform.id} style={{
                     borderRadius:10,
@@ -372,10 +369,6 @@ export default function Profile() {
                       {isConnected ? (
                         <button className="btn btn-danger btn-sm" style={{ flexShrink:0, fontSize:'.72rem' }} onClick={() => disconnectSocial(platform.id)}>
                           Disconnect
-                        </button>
-                      ) : isComingSoon ? (
-                        <button className="btn btn-sm btn-outline" disabled style={{ flexShrink:0, fontSize:'.72rem', opacity:0.45, cursor:'not-allowed' }}>
-                          Coming Soon
                         </button>
                       ) : (
                         <button
