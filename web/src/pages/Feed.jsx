@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, Component } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -483,7 +483,7 @@ function commentUrl(post) {
   }
 }
 
-function PostCard({ post, onVideoOpen, onPostUpdated }) {
+const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -774,7 +774,7 @@ function PostCard({ post, onVideoOpen, onPostUpdated }) {
       )}
     </div>
   );
-}
+}); // PostCard memo
 
 class FeedErrorBoundary extends Component {
   state = { error: null };
@@ -915,14 +915,16 @@ export default function Feed() {
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      loadFeed(false, []);
+      // Silent background refresh — don't block UI
+      loadFeed(false, [], { silent: true, live: true });
       return;
     }
     const prev = activeTabsRef.current;
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
-    loadFeed(false, next);
+    // Filter client-side immediately; silently fetch more source posts in background
+    loadFeed(false, next, { silent: true, live: true });
   }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
