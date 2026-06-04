@@ -76,7 +76,8 @@ function HomeRoute() {
 export default function App() {
   const [preview, setPreview] = useState(() => {
     if (typeof window === 'undefined') return false;
-    if (new URLSearchParams(window.location.search).has('preview')) {
+    const url = window.location.href;
+    if (url.includes('preview') || url.includes('admin')) {
       sessionStorage.setItem('ufi_preview', '1');
       return true;
     }
