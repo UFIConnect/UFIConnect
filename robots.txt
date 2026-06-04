@@ -1,6 +1,7 @@
 User-agent: *
 Allow: /
 Disallow: /api/
+Disallow: /hq
 Disallow: /onboarding
 Disallow: /settings
 Disallow: /messages
@@ -22,4 +23,3 @@ User-agent: YandexBot
 Allow: /
 
 Sitemap: https://uficonnect.org/sitemap.xml
-Sitemap: https://uficonnect.pro/sitemap.xml
