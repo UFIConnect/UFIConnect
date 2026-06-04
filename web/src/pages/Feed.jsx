@@ -6,7 +6,10 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 
 function timeAgo(iso) {
-  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t) || t <= 0) return '';
+  const diff = (Date.now() - t) / 1000;
   if (diff < 60)    return 'just now';
   if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
@@ -434,6 +437,16 @@ function commentSectionLabel(source) {
   return 'Comments';
 }
 
+function commentToFeedComment(comment) {
+  return {
+    id: comment?.id || `local_${Date.now()}`,
+    author: comment?.author?.name || 'Member',
+    body: comment?.content || '',
+    score: 0,
+    created: comment?.createdAt || new Date().toISOString(),
+  };
+}
+
 /** Unified post card */
 function commentUrl(post) {
   const u = post.sourceUrl || '';
@@ -470,12 +483,15 @@ function commentUrl(post) {
   }
 }
 
-function PostCard({ post, onVideoOpen }) {
+function PostCard({ post, onVideoOpen, onPostUpdated }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentsError,   setCommentsError]   = useState(false);
+  const [commentDraft,    setCommentDraft]    = useState('');
+  const [commentSending,  setCommentSending]  = useState(false);
+  const [commentPostError,setCommentPostError]= useState(false);
 
   if (!post || typeof post !== 'object') return null;
 
@@ -492,6 +508,7 @@ function PostCard({ post, onVideoOpen }) {
   const hasComments    = COMMENT_SOURCES.has(post.source);
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
+  const canWriteComment = !post.isExternal && (post.source || 'uficonnect') === 'uficonnect';
 
   async function fetchComments() {
     setCommentsLoading(true);
@@ -512,6 +529,27 @@ function PostCard({ post, onVideoOpen }) {
     setShowComments(true);
     if (comments !== null && !commentsError) return;
     fetchComments();
+  }
+
+  async function submitComment(e) {
+    e.preventDefault();
+    if (!canWriteComment || commentSending) return;
+    const content = commentDraft.trim();
+    if (!content) return;
+
+    setCommentSending(true);
+    setCommentPostError(false);
+    try {
+      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
+      setComments(prev => [...(prev || []), commentToFeedComment(data.comment)]);
+      setCommentsLive(true);
+      setCommentDraft('');
+      onPostUpdated?.(data.post || { ...post, commentsCount: data.commentsCount });
+    } catch {
+      setCommentPostError(true);
+    } finally {
+      setCommentSending(false);
+    }
   }
 
   return (
@@ -682,6 +720,36 @@ function PostCard({ post, onVideoOpen }) {
           )}
 
           {/* Read-more link — always shown at bottom */}
+          {canWriteComment && (
+            <form onSubmit={submitComment} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
+              <input
+                className="form-input"
+                value={commentDraft}
+                onChange={e => {
+                  setCommentDraft(e.target.value);
+                  if (commentPostError) setCommentPostError(false);
+                }}
+                placeholder="Write a comment..."
+                maxLength={1000}
+                style={{ flex: 1, fontSize: '.86rem' }}
+              />
+              <button
+                type="submit"
+                className="btn btn-primary btn-sm"
+                disabled={commentSending || !commentDraft.trim()}
+                style={{ flexShrink: 0 }}
+              >
+                {commentSending ? <span className="spinner" /> : 'Send'}
+              </button>
+            </form>
+          )}
+
+          {commentPostError && (
+            <div style={{ fontSize: '.76rem', color: 'var(--danger)', marginTop: 8 }}>
+              Couldn't post that comment. Try again.
+            </div>
+          )}
+
           {commUrl && (
             <a
               href={commUrl}
@@ -850,6 +918,13 @@ export default function Feed() {
     } catch {}
     finally { setLoadingMore(false); }
   }, [loadingMore, remoteHasMore, remotePage]);
+
+  const updateFeedPost = useCallback((updatedPost) => {
+    if (!updatedPost?.id) return;
+    setPosts(prev => prev.map(post =>
+      post.id === updatedPost.id ? { ...post, ...updatedPost } : post
+    ));
+  }, []);
 
   // Load initial feed
   useEffect(() => { loadFeed(); }, [loadFeed]);
@@ -1323,7 +1398,12 @@ export default function Feed() {
           <FeedErrorBoundary>
           <div>
             {displayed.map(post => (
-              <PostCard key={post.id || String(Math.random())} post={post} onVideoOpen={setVideoPost} />
+              <PostCard
+                key={post.id || String(Math.random())}
+                post={post}
+                onVideoOpen={setVideoPost}
+                onPostUpdated={updateFeedPost}
+              />
             ))}
           </div>
           </FeedErrorBoundary>
