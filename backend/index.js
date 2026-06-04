@@ -5213,7 +5213,7 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   new Date(Date.now() - (i + 1) * 11 * 60 * 1000).toISOString(),
+      createdAt:   new Date(Date.now() - (i + 1) * 4000).toISOString(),
       isExternal:  true,
       group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
       fromJoinedGroup: false,
@@ -5235,7 +5235,7 @@ function buildCuratedSourcePosts(source) {
       mediaType:   null,
       author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
       likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   new Date(Date.now() - (i + 1) * 9 * 60 * 1000).toISOString(),
+      createdAt:   new Date(Date.now() - (i + 1) * 5000).toISOString(),
       isExternal:  true,
       group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
       fromJoinedGroup: false,
@@ -5256,7 +5256,7 @@ function buildCuratedSourcePosts(source) {
     mediaType:   p.mediaType || null,
     author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
     likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 8 * 60 * 1000).toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 6000).toISOString(),
     isExternal:  false,
     group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
     fromJoinedGroup: false,
@@ -7222,7 +7222,7 @@ app.get('/feed', authenticate, async (req, res) => {
     scored.forEach(({ p }) => {
       // Use a fresh staggered timestamp so social posts always rank within the top posts
       // regardless of when the server started (startup ago() times go stale otherwise).
-      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 7 * 60 * 1000).toISOString();
+      const freshCreatedAt = new Date(Date.now() - (++_socialIdx) * 3000).toISOString();
       connectedSocialPosts.push({
         id:          `${p.id}_social`,
         authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
@@ -7259,7 +7259,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 9 * 60 * 1000).toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 5000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
     fromJoinedGroup: false,
@@ -7278,7 +7278,7 @@ app.get('/feed', authenticate, async (req, res) => {
     topic:       'career growth',
     author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
     likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   new Date(Date.now() - (i + 1) * 11 * 60 * 1000).toISOString(),
+    createdAt:   new Date(Date.now() - (i + 1) * 4000).toISOString(),
     isExternal:  true,
     group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
     fromJoinedGroup: false,
