@@ -3704,13 +3704,31 @@ function postEngagement(post) {
   return normalizeCount(post?.likesCount ?? post?.likes) + normalizeCount(post?.commentsCount ?? post?.comments) * 2;
 }
 
-function postRankScore(post) {
+function postRankScore(post, srcMaxEngagement = null) {
   const ageHours = Math.max(0, (Date.now() - postTimestamp(post)) / H);
   const recency = Math.max(0, 100 - ageHours * 1.8);
-  const engagement = Math.log1p(postEngagement(post)) * 12;
+  const rawEng = postEngagement(post);
+  // When a per-source max is provided, normalize engagement to [0,50] within the
+  // source so a Reddit post with 10k upvotes doesn't permanently outrank a fresh
+  // GitHub post with 30 stars — both become "best in class" within their source.
+  const engagement = srcMaxEngagement
+    ? (rawEng / Math.max(srcMaxEngagement, 1)) * 50
+    : Math.log1p(rawEng) * 12;
   const communityBoost = post?.fromJoinedGroup ? 18 : 0;
   const firstPartyBoost = (post?.source || 'uficonnect') === 'uficonnect' ? 10 : 0;
   return recency + engagement + communityBoost + firstPartyBoost;
+}
+
+// Returns a Map<source, maxEngagement> across a batch of posts — used to level
+// the playing field so no single high-engagement source dominates ranking.
+function buildSrcMaxEngagement(posts) {
+  const map = {};
+  for (const p of posts) {
+    const src = p.source || 'unknown';
+    const eng = postEngagement(p);
+    if (!(src in map) || eng > map[src]) map[src] = eng;
+  }
+  return map;
 }
 
 function normalizeFeedSort(value, fallback = 'ranked') {
@@ -3758,16 +3776,21 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
       seen.add(post.id);
       unique.push(post);
     }
+    const srcMaxEng = options.levelSources ? buildSrcMaxEngagement(unique) : null;
     unique.sort((a, b) => {
       if (sortMode === 'newest') return postTimestamp(b) - postTimestamp(a);
       if (sortMode === 'popular') {
-        const engagementDelta = postEngagement(b) - postEngagement(a);
-        return engagementDelta || (postTimestamp(b) - postTimestamp(a));
+        const aEng = srcMaxEng ? (postEngagement(a) / Math.max(srcMaxEng[a.source || 'unknown'] || 1, 1)) : postEngagement(a);
+        const bEng = srcMaxEng ? (postEngagement(b) / Math.max(srcMaxEng[b.source || 'unknown'] || 1, 1)) : postEngagement(b);
+        return (bEng - aEng) || (postTimestamp(b) - postTimestamp(a));
       }
-      const rankDelta = postRankScore(b) - postRankScore(a);
+      const aMax = srcMaxEng ? srcMaxEng[a.source || 'unknown'] : null;
+      const bMax = srcMaxEng ? srcMaxEng[b.source || 'unknown'] : null;
+      const rankDelta = postRankScore(b, bMax) - postRankScore(a, aMax);
       return rankDelta || (postTimestamp(b) - postTimestamp(a));
     });
-    const output = (options.diversify || sortMode === 'balanced')
+    const shouldDiversify = options.diversify || sortMode === 'balanced';
+    const output = shouldDiversify
       ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2)
       : unique.slice(0, limit);
 
@@ -7323,12 +7346,17 @@ app.get('/feed', authenticate, async (req, res) => {
   ], 'main-feed-response', {
     limit: Math.max(feedLimit * 4, sortAgentLimit()),
     sort: sortMode,
-    diversify: sortMode === 'balanced',
-    maxConsecutivePerSource: 2,
+    levelSources: sortMode !== 'newest',   // normalize engagement per-source so no single source dominates
+    diversify: true,                        // always interleave — prevents runs of the same source
+    maxConsecutivePerSource: sortMode === 'balanced' ? 1 : 2,
   });
 
-  // Balanced mode keeps one loud source from taking over the first page.
-  const SRC_CAP = Math.max(5, Math.ceil(feedLimit * 0.15));
+  // Per-source hard cap — tighter in balanced mode, looser otherwise.
+  // Applied in all modes (previously only balanced) so a prolific source can't
+  // flood the feed even when ranked by score.
+  const SRC_CAP = sortMode === 'balanced'
+    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: ≤10% per source
+    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: ≤18% per source
   const srcCounts = {};
   const cappedPosts = [];
   const overflowPosts = [];
@@ -7338,9 +7366,10 @@ app.get('/feed', authenticate, async (req, res) => {
     if (srcCounts[src] <= SRC_CAP) cappedPosts.push(p);
     else overflowPosts.push(p);
   }
-  const responsePosts = sortMode === 'balanced'
-    ? (cappedPosts.length >= feedLimit ? cappedPosts.slice(0, feedLimit) : [...cappedPosts, ...overflowPosts].slice(0, feedLimit))
-    : liveSorted.slice(0, feedLimit);
+  // Always apply the cap; fall back to overflow posts if needed to fill the page.
+  const responsePosts = cappedPosts.length >= feedLimit
+    ? cappedPosts.slice(0, feedLimit)
+    : [...cappedPosts, ...overflowPosts].slice(0, feedLimit);
 
   res.json({
     posts: responsePosts,
