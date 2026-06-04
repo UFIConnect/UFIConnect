@@ -4872,20 +4872,7 @@ startContinuousWorkers();
 // Pre-seed agentSourceCache with curated posts so office cards and health status
 // reflect real content immediately — workers accumulate live posts on top over time.
 setImmediate(() => {
-  return;
-  for (const id of Object.keys(SOURCE_CONFIG)) {
-    if (agentSourceCache.has(id)) continue;
-    const curated = buildCuratedSourcePosts(id);
-    if (!curated.length) continue;
-    const def = AGENT_DEFS[id];
-    agentSourceCache.set(id, {
-      posts:     curated.slice(0, SOURCE_FEED_CACHE_LIMIT),
-      lastFetch: null,
-      totalSeen: curated.length,
-      emoji:     def?.emoji,
-      color:     def?.color,
-    });
-  }
+  // Live workers populate source caches.
 });
 
 if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
@@ -5131,307 +5118,8 @@ function getSocialPostUrl(platform, post) {
   }
 }
 
-// ─── Mock social posts per platform ──────────────────────────────────────────
-// Each post has `topics[]` — matched against user's selected interests.
-// Photos: picsum.photos (free, deterministic, no key). Videos: mediaType:'video'
-const SOCIAL_POSTS = {
-  facebook: [
-    { id: 'fb1',  platform: 'facebook', source: 'Product Builders Group',   author: 'James Liu',     topics: ['saas','product manager','career growth'], content: 'Our PM community just hit 50k members. Running a free workshop on AI feature prioritisation next Thursday — link in comments.', time: ago(1.2*H), likes: 312,   comments: 47  },
-    { id: 'fb2',  platform: 'facebook', source: 'Remote Work Collective',    author: 'Priya Nair',    topics: ['remote work','productivity','future of work'], content: 'Poll results: 78% of remote workers say async-first culture is the single biggest driver of productivity. Not tools, not meetings — culture.', time: ago(5*H), likes: 891, comments: 134, mediaUrl: 'https://picsum.photos/seed/fb-remote/800/420', mediaType: 'image' },
-    { id: 'fb3',  platform: 'facebook', source: 'Startup Founders Hub',      author: 'Marco Rossi',   topics: ['founder / entrepreneur','bootstrapping','fundraising'], content: 'Just closed our Series A. 18 months of runway, 8 months of hard work. The fundraising advice I wish I had: your deck tells a story, not a business plan.', time: ago(1*D), likes: 2103, comments: 289 },
-    { id: 'fb4',  platform: 'facebook', source: 'Design & Tech Community',   author: 'Lena Torres',   topics: ['ui/ux design','brand identity','creative director'], content: 'The difference between a good designer and a great one: great designers ask "why does this need to exist?" before "how should it look?". Sharing 3 frameworks that changed how I approach product design.', time: ago(7*H), likes: 1450, comments: 198, mediaUrl: 'https://picsum.photos/seed/fb-design/800/420', mediaType: 'image' },
-    { id: 'fb5',  platform: 'facebook', source: 'Entrepreneurs Unite',       author: 'Felix Oduya',   topics: ['founder / entrepreneur','sales & revenue','b2b / enterprise'], content: 'Year 2 update: We were rejected by 47 accelerators. Now we have 3 enterprise contracts totalling $480k ARR. Persistence is not glamorous but it is everything.', time: ago(2*D), likes: 5620, comments: 731 },
-    { id: 'fb6',  platform: 'facebook', source: 'Women in Tech',             author: 'Aisha Mohammed', topics: ['career growth','diversity & inclusion','leadership'], content: 'Just wrapped our annual salary negotiation workshop. 94% of attendees said they had never negotiated their first offer. Start there. The worst they can say is no.', time: ago(10*H), likes: 3280, comments: 445, mediaUrl: 'https://picsum.photos/seed/fb-career/800/420', mediaType: 'image' },
-    { id: 'fb7',  platform: 'facebook', source: 'Fitness & Wellness Hub',    author: 'Carlos Reyes',  topics: ['fitness & gym','nutrition & diet','sports & athletics'], content: 'Week 12 transformation complete. No fad diets, no 3-hour gym sessions. Just consistency, protein targets, and sleep. Happy to share my full plan in the comments.', time: ago(4*H), likes: 8920, comments: 1230, mediaUrl: 'https://picsum.photos/seed/fb-fitness/800/420', mediaType: 'image' },
-    { id: 'fb8',  platform: 'facebook', source: 'Foodies & Home Chefs',      author: 'Sofia Martini', topics: ['cooking & recipes','baking & pastry','restaurant culture'], content: 'Made this sourdough loaf from a starter I have been nurturing for 3 years. The crust, the crumb — worth every hour of waiting. Recipe in comments! 🍞', time: ago(6*H), likes: 12400, comments: 890, mediaUrl: 'https://picsum.photos/seed/fb-bread/800/420', mediaType: 'image' },
-    { id: 'fb9',  platform: 'facebook', source: 'Travel Addicts Community',  author: 'Yuki Tanaka',   topics: ['travel & adventure','solo travel','cultural tourism'], content: 'Solo trip to Kyoto during cherry blossom season. No tour guide, no group. Just me, a JR Pass, and 2 weeks of pure exploration. Album below 👇', time: ago(12*H), likes: 34200, comments: 2180, mediaUrl: 'https://picsum.photos/seed/fb-kyoto/800/420', mediaType: 'image' },
-    { id: 'fb10', platform: 'facebook', source: 'Music Makers Network',      author: 'Devon Clarke',  topics: ['music discovery','songwriting','music production'], content: 'Finally finished my EP after 14 months of writing and producing solo from my bedroom. Self-released last night — already at 2k streams. If you make music independently, you belong here.', time: ago(8*H), likes: 4100, comments: 560 },
-    { id: 'fb11', platform: 'facebook', source: 'Personal Finance Club',     author: 'Tyler McMurray', topics: ['personal finance','real estate','investing'], content: 'The math on renting vs buying in 2025 has completely changed. With current rates and prices, renting and investing the difference beats buying in 72% of major US cities. Full breakdown below.', time: ago(3*H), likes: 6820, comments: 890 },
-    { id: 'fb12', platform: 'facebook', source: 'Gamers United',             author: 'Jackson Reid',   topics: ['video games','esports & competitive gaming','game dev'], content: 'The indie game scene in 2025 is more exciting than AAA. Smaller teams, more creative risks, and direct-to-consumer models. Here are 10 indie titles that deserve your attention this quarter.', time: ago(15*H), likes: 3210, comments: 430, mediaUrl: 'https://picsum.photos/seed/fb-gaming/800/420', mediaType: 'image' },
-    { id: 'fb13', platform: 'facebook', source: 'Sustainable Living Network', author: 'Emma Thornton', topics: ['sustainability','climate tech','social impact'], content: 'Small changes, massive impact. Our community tracked 3 simple swaps — reusable bags, cloth towels, bar soap — and calculated 1.2 tonnes of plastic waste diverted per household per year.', time: ago(6*H), likes: 9400, comments: 1180, mediaUrl: 'https://picsum.photos/seed/fb-eco/800/420', mediaType: 'image' },
-    { id: 'fb14', platform: 'facebook', source: 'Teachers & Educators Hub',  author: 'Dr. Rachel Kim', topics: ['edtech','education','ai & machine learning'], content: 'My classroom experiment with AI tutoring for 3 months: comprehension scores up 34%, student confidence up 51%, and my planning time down 40%. The tool is not replacing teachers — it is giving us superpowers.', time: ago(9*H), likes: 7830, comments: 1020 },
-    { id: 'fb15', platform: 'facebook', source: 'Crypto & Blockchain Hub',   author: 'Nathan Cruz',    topics: ['web3 / crypto','personal finance','fintech'], content: 'Staking vs yield farming vs HODLing: after running the numbers for 2 years across multiple market cycles, here is the risk-adjusted return breakdown that nobody talks about honestly.', time: ago(11*H), likes: 4560, comments: 780 },
-  ],
-  instagram: [
-    { id: 'ig1',  platform: 'instagram', source: '@ux.weekly',         author: '@ux.weekly',         topics: ['ui/ux design','design systems','brand identity'], content: 'The best interfaces are the ones users never notice. Frictionless design is invisible design. Swipe → 5 principles from 10k usability tests. 🎨', time: ago(3*H), likes: 4820,  comments: 203,  mediaUrl: 'https://picsum.photos/seed/ig-ux/600/600',        mediaType: 'image' },
-    { id: 'ig2',  platform: 'instagram', source: '@buildinpublic',     author: '@buildinpublic',     topics: ['saas','bootstrapping','side projects'], content: 'Month 6 revenue: $0 → $8,400 MRR. No VC, no paid ads. Just content and community. Thread in bio. 🚀', time: ago(8*H), likes: 7341,  comments: 512,  mediaUrl: 'https://picsum.photos/seed/ig-startup/600/600',   mediaType: 'image' },
-    { id: 'ig3',  platform: 'instagram', source: '@devlife.co',        author: '@devlife.co',        topics: ['engineer / developer','side projects','career growth'], content: 'POV: your side project just got its first paying customer at 2am on a Tuesday. This is the way. 💻', time: ago(2*D), likes: 18900, comments: 841,  mediaUrl: 'https://picsum.photos/seed/ig-dev/600/600',       mediaType: 'image' },
-    { id: 'ig4',  platform: 'instagram', source: '@designinspo',       author: '@designinspo',       topics: ['brand identity','motion design','ui/ux design'], content: 'Colour palette breakdown from the most-saved brand redesigns of 2025. Save this. Your next project will thank you. 🎨✨', time: ago(5*H), likes: 22400, comments: 1190, mediaUrl: 'https://picsum.photos/seed/ig-colour/600/600',     mediaType: 'image' },
-    { id: 'ig5',  platform: 'instagram', source: '@techfounder',       author: '@techfounder',       topics: ['remote work','productivity','founder / entrepreneur'], content: 'My home office setup after 4 years of remote work. Every item has a reason. Ask me anything. 🏠💻', time: ago(14*H), likes: 31200, comments: 2040, mediaUrl: 'https://picsum.photos/seed/ig-homeoffice/600/600', mediaType: 'image' },
-    { id: 'ig6',  platform: 'instagram', source: '@fitwithlena',       author: '@fitwithlena',       topics: ['fitness & gym','yoga & meditation','nutrition & diet'], content: '6am workout ✅ Matcha ✅ Cold plunge ✅ Your morning routine is your ROI. 💪 What does yours look like?', time: ago(3*H), likes: 41200, comments: 2890, mediaUrl: 'https://picsum.photos/seed/ig-morning/600/600',    mediaType: 'image' },
-    { id: 'ig7',  platform: 'instagram', source: '@chefamara',         author: '@chefamara',         topics: ['cooking & recipes','restaurant culture','food & cooking'], content: 'Homemade ramen from scratch. 12-hour pork bone broth. Yes it is worth it. Recipe in highlights. 🍜', time: ago(6*H), likes: 28900, comments: 1740, mediaUrl: 'https://picsum.photos/seed/ig-ramen/600/600',      mediaType: 'image' },
-    { id: 'ig8',  platform: 'instagram', source: '@wanderlens',        author: '@wanderlens',        topics: ['travel & adventure','photography','cultural tourism'], content: 'Santorini at golden hour. Worth the hype? Absolutely. Overrated? Also yes. Here is my honest guide. 🌅', time: ago(10*H), likes: 67400, comments: 4230, mediaUrl: 'https://picsum.photos/seed/ig-santorini/600/600',  mediaType: 'image' },
-    { id: 'ig9',  platform: 'instagram', source: '@sneakercollector',  author: '@sneakercollector',  topics: ['streetwear','fashion & style','sneakers'], content: 'The grail arrived. 5 years of hunting. Every story has a W eventually. 👟🔥', time: ago(2*H), likes: 89300, comments: 5610, mediaUrl: 'https://picsum.photos/seed/ig-sneakers/600/600',   mediaType: 'image' },
-    { id: 'ig10', platform: 'instagram', source: '@gamingsetups',      author: '@gamingsetups',      topics: ['video games','game streaming & content','esports & competitive gaming'], content: 'Setup upgrade complete. RGB optional, performance mandatory. 🖥️🎮 Full build specs in bio.', time: ago(5*H), likes: 52800, comments: 3140, mediaUrl: 'https://picsum.photos/seed/ig-setup/600/600',     mediaType: 'image' },
-    { id: 'ig11', platform: 'instagram', source: '@sustainablestyle',   author: '@sustainablestyle',  topics: ['sustainable fashion','streetwear','fashion & style'], content: 'Zero-waste wardrobe for 30 days. Every piece thrifted, swapped, or already owned. Proof that sustainability and style are not opposites 🌿👗 #SustainableFashion', time: ago(4*H), likes: 38900, comments: 2340, mediaUrl: 'https://picsum.photos/seed/ig-sustain/600/600', mediaType: 'image' },
-    { id: 'ig12', platform: 'instagram', source: '@financefor20s',      author: '@financefor20s',     topics: ['personal finance','side projects','career growth'], content: 'Saved $40k in 3 years on a $58k salary 💰 No inheritance, no side hustle (at first). Just a system. Breaking it all down in stories ➡️ #PersonalFinance #Savings', time: ago(7*H), likes: 56200, comments: 4120, mediaUrl: 'https://picsum.photos/seed/ig-finance/600/600', mediaType: 'image' },
-    { id: 'ig13', platform: 'instagram', source: '@mentalwellness',     author: '@mentalwellness',    topics: ['mental health & wellness','productivity','yoga & meditation'], content: 'Signs your nervous system is dysregulated and what I do about it 🧠 Posting this because I wish someone had told me this at 22. Save for when you need it 💙 #MentalHealth', time: ago(5*H), likes: 71400, comments: 5890, mediaUrl: 'https://picsum.photos/seed/ig-mental/600/600', mediaType: 'image' },
-    { id: 'ig14', platform: 'instagram', source: '@cryptoportfolio',    author: '@cryptoportfolio',   topics: ['web3 / crypto','personal finance','investing'], content: 'My portfolio breakdown after 4 years in crypto 📊 Current allocation, biggest learnings, what I would tell 2021 me. DCA wins. Story time 👆 #Crypto #Bitcoin', time: ago(3*H), likes: 29800, comments: 2100, mediaUrl: 'https://picsum.photos/seed/ig-crypto/600/600', mediaType: 'image' },
-    { id: 'ig15', platform: 'instagram', source: '@artiststudio',       author: '@artiststudio',      topics: ['photography','brand identity','creative director'], content: 'How I turned my art practice into a $12k/month business without selling out 🎨 Thread on my process, pricing, and the galleries I turned down. Full transparency. #ArtBusiness', time: ago(8*H), likes: 43600, comments: 3270, mediaUrl: 'https://picsum.photos/seed/ig-art/600/600', mediaType: 'image' },
-  ],
-  linkedin: [],
-  twitter: [
-    { id: 'tw1',  platform: 'twitter', source: '#buildinpublic', author: '@shl',      topics: ['saas','bootstrapping','founder / entrepreneur'], content: 'The market does not care about your effort. It only cares about the value you deliver. Ship faster.', time: ago(45*60*1000), likes: 3420,  comments: 287  },
-    { id: 'tw2',  platform: 'twitter', source: '#devtools',     author: '@t3dotgg',   topics: ['developer tools','engineer / developer','productivity'], content: 'Hot take: the biggest unlock for most dev teams is not a better framework. It is writing down what "done" means before you start.', time: ago(4*H), likes: 5810, comments: 634 },
-    { id: 'tw3',  platform: 'twitter', source: '#startups',     author: '@paulg',     topics: ['founder / entrepreneur','venture capital','fundraising'], content: 'The best founders are not the ones who had the clearest vision from day one. They are the ones who updated their vision fastest when reality disagreed.', time: ago(18*H), likes: 28900, comments: 1820 },
-    { id: 'tw4',  platform: 'twitter', source: '#design',       author: '@rauchg',    topics: ['engineer / developer','saas','product manager'], content: 'Shipping is a feature. A product with 10 great features and 3 bugs beats a roadmap of 100 perfect features that never shipped.', time: ago(2*H), likes: 12400, comments: 892, mediaUrl: 'https://picsum.photos/seed/tw-ship/800/420', mediaType: 'image' },
-    { id: 'tw5',  platform: 'twitter', source: '#AI',           author: '@sama',      topics: ['ai & machine learning','generative ai','llms & chatbots'], content: 'The most important skill for the next decade: knowing which decisions to delegate to AI and which demand your full human judgement.', time: ago(9*H), likes: 48200, comments: 5100 },
-    { id: 'tw6',  platform: 'twitter', source: '#career',       author: '@naval',     topics: ['career growth','side projects','freelancing'], content: 'Specific knowledge is knowledge you cannot be trained for. If society can train you, society can also replace you. Find what only you can do.', time: ago(1.5*D), likes: 64300, comments: 7800, mediaUrl: 'https://picsum.photos/seed/tw-knowledge/800/420', mediaType: 'image' },
-    { id: 'tw7',  platform: 'twitter', source: '#fitness',      author: '@hubermanlab', topics: ['fitness & gym','nutrition & diet','mental health & wellness'], content: 'Morning sunlight for 10 minutes, within 30 minutes of waking. No sunglasses. This single habit has more documented benefits than almost any supplement. Free and effective.', time: ago(3*H), likes: 89400, comments: 6200 },
-    { id: 'tw8',  platform: 'twitter', source: '#gaming',       author: '@mrbeast',   topics: ['video games','game streaming & content','creator economy'], content: 'The gaming industry is now larger than film and music combined. Still the most underestimated creative career path.', time: ago(7*H), likes: 124000, comments: 8900, mediaUrl: 'https://picsum.photos/seed/tw-gaming/800/420', mediaType: 'image' },
-    { id: 'tw9',  platform: 'twitter', source: '#travel',       author: '@nomadlist', topics: ['travel & adventure','digital nomad','solo travel'], content: 'Places with the best value for remote workers right now: Tbilisi 🇬🇪, Chiang Mai 🇹🇭, Mexico City 🇲🇽, Medellin 🇨🇴, Split 🇭🇷. Cost of living under $2k/month, fast internet, great culture.', time: ago(5*H), likes: 43200, comments: 3410 },
-    { id: 'tw10', platform: 'twitter', source: '#music',        author: '@pitchfork',    topics: ['music discovery','live events & concerts','creator economy'], content: 'Vinyl sales have now outpaced CD sales for 3 consecutive years. The format is not nostalgia. It is a preference.', time: ago(11*H), likes: 18700, comments: 2130, mediaUrl: 'https://picsum.photos/seed/tw-vinyl/800/420', mediaType: 'image' },
-    { id: 'tw11', platform: 'twitter', source: '#web3',         author: '@VitalikButerin', topics: ['web3 / crypto','ai & machine learning','open source'], content: 'The future is not crypto vs AI. The future is crypto + AI: verifiable computation, decentralised ownership of models, and trustless coordination at scale.', time: ago(4*H), likes: 78200, comments: 6100 },
-    { id: 'tw12', platform: 'twitter', source: '#mentalhealth', author: '@simonsinek',    topics: ['mental health & wellness','leadership','productivity'], content: 'Burnout is not about working too many hours. It is about working without purpose. Find the why and the hours stop mattering. Lose the why and even 4 hours feels exhausting.', time: ago(13*H), likes: 93400, comments: 7200, mediaUrl: 'https://picsum.photos/seed/tw-burnout/800/420', mediaType: 'image' },
-    { id: 'tw13', platform: 'twitter', source: '#climatetech',  author: '@BillGates',     topics: ['climate tech','sustainability','social impact'], content: 'The breakthrough we need in climate is not just clean energy — it is clean everything: cement, steel, shipping, and fertiliser. Those four account for 30% of global emissions. Hard problems. Let\'s fund them.', time: ago(8*H), likes: 143000, comments: 9800 },
-    { id: 'tw14', platform: 'twitter', source: '#ux',           author: '@rsms',          topics: ['ui/ux design','brand identity','product manager'], content: 'Design is not making things look beautiful. Design is making things work — beautifully. When form follows function perfectly, beauty is the result, not the goal.', time: ago(3*H), likes: 57800, comments: 4200, mediaUrl: 'https://picsum.photos/seed/tw-design2/800/420', mediaType: 'image' },
-    { id: 'tw15', platform: 'twitter', source: '#buildinpublic', author: '@levelsio',     topics: ['bootstrapping','side projects','saas'], content: 'Built my first profitable app in a weekend with just HTML and SQLite. No frameworks. No cloud. Just a problem people had and a simple solution. $0 to $8k MRR in 6 weeks. Build simple things.', time: ago(6*H), likes: 84600, comments: 6700 },
-  ],
-  reddit: [
-    { id: 're1',  platform: 'reddit', source: 'r/MachineLearning',    author: 'u/ml_practitioner',    topics: ['ai & machine learning','data science','llms & chatbots'], content: 'We benchmarked 12 embedding models on our proprietary dataset. The 7B model outperformed GPT-4 on domain-specific retrieval by 23%. Full write-up in comments.', time: ago(6*H), likes: 2341, comments: 412 },
-    { id: 're2',  platform: 'reddit', source: 'r/startups',           author: 'u/bootstrapped_founder', topics: ['bootstrapping','founder / entrepreneur','saas'], content: 'After 4 failed startups, #5 just hit profitability. I stopped building what I thought was cool and started building what one specific person desperately needed.', time: ago(14*H), likes: 8920, comments: 1034 },
-    { id: 're3',  platform: 'reddit', source: 'r/ExperiencedDevs',    author: 'u/senior_dev_42',      topics: ['engineer / developer','career growth','productivity'], content: 'At what point did your team stop shipping features and start mostly paying down tech debt? Trying to understand if our 60/40 split is normal.', time: ago(3*H), likes: 1203, comments: 289 },
-    { id: 're4',  platform: 'reddit', source: 'r/cscareerquestions',  author: 'u/career_change_2025', topics: ['career growth','freelancing','side projects'], content: 'Quit my $180k SWE job to start a tutoring business. 6 months in: making $22k/month, 25-hour weeks, and happier than ever. Happy to answer questions.', time: ago(5*H), likes: 31400, comments: 2890, mediaUrl: 'https://picsum.photos/seed/re-career/800/420', mediaType: 'image' },
-    { id: 're5',  platform: 'reddit', source: 'r/webdev',             author: 'u/fullstack_builder',  topics: ['saas','frontend dev','backend dev'], content: 'I built a SaaS in a weekend using only free tiers. Here is the exact stack and the limits I hit. [OC]', time: ago(1*D), likes: 7230, comments: 843, mediaUrl: 'https://picsum.photos/seed/re-saas/800/420', mediaType: 'image' },
-    { id: 're6',  platform: 'reddit', source: 'r/Fitness',            author: 'u/lifting_for_life',   topics: ['fitness & gym','nutrition & diet','running & cycling'], content: 'Lost 60 lbs in 18 months. No keto, no IF. Just calorie deficit, progressive overload, and walking. Here is everything I tracked.', time: ago(2*H), likes: 42800, comments: 3890, mediaUrl: 'https://picsum.photos/seed/re-fitness/800/420', mediaType: 'image' },
-    { id: 're7',  platform: 'reddit', source: 'r/Cooking',            author: 'u/homecook_pro',       topics: ['cooking & recipes','baking & pastry','food & cooking'], content: 'I recreated every Michelin-starred dish I could find a recipe for. Here are the top 10 that are actually achievable at home.', time: ago(4*H), likes: 19200, comments: 1240, mediaUrl: 'https://picsum.photos/seed/re-cooking/800/420', mediaType: 'image' },
-    { id: 're8',  platform: 'reddit', source: 'r/travel',             author: 'u/perpetual_nomad',    topics: ['travel & adventure','budget travel','solo travel'], content: '2 years of full-time travel on $1,500/month. Countries visited: 31. Things I wish someone had told me before I started.', time: ago(8*H), likes: 27600, comments: 2140 },
-    { id: 're9',  platform: 'reddit', source: 'r/gaming',             author: 'u/retro_gamer_85',     topics: ['video games','esports & competitive gaming','game dev'], content: 'The best game I played this year had a $12 budget, a 2-person team, and no marketing. It also had the best story I\'ve experienced in a decade. Indie gaming is thriving.', time: ago(6*H), likes: 34100, comments: 2980 },
-    { id: 're10', platform: 'reddit', source: 'r/streetwear',          author: 'u/fit_check_king',      topics: ['streetwear','fashion & style','sneakers'], content: 'Full grail collection after 8 years of copping. AMA about the hunt, resale, and which releases were worth the hype.', time: ago(3*H), likes: 8940, comments: 1120, mediaUrl: 'https://picsum.photos/seed/re-grails/800/420', mediaType: 'image' },
-    { id: 're11', platform: 'reddit', source: 'r/personalfinance',    author: 'u/debt_free_at_30',     topics: ['personal finance','career growth','side projects'], content: 'Paid off $67k of student loans in 4 years on a teacher\'s salary. Here is every sacrifice I made, every mistake I made, and the exact payoff order I used. AMA.', time: ago(3*H), likes: 48200, comments: 4310, mediaUrl: 'https://picsum.photos/seed/re-debt/800/420', mediaType: 'image' },
-    { id: 're12', platform: 'reddit', source: 'r/MachineLearning',    author: 'u/ai_researcher_99',   topics: ['ai & machine learning','llms & chatbots','data science'], content: 'We trained a 1B parameter model on synthetic data only and it matched a 7B model trained on real data on 4 out of 5 benchmarks. The implications for data privacy and model efficiency are huge.', time: ago(9*H), likes: 6780, comments: 890 },
-    { id: 're13', platform: 'reddit', source: 'r/sustainability',     author: 'u/zero_waste_engineer', topics: ['sustainability','climate tech','social impact'], content: 'Civil engineer here. Just finished a project that reduced a city block\'s water usage by 61% with zero new infrastructure — just smart fixture choices and habit interventions. The playbook is replicable anywhere.', time: ago(5*H), likes: 22400, comments: 1890 },
-    { id: 're14', platform: 'reddit', source: 'r/WeAreTheMusicMakers', author: 'u/indie_album_release', topics: ['music discovery','songwriting','music production'], content: 'Released my album independently last month. 0 label, 0 marketing budget. Just good music and Reddit posts. 200k streams. Here is everything I did in chronological order.', time: ago(7*H), likes: 15600, comments: 1340, mediaUrl: 'https://picsum.photos/seed/re-music/800/420', mediaType: 'image' },
-    { id: 're15', platform: 'reddit', source: 'r/datascience',        author: 'u/sql_wizard_ds',      topics: ['data science','career growth','ai & machine learning'], content: 'After 5 years as a data scientist, here is what I actually spend my time on: 60% data cleaning, 20% stakeholder management, 15% feature engineering, 5% actual modelling. Learn to love the 60%.', time: ago(4*H), likes: 19300, comments: 2010 },
-  ],
-  tiktok: [
-    { id: 'tt1',  platform: 'tiktok', source: '@techexplained',      author: '@techexplained',     topics: ['ai & machine learning','developer tools','engineer / developer'], content: 'How AI actually works in 60 seconds — explained like you\'re 5 🤖 #AI #Tech #LearnOnTikTok', time: ago(2*H), likes: 84200,  comments: 3210,  mediaUrl: 'https://picsum.photos/seed/tt-ai/600/800',        mediaType: 'video' },
-    { id: 'tt2',  platform: 'tiktok', source: '@dayinmylife.dev',    author: '@dayinmylife.dev',   topics: ['engineer / developer','career growth','remote work'], content: 'Day in my life as a software engineer at a FAANG 💻 (real hours, not the highlight reel) #DayInMyLife #SoftwareEngineer', time: ago(6*H), likes: 142000, comments: 8900,  mediaUrl: 'https://picsum.photos/seed/tt-dev/600/800',       mediaType: 'video' },
-    { id: 'tt3',  platform: 'tiktok', source: '@sidehustlediary',    author: '@sidehustlediary',   topics: ['side projects','freelancing','bootstrapping'], content: 'I made $14,000 last month from my side project 💸 Every income stream broken down #SideHustle', time: ago(1*D), likes: 221000, comments: 15400, mediaUrl: 'https://picsum.photos/seed/tt-money/600/800',     mediaType: 'video' },
-    { id: 'tt4',  platform: 'tiktok', source: '@designwithme',       author: '@designwithme',      topics: ['ui/ux design','brand identity','creative director'], content: 'UI redesign in 60 seconds — boring landing page to 🔥 conversion machine #UIDesign #UX', time: ago(4*H), likes: 97800,  comments: 4320,  mediaUrl: 'https://picsum.photos/seed/tt-design/600/800',   mediaType: 'video' },
-    { id: 'tt5',  platform: 'tiktok', source: '@fitnessmotivation',  author: '@fitnessmotivation', topics: ['fitness & gym','running & cycling','sports & athletics'], content: '100-day transformation. Same gym, same diet, just showing up every single day. Results speak. 💪 #Fitness #Transformation', time: ago(3*H), likes: 389000, comments: 24100, mediaUrl: 'https://picsum.photos/seed/tt-transform/600/800', mediaType: 'video' },
-    { id: 'tt6',  platform: 'tiktok', source: '@chefsecrets',        author: '@chefsecrets',       topics: ['cooking & recipes','restaurant culture','baking & pastry'], content: 'The technique every home cook needs to know but no one teaches. Watch til the end 🍳 #ChefTips #Cooking', time: ago(5*H), likes: 241000, comments: 12400, mediaUrl: 'https://picsum.photos/seed/tt-cook/600/800',     mediaType: 'video' },
-    { id: 'tt7',  platform: 'tiktok', source: '@travelhacks',        author: '@travelhacks',       topics: ['travel & adventure','budget travel','solo travel'], content: 'Travelling Europe on €40/day. Hotels: no. Hostels: sometimes. Airbnb hacks: always. Full breakdown 🌍 #Travel #BudgetTravel', time: ago(7*H), likes: 167000, comments: 9800,  mediaUrl: 'https://picsum.photos/seed/tt-travel/600/800',   mediaType: 'video' },
-    { id: 'tt8',  platform: 'tiktok', source: '@gamingclips',        author: '@gamingclips',       topics: ['video games','esports & competitive gaming','game streaming & content'], content: 'This clip went viral in the esports community and I still don\'t know how I pulled it off 😅 #Gaming #Esports', time: ago(2*H), likes: 512000, comments: 31200, mediaUrl: 'https://picsum.photos/seed/tt-game/600/800',     mediaType: 'video' },
-    { id: 'tt9',  platform: 'tiktok', source: '@fashioninspo',       author: '@fashioninspo',      topics: ['fashion & style','streetwear','sustainable fashion'], content: 'Thrifted an entire week of outfits for under $80. Sustainable fashion does not have to be boring or expensive 👗 #ThriftFlip', time: ago(9*H), likes: 298000, comments: 18600, mediaUrl: 'https://picsum.photos/seed/tt-thrift/600/800',  mediaType: 'video' },
-    { id: 'tt10', platform: 'tiktok', source: '@musicstudio',          author: '@musicstudio',          topics: ['music discovery','songwriting','djing & remixing'], content: 'Made this beat from scratch in 30 minutes — start to finish. Every sample, every layer. 🎵 #MusicProduction #BeatMaking', time: ago(4*H), likes: 183000, comments: 11300, mediaUrl: 'https://picsum.photos/seed/tt-beat/600/800', mediaType: 'video' },
-    { id: 'tt11', platform: 'tiktok', source: '@personalfinancetok',   author: '@personalfinancetok',   topics: ['personal finance','investing','career growth'], content: 'How I paid off $45k in debt in 18 months working a $55k job 💸 The exact budget and sacrifices, no gatekeeping #PersonalFinance #DebtFree', time: ago(3*H), likes: 291000, comments: 18400, mediaUrl: 'https://picsum.photos/seed/tt-debt/600/800', mediaType: 'video' },
-    { id: 'tt12', platform: 'tiktok', source: '@sustainabletok',       author: '@sustainabletok',       topics: ['sustainability','cooking & recipes','social impact'], content: 'Zero waste kitchen in 2025 — everything I replaced, what actually worked, what was greenwashing 🌿 #ZeroWaste #Sustainable', time: ago(5*H), likes: 184000, comments: 11200, mediaUrl: 'https://picsum.photos/seed/tt-zerowaste/600/800', mediaType: 'video' },
-    { id: 'tt13', platform: 'tiktok', source: '@studywithme_tok',      author: '@studywithme_tok',      topics: ['productivity','career growth','edtech'], content: '4 hours of studying done in 90 minutes using science-backed methods 📚 The Feynman Technique changed everything for me #StudyTok #Productivity', time: ago(2*H), likes: 412000, comments: 28700, mediaUrl: 'https://picsum.photos/seed/tt-study/600/800', mediaType: 'video' },
-    { id: 'tt14', platform: 'tiktok', source: '@cryptotok_real',       author: '@cryptotok_real',       topics: ['web3 / crypto','personal finance','investing'], content: 'My $1,000 crypto experiment: I put $100 into 10 different coins 12 months ago. Real results, no cherry picking 📊 #Crypto #Investment', time: ago(6*H), likes: 328000, comments: 24100, mediaUrl: 'https://picsum.photos/seed/tt-crypto/600/800', mediaType: 'video' },
-    { id: 'tt15', platform: 'tiktok', source: '@artprocesstok',        author: '@artprocesstok',        topics: ['photography','brand identity','music discovery'], content: 'This painting took 40 hours. This video is 60 seconds. The gap between what art looks like and how it feels to make it 🎨 #ArtTok #ProcessVideo', time: ago(4*H), likes: 763000, comments: 52400, mediaUrl: 'https://picsum.photos/seed/tt-art/600/800', mediaType: 'video' },
-  ],
-};
-
-const CURATED_SOURCE_POSTS = {
-  stackoverflow: [
-    { id: 'sofb1', source: 'Stack Overflow', author: 'react_architect', topic: 'reactjs', title: 'How should I keep an infinite feed fast when filters are changing?', content: 'A practical discussion around windowing, cursor pagination, and keeping filter state from forcing full feed reloads.', url: 'https://stackoverflow.com/questions/tagged/reactjs', time: ago(2*H), likes: 42, comments: 9 },
-    { id: 'sofb2', source: 'Stack Overflow', author: 'node_runner', topic: 'node.js', title: 'Node service runs out of heap during production build', content: 'Answers cover NODE_OPTIONS, chunking large build steps, and spotting memory leaks in bundler plugins.', url: 'https://stackoverflow.com/questions/tagged/node.js', time: ago(4*H), likes: 37, comments: 6 },
-    { id: 'sofb3', source: 'Stack Overflow', author: 'api_builder', topic: 'api', title: 'Best pattern for stale-while-revalidate API responses?', content: 'Developers compare cache-first responses, background refresh jobs, and user-visible refresh indicators.', url: 'https://stackoverflow.com/questions/tagged/api', time: ago(5*H), likes: 31, comments: 5 },
-    { id: 'sofb4', source: 'Stack Overflow', author: 'postgres_tuner', topic: 'postgresql', title: 'Paginating large Postgres result sets by source and date', content: 'Covers composite indexes, keyset pagination, and avoiding expensive offset scans on high-volume feeds.', url: 'https://stackoverflow.com/questions/tagged/postgresql', time: ago(8*H), likes: 29, comments: 4 },
-    { id: 'sofb5', source: 'Stack Overflow', author: 'vite_shipper', topic: 'vite', title: 'Vite build succeeds locally but fails in CI because of memory limits', content: 'Troubleshooting thread for GitHub Actions heap allocation and dependency install strategy.', url: 'https://stackoverflow.com/questions/tagged/vite', time: ago(12*H), likes: 26, comments: 7 },
-    { id: 'sofb6', source: 'Stack Overflow', author: 'cloud_deploy', topic: 'deployment', title: 'How do I prevent refresh from returning an empty list during upstream timeout?', content: 'Discussion of retaining last-known-good content while revalidating external providers in the background.', url: 'https://stackoverflow.com/questions/tagged/deployment', time: ago(1*D), likes: 35, comments: 8 },
-    { id: 'sofb7', source: 'Stack Overflow', author: 'oauth_debugger', topic: 'oauth', title: 'OAuth source tabs should show connected-state and fallback content clearly', content: 'Patterns for API-backed social tabs, token failures, and product gating without breaking the feed.', url: 'https://stackoverflow.com/questions/tagged/oauth', time: ago(1.4*D), likes: 18, comments: 3 },
-    { id: 'sofb8', source: 'Stack Overflow', author: 'frontend_ops', topic: 'javascript', title: 'IntersectionObserver stops loading when filtered results are empty', content: 'Solutions include sentinel placement outside empty states and proactive loading while filters are narrow.', url: 'https://stackoverflow.com/questions/tagged/javascript', time: ago(2*D), likes: 44, comments: 10 },
-  ],
-  producthunt: [
-    { id: 'phfb1', source: 'Product Hunt', author: 'Launch Team', topic: 'ai tools', title: 'AI workflow builder for small teams', content: 'A no-code workflow tool that connects documents, chat, CRM, and support data into reusable AI agents.', url: 'https://www.producthunt.com', time: ago(3*H), likes: 814, comments: 91 },
-    { id: 'phfb2', source: 'Product Hunt', author: 'Founder Stack', topic: 'startup', title: 'Founder OS for launch planning', content: 'One workspace for launch calendars, waitlists, changelogs, customer feedback, and investor updates.', url: 'https://www.producthunt.com', time: ago(5*H), likes: 621, comments: 74 },
-    { id: 'phfb3', source: 'Product Hunt', author: 'Design Tools', topic: 'design systems', title: 'Design token sync for web and mobile apps', content: 'Keeps Figma variables, Tailwind config, and native app tokens in sync through a simple Git workflow.', url: 'https://www.producthunt.com', time: ago(7*H), likes: 488, comments: 52 },
-    { id: 'phfb4', source: 'Product Hunt', author: 'Dev Tools', topic: 'developer tools', title: 'API monitor that explains failing requests', content: 'Turns endpoint failures into timeline summaries with request samples, deploy diffs, and suggested fixes.', url: 'https://www.producthunt.com', time: ago(9*H), likes: 730, comments: 83 },
-    { id: 'phfb5', source: 'Product Hunt', author: 'Remote Works', topic: 'productivity', title: 'Async standup app with decision logs', content: 'A lightweight team journal for daily updates, blockers, decisions, and shipped work across time zones.', url: 'https://www.producthunt.com', time: ago(12*H), likes: 402, comments: 39 },
-    { id: 'phfb6', source: 'Product Hunt', author: 'Growth Lab', topic: 'marketing', title: 'Landing page experiment generator', content: 'Creates testable copy, sections, and metrics plans from product positioning and customer segments.', url: 'https://www.producthunt.com', time: ago(18*H), likes: 515, comments: 47 },
-    { id: 'phfb7', source: 'Product Hunt', author: 'Open Source', topic: 'open source', title: 'Self-hosted customer feedback board', content: 'An open-source roadmap and changelog board for teams that want full control over their product data.', url: 'https://www.producthunt.com', time: ago(1*D), likes: 367, comments: 33 },
-    { id: 'phfb8', source: 'Product Hunt', author: 'Career Tools', topic: 'career growth', title: 'Portfolio builder for technical operators', content: 'Turns project notes, metrics, screenshots, and case studies into a polished public portfolio.', url: 'https://www.producthunt.com', time: ago(1.5*D), likes: 295, comments: 28 },
-  ],
-  techcrunch: [
-    { id: 'tcfb1', source: 'TechCrunch', author: 'TechCrunch', topic: 'venture capital', title: 'Seed-stage AI infrastructure startups keep raising despite a tighter market', content: 'Investors are still funding teams with clear distribution, lower inference costs, and practical enterprise workflows.', url: 'https://techcrunch.com', time: ago(2*H), likes: 210, comments: 18 },
-    { id: 'tcfb2', source: 'TechCrunch', author: 'TechCrunch', topic: 'cloud', title: 'Cloud cost platforms shift from dashboards to automated optimization', content: 'The next generation of FinOps tools is moving budget decisions directly into deployment workflows.', url: 'https://techcrunch.com', time: ago(4*H), likes: 166, comments: 13 },
-    { id: 'tcfb3', source: 'TechCrunch', author: 'TechCrunch', topic: 'security', title: 'Security startups focus on browser-based work and identity boundaries', content: 'Teams are looking past network perimeters as more sensitive workflows move into SaaS and AI tools.', url: 'https://techcrunch.com', time: ago(7*H), likes: 189, comments: 21 },
-    { id: 'tcfb4', source: 'TechCrunch', author: 'TechCrunch', topic: 'productivity', title: 'Work apps are converging around agents, notes, and project context', content: 'The productivity market is crowded, but products with reliable context memory are starting to stand out.', url: 'https://techcrunch.com', time: ago(9*H), likes: 144, comments: 10 },
-    { id: 'tcfb5', source: 'TechCrunch', author: 'TechCrunch', topic: 'startups', title: 'Founders return to smaller teams and sharper revenue discipline', content: 'Operators are prioritizing profitable customer segments instead of growth at any cost.', url: 'https://techcrunch.com', time: ago(13*H), likes: 198, comments: 16 },
-    { id: 'tcfb6', source: 'TechCrunch', author: 'TechCrunch', topic: 'developer tools', title: 'Developer platforms compete on local-first speed and deployment confidence', content: 'New tools are bundling preview environments, observability, and rollback into a single developer workflow.', url: 'https://techcrunch.com', time: ago(1*D), likes: 173, comments: 14 },
-    { id: 'tcfb7', source: 'TechCrunch', author: 'TechCrunch', topic: 'fintech', title: 'Fintech infrastructure shifts toward embedded compliance and faster onboarding', content: 'The winners are reducing the paperwork burden for small businesses and independent operators.', url: 'https://techcrunch.com', time: ago(1.3*D), likes: 132, comments: 9 },
-    { id: 'tcfb8', source: 'TechCrunch', author: 'TechCrunch', topic: 'climate tech', title: 'Climate software startups find traction in measurement and procurement', content: 'Companies want tools that connect emissions data to purchasing, logistics, and finance decisions.', url: 'https://techcrunch.com', time: ago(2*D), likes: 119, comments: 7 },
-  ],
-  theverge: [
-    { id: 'vergefb1', source: 'The Verge', author: 'The Verge', topic: 'consumer tech', title: 'AI assistants are becoming settings panels for everything', content: 'The next interface battle is less about chat and more about who controls the intent layer across devices.', url: 'https://www.theverge.com', time: ago(2*H), likes: 302, comments: 45 },
-    { id: 'vergefb2', source: 'The Verge', author: 'The Verge', topic: 'hardware', title: 'Laptop makers are betting on battery life over raw benchmark wins', content: 'Better chips, brighter displays, and lighter designs are making all-day machines more realistic.', url: 'https://www.theverge.com', time: ago(4*H), likes: 248, comments: 37 },
-    { id: 'vergefb3', source: 'The Verge', author: 'The Verge', topic: 'platforms', title: 'App stores face another wave of payment and policy pressure', content: 'Developers are watching fee rules, install flows, and regional compliance changes closely.', url: 'https://www.theverge.com', time: ago(6*H), likes: 211, comments: 29 },
-    { id: 'vergefb4', source: 'The Verge', author: 'The Verge', topic: 'creator economy', title: 'Creator tools are becoming full business suites', content: 'Video, merch, newsletters, analytics, and payments are collapsing into fewer creator platforms.', url: 'https://www.theverge.com', time: ago(8*H), likes: 190, comments: 26 },
-    { id: 'vergefb5', source: 'The Verge', author: 'The Verge', topic: 'gaming', title: 'Indie games keep winning attention with smaller worlds and sharper mechanics', content: 'Players are rewarding games that feel focused, weird, and deeply replayable.', url: 'https://www.theverge.com', time: ago(12*H), likes: 279, comments: 42 },
-    { id: 'vergefb6', source: 'The Verge', author: 'The Verge', topic: 'science', title: 'Climate data tools move from research dashboards into everyday planning', content: 'Cities and companies are using sharper local forecasts for infrastructure and operations decisions.', url: 'https://www.theverge.com', time: ago(1*D), likes: 164, comments: 19 },
-    { id: 'vergefb7', source: 'The Verge', author: 'The Verge', topic: 'social platforms', title: 'The open social web is still messy, but the tooling is improving', content: 'Moderation, identity, and cross-posting remain hard, yet developers are shipping better bridges.', url: 'https://www.theverge.com', time: ago(1.6*D), likes: 235, comments: 33 },
-    { id: 'vergefb8', source: 'The Verge', author: 'The Verge', topic: 'mobile', title: 'Mobile apps are quietly becoming AI command centers', content: 'The strongest apps are pairing short actions with memory, files, and cross-service permissions.', url: 'https://www.theverge.com', time: ago(2*D), likes: 188, comments: 22 },
-  ],
-  hashnode: [
-    { id: 'hashfb1', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'javascript', title: 'Build a resilient infinite scroll feed in React', content: 'A practical walkthrough of pagination, deduplication, observer sentinels, and refresh-safe API calls.', url: 'https://www.freecodecamp.org/news/', time: ago(3*H), likes: 420, comments: 34 },
-    { id: 'hashfb2', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'node.js', title: 'How to debug Node memory pressure in CI', content: 'Learn how heap allocation, bundle size, dependency graphs, and test workers interact during builds.', url: 'https://www.freecodecamp.org/news/', time: ago(5*H), likes: 366, comments: 28 },
-    { id: 'hashfb3', source: 'The New Stack', author: 'The New Stack', topic: 'devops', title: 'Platform engineering teams are becoming product teams', content: 'Internal platforms are getting roadmaps, user research, and reliability budgets like external products.', url: 'https://thenewstack.io', time: ago(8*H), likes: 284, comments: 20 },
-    { id: 'hashfb4', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'css', title: 'Modern CSS patterns for dense application layouts', content: 'Grid, container queries, and stable sizing techniques for dashboards and tools.', url: 'https://www.freecodecamp.org/news/', time: ago(10*H), likes: 312, comments: 24 },
-    { id: 'hashfb5', source: 'The New Stack', author: 'The New Stack', topic: 'kubernetes', title: 'Kubernetes cost control starts with product ownership', content: 'Teams are linking workloads, owners, and business metrics to make cluster spending understandable.', url: 'https://thenewstack.io', time: ago(14*H), likes: 255, comments: 17 },
-    { id: 'hashfb6', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'python', title: 'Python data pipelines without mystery state', content: 'A guide to reproducible jobs, explicit schemas, retries, and observable data quality checks.', url: 'https://www.freecodecamp.org/news/', time: ago(1*D), likes: 391, comments: 31 },
-    { id: 'hashfb7', source: 'The New Stack', author: 'The New Stack', topic: 'security', title: 'Supply chain security is now part of everyday development', content: 'Package provenance, SBOMs, and signing are moving into normal pull request workflows.', url: 'https://thenewstack.io', time: ago(1.4*D), likes: 222, comments: 18 },
-    { id: 'hashfb8', source: 'freeCodeCamp', author: 'freeCodeCamp', topic: 'react', title: 'React state patterns for filters, tabs, and server data', content: 'How to coordinate query parameters, local filters, optimistic updates, and cached remote pages.', url: 'https://www.freecodecamp.org/news/', time: ago(2*D), likes: 344, comments: 29 },
-  ],
-  venturebeat: [
-    { id: 'vbfb1', source: 'VentureBeat', author: 'VentureBeat', topic: 'ai', title: 'Enterprise AI teams are moving from pilots to production agents', content: 'Operators are standardizing evaluation, cost controls, and human review before rolling AI systems into daily workflows.', url: 'https://venturebeat.com/category/ai/', time: ago(2*H), likes: 246, comments: 24 },
-    { id: 'vbfb2', source: 'VentureBeat', author: 'VentureBeat', topic: 'startups', title: 'AI infrastructure startups focus on reliability and observability', content: 'Founders are selling tools that help teams trace prompts, data access, model calls, and user outcomes in one place.', url: 'https://venturebeat.com/', time: ago(4*H), likes: 204, comments: 19 },
-    { id: 'vbfb3', source: 'VentureBeat', author: 'VentureBeat', topic: 'security', title: 'Security buyers want guardrails built into AI workflows', content: 'The strongest products are combining policy checks, identity boundaries, audit trails, and red-team feedback loops.', url: 'https://venturebeat.com/security/', time: ago(7*H), likes: 188, comments: 16 },
-    { id: 'vbfb4', source: 'VentureBeat', author: 'VentureBeat', topic: 'cloud', title: 'Inference cost pressure is reshaping cloud architecture', content: 'Teams are mixing smaller models, caching, batching, and routing layers to keep AI features financially sustainable.', url: 'https://venturebeat.com/category/cloud/', time: ago(10*H), likes: 221, comments: 21 },
-    { id: 'vbfb5', source: 'VentureBeat', author: 'VentureBeat', topic: 'data', title: 'Data quality becomes the bottleneck for enterprise automation', content: 'Companies are investing in lineage, permissions, freshness checks, and domain ownership before connecting agents to systems.', url: 'https://venturebeat.com/data-infrastructure/', time: ago(14*H), likes: 177, comments: 12 },
-    { id: 'vbfb6', source: 'VentureBeat', author: 'VentureBeat', topic: 'productivity', title: 'Agentic work tools compete on memory, permissions, and handoff', content: 'Business users are gravitating toward systems that can explain what they did and ask for approval at the right moments.', url: 'https://venturebeat.com/', time: ago(1*D), likes: 198, comments: 18 },
-    { id: 'vbfb7', source: 'VentureBeat', author: 'VentureBeat', topic: 'developer tools', title: 'Developer platforms add AI review without removing ownership', content: 'Teams want suggestions, test plans, and release summaries while keeping final code decisions in the engineering workflow.', url: 'https://venturebeat.com/programming-development/', time: ago(1.4*D), likes: 169, comments: 11 },
-    { id: 'vbfb8', source: 'VentureBeat', author: 'VentureBeat', topic: 'enterprise', title: 'Enterprise software budgets shift toward measurable automation', content: 'Executives are asking for time saved, error reduction, and adoption metrics before expanding AI software contracts.', url: 'https://venturebeat.com/business/', time: ago(2*D), likes: 156, comments: 9 },
-  ],
-  gitlab: [
-    { id: 'gitlabfb1', source: 'GitLab', author: 'Open Source Maintainers', topic: 'open source', title: 'Public GitLab projects trending across developer workflows', content: 'Explore active repositories, CI/CD examples, self-hosted tools, and engineering portfolios published on GitLab.', url: 'https://gitlab.com/explore/projects/trending', time: ago(2*H), likes: 188, comments: 18 },
-    { id: 'gitlabfb2', source: 'GitLab', author: 'DevOps Teams', topic: 'devops', title: 'CI/CD templates teams are reusing for faster releases', content: 'Reusable pipelines, deployment checks, security scans, and package publishing workflows are showing up across public projects.', url: 'https://gitlab.com/explore/projects', time: ago(6*H), likes: 141, comments: 12 },
-    { id: 'gitlabfb3', source: 'GitLab', author: 'Platform Engineers', topic: 'developer tools', title: 'Self-hosted platform tooling gains momentum', content: 'Infrastructure dashboards, build agents, and internal developer portals continue to grow in public GitLab ecosystems.', url: 'https://gitlab.com/explore/projects', time: ago(12*H), likes: 117, comments: 9 },
-  ],
-  remoteok: [
-    { id: 'remoteokfb1', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'remote work', title: 'Remote engineering roles are clustering around product velocity', content: 'Full-stack, infrastructure, AI tooling, and security teams are hiring for operators who can ship across distributed teams.', url: 'https://remoteok.com/remote-dev-jobs', time: ago(2*H), likes: 96, comments: 8 },
-    { id: 'remoteokfb2', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'career growth', title: 'Product and growth roles keep moving remote-first', content: 'Teams are looking for people who can combine async communication, experiments, analytics, and customer context.', url: 'https://remoteok.com/', time: ago(7*H), likes: 84, comments: 6 },
-    { id: 'remoteokfb3', source: 'Remote OK', author: 'Remote Hiring Teams', topic: 'developer tools', title: 'Developer-tool companies post remote roles for infrastructure skills', content: 'Kubernetes, observability, TypeScript, Python, and platform engineering skills continue to appear across remote listings.', url: 'https://remoteok.com/remote-dev-jobs', time: ago(14*H), likes: 73, comments: 5 },
-  ],
-  yc: [
-    { id: 'ycfb1', source: 'Y Combinator', author: 'Y Combinator', topic: 'startups', title: 'Founder lessons for building with sharper distribution', content: 'YC essays and founder notes continue to focus on customer discovery, launch discipline, recruiting, and resilient execution.', url: 'https://www.ycombinator.com/blog', time: ago(3*H), likes: 204, comments: 22 },
-    { id: 'ycfb2', source: 'Y Combinator', author: 'Y Combinator', topic: 'fundraising', title: 'Early-stage teams refine metrics before raising', content: 'The strongest startup updates connect product usage, revenue quality, customer urgency, and a clear path to repeatable growth.', url: 'https://www.ycombinator.com/blog', time: ago(8*H), likes: 168, comments: 15 },
-    { id: 'ycfb3', source: 'Y Combinator', author: 'Y Combinator', topic: 'career growth', title: 'Startup operators are becoming more technical', content: 'Founders increasingly want generalists who can use automation, data, and product instincts to compress learning loops.', url: 'https://www.ycombinator.com/blog', time: ago(1*D), likes: 137, comments: 11 },
-  ],
-  crunchbase: [
-    { id: 'crunchbasefb1', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'venture capital', title: 'Funding signals show where business software is moving', content: 'Investors are watching AI operations, security, vertical SaaS, and automation infrastructure for durable enterprise demand.', url: 'https://news.crunchbase.com/', time: ago(4*H), likes: 143, comments: 12 },
-    { id: 'crunchbasefb2', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'startups', title: 'Startup market maps help professionals track emerging categories', content: 'Company formation, funding rounds, and hiring patterns reveal which markets are gaining momentum before they become obvious.', url: 'https://news.crunchbase.com/', time: ago(9*H), likes: 129, comments: 10 },
-    { id: 'crunchbasefb3', source: 'Crunchbase News', author: 'Crunchbase News', topic: 'fintech', title: 'Fintech infrastructure keeps drawing focused capital', content: 'Compliance, payments orchestration, fraud tooling, and embedded finance remain active areas for early-stage companies.', url: 'https://news.crunchbase.com/', time: ago(1.5*D), likes: 111, comments: 8 },
-  ],
-  behance: [
-    { id: 'behancefb1', source: 'Behance', author: 'Creative Teams', topic: 'ui/ux design', title: 'Portfolio projects highlight richer product storytelling', content: 'Designers are publishing case studies that show research, systems, prototypes, and business results instead of isolated screens.', url: 'https://www.behance.net/', time: ago(2*H), likes: 221, comments: 24 },
-    { id: 'behancefb2', source: 'Behance', author: 'Brand Designers', topic: 'brand identity', title: 'Identity systems become more motion-aware and modular', content: 'Creative portfolios are emphasizing flexible systems that work across apps, social video, packaging, and launch campaigns.', url: 'https://www.behance.net/search/projects?search=brand%20identity', time: ago(6*H), likes: 187, comments: 17 },
-    { id: 'behancefb3', source: 'Behance', author: 'Product Designers', topic: 'design systems', title: 'Design-system work is becoming a portfolio differentiator', content: 'Strong case studies connect component strategy, accessibility, tokens, documentation, and engineering collaboration.', url: 'https://www.behance.net/search/projects?search=design%20system', time: ago(13*H), likes: 166, comments: 14 },
-  ],
-  designweb: [
-    { id: 'designwebfb1', source: 'Design Web', author: 'Design Editors', topic: 'design', title: 'Design and product craft sources merge into one discovery lane', content: 'UX, CSS, architecture, product strategy, and creative technology updates are bundled into one professional design feed.', url: 'https://www.awwwards.com/blog/', time: ago(3*H), likes: 154, comments: 13 },
-    { id: 'designwebfb2', source: 'Design Web', author: 'Frontend Designers', topic: 'frontend dev', title: 'Modern CSS patterns keep reshaping interface systems', content: 'Container queries, accessibility-first components, stable layout sizing, and motion restraint are driving better product UIs.', url: 'https://css-tricks.com/', time: ago(7*H), likes: 138, comments: 11 },
-    { id: 'designwebfb3', source: 'Design Web', author: 'Product Teams', topic: 'productivity', title: 'Business and creative strategy increasingly overlap', content: 'Professional design coverage now blends brand, operations, workplace tools, AI workflows, and product-market positioning.', url: 'https://www.fastcompany.com/', time: ago(1*D), likes: 121, comments: 9 },
-  ],
-};
-
-// ─── Curated social-source fallback posts ─────────────────────────────────────
-function buildCuratedSourcePosts(source) {
-  if (source === 'usajobs') {
-    return GOVT_JOBS.map((j, i) => ({
-      id:          `usajobs_${j.id}_fallback`,
-      authorId:    'usajobs',
-      groupId:     'ext_usajobs',
-      content:     `${j.type} - ${j.location}${j.salary ? ' - ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
-      title:       `${j.title} - ${j.agency}`,
-      source:      'usajobs',
-      sourceLabel: 'USAJobs',
-      sourceUrl:   `https://www.usajobs.gov/search/results/?k=${encodeURIComponent(j.title)}&p=1`,
-      topic:       'career growth',
-      mediaUrl:    null,
-      mediaType:   null,
-      author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
-      likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 4 * H)),
-      isExternal:  true,
-      group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
-      fromJoinedGroup: false,
-    }));
-  }
-
-  if (source === 'indeed') {
-    return INDEED_JOBS.map((j, i) => ({
-      id:          `indeed_${j.id}_fallback`,
-      authorId:    'indeed_jobs',
-      groupId:     'ext_indeed',
-      content:     `${j.type} - ${j.location}${j.salary ? ' - ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
-      title:       `${j.title} @ ${j.company}`,
-      source:      'indeed',
-      sourceLabel: 'Indeed',
-      sourceUrl:   `https://www.indeed.com/jobs?q=${encodeURIComponent(j.title)}&l=${encodeURIComponent(j.location)}`,
-      topic:       'career growth',
-      mediaUrl:    null,
-      mediaType:   null,
-      author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
-      likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 5 * H)),
-      isExternal:  true,
-      group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
-      fromJoinedGroup: false,
-    }));
-  }
-
-  return [...(SOCIAL_POSTS[source] || []), ...(CURATED_SOURCE_POSTS[source] || [])].map((p, i) => ({
-    id:          `${p.id}_social`,
-    authorId:    `${source}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
-    groupId:     `ext_${source}`,
-    content:     p.content,
-    title:       p.title || null,
-    source,
-    sourceLabel: p.source || p.sourceLabel || source,
-    sourceUrl:   p.url || p.sourceUrl || getSocialPostUrl(source, p),
-    topic:       p.topic || (p.topics || [])[0] || '',
-    mediaUrl:    p.mediaUrl || null,
-    mediaType:   p.mediaType || null,
-    author:      { id: `${source}_${p.author}`, name: p.author || null, title: p.source, organization: source },
-    likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-    createdAt:   normalizeTimestamp(p.time || p.createdAt, fallbackTimestamp(i, H)),
-    isExternal:  false,
-    group:       { id: `ext_${source}`, name: source.charAt(0).toUpperCase() + source.slice(1), category: 'Social', externalUrl: getSocialPostUrl(source, p) },
-    fromJoinedGroup: false,
-    isSocialCard: false,
-  }));
-}
-
-// ─── Mock Indeed job listings ─────────────────────────────────────────────────
-const INDEED_JOBS = [
-  { id: 'j1', title: 'Senior ML Engineer', company: 'Anthropic', location: 'San Francisco, CA', type: 'Full-time', salary: '$220k–$280k', tags: ['PyTorch', 'LLMs', 'Python'], posted: ago(1*D) },
-  { id: 'j2', title: 'Product Manager, AI', company: 'Scale AI', location: 'Remote', type: 'Full-time', salary: '$160k–$210k', tags: ['AI', 'Roadmapping', 'Data'], posted: ago(2*D) },
-  { id: 'j3', title: 'Senior UX Designer', company: 'Linear', location: 'Remote', type: 'Full-time', salary: '$140k–$180k', tags: ['Figma', 'Systems', 'Prototyping'], posted: ago(3*H) },
-  { id: 'j4', title: 'Growth Lead', company: 'Notion', location: 'San Francisco, CA', type: 'Full-time', salary: '$150k–$190k', tags: ['Growth', 'Analytics', 'B2B'], posted: ago(8*H) },
-  { id: 'j5', title: 'Staff Software Engineer', company: 'Vercel', location: 'Remote', type: 'Full-time', salary: '$200k–$260k', tags: ['React', 'Node', 'Infrastructure'], posted: ago(5*H) },
-  { id: 'j6', title: 'Founding Engineer', company: 'Stealth AI Startup', location: 'Remote', type: 'Full-time', salary: '$180k + equity', tags: ['TypeScript', 'LLMs', 'Startup'], posted: ago(2*H) },
-  { id: 'j7', title: 'DevRel Engineer', company: 'Supabase', location: 'Remote', type: 'Full-time', salary: '$130k–$170k', tags: ['Postgres', 'OSS', 'Content'], posted: ago(1*D) },
-  { id: 'j8', title: 'Data Scientist', company: 'Figma', location: 'San Francisco, CA', type: 'Full-time', salary: '$160k–$200k', tags: ['Python', 'SQL', 'Experimentation'], posted: ago(4*H) },
-];
-
-// ─── Government / Federal job listings ───────────────────────────────────────
-const GOVT_JOBS = [
-  // Software & Tech
-  { id: 'g1',  title: 'Software Engineer', agency: 'U.S. Digital Service', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Python','React','Cloud','Civic Tech'], posted: ago(1*H) },
-  { id: 'g2',  title: 'Data Scientist', agency: 'Census Bureau', location: 'Suitland, MD / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Python','R','Statistics','Big Data'], posted: ago(3*H) },
-  { id: 'g3',  title: 'Cybersecurity Analyst', agency: 'CISA', location: 'Arlington, VA / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['SIEM','Incident Response','NIST','Cloud Security'], posted: ago(5*H) },
-  { id: 'g4',  title: 'AI/ML Engineer', agency: 'Department of Defense (JAIC)', location: 'Arlington, VA', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['PyTorch','TensorFlow','LLMs','Cloud'], posted: ago(6*H) },
-  { id: 'g5',  title: 'Cloud Infrastructure Engineer', agency: 'NASA', location: 'Houston, TX / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['AWS','Kubernetes','Terraform','DevOps'], posted: ago(8*H) },
-  { id: 'g6',  title: 'Full Stack Developer', agency: 'VA Digital Experience', location: 'Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['React','Node.js','PostgreSQL','Accessibility'], posted: ago(10*H) },
-  { id: 'g7',  title: 'Product Manager (Digital Services)', agency: '18F / GSA', location: 'Remote', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Agile','UX','Government Tech','Stakeholder Mgmt'], posted: ago(12*H) },
-  { id: 'g8',  title: 'IT Security Specialist', agency: 'NSA', location: 'Fort Meade, MD', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Cryptography','Network Security','Clearance Required'], posted: ago(1*D) },
-  // Policy & Analysis
-  { id: 'g9',  title: 'Policy Analyst', agency: 'White House OSTP', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Tech Policy','AI Governance','Research','Writing'], posted: ago(2*H) },
-  { id: 'g10', title: 'Foreign Affairs Officer', agency: 'U.S. State Department', location: 'Washington, DC', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Diplomacy','International Relations','Languages'], posted: ago(4*H) },
-  { id: 'g11', title: 'Intelligence Analyst', agency: 'DIA', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Research','National Security','Clearance Required','Analysis'], posted: ago(7*H) },
-  { id: 'g12', title: 'Budget Analyst', agency: 'Office of Management & Budget', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Finance','Budgeting','Policy','Excel'], posted: ago(9*H) },
-  // Healthcare & Science
-  { id: 'g13', title: 'Epidemiologist', agency: 'CDC', location: 'Atlanta, GA / Remote', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Public Health','Statistics','R','Surveillance'], posted: ago(3*H) },
-  { id: 'g14', title: 'Biomedical Research Scientist', agency: 'NIH', location: 'Bethesda, MD', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Genomics','Bioinformatics','Research','Publications'], posted: ago(6*H) },
-  { id: 'g15', title: 'Public Health Advisor', agency: 'HHS', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Public Health','Grant Management','Healthcare Policy'], posted: ago(1*D) },
-  { id: 'g16', title: 'Nurse Practitioner', agency: 'Veterans Affairs (VA)', location: 'Multiple Locations', type: 'Full-time', salary: '$95k–$130k', tags: ['NP','Primary Care','VA Benefits','Patient Care'], posted: ago(5*H) },
-  // Engineering & Infrastructure
-  { id: 'g17', title: 'Civil Engineer', agency: 'Army Corps of Engineers', location: 'Various Locations', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Civil Engineering','Infrastructure','Project Mgmt','PE'], posted: ago(2*D) },
-  { id: 'g18', title: 'Environmental Scientist', agency: 'EPA', location: 'Washington, DC / Remote', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Environmental Science','GIS','Policy','Climate'], posted: ago(1*D) },
-  { id: 'g19', title: 'Aerospace Engineer', agency: 'NASA (Jet Propulsion Lab)', location: 'Pasadena, CA', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Aerospace','MATLAB','Systems Engineering','Space'], posted: ago(3*D) },
-  { id: 'g20', title: 'Transportation Planner', agency: 'Department of Transportation', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Urban Planning','GIS','Infrastructure','Policy'], posted: ago(2*D) },
-  // Law & Finance
-  { id: 'g21', title: 'Special Agent', agency: 'FBI', location: 'Various Field Offices', type: 'Full-time', salary: 'GL-10 ($56k–$73k)', tags: ['Law Enforcement','Investigation','Clearance Required','Fitness'], posted: ago(4*H) },
-  { id: 'g22', title: 'Revenue Agent (Compliance)', agency: 'IRS', location: 'Remote / Various', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Accounting','CPA','Tax Law','Auditing'], posted: ago(8*H) },
-  { id: 'g23', title: 'Economist', agency: 'Bureau of Labor Statistics', location: 'Washington, DC', type: 'Full-time', salary: 'GS-13 ($99k–$128k)', tags: ['Economics','Statistics','R','Labor Market'], posted: ago(1*D) },
-  { id: 'g24', title: 'Attorney Advisor', agency: 'Department of Justice', location: 'Washington, DC', type: 'Full-time', salary: 'GS-14 ($117k–$152k)', tags: ['Law','JD Required','Federal Litigation','Policy'], posted: ago(2*D) },
-  // Emergency & Operations
-  { id: 'g25', title: 'Emergency Management Specialist', agency: 'FEMA', location: 'Remote / Disaster Response', type: 'Full-time', salary: 'GS-12 ($87k–$113k)', tags: ['Emergency Mgmt','Logistics','Crisis Response','NIMS'], posted: ago(5*H) },
-  { id: 'g26', title: 'Border Patrol Agent', agency: 'CBP', location: 'Southwest Border', type: 'Full-time', salary: 'GL-7 ($49k–$63k)', tags: ['Law Enforcement','Fitness Test','Clearance Required'], posted: ago(1*D) },
-  { id: 'g27', title: 'Air Traffic Controller', agency: 'FAA', location: 'Various Facilities', type: 'Full-time', salary: '$80k–$140k', tags: ['ATC','Aviation','Safety','Shift Work'], posted: ago(3*D) },
-];
+// ─── buildCuratedSourcePosts: all sources are live — no mock fallbacks ───────
+function buildCuratedSourcePosts() { return []; }
 
 // ─── Registered users ─────────────────────────────────────────────────────────
 // Live users — populated from PostgreSQL at login/register, no hardcoded demos
@@ -7379,97 +7067,6 @@ app.get('/feed', authenticate, async (req, res) => {
   const behancePosts   = behanceRaw.map(p => mapExternalPost(p, 'behance'));
   const designwebPosts = designwebRaw.map(p => mapExternalPost(p, 'designweb'));
 
-  // Social platform posts — shown for all users, topic-matched
-  const userInterests  = new Set((prefs.interests || []).map(s => s.toLowerCase()));
-  // ── Social platform posts — shown for ALL users, topic-matched, top 5 per platform ──
-  const PLATFORM_URLS = {
-    twitter: 'https://x.com', tiktok: 'https://tiktok.com',
-    instagram: 'https://instagram.com', facebook: 'https://facebook.com',
-    linkedin: 'https://linkedin.com', reddit: 'https://reddit.com',
-    indeed: 'https://indeed.com',
-    usajobs: 'https://www.usajobs.gov',
-  };
-  const ALL_SOCIAL_PLATFORMS = ['facebook', 'instagram', 'linkedin', 'twitter', 'tiktok', 'reddit'];
-  const connectedSocialPosts = [];
-  let _socialIdx = 0; // global stagger counter so posts spread across all platforms
-
-  for (const platform of ALL_SOCIAL_PLATFORMS) {
-    const platformPosts = SOCIAL_POSTS[platform] || [];
-    // Score by topic match; always include at least 3, up to 5 most relevant
-    const scored = platformPosts
-      .map(p => {
-        const postTopics = (p.topics || []).map(t => t.toLowerCase());
-        const matchScore = userInterests.size > 0
-          ? postTopics.filter(t => userInterests.has(t)).length
-          : 1;
-        return { p, score: matchScore };
-      })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 75);
-
-    scored.forEach(({ p }) => {
-      const fallbackCreatedAt = fallbackTimestamp(_socialIdx++, 5 * 60 * 1000);
-      connectedSocialPosts.push({
-        id:          `${p.id}_social`,
-        authorId:    `${platform}_${p.author?.replace(/[^a-z0-9]/gi,'_') || 'user'}`,
-        groupId:     `ext_${platform}`,
-        content:     p.content,
-        title:       p.title || null,
-        source:      platform,
-        sourceLabel: p.source || platform,
-        sourceUrl:   getSocialPostUrl(platform, p),
-        topic:       (p.topics || [])[0] || '',
-        mediaUrl:    p.mediaUrl || null,
-        mediaType:   p.mediaType || null,
-        author:      { id: `${platform}_${p.author}`, name: p.author || null, title: p.source, organization: platform },
-        likes: [], likesCount: p.likes || 0, commentsCount: p.comments || 0,
-        createdAt:   normalizeTimestamp(p.time || p.createdAt, fallbackCreatedAt),
-        isExternal:  false,
-        group:       { id: `ext_${platform}`, name: platform.charAt(0).toUpperCase() + platform.slice(1), category: 'Social', externalUrl: PLATFORM_URLS[platform] || `https://${platform}.com` },
-        fromJoinedGroup: false,
-        isSocialCard: false,
-      });
-    });
-  }
-
-  // ── Indeed job posts in feed ───────────────────────────────────────────────
-  const indeedPosts = INDEED_JOBS.slice(0, 75).map((j, i) => ({
-    id:          `indeed_${j.id}`,
-    authorId:    'indeed_jobs',
-    groupId:     'ext_indeed',
-    content:     `${j.type} · ${j.location}${j.salary ? ' · ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
-    title:       `${j.title} @ ${j.company}`,
-    source:      'indeed',
-    sourceLabel: 'Indeed',
-    sourceUrl:   `https://www.indeed.com/jobs?q=${encodeURIComponent(j.title)}&l=${encodeURIComponent(j.location)}`,
-    topic:       'career growth',
-    author:      { id: 'indeed_jobs', name: j.company, title: 'Hiring', organization: 'Indeed' },
-    likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 15 * 60 * 1000)),
-    isExternal:  true,
-    group:       { id: 'ext_indeed', name: 'Indeed Jobs', category: 'Startups', externalUrl: 'https://indeed.com' },
-    fromJoinedGroup: false,
-  }));
-
-  // ── Government job posts in feed ──────────────────────────────────────────
-  const govtPosts = GOVT_JOBS.map((j, i) => ({
-    id:          `govt_${j.id}`,
-    authorId:    'usajobs',
-    groupId:     'ext_usajobs',
-    content:     `${j.type} · ${j.location}${j.salary ? ' · ' + j.salary : ''}\n\nSkills: ${(j.tags || []).join(', ')}`,
-    title:       `${j.title} — ${j.agency}`,
-    source:      'usajobs',
-    sourceLabel: 'USAJobs',
-    sourceUrl:   `https://www.usajobs.gov/search/results/?k=${encodeURIComponent(j.title)}&p=1`,
-    topic:       'career growth',
-    author:      { id: 'usajobs', name: j.agency, title: 'Federal Hiring', organization: 'U.S. Government' },
-    likes: [], likesCount: 0, commentsCount: 0,
-    createdAt:   normalizeTimestamp(j.posted, fallbackTimestamp(i, 20 * 60 * 1000)),
-    isExternal:  true,
-    group:       { id: 'ext_usajobs', name: 'Government Jobs', category: 'Career Growth', externalUrl: 'https://www.usajobs.gov' },
-    fromJoinedGroup: false,
-  }));
-
   // Include background-cached global posts (already fetched, mapped by source)
   // Background-cached posts (global refresh + DB)
   const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
@@ -7510,7 +7107,7 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Sort live posts (excludes mock social so their age doesn't affect ranking).
+  // Sort all live posts by recency + relevance.
   const liveSorted = sortFeedBatch([
     ...internal, ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
@@ -7856,17 +7453,13 @@ function _sourceFromPostId(id) {
 }
 
 function findKnownFeedPost(postId) {
-  const memoryPost = [
+  return realFeedPosts([
     ...globalFeedCache.posts,
     ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
-  ].find(p => p?.id === postId);
-  if (memoryPost) return memoryPost;
-
-  const source = _sourceFromPostId(postId);
-  return buildCuratedSourcePosts(source).find(p => p?.id === postId) || null;
+  ]).find(p => p?.id === postId) || null;
 }
 
-// ─── Unified comments endpoint — live for Reddit / HN / DEV.to, curated for rest ─
+// ─── Unified comments endpoint — live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters ─
 app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   const { postId } = req.params;
 
@@ -7948,7 +7541,134 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
     }
   }
 
-  // ── All other sources: curated ───────────────────────────────────────────────
+  // ── GitHub: recent commits as discussion ─────────────────────────────────────
+  if (postId.startsWith('github_')) {
+    try {
+      const post = await findPostById(postId);
+      const repoUrl = post?.sourceUrl || '';
+      const match = repoUrl.match(/github\.com\/([^/]+\/[^/?#]+)/);
+      if (!match) return res.json({ comments: [], source: 'github', live: false });
+      const fullName = match[1].replace(/\.git$/, '');
+      const [commitsData, issuesData] = await Promise.all([
+        fetchJSON(`https://api.github.com/repos/${fullName}/commits?per_page=8`, GITHUB_HEADERS).catch(() => []),
+        fetchJSON(`https://api.github.com/repos/${fullName}/issues?state=open&per_page=5&sort=created&direction=desc`, GITHUB_HEADERS).catch(() => []),
+      ]);
+      const commitComments = (Array.isArray(commitsData) ? commitsData : []).slice(0, 8).map(c => ({
+        id:      c.sha?.slice(0, 8) || `commit_${Date.now()}`,
+        author:  c.commit?.author?.name || c.author?.login || 'unknown',
+        body:    c.commit?.message?.split('\n')[0]?.slice(0, 300) || '',
+        score:   0,
+        created: c.commit?.author?.date || c.commit?.committer?.date,
+        url:     c.html_url,
+        type:    'commit',
+      }));
+      const issueComments = (Array.isArray(issuesData) ? issuesData : [])
+        .filter(i => !i.pull_request)
+        .slice(0, 5)
+        .map(i => ({
+          id:      `issue_${i.number}`,
+          author:  i.user?.login || 'unknown',
+          body:    `#${i.number}: ${i.title}`,
+          score:   i.comments || 0,
+          created: i.created_at,
+          url:     i.html_url,
+          type:    'issue',
+        }));
+      return res.json({ comments: [...commitComments, ...issueComments], source: 'github', live: true });
+    } catch {
+      return res.json({ comments: [], source: 'github', live: false });
+    }
+  }
+
+  // ── Stack Overflow: top answers ──────────────────────────────────────────────
+  if (postId.startsWith('so_')) {
+    const qId = postId.replace(/^so_/, '');
+    try {
+      const data = await fetchJSON(
+        `https://api.stackexchange.com/2.3/questions/${qId}/answers?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=8`
+      );
+      const comments = (data?.items || []).slice(0, 8).map(a => ({
+        id:      `${a.answer_id}`,
+        author:  a.owner?.display_name || 'anonymous',
+        body:    (a.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+        score:   a.score || 0,
+        created: normalizeTimestamp(a.creation_date),
+        url:     a.link,
+      }));
+      return res.json({ comments, source: 'stackoverflow', live: true });
+    } catch {
+      return res.json({ comments: [], source: 'stackoverflow', live: false });
+    }
+  }
+
+  // ── Bluesky: thread replies ──────────────────────────────────────────────────
+  if (postId.startsWith('bluesky_')) {
+    try {
+      const post = await findPostById(postId);
+      const sourceUrl = post?.sourceUrl || '';
+      // sourceUrl: https://bsky.app/profile/{handle}/post/{rkey}
+      const m = sourceUrl.match(/bsky\.app\/profile\/([^/]+)\/post\/([^/?#]+)/);
+      if (!m) return res.json({ comments: [], source: 'bluesky', live: false });
+      const [, handle, rkey] = m;
+      const uri = `at://${handle}/app.bsky.feed.post/${rkey}`;
+      const data = await fetchJSON(
+        `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=4`
+      );
+      const replies = (data?.thread?.replies || []).flatMap(r => {
+        const top = r.post;
+        if (!top?.record?.text) return [];
+        return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: top.record.text.slice(0, 400), score: top.likeCount || 0, created: top.record.createdAt }];
+      }).slice(0, 12);
+      return res.json({ comments: replies, source: 'bluesky', live: true });
+    } catch {
+      return res.json({ comments: [], source: 'bluesky', live: false });
+    }
+  }
+
+  // ── Mastodon: status replies ─────────────────────────────────────────────────
+  if (postId.startsWith('mastodon_')) {
+    try {
+      const post = await findPostById(postId);
+      const sourceUrl = post?.sourceUrl || '';
+      // sourceUrl: https://{instance}/@{user}/{status_id}
+      const m = sourceUrl.match(/^https?:\/\/([^/]+)\/@[^/]+\/(\d+)/);
+      if (!m) return res.json({ comments: [], source: 'mastodon', live: false });
+      const [, instance, statusId] = m;
+      const data = await fetchJSON(`https://${instance}/api/v1/statuses/${statusId}/context`);
+      const comments = (data?.descendants || []).slice(0, 12).map(s => ({
+        id:      s.id,
+        author:  `@${s.account?.acct || 'unknown'}`,
+        body:    (s.content || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400),
+        score:   s.favourites_count || 0,
+        created: s.created_at,
+        url:     s.url,
+      }));
+      return res.json({ comments, source: 'mastodon', live: true });
+    } catch {
+      return res.json({ comments: [], source: 'mastodon', live: false });
+    }
+  }
+
+  // ── Lobsters: real comments ──────────────────────────────────────────────────
+  if (postId.startsWith('lobsters_')) {
+    const shortId = postId.replace(/^lobsters_/, '');
+    try {
+      const data = await fetchJSON(`https://lobste.rs/s/${shortId}.json`);
+      const comments = (data?.comments || []).slice(0, 12).map(c => ({
+        id:      c.short_id || `${Date.now()}`,
+        author:  c.commenting_user || 'anonymous',
+        body:    (c.comment_plain || c.comment || '').slice(0, 500),
+        score:   c.score || 0,
+        created: c.created_at,
+        url:     `https://lobste.rs/s/${shortId}#c_${c.short_id}`,
+      }));
+      return res.json({ comments, source: 'lobsters', live: true });
+    } catch {
+      return res.json({ comments: [], source: 'lobsters', live: false });
+    }
+  }
+
+  // ── All other sources: no comments available ──────────────────────────────────
   const source = _sourceFromPostId(postId);
   return res.json({ comments: [], source, live: false });
 });
