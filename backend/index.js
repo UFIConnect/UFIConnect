@@ -3334,6 +3334,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           health.lastError = null;
           const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
           if (fresh.length) {
+            indexPostUrls(fresh);
             const n = addAndBroadcast(fresh);
             const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
             agentSourceCache.set(agentId, {
@@ -3562,6 +3563,36 @@ function dedupeAndSortFeedPosts(posts = []) {
 
 // Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
 const agentSourceCache = new Map();
+
+// Persistent postId → sourceUrl index so comments can be fetched for any post
+// that has ever been seen, even after it rotates out of the per-source cache.
+const postUrlIndex = new Map();
+const POST_URL_INDEX_MAX = 50_000;
+
+function indexPostUrls(posts) {
+  for (const p of posts) {
+    if (p.id && p.sourceUrl) {
+      postUrlIndex.set(p.id, p.sourceUrl);
+      if (postUrlIndex.size > POST_URL_INDEX_MAX) {
+        postUrlIndex.delete(postUrlIndex.keys().next().value);
+      }
+    }
+  }
+}
+
+function findPostById(postId) {
+  // Fast path: check global feed cache
+  const g = globalFeedCache.posts.find(p => p.id === postId);
+  if (g) return g;
+  // Check per-source caches
+  for (const cache of agentSourceCache.values()) {
+    const hit = (cache.posts || []).find(p => p.id === postId);
+    if (hit) return hit;
+  }
+  // Fall back to URL-only stub from persistent index
+  const url = postUrlIndex.get(postId);
+  return url ? { id: postId, sourceUrl: url } : null;
+}
 
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
