@@ -1,6 +1,37 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
+
+const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
+
+function MaintenancePage() {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      background: 'var(--bg, #f8fafc)', padding: 24, textAlign: 'center',
+    }}>
+      <div style={{ fontSize: '3rem', marginBottom: 16 }}>🔧</div>
+      <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: 12, color: 'var(--text, #0f172a)' }}>
+        We're making improvements
+      </h1>
+      <p style={{ fontSize: '1rem', color: 'var(--muted, #64748b)', maxWidth: 400, lineHeight: 1.6, marginBottom: 32 }}>
+        UFIConnect is temporarily offline while we polish a few things.
+        We'll be back shortly — thanks for your patience.
+      </p>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '10px 20px', borderRadius: 24,
+        background: 'var(--primary, #6366f1)', color: '#fff',
+        fontSize: '.875rem', fontWeight: 600,
+      }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff', opacity: 0.7,
+          animation: 'pulse 1.5s ease-in-out infinite' }} />
+        Coming back soon
+      </div>
+    </div>
+  );
+}
 
 const Login          = lazy(() => import('./pages/Login'));
 const Register       = lazy(() => import('./pages/Register'));
@@ -43,6 +74,17 @@ function HomeRoute() {
 }
 
 export default function App() {
+  const [preview, setPreview] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    if (new URLSearchParams(window.location.search).has('preview')) {
+      sessionStorage.setItem('ufi_preview', '1');
+      return true;
+    }
+    return sessionStorage.getItem('ufi_preview') === '1';
+  });
+
+  if (MAINTENANCE && !preview) return <MaintenancePage />;
+
   return (
     <Suspense fallback={<div className="splash">Loading…</div>}>
     <Routes>
