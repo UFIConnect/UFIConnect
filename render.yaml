@@ -134,7 +134,7 @@ services:
       - key: VITE_API_URL
         value: https://uficonnect-api.onrender.com
       - key: VITE_MAINTENANCE_MODE
-        value: true
+        value: false
       - key: VITE_AUTH0_DOMAIN
         sync: false
       - key: VITE_AUTH0_CLIENT_ID
