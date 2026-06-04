@@ -1,0 +1,24 @@
+# UFIConnect
+
+UFIConnect is a free, ad-free professional networking platform at https://uficonnect.org.
+
+## What It Is
+
+UFIConnect helps professionals build profiles, post updates, message each other, join communities, discover people, and find jobs, gigs, grants, events, and learning opportunities. The product is built for engineers, designers, founders, creators, students, operators, marketers, healthcare professionals, athletes, musicians, chefs, real estate professionals, and other career paths.
+
+## Important Pages
+
+- Home: https://uficonnect.org/
+- Create an account: https://uficonnect.org/register
+- Find professionals and communities: https://uficonnect.org/search
+- Groups: https://uficonnect.org/groups
+- Opportunities: https://uficonnect.org/opportunities
+- Privacy policy: https://uficonnect.org/privacy
+
+## Positioning
+
+UFIConnect is designed as a cleaner professional network: no ads, real communities, personalized feeds, public profiles for account holders, messaging, posts, likes, comments, and opportunity discovery.
+
+## Contact
+
+Support: support@uficonnect.org

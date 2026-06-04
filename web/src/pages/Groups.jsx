@@ -44,6 +44,13 @@ export default function Groups() {
       <Helmet>
         <title>Professional Communities & Groups | UFIConnect</title>
         <meta name="description" content="Discover 50+ professional communities on UFIConnect. Join business, creative, education, and industry groups from Reddit, Discord, LinkedIn, and more — all curated by your role and interests." />
+        <link rel="canonical" href="https://uficonnect.org/groups" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://uficonnect.org/groups" />
+        <meta property="og:title" content="Professional Communities & Groups | UFIConnect" />
+        <meta property="og:description" content="Discover professional communities on UFIConnect across business, creative, education, tech, and industry paths." />
+        <meta property="og:image" content="https://uficonnect.org/og-image.png" />
+        <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
       {GroupsContent()}
     </>

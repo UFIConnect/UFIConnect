@@ -146,6 +146,13 @@ export default function Opportunities() {
       <Helmet>
         <title>Jobs, Gigs & Opportunities | UFIConnect</title>
         <meta name="description" content="Personalized jobs, gigs, grants, events, and learning opportunities matched to your role and interests." />
+        <link rel="canonical" href="https://uficonnect.org/opportunities" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://uficonnect.org/opportunities" />
+        <meta property="og:title" content="Jobs, Gigs & Opportunities | UFIConnect" />
+        <meta property="og:description" content="Discover personalized jobs, gigs, grants, events, and learning opportunities matched to your role and interests." />
+        <meta property="og:image" content="https://uficonnect.org/og-image.png" />
+        <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
       <Layout>
         <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>

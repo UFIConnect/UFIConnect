@@ -41,6 +41,11 @@ export default function PrivacyPolicy() {
       <Helmet>
         <title>Privacy Policy — UFIConnect</title>
         <meta name="description" content="UFIConnect privacy policy — how we collect, use, and protect your data." />
+        <link rel="canonical" href="https://uficonnect.org/privacy" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://uficonnect.org/privacy" />
+        <meta property="og:title" content="Privacy Policy | UFIConnect" />
+        <meta property="og:description" content="How UFIConnect collects, uses, and protects your data." />
       </Helmet>
 
       {/* Nav bar */}

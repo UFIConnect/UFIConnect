@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
@@ -53,13 +54,57 @@ const ROLE_PREVIEWS = [
   { icon: '🌐', label: 'Community', color: '#0284C7' },
 ];
 
+const SHARE_URL = 'https://uficonnect.org';
+const SHARE_TEXT = 'UFIConnect is a free, ad-free professional network with personalized feeds, communities, messaging, posts, and real opportunities.';
+const SHARE_LINKS = [
+  {
+    label: 'Share on X',
+    href: `https://twitter.com/intent/tweet?text=${encodeURIComponent(SHARE_TEXT)}&url=${encodeURIComponent(SHARE_URL)}`,
+  },
+  {
+    label: 'Share on LinkedIn',
+    href: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(SHARE_URL)}`,
+  },
+  {
+    label: 'Email',
+    href: `mailto:?subject=${encodeURIComponent('Join me on UFIConnect')}&body=${encodeURIComponent(`${SHARE_TEXT}\n\n${SHARE_URL}`)}`,
+  },
+];
+
 export default function Landing() {
+  const [shareCopied, setShareCopied] = useState(false);
+
+  async function handleShare() {
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'UFIConnect', text: SHARE_TEXT, url: SHARE_URL });
+        return;
+      }
+      await navigator.clipboard.writeText(SHARE_URL);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 1800);
+    } catch {
+      setShareCopied(false);
+    }
+  }
+
   return (
     <>
       <Helmet>
         <title>UFIConnect | UFI — Free Professional Network for Engineers, Creators & Founders</title>
         <meta name="description" content="UFIConnect (UFI) is a free professional networking platform for engineers, designers, founders, creators, and every career path. Join UFI communities, find real jobs, and get a personalised content feed — no ads, no noise." />
         <meta name="keywords" content="UFI, UFIConnect, UFI Connect, UFI network, UFI professional, professional network, engineering community, tech jobs, remote work, founders, designers, creators, career growth, job listings, no ads, developer network, startup community" />
+        <link rel="canonical" href={SHARE_URL} />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content={SHARE_URL} />
+        <meta property="og:title" content="UFIConnect | Free Professional Network, No Ads" />
+        <meta property="og:description" content={SHARE_TEXT} />
+        <meta property="og:image" content={`${SHARE_URL}/og-image.png`} />
+        <meta property="og:image:alt" content="UFIConnect professional networking app preview" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="UFIConnect | Free Professional Network, No Ads" />
+        <meta name="twitter:description" content={SHARE_TEXT} />
+        <meta name="twitter:image" content={`${SHARE_URL}/og-image.png`} />
       </Helmet>
 
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>
@@ -179,6 +224,43 @@ export default function Landing() {
                     <div style={{ fontSize: '2rem', fontWeight: 900, marginBottom: 4 }}>{stat}</div>
                     <div style={{ fontSize: '.85rem', opacity: .85 }}>{label}</div>
                   </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* Share strip */}
+          <section style={{ background: '#0F172A', color: '#fff', padding: '48px 32px', borderTop: '1px solid rgba(255,255,255,.08)' }}>
+            <div style={{ maxWidth: 960, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 28, alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase', color: '#93C5FD', marginBottom: 10 }}>
+                  Grow the network
+                </div>
+                <h2 style={{ fontSize: '1.55rem', fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
+                  Share UFIConnect with people building their next move.
+                </h2>
+                <p style={{ color: '#CBD5E1', fontSize: '.95rem', lineHeight: 1.65, margin: 0, maxWidth: 650 }}>
+                  Every shared link helps the right professionals discover a cleaner place to post, connect, and find opportunities.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  style={{ padding: '11px 18px', borderRadius: 'var(--radius-sm)', border: '1px solid #93C5FD', background: '#2563EB', color: '#fff', fontWeight: 800, cursor: 'pointer' }}
+                >
+                  {shareCopied ? 'Link copied' : 'Copy share link'}
+                </button>
+                {SHARE_LINKS.map(({ label, href }) => (
+                  <a
+                    key={label}
+                    href={href}
+                    target={label === 'Email' ? undefined : '_blank'}
+                    rel={label === 'Email' ? undefined : 'noreferrer'}
+                    style={{ padding: '11px 16px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(255,255,255,.22)', color: '#fff', textDecoration: 'none', fontSize: '.9rem', fontWeight: 700, background: 'rgba(255,255,255,.08)' }}
+                  >
+                    {label}
+                  </a>
                 ))}
               </div>
             </div>

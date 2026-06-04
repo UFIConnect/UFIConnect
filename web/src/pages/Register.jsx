@@ -560,6 +560,13 @@ export default function Register() {
       <Helmet>
         <title>Join UFIConnect — Professional Network for All Careers</title>
         <meta name="description" content="Create your UFIConnect account and get a personalized feed from day one." />
+        <link rel="canonical" href="https://uficonnect.org/register" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://uficonnect.org/register" />
+        <meta property="og:title" content="Join UFIConnect | Free Professional Network" />
+        <meta property="og:description" content="Create your UFIConnect account and get a personalized feed, communities, posts, messaging, and opportunities from day one." />
+        <meta property="og:image" content="https://uficonnect.org/og-image.png" />
+        <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
 
       <div className="auth-page">
