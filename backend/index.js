@@ -337,7 +337,7 @@ const ROLE_TO_SUBREDDITS = {
 const redditCache = new Map(); // subreddit → { posts, fetchedAt }
 const REDDIT_TTL  = 30 * 60 * 1000; // 30 minutes
 
-function fetchJSON(url) {
+function fetchJSON(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
@@ -345,13 +345,14 @@ function fetchJSON(url) {
         'Accept':          'application/json',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control':   'no-cache',
+        ...extraHeaders,
       },
     };
     https.get(url, opts, (res) => {
       // Follow redirects
       if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
         const nextUrl = new URL(res.headers.location, url).toString();
-        return fetchJSON(nextUrl).then(resolve).catch(reject);
+        return fetchJSON(nextUrl, extraHeaders).then(resolve).catch(reject);
       }
       // Reject on non-success HTTP status (catches 429, 403, 503, etc.)
       if (res.statusCode < 200 || res.statusCode >= 300) {
@@ -1157,23 +1158,65 @@ function parseRedditRSSFeed(xml, topicKeyword) {
   return posts;
 }
 
+// Parse Reddit's JSON API response (old.reddit.com/r/${sub}/new.json)
+function parseRedditJSON(data, topicKeyword) {
+  const children = data?.data?.children || [];
+  const sub = children[0]?.data?.subreddit || topicKeyword;
+  const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
+  return children
+    .filter(c => c.kind === 't3' && c.data?.title && !c.data.stickied)
+    .map(c => {
+      const d = c.data;
+      const selfUrl = `https://www.reddit.com${d.permalink}`;
+      return {
+        id:          `reddit_${d.id}`,
+        authorId:    `reddit_${d.author}`,
+        groupId:     matchedGroup?.id || `ext_${sub.toLowerCase()}`,
+        content:     (d.selftext || d.title).slice(0, 400),
+        title:       d.title,
+        source:      'reddit',
+        sourceLabel: `r/${sub}`,
+        sourceUrl:   d.url?.startsWith('http') && !d.is_self ? d.url : selfUrl,
+        topic:       topicKeyword,
+        author:      { id: `reddit_${d.author}`, name: `u/${d.author}`, title: `r/${sub}`, organization: 'Reddit' },
+        likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
+        createdAt:   new Date((d.created_utc || 0) * 1000).toISOString(),
+        isExternal:  true,
+        group:       matchedGroup
+          ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
+          : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+      };
+    });
+}
+
+async function fetchRedditSub(sub, keyword) {
+  // Try JSON API first (old.reddit.com is less aggressively blocked from server IPs)
+  try {
+    const data = await fetchJSON(`https://old.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`, REDDIT_HEADERS);
+    const posts = parseRedditJSON(data, keyword);
+    if (posts.length) return posts;
+  } catch { /* fallthrough to RSS */ }
+  // RSS fallback
+  try {
+    const xml = await fetchText(`https://old.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
+    return parseRedditRSSFeed(xml, keyword);
+  } catch { return []; }
+}
+
 async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
 
-  // If keyword looks like a raw subreddit name (single word, no spaces), fetch it directly
+  // If keyword looks like a raw subreddit name, fetch it directly
   const looksLikeSubreddit = /^[A-Za-z0-9_]+$/.test(keyword) && keyword.length < 30 && !TOPIC_SUBREDDITS[keyword];
   if (looksLikeSubreddit) {
-    try {
-      const xml = await fetchText(`https://www.reddit.com/r/${keyword}/new.rss?limit=100`, REDDIT_HEADERS);
-      const posts = parseRedditRSSFeed(xml, keyword);
-      if (posts.length) {
-        posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        setCached(key, posts);
-        return posts;
-      }
-    } catch { /* fallthrough */ }
+    const posts = await fetchRedditSub(keyword, keyword);
+    if (posts.length) {
+      posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      setCached(key, posts);
+      return posts;
+    }
   }
 
   // Get subreddits for this topic — fall back to programming/technology
@@ -1182,12 +1225,9 @@ async function fetchRedditByKeyword(keyword) {
     || ['programming', 'technology', 'webdev'];
 
   const allPosts = [];
-  // Fetch new.rss from all mapped subreddits in parallel
   await Promise.allSettled(subs.map(async sub => {
-    try {
-      const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
-      allPosts.push(...parseRedditRSSFeed(xml, keyword));
-    } catch { /* 403/hang — skip this subreddit */ }
+    const posts = await fetchRedditSub(sub, keyword);
+    allPosts.push(...posts);
   }));
 
   if (allPosts.length) {
@@ -1282,7 +1322,7 @@ async function fetchGitHubByKeyword(keyword) {
     // GitHub public repos only — recent pushes (last 7 days), sorted by freshness
     const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} is:public pushed:>${since}`)}&sort=updated&order=desc&per_page=100`;
-    const data = await fetchJSON(url);
+    const data = await fetchJSON(url, GITHUB_HEADERS);
     const posts = (data?.items || [])
       .filter(r => r.description)
       .map(r => ({
@@ -1362,12 +1402,17 @@ function fetchText(url, extraHeaders = {}) {
   });
 }
 
-// Reddit blocks non-browser User-Agents — use this for all Reddit RSS fetches
+// Reddit blocks non-browser User-Agents — use this for all Reddit fetches
 const REDDIT_HEADERS = {
   'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept':          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept':          'application/json, text/html, */*',
   'Accept-Language': 'en-US,en;q=0.9',
 };
+
+// GitHub: 5000 req/hr with token vs 60/hr unauthed
+const GITHUB_HEADERS = process.env.GITHUB_TOKEN
+  ? { Authorization: `token ${process.env.GITHUB_TOKEN}` }
+  : {};
 
 async function fetchMediumByTag(tag) {
   const key = `medium_tag_${tag}`;
@@ -3149,8 +3194,8 @@ const FEED_TOPICS = [
 // pauses for CIRCUIT_PAUSE_MS before automatically resuming.
 // Individual fetchers catch their own errors internally; we detect problems via sustained
 // absence of fresh posts across all topics rather than exception tracking.
-const CIRCUIT_EMPTY_CYCLES = 2;  // empty full-cycles before pausing
-const CIRCUIT_PAUSE_MS     = 5 * 60 * 1000; // 5 minutes
+const CIRCUIT_EMPTY_CYCLES = 5;  // empty full-cycles before pausing (increased from 2 — Reddit/GitHub often fail transiently)
+const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto-recover faster)
 
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   const sourceTtl   = SOURCE_CONFIG[agentId]?.ttl ?? 5 * 60 * 1000;
