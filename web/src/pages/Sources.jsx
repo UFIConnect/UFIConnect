@@ -1,168 +1,217 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
+const DISABLED_KEY = 'ufi_disabled_sources';
+
+function loadDisabled() {
+  try { return new Set(JSON.parse(localStorage.getItem(DISABLED_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function saveDisabled(set) {
+  localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
+}
+
 const SOURCE_META = {
-  reddit:        { label: 'Reddit',          color: '#FF4500', icon: '🟠' },
-  hackernews:    { label: 'Hacker News',      color: '#FF6600', icon: '🗞' },
-  devto:         { label: 'DEV Community',    color: '#3B49DF', icon: '👩‍💻' },
-  bluesky:       { label: 'Bluesky',          color: '#0085FF', icon: '🦋' },
-  github:        { label: 'GitHub',           color: '#24292F', icon: '🐙' },
-  gitlab:        { label: 'GitLab',           color: '#FC6D26', icon: '🦊' },
-  youtube:       { label: 'YouTube',          color: '#FF0000', icon: '▶️' },
-  medium:        { label: 'Medium',           color: '#1A8917', icon: '📝' },
-  stackoverflow: { label: 'Stack Overflow',   color: '#F48024', icon: '📚' },
-  mastodon:      { label: 'Mastodon',         color: '#6364FF', icon: '🦣' },
-  lobsters:      { label: 'Lobsters',         color: '#AC130D', icon: '🦞' },
-  arxiv:         { label: 'arXiv',            color: '#B31B1B', icon: '🔬' },
-  producthunt:   { label: 'Product Hunt',     color: '#DA552F', icon: '🚀' },
-  techcrunch:    { label: 'TechCrunch',       color: '#0D9F3F', icon: '📰' },
-  theverge:      { label: 'The Verge',        color: '#FF3333', icon: '⬛' },
-  indiehackers:  { label: 'Indie Hackers',    color: '#0E2150', icon: '💡' },
-  hashnode:      { label: 'freeCodeCamp',     color: '#006400', icon: '🔥' },
-  arstechnica:   { label: 'Ars Technica',     color: '#FF6600', icon: '📡' },
-  wired:         { label: 'WIRED',            color: '#111111', icon: '🔌' },
-  theregister:   { label: 'The Register',     color: '#CC0000', icon: '📋' },
-  venturebeat:   { label: 'VentureBeat',      color: '#1E6FBF', icon: '💹' },
-  smashing:      { label: 'Smashing Mag',     color: '#E9620A', icon: '🎨' },
-  phoronix:      { label: 'Phoronix',         color: '#2B7BB9', icon: '🐧' },
-  infoq:         { label: 'InfoQ',            color: '#67B346', icon: '🏗️' },
-  mittr:         { label: 'MIT Tech Review',  color: '#A31F34', icon: '🔬' },
-  remoteok:      { label: 'Remote OK',        color: '#10B981', icon: '💻' },
-  yc:            { label: 'Y Combinator',     color: '#FF6600', icon: 'YC' },
-  crunchbase:    { label: 'Crunchbase',       color: '#146AFF', icon: 'CB' },
-  behance:       { label: 'Behance',          color: '#053EFF', icon: 'Be' },
-  designweb:     { label: 'Design Web',       color: '#DB2777', icon: 'UX' },
-  indeed:        { label: 'Indeed',           color: '#2557A7', icon: '💼' },
-  usajobs:       { label: 'USAJobs',          color: '#005EA8', icon: '🏛️' },
-  uficonnect:    { label: 'UFIConnect',       color: '#6366F1', icon: '🌐' },
+  reddit:        { label: 'Reddit',           icon: '🟠', color: '#FF4500', desc: 'Community discussions and threads' },
+  hackernews:    { label: 'Hacker News',       icon: '🗞',  color: '#FF6600', desc: 'Tech links and founder discussions' },
+  devto:         { label: 'DEV Community',     icon: '👩‍💻', color: '#3B49DF', desc: 'Developer articles and tutorials' },
+  github:        { label: 'GitHub',            icon: '🐙', color: '#24292F', desc: 'Open source repos and projects' },
+  gitlab:        { label: 'GitLab',            icon: '🦊', color: '#FC6D26', desc: 'GitLab projects and activity' },
+  youtube:       { label: 'YouTube',           icon: '▶️', color: '#FF0000', desc: 'Tech and creator video content' },
+  medium:        { label: 'Medium',            icon: '📝', color: '#1A8917', desc: 'Long-form articles and essays' },
+  stackoverflow: { label: 'Stack Overflow',    icon: '📚', color: '#F48024', desc: 'Programming Q&A and answers' },
+  mastodon:      { label: 'Mastodon',          icon: '🦣', color: '#6364FF', desc: 'Decentralised social posts' },
+  bluesky:       { label: 'Bluesky',           icon: '🦋', color: '#0085FF', desc: 'Open social network posts' },
+  lobsters:      { label: 'Lobsters',          icon: '🦞', color: '#AC130D', desc: 'Curated tech link aggregator' },
+  arxiv:         { label: 'arXiv',             icon: '🔬', color: '#B31B1B', desc: 'Academic research papers' },
+  producthunt:   { label: 'Product Hunt',      icon: '🚀', color: '#DA552F', desc: 'New product and startup launches' },
+  techcrunch:    { label: 'TechCrunch',        icon: '📰', color: '#0D9F3F', desc: 'Tech and startup news' },
+  theverge:      { label: 'The Verge',         icon: '⬛', color: '#FF3333', desc: 'Tech, science and culture' },
+  indiehackers:  { label: 'Indie Hackers',     icon: '💡', color: '#0E2150', desc: 'Bootstrapper and founder stories' },
+  hashnode:      { label: 'freeCodeCamp',      icon: '🔥', color: '#006400', desc: 'Free coding tutorials and guides' },
+  arstechnica:   { label: 'Ars Technica',      icon: '📡', color: '#FF6600', desc: 'Deep-dive tech and science' },
+  wired:         { label: 'WIRED',             icon: '🔌', color: '#111111', desc: 'Tech, culture and future thinking' },
+  theregister:   { label: 'The Register',      icon: '📋', color: '#CC0000', desc: 'Enterprise IT and open-source news' },
+  venturebeat:   { label: 'VentureBeat',       icon: '💹', color: '#1E6FBF', desc: 'AI, enterprise tech and funding' },
+  smashing:      { label: 'Smashing Magazine', icon: '🎨', color: '#E9620A', desc: 'Web design and frontend dev' },
+  phoronix:      { label: 'Phoronix',          icon: '🐧', color: '#2B7BB9', desc: 'Linux and open-source hardware' },
+  infoq:         { label: 'InfoQ',             icon: '🏗️', color: '#67B346', desc: 'Software architecture and DevOps' },
+  mittr:         { label: 'MIT Tech Review',   icon: '🔬', color: '#A31F34', desc: 'Deep tech and AI policy' },
+  remoteok:      { label: 'Remote OK',         icon: '💻', color: '#10B981', desc: 'Remote job listings' },
+  yc:            { label: 'Y Combinator',      icon: '🦾', color: '#FF6600', desc: 'YC blog and startup essays' },
+  crunchbase:    { label: 'Crunchbase News',   icon: '💰', color: '#146AFF', desc: 'Startup funding and company news' },
+  behance:       { label: 'Behance',           icon: '🖼️', color: '#053EFF', desc: 'Creative portfolio projects' },
+  designweb:     { label: 'Design & Web',      icon: '✏️', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
+  indeed:        { label: 'Indeed',            icon: '💼', color: '#2557A7', desc: 'Remote job listings' },
+  uficonnect:    { label: 'UFIConnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
 };
 
+const CATEGORIES = [
+  { id: 'developer',  label: 'Developer',            sources: ['github', 'gitlab', 'devto', 'stackoverflow', 'hackernews', 'lobsters', 'arxiv', 'phoronix', 'infoq'] },
+  { id: 'news',       label: 'Tech News',             sources: ['techcrunch', 'theverge', 'arstechnica', 'wired', 'theregister', 'venturebeat', 'mittr'] },
+  { id: 'social',     label: 'Social & Community',   sources: ['reddit', 'mastodon', 'bluesky', 'indiehackers'] },
+  { id: 'content',    label: 'Writing & Video',       sources: ['medium', 'hashnode', 'youtube', 'smashing'] },
+  { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
+  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok'] },
+  { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
+  { id: 'community',  label: 'UFIConnect',            sources: ['uficonnect'] },
+];
+
+function Toggle({ enabled, onChange }) {
+  return (
+    <button
+      role="switch"
+      aria-checked={enabled}
+      onClick={e => { e.stopPropagation(); onChange(!enabled); }}
+      style={{
+        flexShrink: 0,
+        width: 44, height: 24, borderRadius: 12,
+        background: enabled ? '#6366F1' : 'var(--border)',
+        border: 'none', cursor: 'pointer', position: 'relative',
+        transition: 'background .2s',
+        padding: 0,
+      }}
+    >
+      <span style={{
+        position: 'absolute',
+        top: 3, left: enabled ? 23 : 3,
+        width: 18, height: 18, borderRadius: '50%',
+        background: '#fff',
+        boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+        transition: 'left .2s',
+        display: 'block',
+      }} />
+    </button>
+  );
+}
+
+function HealthDot({ postCount, lastFetch }) {
+  const age = lastFetch ? (Date.now() - new Date(lastFetch).getTime()) / 60000 : 9999;
+  const live = postCount > 0 && age < 30;
+  const stale = postCount > 0 && age >= 30;
+  const color = live ? '#22C55E' : stale ? '#F59E0B' : '#94A3B8';
+  const label = live ? 'Live' : stale ? 'Updating' : 'No data yet';
+  return (
+    <span title={label} style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: '.68rem', color, fontWeight: 600,
+    }}>
+      <span style={{
+        width: 6, height: 6, borderRadius: '50%', background: color,
+        boxShadow: live ? `0 0 0 2px ${color}33` : 'none', display: 'inline-block',
+      }} />
+      {label}
+    </span>
+  );
+}
+
 function relativeTime(iso) {
-  if (!iso) return '—';
+  if (!iso) return null;
   const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60)  return `${s}s ago`;
-  const m = Math.floor(s / 60);
+  const m = Math.floor(diff / 60000);
   if (m < 60)  return `${m}m ago`;
   const h = Math.floor(m / 60);
   if (h < 24)  return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function HealthDot({ postCount, lastFetch }) {
-  const age = lastFetch ? (Date.now() - new Date(lastFetch).getTime()) / 60000 : 9999;
-  const ok = postCount > 0 && age < 30;
-  const stale = postCount > 0 && age >= 30;
-  return (
-    <span title={ok ? 'Live' : stale ? 'Stale' : 'No data'} style={{
-      display: 'inline-block', width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-      background: ok ? '#22C55E' : stale ? '#F59E0B' : '#94A3B8',
-      boxShadow: ok ? '0 0 0 2px #DCFCE7' : stale ? '0 0 0 2px #FEF3C7' : 'none',
-    }} />
-  );
-}
-
-function SourceCard({ source, expanded, onToggle }) {
-  const meta = SOURCE_META[source.id] || {};
-  const color = source.color || meta.color || '#6366F1';
-  const icon = source.emoji || meta.icon || source.id.slice(0, 2).toUpperCase();
+function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand }) {
+  const meta = SOURCE_META[sourceId] || { label: sourceId, icon: '📡', color: '#6366F1', desc: '' };
+  const { postCount = 0, lastFetch, samplePosts = [] } = health || {};
 
   return (
-    <div className="card" style={{ overflow: 'hidden', transition: 'box-shadow .15s' }}>
-      {/* Header row */}
-      <div
-        onClick={onToggle}
-        style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', cursor: 'pointer' }}
-      >
+    <div style={{
+      borderRadius: 12,
+      border: '1px solid var(--border)',
+      background: enabled ? 'var(--surface)' : 'var(--bg-secondary)',
+      overflow: 'hidden',
+      opacity: enabled ? 1 : 0.55,
+      transition: 'opacity .2s, border-color .2s',
+    }}>
+      {/* Main row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px' }}>
         {/* Icon */}
         <div style={{
-          width: 44, height: 44, borderRadius: 12, background: color,
+          width: 38, height: 38, borderRadius: 10,
+          background: meta.color, flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          flexShrink: 0, fontSize: '1.1rem', color: '#fff', fontWeight: 700,
+          fontSize: '1rem', color: '#fff', fontWeight: 700,
         }}>
-          {icon}
+          {meta.icon}
         </div>
 
-        {/* Name + meta */}
+        {/* Name + desc */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{source.name}</span>
-            <HealthDot postCount={source.postCount} lastFetch={source.lastFetch} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: '.88rem' }}>{meta.label}</span>
+            {health && <HealthDot postCount={postCount} lastFetch={lastFetch} />}
           </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 2, fontSize: '.76rem', color: 'var(--muted)' }}>
-            <span>{source.postCount} posts</span>
-            {source.totalSeen > source.postCount && (
-              <span>({source.totalSeen} seen)</span>
-            )}
-            <span>·</span>
-            <span>{relativeTime(source.lastFetch)}</span>
+          <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 1, lineHeight: 1.4 }}>
+            {meta.desc}
           </div>
         </div>
 
-        {/* Expand toggle */}
-        <span style={{ fontSize: '.75rem', color: 'var(--muted)', flexShrink: 0 }}>
-          {expanded ? '▲' : '▼'}
-        </span>
+        {/* Post count + expand + toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          {postCount > 0 && (
+            <span style={{
+              fontSize: '.68rem', color: 'var(--muted)', fontWeight: 600,
+              background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 7px',
+            }}>
+              {postCount} posts
+            </span>
+          )}
+          {samplePosts.length > 0 && (
+            <button
+              onClick={onExpand}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', fontSize: '.7rem', padding: '4px 2px',
+              }}
+              title={expanded ? 'Hide preview' : 'Preview posts'}
+            >
+              {expanded ? '▲' : '▼'}
+            </button>
+          )}
+          <Toggle enabled={enabled} onChange={onToggle} />
+        </div>
       </div>
 
       {/* Expanded sample posts */}
-      {expanded && (
-        <div style={{ borderTop: '1px solid var(--border)', padding: '0 0 8px' }}>
-          {source.description && (
-            <p style={{ margin: '10px 16px 6px', fontSize: '.78rem', color: 'var(--muted)', lineHeight: 1.5 }}>
-              {source.description}
-            </p>
-          )}
-          {(source.samplePosts || []).length === 0 ? (
-            <p style={{ padding: '8px 16px', fontSize: '.8rem', color: 'var(--muted)', fontStyle: 'italic' }}>
-              No posts cached yet
-            </p>
-          ) : (
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
-              {source.samplePosts.map((p, i) => (
-                <li key={p.id || i} style={{
-                  padding: '8px 16px',
-                  borderBottom: i < source.samplePosts.length - 1 ? '1px solid var(--border)' : 'none',
-                }}>
-                  <a
-                    href={p.sourceUrl || p.url || '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: 'var(--text)', textDecoration: 'none', display: 'block' }}
-                  >
-                    <div style={{ fontSize: '.83rem', fontWeight: 600, lineHeight: 1.4, marginBottom: 3 }}>
-                      {p.title || p.content?.slice(0, 90) || '(no title)'}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
-                      {p.author && <span>by {p.author}</span>}
-                      {p.createdAt && <span>· {relativeTime(p.createdAt)}</span>}
-                      {(p.likesCount > 0) && (
-                        <span>· ▲ {p.likesCount}</span>
-                      )}
-                      {p.commentsCount > 0 && <span>· 💬 {p.commentsCount}</span>}
-                    </div>
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div style={{ padding: '8px 16px 4px' }}>
-            <Link
-              to={`/?source=${source.id}`}
-              onClick={() => {
-                // Navigate to feed filtered by this source
-                window.dispatchEvent(new CustomEvent('feed:setSource', { detail: source.id }));
-              }}
+      {expanded && samplePosts.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)' }}>
+          {samplePosts.slice(0, 3).map((p, i) => (
+            <a
+              key={p.id || i}
+              href={p.sourceUrl || '#'}
+              target="_blank"
+              rel="noopener noreferrer"
               style={{
-                display: 'inline-flex', alignItems: 'center', gap: 5,
-                fontSize: '.76rem', fontWeight: 600, color: color,
-                textDecoration: 'none',
+                display: 'block', padding: '9px 14px',
+                borderBottom: i < 2 ? '1px solid var(--border)' : 'none',
+                textDecoration: 'none', color: 'inherit',
               }}
             >
-              View all from {source.name} in feed →
+              <div style={{ fontSize: '.8rem', fontWeight: 600, lineHeight: 1.4, marginBottom: 2 }}>
+                {p.title || p.content?.slice(0, 80) || '(no title)'}
+              </div>
+              <div style={{ fontSize: '.7rem', color: 'var(--muted)', display: 'flex', gap: 8 }}>
+                {p.author && <span>{p.author}</span>}
+                {p.createdAt && <span>· {relativeTime(p.createdAt)}</span>}
+                {p.likesCount > 0 && <span>· ▲ {p.likesCount}</span>}
+              </div>
+            </a>
+          ))}
+          <div style={{ padding: '8px 14px' }}>
+            <Link
+              to="/"
+              onClick={() => window.dispatchEvent(new CustomEvent('feed:setSource', { detail: sourceId }))}
+              style={{ fontSize: '.73rem', fontWeight: 600, color: meta.color, textDecoration: 'none' }}
+            >
+              See all {meta.label} posts in feed →
             </Link>
           </div>
         </div>
@@ -172,38 +221,59 @@ function SourceCard({ source, expanded, onToggle }) {
 }
 
 export default function Sources() {
-  const [data,     setData]     = useState(null);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState(null);
-  const [search,   setSearch]   = useState('');
-  const [expanded, setExpanded] = useState(null);
-  const [sortBy,   setSortBy]   = useState('posts'); // posts | name | fresh
+  const [data,      setData]      = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState(null);
+  const [search,    setSearch]    = useState('');
+  const [expanded,  setExpanded]  = useState(null);
+  const [disabled,  setDisabled]  = useState(loadDisabled);
 
   useEffect(() => {
-    client.get('/feed/sources?sample=5')
+    client.get('/feed/sources?sample=3')
       .then(r => setData(r.data))
-      .catch(e => setError(e?.response?.data?.error || e.message || 'Failed to load sources'))
+      .catch(e => setError(e?.response?.data?.error || e.message || 'Failed to load'))
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = useMemo(() => {
-    if (!data?.sources) return [];
-    let list = data.sources;
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(s =>
-        s.name.toLowerCase().includes(q) ||
-        s.id.toLowerCase().includes(q) ||
-        (s.description || '').toLowerCase().includes(q)
-      );
-    }
-    if (sortBy === 'posts')  list = [...list].sort((a, b) => b.postCount - a.postCount);
-    if (sortBy === 'name')   list = [...list].sort((a, b) => a.name.localeCompare(b.name));
-    if (sortBy === 'fresh')  list = [...list].sort((a, b) => new Date(b.lastFetch || 0) - new Date(a.lastFetch || 0));
-    return list;
-  }, [data, search, sortBy]);
+  const toggle = useCallback((sourceId) => {
+    setDisabled(prev => {
+      const next = new Set(prev);
+      if (next.has(sourceId)) next.delete(sourceId);
+      else next.add(sourceId);
+      saveDisabled(next);
+      return next;
+    });
+  }, []);
 
-  const liveSources  = (data?.sources || []).filter(s => {
+  const enableAll  = () => { setDisabled(new Set()); saveDisabled(new Set()); };
+  const disableAll = (ids) => { const s = new Set(ids); setDisabled(s); saveDisabled(s); };
+
+  // Build a health map: sourceId → { postCount, lastFetch, samplePosts }
+  const healthMap = useMemo(() => {
+    const map = {};
+    for (const s of (data?.sources || [])) {
+      map[s.id] = { postCount: s.postCount, lastFetch: s.lastFetch, samplePosts: s.samplePosts || [] };
+    }
+    return map;
+  }, [data]);
+
+  // All known source IDs (union of API data + SOURCE_META)
+  const allSourceIds = useMemo(() => {
+    const fromApi = (data?.sources || []).map(s => s.id);
+    const fromMeta = Object.keys(SOURCE_META);
+    return [...new Set([...fromApi, ...fromMeta])];
+  }, [data]);
+
+  const q = search.trim().toLowerCase();
+  const matchesSearch = (id) => {
+    if (!q) return true;
+    const meta = SOURCE_META[id] || {};
+    return (meta.label || id).toLowerCase().includes(q) ||
+           (meta.desc || '').toLowerCase().includes(q);
+  };
+
+  const enabledCount  = allSourceIds.filter(id => !disabled.has(id)).length;
+  const liveCount     = (data?.sources || []).filter(s => {
     const age = s.lastFetch ? (Date.now() - new Date(s.lastFetch).getTime()) / 60000 : 9999;
     return s.postCount > 0 && age < 30;
   }).length;
@@ -211,114 +281,174 @@ export default function Sources() {
   return (
     <Layout>
       <Helmet>
-        <title>Sources | UFIConnect</title>
-        <meta name="description" content="All live data sources powering your feed — see which sources are active, how many posts they have cached, and their latest content." />
+        <title>Feed Sources | UFIConnect</title>
+        <meta name="description" content="Control which sources appear in your UFIConnect feed." />
       </Helmet>
 
       <div className="page-header">
-        <h1 className="page-title">Live Sources</h1>
+        <h1 className="page-title">Feed Sources</h1>
         <p className="page-subtitle">
-          All data sources powering your feed. Posts are cached continuously by background workers and ranked by freshness and engagement.
+          Turn sources on or off to control what shows up in your feed.
         </p>
       </div>
 
       {loading && (
         <div style={{ textAlign: 'center', padding: 60 }}>
           <span className="spinner spinner-primary" />
-          <p style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>Loading sources…</p>
+          <p style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>Loading…</p>
         </div>
       )}
 
       {error && (
         <div style={{
-          padding: '12px 16px', borderRadius: 8, background: '#FEF2F2',
-          color: '#DC2626', border: '1px solid #FECACA', marginBottom: 20, fontSize: '.85rem',
+          padding: '12px 16px', borderRadius: 8, marginBottom: 20,
+          background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA', fontSize: '.85rem',
         }}>
           {error}
         </div>
       )}
 
-      {data && (
+      {!loading && (
         <>
-          {/* Stats bar */}
+          {/* Summary bar */}
           <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-            gap: 12, marginBottom: 24,
+            display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+            padding: '12px 16px', borderRadius: 12, background: 'var(--bg-secondary)',
+            marginBottom: 20, border: '1px solid var(--border)',
           }}>
-            {[
-              { label: 'Total Sources', value: data.totalSources, icon: '📡' },
-              { label: 'Live Now',      value: liveSources,        icon: '🟢' },
-              { label: 'Cached Posts',  value: data.totalPosts,    icon: '📦' },
-              { label: 'Global Cache',  value: data.globalCacheCount, icon: '🗄️' },
-            ].map(stat => (
-              <div key={stat.label} className="card" style={{ padding: '14px 16px', textAlign: 'center' }}>
-                <div style={{ fontSize: '1.4rem', marginBottom: 4 }}>{stat.icon}</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 800, lineHeight: 1 }}>{stat.value ?? '—'}</div>
-                <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginTop: 3 }}>{stat.label}</div>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontWeight: 700, fontSize: '.9rem' }}>
+                {enabledCount} of {allSourceIds.length} sources active
               </div>
-            ))}
-          </div>
-
-          {/* Search + sort */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ flex: 1, position: 'relative', minWidth: 180 }}>
-              <span style={{
-                position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
-                fontSize: '.85rem', opacity: 0.4, pointerEvents: 'none',
-              }}>🔍</span>
-              <input
-                className="form-input"
-                placeholder="Search sources…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                style={{ paddingLeft: 34, borderRadius: 20, padding: '8px 14px 8px 34px', fontSize: '.85rem' }}
-              />
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
+                {liveCount > 0 ? `${liveCount} fetching live right now` : 'Sources update in the background'}
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[['posts', '# Posts'], ['fresh', 'Freshest'], ['name', 'A–Z']].map(([val, lbl]) => (
+            <div style={{ display: 'flex', gap: 8 }}>
+              {disabled.size > 0 && (
                 <button
-                  key={val}
-                  onClick={() => setSortBy(val)}
-                  style={{
-                    padding: '7px 13px', borderRadius: 20, border: `1.5px solid ${sortBy === val ? 'var(--primary)' : 'var(--border)'}`,
-                    background: sortBy === val ? 'var(--primary)' : 'var(--surface)',
-                    color: sortBy === val ? '#fff' : 'var(--text)',
-                    fontSize: '.78rem', fontWeight: 600, cursor: 'pointer',
-                  }}
+                  onClick={enableAll}
+                  className="btn btn-sm btn-outline"
+                  style={{ fontSize: '.75rem' }}
                 >
-                  {lbl}
+                  Enable all
                 </button>
-              ))}
+              )}
+              {disabled.size < allSourceIds.length && (
+                <button
+                  onClick={() => disableAll(allSourceIds)}
+                  className="btn btn-sm btn-ghost"
+                  style={{ fontSize: '.75rem' }}
+                >
+                  Disable all
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Source count */}
-          <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginBottom: 12 }}>
-            {filtered.length} source{filtered.length !== 1 ? 's' : ''}
-            {search ? ` matching "${search}"` : ''}
+          {/* Search */}
+          <div style={{ position: 'relative', marginBottom: 20 }}>
+            <span style={{
+              position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+              fontSize: '.85rem', opacity: 0.35, pointerEvents: 'none',
+            }}>🔍</span>
+            <input
+              className="form-input"
+              placeholder="Search sources…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ paddingLeft: 34, borderRadius: 20, fontSize: '.85rem' }}
+            />
           </div>
 
-          {/* Source cards */}
-          {filtered.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--muted)', fontSize: '.9rem' }}>
-              No sources found{search ? ` for "${search}"` : ''}.
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {filtered.map(source => (
-                <SourceCard
-                  key={source.id}
-                  source={source}
-                  expanded={expanded === source.id}
-                  onToggle={() => setExpanded(expanded === source.id ? null : source.id)}
-                />
-              ))}
+          {/* Disabled banner */}
+          {disabled.size > 0 && !q && (
+            <div style={{
+              padding: '10px 14px', borderRadius: 8, marginBottom: 16,
+              background: '#FFF7ED', border: '1px solid #FED7AA',
+              fontSize: '.8rem', color: '#92400E', display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <span>⚠️</span>
+              <span>
+                {disabled.size} source{disabled.size !== 1 ? 's are' : ' is'} hidden from your feed.
+              </span>
+              <button onClick={enableAll} style={{
+                marginLeft: 'auto', background: 'none', border: 'none',
+                color: '#92400E', fontWeight: 700, cursor: 'pointer', fontSize: '.8rem', textDecoration: 'underline',
+              }}>
+                Restore all
+              </button>
             </div>
           )}
 
-          {data.refreshedAt && (
-            <div style={{ textAlign: 'center', padding: '24px 0 8px', fontSize: '.72rem', color: 'var(--muted)' }}>
-              Snapshot taken {relativeTime(data.refreshedAt)}
+          {/* Categories */}
+          {CATEGORIES.map(cat => {
+            const visibleIds = cat.sources.filter(id => matchesSearch(id));
+            if (visibleIds.length === 0) return null;
+            return (
+              <div key={cat.id} style={{ marginBottom: 28 }}>
+                <div style={{
+                  fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)',
+                  textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10,
+                }}>
+                  {cat.label}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {visibleIds.map(id => (
+                    <SourceRow
+                      key={id}
+                      sourceId={id}
+                      health={healthMap[id]}
+                      enabled={!disabled.has(id)}
+                      onToggle={() => toggle(id)}
+                      expanded={expanded === id}
+                      onExpand={() => setExpanded(expanded === id ? null : id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* Sources not in any category (from API but not in CATEGORIES) */}
+          {(() => {
+            const categorised = new Set(CATEGORIES.flatMap(c => c.sources));
+            const uncategorised = allSourceIds.filter(id => !categorised.has(id) && matchesSearch(id));
+            if (!uncategorised.length) return null;
+            return (
+              <div style={{ marginBottom: 28 }}>
+                <div style={{
+                  fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)',
+                  textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10,
+                }}>
+                  Other
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {uncategorised.map(id => (
+                    <SourceRow
+                      key={id}
+                      sourceId={id}
+                      health={healthMap[id]}
+                      enabled={!disabled.has(id)}
+                      onToggle={() => toggle(id)}
+                      expanded={expanded === id}
+                      onExpand={() => setExpanded(expanded === id ? null : id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {q && allSourceIds.filter(matchesSearch).length === 0 && (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: '.9rem' }}>
+              No sources match "{search}".
+            </div>
+          )}
+
+          {data?.refreshedAt && (
+            <div style={{ textAlign: 'center', padding: '16px 0 4px', fontSize: '.7rem', color: 'var(--muted)' }}>
+              Source data updated {relativeTime(data.refreshedAt)}
             </div>
           )}
         </>

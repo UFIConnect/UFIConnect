@@ -919,6 +919,7 @@ export default function Feed() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
+  const [viewMode,      setViewMode]      = useState('feed');
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -926,6 +927,7 @@ export default function Feed() {
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
   const filtersRef    = useRef(DEFAULT_FILTERS);
+  const viewModeRef   = useRef('feed');
   const searchRef     = useRef('');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -942,7 +944,7 @@ export default function Feed() {
     } = options || {};
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
-    const activeMode = requestedMode || 'feed';
+    const activeMode = requestedMode || viewModeRef.current;
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
     const requestedSources = activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs;
@@ -998,10 +1000,26 @@ export default function Feed() {
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { searchRef.current = search; }, [search]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
+
+  const switchViewMode = useCallback((mode) => {
+    const nextMode = mode === 'archive' ? 'archive' : 'feed';
+    if (viewModeRef.current === nextMode) return;
+    viewModeRef.current = nextMode;
+    setViewMode(nextMode);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    loadFeed(false, activeTabsRef.current, {
+      mode: nextMode,
+      filters: filtersRef.current,
+      q: searchRef.current,
+      replace: true,
+    });
+  }, [loadFeed]);
 
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
@@ -1041,7 +1059,7 @@ export default function Feed() {
       // Silent background refresh — don't block UI
       loadFeed(false, [], {
         silent: true,
-        live: true,
+        live: viewModeRef.current === 'feed',
         replace: true,
       });
       return;
@@ -1053,7 +1071,7 @@ export default function Feed() {
     // Filter client-side immediately; silently fetch more source posts in background
     loadFeed(false, next, {
       silent: true,
-      live: true,
+      live: viewModeRef.current === 'feed',
       replace: true,
     });
   }, [loadFeed]); // eslint-disable-line
@@ -1069,7 +1087,7 @@ export default function Feed() {
       const params = new URLSearchParams({
         page: `${remotePage}`,
         limit: `${FEED_PAGE_SIZE}`,
-        mode: 'feed',
+        mode: viewModeRef.current,
         sort: activeFilters.sort,
       });
       const q = searchRef.current.trim();
@@ -1105,6 +1123,7 @@ export default function Feed() {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
+      if (viewModeRef.current !== 'feed') return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -1145,6 +1164,7 @@ export default function Feed() {
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
+        if (viewModeRef.current !== 'feed') return;
         // Only surface posts that match the active source tabs.
         const tabs = activeTabsRef.current;
         const activeFilters = filtersRef.current;
@@ -1190,6 +1210,12 @@ export default function Feed() {
   // Must be declared before the IntersectionObserver useEffect that reads processed.length
   const processed = useMemo(() => {
     let result = [...posts];
+
+    // Respect sources the user has disabled from the Sources settings page
+    try {
+      const disabled = new Set(JSON.parse(localStorage.getItem('ufi_disabled_sources') || '[]'));
+      if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
+    } catch { /* ignore */ }
 
     // Search
     const q = search.trim().toLowerCase();
@@ -1369,6 +1395,31 @@ export default function Feed() {
           )}
         </div>
 
+      </div>
+
+      {/* View-mode tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[
+          { key: 'feed',    label: 'Personal Feed' },
+          { key: 'archive', label: 'All Collected' },
+        ].map(({ key, label }) => {
+          const active = viewMode === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => switchViewMode(key)}
+              style={{
+                padding: '7px 14px', borderRadius: 20, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer',
+                border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                background: active ? 'var(--primary)' : 'var(--surface)',
+                color: active ? '#fff' : 'var(--text)',
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Source tabs — single scrollable row */}
