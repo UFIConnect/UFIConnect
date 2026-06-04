@@ -3692,10 +3692,50 @@ function postTimestamp(post) {
   return parseTimestampMs(raw) || 0;
 }
 
+function postEngagement(post) {
+  return normalizeCount(post?.likesCount ?? post?.likes) + normalizeCount(post?.commentsCount ?? post?.comments) * 2;
+}
+
+function postRankScore(post) {
+  const ageHours = Math.max(0, (Date.now() - postTimestamp(post)) / H);
+  const recency = Math.max(0, 100 - ageHours * 1.8);
+  const engagement = Math.log1p(postEngagement(post)) * 12;
+  const communityBoost = post?.fromJoinedGroup ? 18 : 0;
+  const firstPartyBoost = (post?.source || 'uficonnect') === 'uficonnect' ? 10 : 0;
+  return recency + engagement + communityBoost + firstPartyBoost;
+}
+
+function normalizeFeedSort(value, fallback = 'ranked') {
+  return ['ranked', 'newest', 'popular', 'balanced'].includes(value) ? value : fallback;
+}
+
+function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
+  const pool = [...posts];
+  const output = [];
+  let lastSource = null;
+  let streak = 0;
+
+  while (pool.length && output.length < limit) {
+    let pickIndex = 0;
+    if (lastSource && streak >= maxConsecutive) {
+      const alternate = pool.findIndex(p => (p?.source || 'unknown') !== lastSource);
+      if (alternate >= 0) pickIndex = alternate;
+    }
+    const [post] = pool.splice(pickIndex, 1);
+    const source = post?.source || 'unknown';
+    if (source === lastSource) streak += 1;
+    else { lastSource = source; streak = 1; }
+    output.push(post);
+  }
+
+  return output;
+}
+
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
   const started = Date.now();
   const input = Array.isArray(posts) ? posts.filter(Boolean) : [];
   const limit = Math.max(1, Math.floor(options.limit || sortAgentLimit()));
+  const sortMode = normalizeFeedSort(options.sort);
   const pressureScanCap = refreshControl.mode === 'normal'
     ? input.length
     : Math.min(input.length, limit * 2);
@@ -3710,8 +3750,18 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
       seen.add(post.id);
       unique.push(post);
     }
-    unique.sort((a, b) => postTimestamp(b) - postTimestamp(a));
-    const output = unique.slice(0, limit);
+    unique.sort((a, b) => {
+      if (sortMode === 'newest') return postTimestamp(b) - postTimestamp(a);
+      if (sortMode === 'popular') {
+        const engagementDelta = postEngagement(b) - postEngagement(a);
+        return engagementDelta || (postTimestamp(b) - postTimestamp(a));
+      }
+      const rankDelta = postRankScore(b) - postRankScore(a);
+      return rankDelta || (postTimestamp(b) - postTimestamp(a));
+    });
+    const output = (options.diversify || sortMode === 'balanced')
+      ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2)
+      : unique.slice(0, limit);
 
     sortAgentState.totalRuns += 1;
     sortAgentState.totalItems += input.length;
@@ -6093,9 +6143,31 @@ async function saveWebsiteOptimizationRun(run) {
 }
 
 // ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
-async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null) {
+function feedTimeRangeMs(range) {
+  if (range === '1h') return H;
+  if (range === '6h') return 6 * H;
+  if (range === 'today' || range === '24h') return D;
+  if (range === 'week' || range === '7d') return 7 * D;
+  return 0;
+}
+
+function dbFeedOrder(sortMode = 'ranked') {
+  if (sortMode === 'newest') {
+    return 'COALESCE(post_created_at, fetched_at) DESC, fetched_at DESC';
+  }
+  if (sortMode === 'popular') {
+    return '(GREATEST(likes_count,0) + GREATEST(comments_count,0) * 2) DESC, COALESCE(post_created_at, fetched_at) DESC';
+  }
+  return `(
+    LN(1 + GREATEST(likes_count,0) + GREATEST(comments_count,0) * 2) * 12
+    - (EXTRACT(EPOCH FROM (NOW() - COALESCE(post_created_at, fetched_at, NOW()))) / 3600.0) * 1.8
+  ) DESC, COALESCE(post_created_at, fetched_at) DESC`;
+}
+
+async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null, options = {}) {
   if (!db.isConnected()) return [];
   try {
+    const sortMode = normalizeFeedSort(options.sort);
     const clauses = [
       `id NOT LIKE '%\\_fallback' ESCAPE '\\'`,
       `id NOT LIKE '%\\_social' ESCAPE '\\'`,
@@ -6115,6 +6187,15 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       params.push(source);
       clauses.push(`source = $${params.length}`);
     }
+    if (options.q) {
+      params.push(`%${options.q}%`);
+      clauses.push(`(title ILIKE $${params.length} OR content ILIKE $${params.length} OR author_name ILIKE $${params.length} OR topic ILIKE $${params.length} OR source ILIKE $${params.length})`);
+    }
+    const rangeMs = feedTimeRangeMs(options.timeRange);
+    if (rangeMs > 0) {
+      params.push(new Date(Date.now() - rangeMs).toISOString());
+      clauses.push(`COALESCE(post_created_at, fetched_at) >= $${params.length}`);
+    }
     params.push(limit);
     const limitParam = params.length;
     params.push(offset);
@@ -6123,7 +6204,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     const { rows } = await db.query(
       `SELECT * FROM feed_posts_cache
        ${where}
-       ORDER BY post_created_at DESC, likes_count DESC
+       ORDER BY ${dbFeedOrder(sortMode)}
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       params
     );
@@ -6764,80 +6845,164 @@ app.get('/feed', authenticate, async (req, res) => {
   const sourcesParam = req.query.sources
     ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
     : [];
-  const feedLimit = Math.max(
+  const feedLimit = Math.min(Math.max(
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
-  );
+  ), 250);
+  const feedMode = req.query.mode === 'archive' ? 'archive' : 'feed';
+  const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
+  const timeRange = req.query.timeRange || req.query.range || 'all';
+  const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+  const searchQuery = (req.query.q || '').trim().toLowerCase();
+
+  function mapFeedRow(p) {
+    const grp = groups.find(g => g.id === p.groupId);
+    return {
+      ...p,
+      group:           grp ? { id: grp.id, name: grp.name, category: grp.category } : p.group,
+      likedByMe:       false,
+      fromJoinedGroup: joined.has(p.groupId),
+      forYou:          true,
+      relevance:       1,
+    };
+  }
+
+  if (feedMode === 'archive') {
+    const offset = (reqPage - 1) * feedLimit;
+    const archiveSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    const dbRows = await getPostsFromDB([], feedLimit + 1, offset, archiveSources, {
+      q: searchQuery,
+      sort: sortMode,
+      timeRange,
+    });
+    let pageRows = dbRows.slice(0, feedLimit);
+    let hasMore = dbRows.length > feedLimit;
+
+    if (!dbRows.length && offset === 0) {
+      const rangeMs = feedTimeRangeMs(timeRange);
+      const memoryRows = sortFeedBatch(realFeedPosts([
+        ...globalFeedCache.posts,
+        ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
+      ]).filter(p => {
+        if (Array.isArray(archiveSources) && archiveSources.length && !archiveSources.includes(p.source)) return false;
+        if (archiveSources && !Array.isArray(archiveSources) && p.source !== archiveSources) return false;
+        if (rangeMs && postTimestamp(p) < Date.now() - rangeMs) return false;
+        if (searchQuery) {
+          const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.topic || ''} ${p.source || ''}`.toLowerCase();
+          if (!text.includes(searchQuery)) return false;
+        }
+        return true;
+      }), 'archive-memory-fallback', {
+        limit: feedLimit + 1,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      });
+      pageRows = memoryRows.slice(0, feedLimit);
+      hasMore = memoryRows.length > feedLimit;
+    }
+
+    return res.json({
+      posts: pageRows.map(mapFeedRow),
+      page: reqPage,
+      mode: 'archive',
+      sort: sortMode,
+      hasMore,
+      totalAvailable: hasMore ? offset + feedLimit + 1 : offset + pageRows.length,
+    });
+  }
 
   // ── Full-text search across all sources ──────────────────────────────────
-  const searchQuery = (req.query.q || '').trim().toLowerCase();
   if (searchQuery) {
-    const allCached = dedupeAndSortFeedPosts(realFeedPosts([
+    const allCached = sortFeedBatch(realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
-    ]));
+    ]), 'feed-search-memory', {
+      limit: Math.max(feedLimit * 3, feedLimit + 1),
+      sort: sortMode,
+      diversify: sortMode === 'balanced',
+    });
+    const searchRangeMs = feedTimeRangeMs(timeRange);
     const memMatches = allCached.filter(p => {
+      if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
       return text.includes(searchQuery);
     });
     let dbMatches = [];
     if (db.isConnected()) {
       try {
-        const { rows } = await db.query(
-          `SELECT * FROM feed_posts_cache
-           WHERE (title ILIKE $1 OR content ILIKE $1)
-             AND id NOT LIKE '%\\_fallback' ESCAPE '\\'
-             AND id NOT LIKE '%\\_social' ESCAPE '\\'
-             AND id NOT LIKE 'social\\_%' ESCAPE '\\'
-             AND id !~* '^indeed_j[0-9]+$'
-             AND id !~* '^govt_g[0-9]+$'
-           ORDER BY post_created_at DESC, likes_count DESC
-           LIMIT $2`,
-          [`%${searchQuery}%`, feedLimit * 3]
-        );
-        dbMatches = rows.map(r => ({
-          id: r.id, source: r.source, title: r.title, content: r.content,
-          sourceUrl: r.source_url, mediaUrl: r.media_url, mediaType: r.media_type,
-          topic: r.topic, likesCount: r.likes_count, commentsCount: r.comments_count,
-          createdAt: r.post_created_at, author: { name: r.author_name }, isExternal: true,
+        const rows = await getPostsFromDB([], feedLimit * 3, 0, null, {
+          q: searchQuery,
+          sort: sortMode,
+          timeRange,
+        });
+        dbMatches = rows.map(p => ({
+          ...p,
+          forYou: true,
+          relevance: 1,
         })).filter(p => !isFallbackFeedPost(p));
       } catch {}
     }
-    const merged = dedupeAndSortFeedPosts(realFeedPosts([...memMatches, ...dbMatches]));
-    return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery });
+    const merged = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
+      limit: feedLimit + 1,
+      sort: sortMode,
+      diversify: sortMode === 'balanced',
+    });
+    return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
   }
 
   // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
-  const reqPage = parseInt(req.query.page || '1', 10);
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
-    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, pageSources);
+    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, pageSources, {
+      sort: sortMode,
+      timeRange,
+    });
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = dbRows.slice(0, feedLimit);
 
     if (sourceFilter) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
-      const memoryRows = dedupeAndSortFeedPosts(realFeedPosts([
+      const memoryRows = sortFeedBatch(realFeedPosts([
         ...(agentSourceCache.get(agentKey)?.posts || []),
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
-      ]));
+      ]), 'feed-page-source-memory', {
+        limit: offset + feedLimit + 1,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      });
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
-      pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
+      pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-source-merge', {
+        limit: feedLimit,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      });
     } else if (sourcesParam.length > 1) {
-      const memoryRows = dedupeAndSortFeedPosts(realFeedPosts(sourcesParam.flatMap(src => {
+      const memoryRows = sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
         const agentKey = feedWorkerKey(src);
         return [
           ...(agentSourceCache.get(agentKey)?.posts || []),
           ...globalFeedCache.posts.filter(p => p.source === src),
         ];
-      })));
+      })), 'feed-page-multi-memory', {
+        limit: offset + feedLimit + 1,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      });
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
-      pageRows = dedupeAndSortFeedPosts([...pageRows, ...memoryPage]).slice(0, feedLimit);
+      pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-merge', {
+        limit: feedLimit,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      });
     } else if (!dbRows.length) {
-      pageRows = realFeedPosts(globalFeedCache.posts).slice(offset, offset + feedLimit + 1);
+      pageRows = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
+        limit: offset + feedLimit + 1,
+        sort: sortMode,
+        diversify: sortMode === 'balanced',
+      }).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = pageRows.slice(0, feedLimit);
     }
@@ -6856,7 +7021,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
     const result = pageRows.map(mapDbPost);
 
-    return res.json({ posts: result, page: reqPage, hasMore });
+    return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
   // Internal posts (user-created)
@@ -6922,17 +7087,23 @@ app.get('/feed', authenticate, async (req, res) => {
       new Promise(resolve => setTimeout(() => resolve([]), 4500)),
     ]);
     const livePosts = realFeedPosts((settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []));
-    const dbRows = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
+    const dbRows = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter, {
+      sort: sortMode,
+      timeRange,
+    });
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     savePostsToDB(livePosts).catch(() => {});
 
     const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
+      sort: sortMode,
+      diversify: sortMode === 'balanced',
     });
     return res.json({
       posts: result.slice(0, feedLimit),
       source: sourceFilter,
       connected: true,
+      sort: sortMode,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
     });
@@ -6953,16 +7124,22 @@ app.get('/feed', authenticate, async (req, res) => {
     }
     if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
     const dbRows = sourcesParam.length > 0
-      ? await getPostsFromDB([], feedLimit + 1, 0, null).then(rows => rows.filter(r => sourcesParam.includes(r.source)))
+      ? await getPostsFromDB([], feedLimit + 1, 0, sourcesParam, {
+          sort: sortMode,
+          timeRange,
+        })
       : [];
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, p.source));
     allSourcePosts.push(...dbPosts);
     const result = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
+      sort: sortMode,
+      diversify: sortMode === 'balanced',
     });
     return res.json({
       posts: result.slice(0, feedLimit),
       sources: sourcesParam,
+      sort: sortMode,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
       refresh: {
@@ -6983,17 +7160,23 @@ app.get('/feed', authenticate, async (req, res) => {
       .map(p => mapExternalPost(p, sourceFilter));
     const liveRaw     = realFeedPosts(liveResult[agentKey] || []);
     const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
-    const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter);
+    const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter, {
+      sort: sortMode,
+      timeRange,
+    });
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
     const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
+      sort: sortMode,
+      diversify: sortMode === 'balanced',
     });
 
     return res.json({
       posts: result.slice(0, feedLimit),
       source: sourceFilter,
+      sort: sortMode,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
       totalAvailable: result.length,
       refresh: {
@@ -7067,16 +7250,25 @@ app.get('/feed', authenticate, async (req, res) => {
   const behancePosts   = behanceRaw.map(p => mapExternalPost(p, 'behance'));
   const designwebPosts = designwebRaw.map(p => mapExternalPost(p, 'designweb'));
 
-  // Include background-cached global posts (already fetched, mapped by source)
-  // Background-cached posts (global refresh + DB)
-  const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
-
   // DB-persisted posts — topic-filtered using interests + skills
   const userTopics = [
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...(user?.skills || []).map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
-  const dbPosts = (await getPostsFromDB(userTopics)).map(p => mapExternalPost(p, p.source || 'reddit'));
+  const dbPosts = (await getPostsFromDB(userTopics, 5000, 0, null, {
+    sort: sortMode,
+    timeRange,
+  })).map(p => mapExternalPost(p, p.source || 'reddit'));
+
+  // Background-cached global posts — filter by user topics when available to reduce noise
+  const allCachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
+  const userTopicSet = new Set(userTopics.map(t => t.toLowerCase()));
+  const cachedMapped = userTopics.length > 0
+    ? allCachedMapped.filter(p => {
+        const t = (p.topic || p.source || '').toLowerCase();
+        return [...userTopicSet].some(kw => t.includes(kw));
+      })
+    : allCachedMapped;
 
   // Per-user social platform posts (only when user has connected a social account)
   const socialKws = userTopics.slice(0, 3);
@@ -7107,7 +7299,7 @@ app.get('/feed', authenticate, async (req, res) => {
     };
   });
 
-  // Sort all live posts by recency + relevance.
+  // Sort all live posts: ranked (time-decay + engagement), interleaved for source diversity.
   const liveSorted = sortFeedBatch([
     ...internal, ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
@@ -7118,13 +7310,30 @@ app.get('/feed', authenticate, async (req, res) => {
     ...gitlabPosts, ...remoteokPosts, ...ycPosts, ...crunchbasePosts, ...behancePosts, ...designwebPosts,
     ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
   ], 'main-feed-response', {
-    limit: Math.max(feedLimit + 1, sortAgentLimit()),
+    limit: Math.max(feedLimit * 4, sortAgentLimit()),
+    sort: sortMode,
+    diversify: sortMode === 'balanced',
+    maxConsecutivePerSource: 2,
   });
 
-  const responsePosts = liveSorted.slice(0, feedLimit);
+  // Balanced mode keeps one loud source from taking over the first page.
+  const SRC_CAP = Math.max(5, Math.ceil(feedLimit * 0.15));
+  const srcCounts = {};
+  const cappedPosts = [];
+  const overflowPosts = [];
+  for (const p of liveSorted) {
+    const src = p.source || 'unknown';
+    srcCounts[src] = (srcCounts[src] || 0) + 1;
+    if (srcCounts[src] <= SRC_CAP) cappedPosts.push(p);
+    else overflowPosts.push(p);
+  }
+  const responsePosts = sortMode === 'balanced'
+    ? (cappedPosts.length >= feedLimit ? cappedPosts.slice(0, feedLimit) : [...cappedPosts, ...overflowPosts].slice(0, feedLimit))
+    : liveSorted.slice(0, feedLimit);
 
   res.json({
     posts: responsePosts,
+    sort: sortMode,
     hasMore: liveSorted.length > feedLimit,
     totalAvailable: liveSorted.length,
     refresh: {
@@ -7235,6 +7444,68 @@ app.get('/feed/stats', authenticate, async (req, res) => {
   } catch (e) {
     res.json({ stats: {}, total: 0, cachedInMemory: realFeedPosts(globalFeedCache.posts).length });
   }
+});
+
+// ─── Feed sources explorer — all live sources with sample posts ───────────────
+app.get('/feed/sources', authenticate, (req, res) => {
+  const sampleSize = Math.min(10, Math.max(1, parseInt(req.query.sample || '5', 10)));
+
+  // Build a map: sourceId → { posts[], lastFetch, totalSeen }
+  const sourceMap = {};
+
+  // Pull from per-source agent cache first (highest fidelity)
+  for (const [id, d] of agentSourceCache) {
+    const posts = realFeedPosts(d.posts || []);
+    if (!sourceMap[id]) sourceMap[id] = { posts: [], lastFetch: d.lastFetch || null, totalSeen: d.totalSeen || 0 };
+    sourceMap[id].posts.push(...posts);
+    sourceMap[id].lastFetch = d.lastFetch || sourceMap[id].lastFetch;
+    sourceMap[id].totalSeen = Math.max(sourceMap[id].totalSeen, d.totalSeen || 0);
+  }
+
+  // Supplement with global cache posts grouped by source
+  for (const p of realFeedPosts(globalFeedCache.posts)) {
+    const src = p.source || 'unknown';
+    if (!sourceMap[src]) sourceMap[src] = { posts: [], lastFetch: null, totalSeen: 0 };
+    sourceMap[src].posts.push(p);
+  }
+
+  // Build response array
+  const def = AGENT_DEFS || {};
+  const sources = Object.entries(sourceMap)
+    .map(([id, d]) => {
+      const meta = def[id] || {};
+      const sorted = sortFeedBatch(d.posts, `sources-${id}`, { limit: sampleSize + 1 });
+      return {
+        id,
+        name:        meta.name        || id.charAt(0).toUpperCase() + id.slice(1),
+        emoji:       meta.emoji       || '📡',
+        color:       meta.color       || '#6366F1',
+        description: meta.description || null,
+        postCount:   d.posts.length,
+        totalSeen:   d.totalSeen || d.posts.length,
+        lastFetch:   d.lastFetch,
+        samplePosts: sorted.slice(0, sampleSize).map(p => ({
+          id:         p.id,
+          title:      p.title || null,
+          content:    (p.content || '').slice(0, 200),
+          sourceUrl:  p.sourceUrl || null,
+          likesCount: p.likesCount || 0,
+          commentsCount: p.commentsCount || 0,
+          createdAt:  p.createdAt,
+          author:     p.author?.name || p.author || null,
+        })),
+      };
+    })
+    .filter(s => s.postCount > 0)
+    .sort((a, b) => b.postCount - a.postCount);
+
+  res.json({
+    sources,
+    totalSources: sources.length,
+    totalPosts: sources.reduce((n, s) => n + s.postCount, 0),
+    globalCacheCount: realFeedPosts(globalFeedCache.posts).length,
+    refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
+  });
 });
 
 // ─── Comment pools for curated fallback (tech/dev/social/community) ──────────

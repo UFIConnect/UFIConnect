@@ -51,6 +51,7 @@ const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
+const Sources        = lazy(() => import('./pages/Sources'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -132,6 +133,10 @@ export default function App() {
       }/>
       <Route path="/settings" element={
         <RequireAuth><RequireOnboarding><Settings /></RequireOnboarding></RequireAuth>
+      }/>
+
+      <Route path="/sources" element={
+        <RequireAuth><RequireOnboarding><Sources /></RequireOnboarding></RequireAuth>
       }/>
 
       {/* Agent Control Room — live on public domain */}
