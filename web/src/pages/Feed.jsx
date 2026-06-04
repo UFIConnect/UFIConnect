@@ -25,7 +25,74 @@ function feedPostTime(post) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function mergeFeedPosts(list = []) {
+function postEngagement(post) {
+  const likes = Number(post?.likesCount || post?.likes || 0);
+  const comments = Number(post?.commentsCount || post?.comments || 0);
+  return Math.max(0, likes) + Math.max(0, comments) * 2;
+}
+
+function postRankScore(post) {
+  const ts = feedPostTime(post);
+  const ageHours = ts > 0 ? Math.max(0, (Date.now() - ts) / (60 * 60 * 1000)) : 9999;
+  const recency = Math.max(0, 100 - ageHours * 1.8);
+  const engagement = Math.log1p(postEngagement(post)) * 12;
+  const communityBoost = post?.fromJoinedGroup ? 18 : 0;
+  const firstPartyBoost = (post?.source || 'uficonnect') === 'uficonnect' ? 10 : 0;
+  return recency + engagement + communityBoost + firstPartyBoost;
+}
+
+function normalizeFeedSort(value) {
+  return ['ranked', 'newest', 'popular', 'balanced', 'bylink'].includes(value) ? value : 'ranked';
+}
+
+function extractDomain(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); }
+  catch { return url || ''; }
+}
+
+function sortByLink(posts = []) {
+  return [...posts].sort((a, b) => {
+    const da = extractDomain(a.sourceUrl || '');
+    const db = extractDomain(b.sourceUrl || '');
+    return da.localeCompare(db) || feedPostTime(b) - feedPostTime(a);
+  });
+}
+
+function diversifyPostsBySource(posts = [], maxConsecutive = 2) {
+  const pool = [...posts];
+  const output = [];
+  let lastSource = null;
+  let streak = 0;
+
+  while (pool.length) {
+    let pickIndex = 0;
+    if (lastSource && streak >= maxConsecutive) {
+      const alternate = pool.findIndex(p => (p?.source || 'unknown') !== lastSource);
+      if (alternate >= 0) pickIndex = alternate;
+    }
+    const [post] = pool.splice(pickIndex, 1);
+    const source = post?.source || 'unknown';
+    if (source === lastSource) streak += 1;
+    else { lastSource = source; streak = 1; }
+    output.push(post);
+  }
+
+  return output;
+}
+
+function sortPostsForView(list = [], sort = 'ranked') {
+  const sortMode = normalizeFeedSort(sort);
+  if (sortMode === 'bylink') return sortByLink(list);
+  const result = [...list];
+  result.sort((a, b) => {
+    if (sortMode === 'newest') return feedPostTime(b) - feedPostTime(a);
+    if (sortMode === 'popular') return (postEngagement(b) - postEngagement(a)) || (feedPostTime(b) - feedPostTime(a));
+    return (postRankScore(b) - postRankScore(a)) || (feedPostTime(b) - feedPostTime(a));
+  });
+  return sortMode === 'balanced' ? diversifyPostsBySource(result) : result;
+}
+
+function mergeFeedPosts(list = [], sort = 'ranked') {
   const byId = new Map();
   for (const post of list) {
     if (!post) continue;
@@ -34,7 +101,7 @@ function mergeFeedPosts(list = []) {
     const previous = byId.get(key);
     if (!previous || feedPostTime(post) >= feedPostTime(previous)) byId.set(key, post);
   }
-  return [...byId.values()].sort((a, b) => feedPostTime(b) - feedPostTime(a));
+  return sortPostsForView([...byId.values()], sort);
 }
 
 const SOURCE_META = {
@@ -90,7 +157,8 @@ const SOURCE_TABS = [
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
-const FEED_PAGE_SIZE = 250;
+const DEFAULT_FILTERS = { sort: 'ranked', sources: [], timeRange: 'all' };
+const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 90 * 1000;
 
 const ALL_FILTER_SOURCES = [
@@ -198,6 +266,10 @@ function VideoModal({ post, onClose }) {
 function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
   const [local, setLocal] = useState({ ...filters });
 
+  useEffect(() => {
+    setLocal({ ...filters });
+  }, [filters]);
+
   function toggleSource(s) {
     setLocal(f => {
       const next = f.sources.includes(s) ? f.sources.filter(x => x !== s) : [...f.sources, s];
@@ -211,7 +283,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
   }
 
   function reset() {
-    const cleared = { sort: 'newest', sources: [], timeRange: 'all' };
+    const cleared = { ...DEFAULT_FILTERS };
     setLocal(cleared);
     onChange(cleared);
     onClose();
@@ -230,16 +302,19 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       {/* Sort */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Sort</div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
-            { value: 'newest',  label: '🕐 Newest' },
-            { value: 'popular', label: '🔥 Popular' },
+            { value: 'ranked',   label: 'Ranked' },
+            { value: 'newest',   label: 'Newest' },
+            { value: 'popular',  label: 'Popular' },
+            { value: 'balanced', label: 'Balanced' },
+            { value: 'bylink',   label: 'By Domain' },
           ].map(({ value, label }) => (
             <button
               key={value}
               onClick={() => setLocal(f => ({ ...f, sort: value }))}
               style={{
-                flex: 1, padding: '7px 0', borderRadius: 8, fontSize: '.8rem', fontWeight: 600,
+                flex: '1 1 46%', padding: '7px 0', borderRadius: 8, fontSize: '.8rem', fontWeight: 600,
                 border: `1.5px solid ${local.sort === value ? 'var(--primary)' : 'var(--border)'}`,
                 background: local.sort === value ? 'var(--primary)' : 'var(--surface)',
                 color: local.sort === value ? '#fff' : 'var(--text)', cursor: 'pointer',
@@ -841,15 +916,20 @@ export default function Feed() {
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [videoPost,     setVideoPost]    = useState(null);
   const [lastRefresh,   setLastRefresh]  = useState(null);
-  const [filters, setFilters] = useState({ sort: 'newest', sources: [], timeRange: 'all' });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
+  const [viewMode,      setViewMode]      = useState('feed');
+  const [feedStats,     setFeedStats]     = useState(null);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
+  const filtersRef    = useRef(DEFAULT_FILTERS);
+  const viewModeRef   = useRef('feed');
+  const searchRef     = useRef('');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
 
@@ -858,20 +938,31 @@ export default function Feed() {
       silent = false,
       live = manual,
       preserveScroll = silent,
-      q = '',
+      q,
+      filters: requestedFilters,
+      mode: requestedMode,
+      replace = false,
     } = options || {};
+    const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
+    activeFilters.sort = normalizeFeedSort(activeFilters.sort);
+    const activeMode = requestedMode || viewModeRef.current;
+    const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
+    const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
+    const requestedSources = activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs;
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
     }
     try {
-      const params = new URLSearchParams({ limit: `${FEED_PAGE_SIZE}` });
-      if (q) {
-        params.set('q', q);
-      } else {
-        if (tabs.length === 1) params.set('source', tabs[0]);
-        else if (tabs.length > 1) params.set('sources', tabs.join(','));
-      }
+      const params = new URLSearchParams({
+        limit: `${FEED_PAGE_SIZE}`,
+        mode: activeMode,
+        sort: activeFilters.sort,
+      });
+      if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
+      if (activeSearch) params.set('q', activeSearch);
+      if (requestedSources.length === 1) params.set('source', requestedSources[0]);
+      else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       if (manual) {
         params.set('bust', '1');
       }
@@ -882,10 +973,10 @@ export default function Feed() {
       const { data } = await client.get(url);
       const incoming = data.posts || [];
       const previous = postsRef.current;
-      const shouldMerge = manual || live;
+      const shouldMerge = (manual || live) && !replace;
       const nextPosts = shouldMerge
-        ? mergeFeedPosts([...incoming, ...previous])
-        : mergeFeedPosts(incoming);
+        ? mergeFeedPosts([...incoming, ...previous], activeFilters.sort)
+        : mergeFeedPosts(incoming, activeFilters.sort);
 
       if (shouldMerge) {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
@@ -899,8 +990,8 @@ export default function Feed() {
       }
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
       setPosts(nextPosts);
-      writeFeedCache(nextPosts);
-      if (!shouldMerge || previous.length === 0) setRemotePage(2);
+      if (activeMode === 'feed' && !activeSearch) writeFeedCache(nextPosts);
+      if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
     } catch (e) { console.error(e); }
@@ -909,18 +1000,68 @@ export default function Feed() {
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
+  useEffect(() => { filtersRef.current = filters; }, [filters]);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  useEffect(() => { searchRef.current = search; }, [search]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
 
+  const applyFilters = useCallback((nextFilters) => {
+    const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
+    next.sort = normalizeFeedSort(next.sort);
+    filtersRef.current = next;
+    setFilters(next);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    loadFeed(false, activeTabsRef.current, {
+      filters: next,
+      q: searchRef.current,
+      replace: true,
+    });
+  }, [loadFeed]);
+
+  const switchViewMode = useCallback((mode) => {
+    const nextMode = mode === 'archive' ? 'archive' : 'feed';
+    if (viewModeRef.current === nextMode) return;
+    viewModeRef.current = nextMode;
+    setViewMode(nextMode);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    loadFeed(false, activeTabsRef.current, {
+      mode: nextMode,
+      filters: filtersRef.current,
+      q: searchRef.current,
+      replace: true,
+    });
+  }, [loadFeed]);
+
+  const clearFeedControls = useCallback(() => {
+    activeTabsRef.current = [];
+    filtersRef.current = DEFAULT_FILTERS;
+    searchRef.current = '';
+    setActiveTabs([]);
+    setFilters(DEFAULT_FILTERS);
+    setSearch('');
+    setSearchInput('');
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
+  }, [loadFeed]);
+
   const toggleTab = useCallback((key) => {
+    searchRef.current = '';
     setSearch('');
     setSearchInput('');
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
       // Silent background refresh — don't block UI
-      loadFeed(false, [], { silent: true, live: true });
+      loadFeed(false, [], {
+        silent: true,
+        live: viewModeRef.current === 'feed',
+        replace: true,
+      });
       return;
     }
     const prev = activeTabsRef.current;
@@ -928,7 +1069,11 @@ export default function Feed() {
     activeTabsRef.current = next;
     setActiveTabs(next);
     // Filter client-side immediately; silently fetch more source posts in background
-    loadFeed(false, next, { silent: true, live: true });
+    loadFeed(false, next, {
+      silent: true,
+      live: viewModeRef.current === 'feed',
+      replace: true,
+    });
   }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
@@ -936,13 +1081,26 @@ export default function Feed() {
     setLoadingMore(true);
     try {
       const tabs = activeTabsRef.current;
-      let srcParam = '';
-      if (tabs.length === 1) srcParam = `&source=${encodeURIComponent(tabs[0])}`;
-      else if (tabs.length > 1) srcParam = `&sources=${encodeURIComponent(tabs.join(','))}`;
-      const { data } = await client.get(`/feed?page=${remotePage}&limit=${FEED_PAGE_SIZE}${srcParam}`);
+      const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
+      activeFilters.sort = normalizeFeedSort(activeFilters.sort);
+      const requestedSources = activeFilters.sources?.length ? activeFilters.sources : tabs;
+      const params = new URLSearchParams({
+        page: `${remotePage}`,
+        limit: `${FEED_PAGE_SIZE}`,
+        mode: viewModeRef.current,
+        sort: activeFilters.sort,
+      });
+      const q = searchRef.current.trim();
+      if (q) params.set('q', q);
+      if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
+      if (requestedSources.length === 1) params.set('source', requestedSources[0]);
+      else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
+      const { data } = await client.get(`/feed?${params.toString()}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
-      if (incoming.length > 0) setPosts(prev => [...prev, ...incoming]);
+      if (incoming.length > 0) {
+        setPosts(prev => mergeFeedPosts([...prev, ...incoming], activeFilters.sort));
+      }
       setRemotePage(p => p + 1);
       setRemoteHasMore(data.hasMore !== false);
     } catch {}
@@ -965,6 +1123,7 @@ export default function Feed() {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
+      if (viewModeRef.current !== 'feed') return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -985,6 +1144,10 @@ export default function Feed() {
     client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
   }, [profile]);
 
+  useEffect(() => {
+    client.get('/feed/stats').then(({ data }) => setFeedStats(data)).catch(() => {});
+  }, []);
+
   // SSE: stream new posts from all source workers in real time
   useEffect(() => {
     const base = import.meta.env.VITE_API_URL || '/api';
@@ -1004,12 +1167,27 @@ export default function Feed() {
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
+        if (viewModeRef.current !== 'feed') return;
         // Only surface posts that match the active source tabs.
         const tabs = activeTabsRef.current;
+        const activeFilters = filtersRef.current;
+        const q = searchRef.current.trim().toLowerCase();
         const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
-        if (!tabFresh.length) return;
+        const filterFresh = tabFresh.filter(p => {
+          if (activeFilters.sources?.length && !activeFilters.sources.includes(p.source)) return false;
+          if (activeFilters.timeRange && activeFilters.timeRange !== 'all') {
+            const cutoff = timeRangeCutoff(activeFilters.timeRange);
+            if (feedPostTime(p) < cutoff) return false;
+          }
+          if (q) {
+            const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || ''}`.toLowerCase();
+            if (!text.includes(q)) return false;
+          }
+          return true;
+        });
+        if (!filterFresh.length) return;
         setPosts(prev => {
-          const next = mergeFeedPosts([...tabFresh, ...prev]);
+          const next = mergeFeedPosts([...filterFresh, ...prev], activeFilters.sort);
           knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
           return next;
         });
@@ -1060,38 +1238,10 @@ export default function Feed() {
     // Time range
     if (filters.timeRange && filters.timeRange !== 'all') {
       const cutoff = timeRangeCutoff(filters.timeRange);
-      result = result.filter(p => new Date(p.createdAt).getTime() >= cutoff);
+      result = result.filter(p => feedPostTime(p) >= cutoff);
     }
 
-    // Sort within each source bucket first
-    if (filters.sort === 'newest') {
-      result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    } else {
-      result.sort((a, b) => (b.likesCount || 0) - (a.likesCount || 0));
-    }
-
-    // On the all tab with no source filter, interleave round-robin across sources
-    if (activeTabs.length === 0 && filters.sources.length === 0) {
-      const buckets = new Map();
-      for (const p of result) {
-        const src = p.source || 'unknown';
-        if (!buckets.has(src)) buckets.set(src, []);
-        buckets.get(src).push(p);
-      }
-      const keys = [...buckets.keys()];
-      const mixed = [];
-      let filled = true;
-      while (filled) {
-        filled = false;
-        for (const k of keys) {
-          const bucket = buckets.get(k);
-          if (bucket.length) { mixed.push(bucket.shift()); filled = true; }
-        }
-      }
-      return mixed;
-    }
-
-    return result;
+    return sortPostsForView(result, filters.sort);
   }, [posts, search, filters, activeTabs]);
 
   useEffect(() => {
@@ -1130,12 +1280,16 @@ export default function Feed() {
     () => [...new Set(posts.map(p => p.source).filter(s => ALL_FILTER_SOURCES.includes(s)))],
     [posts]
   );
+  const topSourceStats = useMemo(
+    () => Object.entries(feedStats?.stats || {}).slice(0, 6),
+    [feedStats]
+  );
 
   const displayed = processed; // render all locally-held posts — no artificial cap
   const hasMore   = remoteHasMore;
 
   const firstName = profile?.name?.split(' ')[0] || '';
-  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
+  const activeFilterCount = filters.sources.length + (filters.sort !== 'ranked' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -1177,17 +1331,34 @@ export default function Feed() {
               placeholder="Search posts…"
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { const q = searchInput.trim(); setSearch(q); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); } }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  const nextQ = searchInput.trim();
+                  searchRef.current = nextQ;
+                  setSearch(nextQ);
+                  loadFeed(false, activeTabsRef.current, { q: nextQ, replace: true });
+                }
+              }}
               style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
             />
             {searchInput && (
-              <button type="button" onClick={() => { setSearchInput(''); setSearch(''); loadFeed(false, activeTabsRef.current); }}
+              <button type="button" onClick={() => {
+                searchRef.current = '';
+                setSearchInput('');
+                setSearch('');
+                loadFeed(false, activeTabsRef.current, { q: '', replace: true });
+              }}
                 style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
             )}
           </div>
           <button
             type="button"
-            onClick={() => { const q = searchInput.trim(); setSearch(q); if (q) loadFeed(false, [], { q }); else loadFeed(false, activeTabsRef.current); }}
+            onClick={() => {
+              const nextQ = searchInput.trim();
+              searchRef.current = nextQ;
+              setSearch(nextQ);
+              loadFeed(false, activeTabsRef.current, { q: nextQ, replace: true });
+            }}
             style={{
               padding: '9px 16px', borderRadius: 22, border: '1.5px solid var(--border)',
               background: searchInput.trim() ? 'var(--primary)' : 'var(--surface)',
@@ -1219,7 +1390,7 @@ export default function Feed() {
           {filterOpen && (
             <FilterPanel
               filters={filters}
-              onChange={f => { setFilters(f); }}
+              onChange={applyFilters}
               sources={ALL_FILTER_SOURCES}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
@@ -1245,6 +1416,64 @@ export default function Feed() {
           <span className="feed-refresh-label">{refreshing ? 'Updating…' : 'Refresh'}</span>
         </button>
       </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        {[
+          { key: 'feed', label: 'Personal Feed' },
+          { key: 'archive', label: 'All Collected' },
+        ].map(({ key, label }) => {
+          const active = viewMode === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => switchViewMode(key)}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 20,
+                border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                background: active ? 'var(--primary)' : 'var(--surface)',
+                color: active ? '#fff' : 'var(--text)',
+                fontWeight: 700,
+                fontSize: '.82rem',
+                cursor: 'pointer',
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+        {feedStats && (
+          <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600 }}>
+            {(feedStats.total || 0).toLocaleString()} stored
+            {feedStats.cachedInMemory ? ` · ${feedStats.cachedInMemory.toLocaleString()} live cache` : ''}
+          </span>
+        )}
+      </div>
+
+      {viewMode === 'archive' && topSourceStats.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {topSourceStats.map(([source, count]) => {
+            const meta = SOURCE_META[source] || {};
+            return (
+              <span key={source} style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 5,
+                padding: '4px 9px',
+                borderRadius: 12,
+                background: 'var(--card)',
+                border: '1px solid var(--border)',
+                color: 'var(--muted)',
+                fontSize: '.72rem',
+                fontWeight: 700,
+              }}>
+                {meta.label || source}: {Number(count || 0).toLocaleString()}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {/* Source tabs — single scrollable row */}
       <div style={{
@@ -1309,15 +1538,15 @@ export default function Feed() {
               background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
               border: '1px solid var(--border)',
             }}>
-              {filters.timeRange === '1h' ? 'Past hour' : filters.timeRange === '24h' ? 'Past 24h' : filters.timeRange === '7d' ? 'Past week' : filters.timeRange}
-              <button onClick={() => setFilters(f => ({ ...f, timeRange: 'all' }))} style={{
+              {filters.timeRange === '1h' ? 'Past hour' : filters.timeRange === '6h' ? 'Past 6h' : filters.timeRange === 'today' ? 'Past 24h' : filters.timeRange === 'week' ? 'Past week' : filters.timeRange}
+              <button onClick={() => applyFilters({ ...filtersRef.current, timeRange: 'all' })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>
             </span>
           )}
 
-          {filters.sort !== 'newest' && (
+          {filters.sort !== 'ranked' && (
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '3px 9px', borderRadius: 12,
@@ -1325,7 +1554,7 @@ export default function Feed() {
               border: '1px solid var(--border)',
             }}>
               Sort: {filters.sort}
-              <button onClick={() => setFilters(f => ({ ...f, sort: 'newest' }))} style={{
+              <button onClick={() => applyFilters({ ...filtersRef.current, sort: 'ranked' })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>
@@ -1342,7 +1571,7 @@ export default function Feed() {
                 border: '1px solid var(--border)',
               }}>
                 {meta.label || key}
-                <button onClick={() => setFilters(f => ({ ...f, sources: f.sources.filter(s => s !== key) }))} style={{
+                <button onClick={() => applyFilters({ ...filtersRef.current, sources: filtersRef.current.sources.filter(s => s !== key) })} style={{
                   marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                   color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
                 }}>×</button>
@@ -1351,7 +1580,7 @@ export default function Feed() {
           })}
 
           <button
-            onClick={() => { setActiveTabs([]); activeTabsRef.current = []; setFilters({ sort: 'newest', sources: [], timeRange: 'all' }); setSearch(''); setSearchInput(''); loadFeed(false, []); }}
+            onClick={clearFeedControls}
             style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.75rem', fontWeight: 600, padding: '2px 4px', textDecoration: 'underline' }}
           >
             Clear all
@@ -1411,9 +1640,14 @@ export default function Feed() {
           </div>
           <div className="empty-desc">
             {search ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => setSearch('')}>Clear search</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => {
+                searchRef.current = '';
+                setSearch('');
+                setSearchInput('');
+                loadFeed(false, activeTabsRef.current, { q: '', replace: true });
+              }}>Clear search</button>
             ) : activeFilterCount > 0 ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => setFilters({ sort: 'newest', sources: [], timeRange: 'all' })}>
+              <button className="btn btn-ghost btn-sm" onClick={() => applyFilters(DEFAULT_FILTERS)}>
                 Reset filters
               </button>
             ) : activeTabs.length > 0 ? (

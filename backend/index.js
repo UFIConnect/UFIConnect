@@ -31,6 +31,14 @@ try {
 // Health-check endpoint (used by AWS load balancer / monitoring)
 app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
 
+// Maintenance mode — set MAINTENANCE=true env var to activate
+if (process.env.MAINTENANCE === 'true') {
+  app.use((req, res, next) => {
+    if (req.path === '/health') return next();
+    res.status(503).json({ error: 'Service temporarily unavailable. We\'ll be back shortly.' });
+  });
+}
+
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key';
 const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || process.env.AUTH0_ISSUER_BASE_URL || '')
@@ -1208,7 +1216,7 @@ function parseRedditJSON(data, topicKeyword) {
         title:       d.title,
         source:      'reddit',
         sourceLabel: `r/${sub}`,
-        sourceUrl:   d.url?.startsWith('http') && !d.is_self ? d.url : selfUrl,
+        sourceUrl:   selfUrl,
         topic:       topicKeyword,
         author:      { id: `reddit_${d.author}`, name: `u/${d.author}`, title: `r/${sub}`, organization: 'Reddit' },
         likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
@@ -1292,7 +1300,7 @@ async function fetchHNByKeyword(keyword) {
         title:         h.title,
         source:        'hackernews',
         sourceLabel:   'News',
-        sourceUrl:     h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+        sourceUrl:     `https://news.ycombinator.com/item?id=${h.objectID}`,
         topic:         keyword,
         author:        { id: `hn_${h.author}`, name: h.author, title: 'News', organization: 'YC' },
         likes: [], likesCount: h.points || 0, commentsCount: h.num_comments || 0,
@@ -2065,7 +2073,7 @@ async function fetchLobstersByTag(tag) {
         title:       s.title,
         source:      'lobsters',
         sourceLabel: 'Lobsters',
-        sourceUrl:   s.url || `https://lobste.rs/s/${s.short_id}`,
+        sourceUrl:   `https://lobste.rs/s/${s.short_id}`,
         topic:       tag,
         author:      { id: `lobsters_${s.submitter_user}`, name: s.submitter_user, title: 'Lobsters', organization: 'Lobsters' },
         likes: [], likesCount: s.score || 0, commentsCount: s.comment_count || 0,
@@ -6913,6 +6921,7 @@ app.get('/feed', authenticate, async (req, res) => {
 
   // ── Full-text search across all sources ──────────────────────────────────
   if (searchQuery) {
+    const searchSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
     const allCached = sortFeedBatch(realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
@@ -6923,6 +6932,8 @@ app.get('/feed', authenticate, async (req, res) => {
     });
     const searchRangeMs = feedTimeRangeMs(timeRange);
     const memMatches = allCached.filter(p => {
+      if (Array.isArray(searchSources) && searchSources.length && !searchSources.includes(p.source)) return false;
+      if (searchSources && !Array.isArray(searchSources) && p.source !== searchSources) return false;
       if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
       return text.includes(searchQuery);
@@ -6930,7 +6941,7 @@ app.get('/feed', authenticate, async (req, res) => {
     let dbMatches = [];
     if (db.isConnected()) {
       try {
-        const rows = await getPostsFromDB([], feedLimit * 3, 0, null, {
+        const rows = await getPostsFromDB([], feedLimit * 3, 0, searchSources, {
           q: searchQuery,
           sort: sortMode,
           timeRange,

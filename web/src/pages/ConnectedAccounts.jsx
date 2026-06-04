@@ -6,6 +6,7 @@ import client from '../api/client';
 
 const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
 const HANDLE_PLATFORMS  = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+const ALL_COMING_SOON   = new Set([...SOCIAL_OAUTH_ONLY, ...HANDLE_PLATFORMS]);
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -105,8 +106,7 @@ export default function ConnectedAccounts() {
   }
 
   const connectedList   = platforms.filter(([k]) =>  connected[k]);
-  const readyList       = platforms.filter(([k]) => !connected[k] && HANDLE_PLATFORMS.has(k));
-  const comingSoonList  = platforms.filter(([k]) => !connected[k] && SOCIAL_OAUTH_ONLY.has(k));
+  const comingSoonList  = platforms.filter(([k]) => !connected[k] && ALL_COMING_SOON.has(k));
 
   return (
     <Layout>
@@ -194,28 +194,7 @@ export default function ConnectedAccounts() {
             </div>
           )}
 
-          {/* Available to connect (handle-based platforms) */}
-          {readyList.length > 0 && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                Available to Connect
-              </div>
-              {readyList.map(([key, p]) => (
-                <PlatformCard
-                  key={key}
-                  platformKey={key}
-                  p={p}
-                  isConnected={false}
-                  expanded={expanded === key}
-                  onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onConnect={() => handleConnect(key)}
-                  connecting={connecting === key}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Coming Soon (OAuth platforms — credentials not yet configured) */}
+          {/* Coming Soon — all platforms pending OAuth integration */}
           {comingSoonList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
