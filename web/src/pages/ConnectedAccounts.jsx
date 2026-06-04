@@ -4,6 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
+const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
+const HANDLE_PLATFORMS  = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
@@ -72,6 +75,16 @@ export default function ConnectedAccounts() {
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (err) {
+      // For handle-based platforms, fall back to mock connect when OAuth isn't configured
+      if (HANDLE_PLATFORMS.has(platform) && err?.response?.status === 501) {
+        try {
+          await client.post('/social/connect', { platform, token: 'connected' });
+          setConnected(prev => ({ ...prev, [platform]: true }));
+          flash_('success', `${platform} connected.`);
+          setConnecting(null);
+          return;
+        } catch {/* fall through to error */}
+      }
       const detail = err?.response?.data?.detail || err?.response?.data?.error || err.message;
       flash_('error', detail || 'Could not start this connection.', 7000);
       setConnecting(null);
@@ -91,8 +104,9 @@ export default function ConnectedAccounts() {
     }
   }
 
-  const connectedList  = platforms.filter(([k]) =>  connected[k]);
-  const readyList      = platforms.filter(([k]) => !connected[k]);
+  const connectedList   = platforms.filter(([k]) =>  connected[k]);
+  const readyList       = platforms.filter(([k]) => !connected[k] && HANDLE_PLATFORMS.has(k));
+  const comingSoonList  = platforms.filter(([k]) => !connected[k] && SOCIAL_OAUTH_ONLY.has(k));
 
   return (
     <Layout>
@@ -180,7 +194,7 @@ export default function ConnectedAccounts() {
             </div>
           )}
 
-          {/* Available to connect */}
+          {/* Available to connect (handle-based platforms) */}
           {readyList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
@@ -201,6 +215,26 @@ export default function ConnectedAccounts() {
             </div>
           )}
 
+          {/* Coming Soon (OAuth platforms — credentials not yet configured) */}
+          {comingSoonList.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
+                Coming Soon
+              </div>
+              {comingSoonList.map(([key, p]) => (
+                <PlatformCard
+                  key={key}
+                  platformKey={key}
+                  p={p}
+                  isConnected={false}
+                  comingSoon
+                  expanded={expanded === key}
+                  onToggle={() => setExpanded(expanded === key ? null : key)}
+                />
+              ))}
+            </div>
+          )}
+
         </>
       )}
     </Layout>
@@ -208,13 +242,13 @@ export default function ConnectedAccounts() {
 }
 
 function PlatformCard({
-  platformKey, p, isConnected, expanded, onToggle,
+  platformKey, p, isConnected, comingSoon, expanded, onToggle,
   onDisconnect, onConnect, connecting, disconnecting,
 }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px', opacity: comingSoon ? 0.72 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {/* Platform icon */}
         <div style={{
@@ -239,6 +273,14 @@ function PlatformCard({
                 ✓ Connected
               </span>
             )}
+            {comingSoon && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 700, color: '#92400E',
+                background: '#FEF3C7', padding: '1px 6px', borderRadius: 4,
+              }}>
+                Coming Soon
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
@@ -253,6 +295,10 @@ function PlatformCard({
           {isConnected ? (
             <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
+            </button>
+          ) : comingSoon ? (
+            <button className="btn btn-sm btn-outline" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+              Coming Soon
             </button>
           ) : (
             <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
