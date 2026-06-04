@@ -319,10 +319,10 @@ const SOURCE_AGENTS = [
   { id: 'crunchbase',    emoji: 'CB', name: 'Crunchbase',      color: '#146AFF' },
   { id: 'behance',       emoji: 'Be', name: 'Behance',         color: '#053EFF' },
   { id: 'designweb',     emoji: 'UX', name: 'Design Web',      color: '#DB2777' },
-  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', needsAuth: true, comingSoon: true },
-  { id: 'twitter',    emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', needsAuth: true, comingSoon: true },
-  { id: 'instagram',  emoji: '📸', name: 'Instagram',   color: '#E1306C', needsAuth: true, comingSoon: true },
-  { id: 'facebook',   emoji: '📘', name: 'Facebook',    color: '#1877F2', needsAuth: true, comingSoon: true },
+  { id: 'linkedin',   emoji: '🔷', name: 'LinkedIn',    color: '#0A66C2', needsAuth: true },
+  { id: 'twitter',    emoji: '🐦', name: 'X / Twitter', color: '#1DA1F2', needsAuth: true },
+  { id: 'instagram',  emoji: '📸', name: 'Instagram',   color: '#E1306C', needsAuth: true },
+  { id: 'facebook',   emoji: '📘', name: 'Facebook',    color: '#1877F2', needsAuth: true },
 ];
 
 const SCAN_TOPICS = [
@@ -402,22 +402,14 @@ function LiveDataCard({ agent, phaseData, stats, onTrigger, onConnect, connected
           {!isAuthNeeded && phase === 0 && `topic: ${SCAN_TOPICS[topicIdx % SCAN_TOPICS.length]}`}
           {!isAuthNeeded && phase === 1 && `fetching…`}
           {!isAuthNeeded && phase === 2 && (lastFetchAgo === 0 ? 'just now' : lastFetchAgo !== null ? `${lastFetchAgo}m ago` : '—')}
-          {isAuthNeeded && <span style={{ color: '#94A3B8' }}>{agent.comingSoon ? 'coming soon' : 'connect to activate'}</span>}
+          {isAuthNeeded && <span style={{ color: '#94A3B8' }}>connect to activate</span>}
         </div>
         {isAuthNeeded ? (
-          agent.comingSoon ? (
-            <button disabled style={{
-              padding: '2px 8px', border: 'none', borderRadius: 5, cursor: 'not-allowed',
-              background: '#F1F5F9', color: '#94A3B8',
-              fontSize: '.6rem', fontWeight: 700, opacity: 0.7,
-            }}>Coming Soon</button>
-          ) : (
           <button onClick={onConnect} style={{
             padding: '2px 8px', border: 'none', borderRadius: 5, cursor: 'pointer',
             background: `${agent.color}18`, color: agent.color,
             fontSize: '.6rem', fontWeight: 700,
           }}>+ Connect</button>
-          )
         ) : (
           <button onClick={onTrigger} style={{
             padding: '2px 8px', border: 'none', borderRadius: 5,
