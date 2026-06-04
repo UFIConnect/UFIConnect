@@ -87,7 +87,6 @@ const SOURCE_TABS = [
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
-const CONNECTED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 const FEED_PAGE_SIZE = 250;
 const FEED_AUTO_REFRESH_MS = 90 * 1000;
 
@@ -1029,7 +1028,6 @@ export default function Feed() {
 
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
-  const lockedSource = activeTabs.find(key => CONNECTED_SOCIAL_TABS.has(key) && connectedSocial !== null && !connectedSocial?.[key]);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -1288,20 +1286,7 @@ export default function Feed() {
         </div>
       )}
 
-      {lockedSource ? (
-        <SocialConnectGate
-          platform={lockedSource}
-          connecting={connecting}
-          onConnect={async () => {
-            setConnecting(true);
-            try {
-              const { data } = await client.get(`/auth/social/${lockedSource}/start`);
-              if (data?.url) window.location.href = data.url;
-              else setConnecting(false);
-            } catch { setConnecting(false); }
-          }}
-        />
-      ) : loading ? (
+      {loading ? (
         <div style={{ textAlign: 'center', padding: 48 }}>
           <span className="spinner spinner-primary" />
           {activeTabs.length > 0 && (
