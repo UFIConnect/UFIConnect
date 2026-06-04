@@ -919,8 +919,6 @@ export default function Feed() {
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
-  const [viewMode,      setViewMode]      = useState('feed');
-  const [feedStats,     setFeedStats]     = useState(null);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -928,7 +926,6 @@ export default function Feed() {
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef([]);
   const filtersRef    = useRef(DEFAULT_FILTERS);
-  const viewModeRef   = useRef('feed');
   const searchRef     = useRef('');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -945,7 +942,7 @@ export default function Feed() {
     } = options || {};
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
-    const activeMode = requestedMode || viewModeRef.current;
+    const activeMode = requestedMode || 'feed';
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
     const requestedSources = activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs;
@@ -1001,7 +998,6 @@ export default function Feed() {
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
-  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { searchRef.current = search; }, [search]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
@@ -1021,20 +1017,6 @@ export default function Feed() {
     });
   }, [loadFeed]);
 
-  const switchViewMode = useCallback((mode) => {
-    const nextMode = mode === 'archive' ? 'archive' : 'feed';
-    if (viewModeRef.current === nextMode) return;
-    viewModeRef.current = nextMode;
-    setViewMode(nextMode);
-    setRemotePage(2);
-    setRemoteHasMore(true);
-    loadFeed(false, activeTabsRef.current, {
-      mode: nextMode,
-      filters: filtersRef.current,
-      q: searchRef.current,
-      replace: true,
-    });
-  }, [loadFeed]);
 
   const clearFeedControls = useCallback(() => {
     activeTabsRef.current = [];
@@ -1059,7 +1041,7 @@ export default function Feed() {
       // Silent background refresh — don't block UI
       loadFeed(false, [], {
         silent: true,
-        live: viewModeRef.current === 'feed',
+        live: true,
         replace: true,
       });
       return;
@@ -1071,7 +1053,7 @@ export default function Feed() {
     // Filter client-side immediately; silently fetch more source posts in background
     loadFeed(false, next, {
       silent: true,
-      live: viewModeRef.current === 'feed',
+      live: true,
       replace: true,
     });
   }, [loadFeed]); // eslint-disable-line
@@ -1087,7 +1069,7 @@ export default function Feed() {
       const params = new URLSearchParams({
         page: `${remotePage}`,
         limit: `${FEED_PAGE_SIZE}`,
-        mode: viewModeRef.current,
+        mode: 'feed',
         sort: activeFilters.sort,
       });
       const q = searchRef.current.trim();
@@ -1123,7 +1105,6 @@ export default function Feed() {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (viewModeRef.current !== 'feed') return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -1144,9 +1125,6 @@ export default function Feed() {
     client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
   }, [profile]);
 
-  useEffect(() => {
-    client.get('/feed/stats').then(({ data }) => setFeedStats(data)).catch(() => {});
-  }, []);
 
   // SSE: stream new posts from all source workers in real time
   useEffect(() => {
@@ -1167,7 +1145,6 @@ export default function Feed() {
         const fresh = incoming.filter(p => !knownIds.current.has(p.id));
         if (!fresh.length) return;
         fresh.forEach(p => knownIds.current.add(p.id));
-        if (viewModeRef.current !== 'feed') return;
         // Only surface posts that match the active source tabs.
         const tabs = activeTabsRef.current;
         const activeFilters = filtersRef.current;
@@ -1279,10 +1256,6 @@ export default function Feed() {
   const activeSources = useMemo(
     () => [...new Set(posts.map(p => p.source).filter(s => ALL_FILTER_SOURCES.includes(s)))],
     [posts]
-  );
-  const topSourceStats = useMemo(
-    () => Object.entries(feedStats?.stats || {}).slice(0, 6),
-    [feedStats]
   );
 
   const displayed = processed; // render all locally-held posts — no artificial cap
@@ -1398,82 +1371,7 @@ export default function Feed() {
           )}
         </div>
 
-        {/* Refresh button */}
-        <button
-          onClick={() => loadFeed(true, activeTabsRef.current)}
-          disabled={refreshing}
-          style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            padding: '9px 14px', borderRadius: 22, border: '1.5px solid var(--border)',
-            background: 'var(--surface)', color: 'var(--text)',
-            cursor: refreshing ? 'default' : 'pointer', fontWeight: 600, fontSize: '.875rem', whiteSpace: 'nowrap',
-            opacity: refreshing ? 0.6 : 1, transition: 'background .15s, border-color .15s',
-          }}
-          onMouseOver={e => { if (!refreshing) { e.currentTarget.style.background = 'var(--card)'; e.currentTarget.style.borderColor = 'var(--primary)'; } }}
-          onMouseOut={e => { e.currentTarget.style.background = 'var(--surface)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-        >
-          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↺</span>
-          <span className="feed-refresh-label">{refreshing ? 'Updating…' : 'Refresh'}</span>
-        </button>
       </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-        {[
-          { key: 'feed', label: 'Personal Feed' },
-          { key: 'archive', label: 'All Collected' },
-        ].map(({ key, label }) => {
-          const active = viewMode === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => switchViewMode(key)}
-              style={{
-                padding: '7px 14px',
-                borderRadius: 20,
-                border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-                background: active ? 'var(--primary)' : 'var(--surface)',
-                color: active ? '#fff' : 'var(--text)',
-                fontWeight: 700,
-                fontSize: '.82rem',
-                cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          );
-        })}
-        {feedStats && (
-          <span style={{ color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600 }}>
-            {(feedStats.total || 0).toLocaleString()} stored
-            {feedStats.cachedInMemory ? ` · ${feedStats.cachedInMemory.toLocaleString()} live cache` : ''}
-          </span>
-        )}
-      </div>
-
-      {viewMode === 'archive' && topSourceStats.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-          {topSourceStats.map(([source, count]) => {
-            const meta = SOURCE_META[source] || {};
-            return (
-              <span key={source} style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 5,
-                padding: '4px 9px',
-                borderRadius: 12,
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-                color: 'var(--muted)',
-                fontSize: '.72rem',
-                fontWeight: 700,
-              }}>
-                {meta.label || source}: {Number(count || 0).toLocaleString()}
-              </span>
-            );
-          })}
-        </div>
-      )}
 
       {/* Source tabs — single scrollable row */}
       <div style={{
