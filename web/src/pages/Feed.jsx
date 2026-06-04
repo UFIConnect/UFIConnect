@@ -1287,9 +1287,7 @@ export default function Feed() {
             {liveActive ? 'LIVE' : 'connecting…'}
           </span>
         </h1>
-        <p className="page-subtitle">
-          17 source workers pulling live from Reddit, GitHub, DEV, Medium, YouTube, Stack Overflow, HN, arXiv, Mastodon, Bluesky, TechCrunch, Product Hunt, Indie Hackers and more — new posts stream in automatically.
-        </p>
+
       </div>
 
 
