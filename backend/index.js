@@ -1230,17 +1230,45 @@ function parseRedditJSON(data, topicKeyword) {
 }
 
 async function fetchRedditSub(sub, keyword) {
-  // Try JSON API first (old.reddit.com is less aggressively blocked from server IPs)
+  // OAuth path — authenticated requests are not rate-limited like anonymous ones
+  const token = await getRedditToken();
+  if (token) {
+    try {
+      const data = await fetchJSON(
+        `https://oauth.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
+        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIConnect/1.0 by /u/uficonnect' }
+      );
+      const posts = parseRedditJSON(data, keyword);
+      if (posts.length) return posts;
+    } catch (e) {
+      console.warn(`[Reddit] OAuth API failed for r/${sub}: ${e.message}`);
+      // Clear token on auth errors so next call re-fetches it
+      if (e.message.includes('401') || e.message.includes('403')) {
+        _redditToken = null;
+        _redditTokenExpiry = 0;
+      }
+    }
+  }
+  // Anonymous fallback (may get 429 from Render IPs, but worth trying)
   try {
-    const data = await fetchJSON(`https://old.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`, REDDIT_HEADERS);
+    const data = await fetchJSON(
+      `https://www.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
+      REDDIT_HEADERS
+    );
     const posts = parseRedditJSON(data, keyword);
     if (posts.length) return posts;
-  } catch { /* fallthrough to RSS */ }
+  } catch (e) {
+    console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
+  }
   // RSS fallback
   try {
-    const xml = await fetchText(`https://old.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
-    return parseRedditRSSFeed(xml, keyword);
-  } catch { return []; }
+    const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
+    const posts = parseRedditRSSFeed(xml, keyword);
+    if (posts.length) return posts;
+  } catch (e) {
+    console.warn(`[Reddit] RSS failed for r/${sub}: ${e.message}`);
+  }
+  return [];
 }
 
 async function fetchRedditByKeyword(keyword) {
@@ -1442,12 +1470,59 @@ function fetchText(url, extraHeaders = {}) {
   });
 }
 
-// Reddit blocks non-browser User-Agents — use this for all Reddit fetches
+// Reddit blocks anonymous server requests with 429. Use OAuth client_credentials
+// when REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET are set in env.
 const REDDIT_HEADERS = {
-  'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept':          'application/json, text/html, */*',
+  'User-Agent':      'UFIConnect/1.0 by /u/uficonnect',
+  'Accept':          'application/json',
   'Accept-Language': 'en-US,en;q=0.9',
 };
+
+let _redditToken = null;
+let _redditTokenExpiry = 0;
+
+async function getRedditToken() {
+  if (_redditToken && Date.now() < _redditTokenExpiry - 60_000) return _redditToken;
+  const clientId = process.env.REDDIT_CLIENT_ID;
+  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  try {
+    const body = 'grant_type=client_credentials';
+    const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    const data = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'www.reddit.com',
+        path: '/api/v1/access_token',
+        method: 'POST',
+        headers: {
+          'Authorization':  `Basic ${auth}`,
+          'User-Agent':     'UFIConnect/1.0 by /u/uficonnect',
+          'Content-Type':   'application/x-www-form-urlencoded',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(new Error('timeout')); });
+      req.write(body);
+      req.end();
+    });
+    if (data.access_token) {
+      _redditToken = data.access_token;
+      _redditTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
+      console.log(`[Reddit] OAuth token obtained, expires in ${data.expires_in}s`);
+      return _redditToken;
+    }
+    console.warn('[Reddit] OAuth token failed:', JSON.stringify(data).slice(0, 200));
+    return null;
+  } catch (e) {
+    console.warn('[Reddit] OAuth token error:', e.message);
+    return null;
+  }
+}
 
 // GitHub: 5000 req/hr with token vs 60/hr unauthed
 const GITHUB_HEADERS = process.env.GITHUB_TOKEN
@@ -3327,7 +3402,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         }
 
         try {
-          const posts = await fetchFn(mappedKey).catch(() => []);
+          const posts = await fetchFn(mappedKey);
           topicFetchedAt.set(mappedKey, Date.now());
           health.lastAttempt = Date.now();
           health.lastSuccess = Date.now();
@@ -4977,6 +5052,13 @@ installCrashGuard();
 runStabilityGuard();
 logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
+// Warm Reddit OAuth token on startup so the first fetch uses authenticated access
+if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
+  console.log('[Reddit] OAuth credentials found — will use authenticated API access');
+  getRedditToken().catch(e => console.warn('[Reddit] Startup token warm failed:', e.message));
+} else {
+  console.warn('[Reddit] No REDDIT_CLIENT_ID/SECRET in env — falling back to anonymous (may get 429)');
+}
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
 startContinuousWorkers();
