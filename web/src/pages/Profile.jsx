@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
@@ -57,11 +57,6 @@ export default function Profile() {
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
-  // Social connections
-  const [connectedSocial, setConnectedSocial] = useState({});
-  const [socialFlash,     setSocialFlash]     = useState(null); // { type: 'success'|'error', platform }
-  const [socialConnecting, setSocialConnecting] = useState(null);
-  const location = useLocation();
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -86,27 +81,6 @@ export default function Profile() {
       .finally(() => setPostsLoading(false));
   }, [profile?.id]);
 
-  // Load social connection status
-  useEffect(() => {
-    client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => {});
-  }, []);
-
-  // Handle OAuth callback params (?social_connected=linkedin or ?social_error=linkedin)
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const connected = params.get('social_connected');
-    const errored   = params.get('social_error');
-    if (connected) {
-      setSocialFlash({ type: 'success', platform: connected });
-      setConnectedSocial(prev => ({ ...prev, [connected]: true }));
-      window.history.replaceState({}, '', '/profile');
-      setTimeout(() => setSocialFlash(null), 5000);
-    } else if (errored) {
-      setSocialFlash({ type: 'error', platform: errored });
-      window.history.replaceState({}, '', '/profile');
-      setTimeout(() => setSocialFlash(null), 6000);
-    }
-  }, [location.search]);
 
   function addSkill() {
     const trimmed = skillInput.trim();
@@ -117,27 +91,6 @@ export default function Profile() {
 
   function removeSkill(s) {
     setSkills(prev => prev.filter(x => x !== s));
-  }
-
-  async function connectSocial(platform) {
-    setSocialConnecting(platform);
-    try {
-      const { data } = await client.get(`/auth/social/${platform}/start`);
-      if (data?.url) { window.location.href = data.url; return; }
-      throw new Error('Missing provider authorization URL.');
-    } catch (e) {
-      const msg = e?.response?.data?.detail || e?.response?.data?.error || e.message || `Could not connect ${platform}. Please try again.`;
-      setSocialFlash({ type: 'error', platform, msg });
-      setTimeout(() => setSocialFlash(null), 5000);
-      setSocialConnecting(null);
-    }
-  }
-
-  async function disconnectSocial(platform) {
-    try {
-      await client.delete(`/profile/social/${platform}`);
-      setConnectedSocial(prev => ({ ...prev, [platform]: false }));
-    } catch {}
   }
 
   async function saveSkills() {
@@ -257,6 +210,7 @@ export default function Profile() {
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
           const icons = { Overview: '👤', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
+          const comingSoon = new Set(['Attachments']);
           return (
             <button key={t} onClick={() => { setTab(t); setEditing(false); }}
               style={{
@@ -265,8 +219,14 @@ export default function Profile() {
                 color: tab === t ? 'var(--primary)' : 'var(--muted)',
                 borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
                 fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
+                display:'flex', alignItems:'center', gap:6,
               }}>
               {icons[t]} {t}
+              {comingSoon.has(t) && (
+                <span style={{ fontSize:'.6rem', fontWeight:700, background:'var(--primary)', color:'#fff', padding:'1px 6px', borderRadius:10, letterSpacing:'.3px' }}>
+                  Soon
+                </span>
+              )}
             </button>
           );
         })}
@@ -313,79 +273,54 @@ export default function Profile() {
 
           {/* Connected Accounts */}
           <div className="card" id="social" style={{ position:'relative', overflow:'hidden' }}>
+            {/* Blur + Coming Soon overlay */}
+            <div style={{
+              position:'absolute', inset:0, zIndex:10,
+              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
+              background:'rgba(var(--bg-rgb,255,255,255),.55)',
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
+            }}>
+              <span style={{ fontSize:'1.6rem' }}>🔒</span>
+              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Connected Accounts</div>
+              <span style={{
+                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
+                background:'var(--primary)', color:'#fff',
+                padding:'3px 12px', borderRadius:20,
+              }}>Coming Soon</span>
+              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
+                Social account linking is coming in the next update.
+              </p>
+            </div>
+
+            {/* Blurred content beneath */}
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:4 }}>
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Connected Accounts</h3>
-              <Link to="/connected-accounts">
-                <button className="btn btn-ghost btn-sm" type="button">Manage</button>
-              </Link>
             </div>
             <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
-              Connect your social accounts to bring your existing feeds into UFIConnect. One tap — you're redirected and sent back automatically.
+              Connect your social accounts to bring your existing feeds into UFIConnect.
             </p>
-
-            {socialFlash && (
-              <div style={{
-                marginBottom:10, padding:'8px 12px', borderRadius:8, fontSize:'.8rem', fontWeight:600,
-                background: socialFlash.type === 'success' ? '#ECFDF5' : '#FEF2F2',
-                color: socialFlash.type === 'success' ? '#059669' : '#DC2626',
-                border: `1px solid ${socialFlash.type === 'success' ? '#A7F3D0' : '#FECACA'}`,
-              }}>
-                {socialFlash.type === 'success'
-                  ? (socialFlash.msg || `✓ ${socialFlash.platform.charAt(0).toUpperCase() + socialFlash.platform.slice(1)} connected successfully`)
-                  : (socialFlash.msg || `Could not connect ${socialFlash.platform} — please try again`)}
-              </div>
-            )}
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              {SOCIAL_PLATFORMS.map(platform => {
-                const connVal = connectedSocial[platform.id];
-                const isConnected = !!connVal;
-                const isConnecting = socialConnecting === platform.id;
-                return (
-                  <div key={platform.id} style={{
-                    borderRadius:10,
-                    border: isConnected ? `1.5px solid ${platform.color}55` : '1.5px solid var(--border)',
-                    background: isConnected ? platform.color + '08' : 'var(--surface)',
-                    overflow: 'hidden',
-                  }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px' }}>
-                      <span style={{
-                        width:36, height:36, borderRadius:9, flexShrink:0,
-                        background: platform.color + '18',
-                        border:`1.5px solid ${platform.color}33`,
-                        display:'flex', alignItems:'center', justifyContent:'center',
-                        fontSize:'1.1rem',
-                      }}>{platform.emoji}</span>
-                      <div style={{ flex:1 }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                          <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
-                          {isConnected && (
-                            <span style={{ fontSize:'.62rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'1px 5px', borderRadius:4 }}>
-                              ✓ Connected
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
-                      </div>
-                      {isConnected ? (
-                        <button className="btn btn-danger btn-sm" style={{ flexShrink:0, fontSize:'.72rem' }} onClick={() => disconnectSocial(platform.id)}>
-                          Disconnect
-                        </button>
-                      ) : (
-                        <button
-                          className="btn btn-sm btn-outline"
-                          style={{ flexShrink:0, fontSize:'.72rem', borderColor: platform.color, color: platform.color, opacity: isConnecting ? .6 : 1 }}
-                          disabled={isConnecting}
-                          onClick={() => connectSocial(platform.id)}
-                        >
-                          {isConnecting ? '...' : 'Connect'}
-                        </button>
-                      )}
+              {SOCIAL_PLATFORMS.slice(0, 4).map(platform => (
+                <div key={platform.id} style={{
+                  borderRadius:10, border:'1.5px solid var(--border)',
+                  background:'var(--surface)', overflow:'hidden',
+                }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px' }}>
+                    <span style={{
+                      width:36, height:36, borderRadius:9, flexShrink:0,
+                      background: platform.color + '18',
+                      border:`1.5px solid ${platform.color}33`,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:'1.1rem',
+                    }}>{platform.emoji}</span>
+                    <div style={{ flex:1 }}>
+                      <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
+                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
                     </div>
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
-
           </div>
 
           {/* Preferences */}
@@ -538,10 +473,28 @@ export default function Profile() {
       {/* ── ATTACHMENTS TAB ──────────────────────────────────── */}
       {tab === 'Attachments' && !editing && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <div className="card">
+          <div className="card" style={{ position:'relative', overflow:'hidden' }}>
+            {/* Coming Soon overlay */}
+            <div style={{
+              position:'absolute', inset:0, zIndex:10,
+              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
+              background:'rgba(var(--bg-rgb,255,255,255),.55)',
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
+            }}>
+              <span style={{ fontSize:'1.6rem' }}>📎</span>
+              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Files &amp; Attachments</div>
+              <span style={{
+                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
+                background:'var(--primary)', color:'#fff',
+                padding:'3px 12px', borderRadius:20,
+              }}>Coming Soon</span>
+              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
+                Resume upload and portfolio links are coming in the next update.
+              </p>
+            </div>
+
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Files &amp; Links</h3>
-              <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit</button>
             </div>
             {hasLinks ? (
               <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
