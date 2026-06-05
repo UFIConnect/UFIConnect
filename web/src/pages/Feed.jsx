@@ -161,6 +161,28 @@ const DEFAULT_FILTERS = { sort: 'ranked', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 90 * 1000;
 
+const FEED_STATE_KEY = 'ufi_feed_state';
+
+function loadFeedState() {
+  try {
+    const raw = sessionStorage.getItem(FEED_STATE_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return {
+      filters:    { ...DEFAULT_FILTERS, ...(s.filters || {}) },
+      activeTabs: Array.isArray(s.activeTabs) ? s.activeTabs : [],
+      search:     typeof s.search === 'string' ? s.search : '',
+      viewMode:   s.viewMode === 'archive' ? 'archive' : 'feed',
+    };
+  } catch { return null; }
+}
+
+function saveFeedState(filters, activeTabs, search, viewMode) {
+  try {
+    sessionStorage.setItem(FEED_STATE_KEY, JSON.stringify({ filters, activeTabs, search, viewMode }));
+  } catch {}
+}
+
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
@@ -911,24 +933,25 @@ export default function Feed() {
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
   const [remoteHasMore, setRemoteHasMore]= useState(true);
-  const [search,        setSearch]       = useState('');
-  const [searchInput,   setSearchInput]  = useState('');
+  const _saved = loadFeedState();
+  const [search,        setSearch]       = useState(_saved?.search || '');
+  const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [videoPost,     setVideoPost]    = useState(null);
   const [lastRefresh,   setLastRefresh]  = useState(null);
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
-  const [activeTabs,    setActiveTabs]    = useState([]); // [] = All
-  const [viewMode,      setViewMode]      = useState('feed');
+  const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
+  const [viewMode,      setViewMode]      = useState(_saved?.viewMode || 'feed');
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
   const sentinelRef   = useRef(null);
-  const activeTabsRef = useRef([]);
-  const filtersRef    = useRef(DEFAULT_FILTERS);
-  const viewModeRef   = useRef('feed');
-  const searchRef     = useRef('');
+  const activeTabsRef = useRef(_saved?.activeTabs || []);
+  const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
+  const viewModeRef   = useRef(_saved?.viewMode || 'feed');
+  const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
 
@@ -1002,6 +1025,11 @@ export default function Feed() {
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { searchRef.current = search; }, [search]);
+
+  // Persist filter state so the page reopens with the same settings
+  useEffect(() => {
+    saveFeedState(filters, activeTabs, search, viewMode);
+  }, [filters, activeTabs, search, viewMode]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
