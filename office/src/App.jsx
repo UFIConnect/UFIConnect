@@ -121,17 +121,159 @@ function LogEntry({ entry }) {
   );
 }
 
+// ─── Website Optimizer Panel ──────────────────────────────────────────────────
+
+const SUB_AGENT_LABELS = {
+  web_perf: 'Perf', web_seo: 'SEO', web_cache: 'Cache',
+  web_storage: 'Storage', web_api: 'API', web_office: 'Office', web_pwa: 'PWA',
+};
+
+function findingImpact(finding) {
+  if (finding.includes('HTTP status'))  return 35;
+  if (finding.includes('TTFB'))         return 12;
+  if (finding.includes('Total load'))   return 10;
+  if (finding.includes('HTML payload')) return 8;
+  if (finding.includes('Canonical'))    return 8;
+  if (finding.includes('Open Graph'))   return 6;
+  if (finding.includes('Structured'))   return 6;
+  if (finding.includes('manifest'))     return 4;
+  if (finding.includes('cache-control') || finding.includes('ETag')) return 4;
+  return 0;
+}
+
+function WebOptimizerPanel({ web, triggerAgent, triggering }) {
+  if (!web) return null;
+
+  const subEntries = Object.entries(web.subAgents || {});
+  const isRunning  = triggering['website_optimizer'] || web.status === 'running';
+
+  const ttfbColor = !web.lastTtfbMs  ? '#64748b'
+    : web.lastTtfbMs  > 800  ? '#f87171'
+    : web.lastTtfbMs  > 400  ? '#fbbf24' : '#4ade80';
+  const loadColor = !web.lastTotalMs ? '#64748b'
+    : web.lastTotalMs > 2500 ? '#f87171' : '#4ade80';
+  const sizeKb    = web.lastBytes ? (web.lastBytes / 1024).toFixed(1) : null;
+  const sizeColor = !sizeKb ? '#64748b' : web.lastBytes > 460 * 1024 ? '#f87171' : '#4ade80';
+  const scoreColor = web.score >= 80 ? '#4ade80' : web.score >= 60 ? '#fbbf24' : '#f87171';
+
+  return (
+    <Card style={{ marginBottom: 28 }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 20 }}>🌐</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>Website Health</div>
+            {web.lastRun && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+                Last audit {fmtAgo(web.lastRun)}
+                {web.publicUrl && <> · <a href={web.publicUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none' }}>{web.publicUrl}</a></>}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 24, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
+            {web.score != null ? `${web.score}/100` : '—'}
+          </span>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('website_optimizer')} disabled={isRunning}>
+            {isRunning ? '...' : '↺ Re-run'}
+          </Btn>
+        </div>
+      </div>
+
+      {/* Metrics row */}
+      <div style={{
+        display: 'flex', gap: 24, flexWrap: 'wrap',
+        padding: '10px 14px', background: 'rgba(255,255,255,.03)',
+        borderRadius: 8, marginBottom: 16,
+      }}>
+        {[
+          { label: 'TTFB',   value: web.lastTtfbMs  != null ? `${web.lastTtfbMs}ms`  : '—', color: ttfbColor },
+          { label: 'Load',   value: web.lastTotalMs != null ? `${web.lastTotalMs}ms` : '—', color: loadColor },
+          { label: 'Size',   value: sizeKb           != null ? `${sizeKb} KB`         : '—', color: sizeColor },
+          { label: 'Status', value: web.lastStatus   ?? '—',
+            color: !web.lastStatus ? '#64748b' : web.lastStatus < 400 ? '#4ade80' : '#f87171' },
+        ].map(({ label, value, color }) => (
+          <div key={label}>
+            <div style={{ fontSize: 10, color: '#475569', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Findings */}
+      <div style={{ marginBottom: 16 }}>
+        <Label>Findings</Label>
+        {!web.findings || web.findings.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#4ade80', marginTop: 8 }}>✓ No issues found</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+            {web.findings.map((f, i) => {
+              const pts = findingImpact(f);
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  padding: '7px 12px',
+                  background: 'rgba(251,191,36,.06)', border: '1px solid rgba(251,191,36,.15)',
+                  borderRadius: 7,
+                }}>
+                  <span style={{ fontSize: 12, color: '#fbbf24' }}>⚠ {f}</span>
+                  {pts > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#f87171', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      −{pts} pts
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Sub-agent chips */}
+      {subEntries.length > 0 && (
+        <div>
+          <Label>Audit Surfaces</Label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {subEntries.map(([id, sub]) => (
+              <div key={id} style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                padding: '6px 11px',
+                background: 'rgba(255,255,255,.04)',
+                border: `1px solid ${sub.status === 'healthy' ? 'rgba(34,197,94,.2)' : sub.lastError ? 'rgba(239,68,68,.2)' : 'rgba(255,255,255,.07)'}`,
+                borderRadius: 8,
+              }}>
+                <Dot ok={sub.status === 'healthy'} pulse={sub.status === 'running'} />
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{SUB_AGENT_LABELS[id] || id}</div>
+                  {sub.lastRun
+                    ? <div style={{ fontSize: 10, color: '#475569' }}>{fmtAgo(sub.lastRun)}</div>
+                    : <div style={{ fontSize: 10, color: '#334155' }}>not run</div>
+                  }
+                  {sub.lastError && (
+                    <div style={{ fontSize: 10, color: '#f87171', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sub.lastError}>
+                      {sub.lastError.slice(0, 60)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── Overview view ────────────────────────────────────────────────────────────
 
-function OverviewView({ status, log, agents }) {
+function OverviewView({ status, log, agents, triggerAgent, triggering }) {
   const s = status?.server;
   const f = status?.feed;
   const a = status?.agents;
   const src = status?.sources;
   const web = status?.websiteOptimizer;
-  const webSubAgents = Object.values(web?.subAgents || {});
-  const webHealthy = webSubAgents.filter(sub => sub.status === 'healthy').length;
-
   const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
   return (
@@ -162,19 +304,14 @@ function OverviewView({ status, log, agents }) {
         <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
         <StatCard
           icon="🌐"
-          label="Optimizer"
-          value={web?.score != null ? `${web.score}/100` : '—'}
-          sub={webSubAgents.length ? `${webHealthy}/${webSubAgents.length} surfaces healthy` : web?.publicUrl}
-          color={web?.score >= 80 ? '#14b8a6' : web?.score ? '#fbbf24' : '#94a3b8'}
-        />
-        <StatCard
-          icon="🌐"
           label="Sources"
           value={src ? `${src.healthy}/${src.total}` : '—'}
           sub={src?.paused ? `${src.paused} paused` : src?.starting ? `${src.starting} starting` : 'all healthy'}
           color={src?.paused ? '#f97316' : src?.starting ? '#94a3b8' : '#4ade80'}
         />
       </div>
+
+      <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
 
       <Label color="#475569">Agent Status</Label>
       <div style={{
@@ -822,7 +959,7 @@ export default function App() {
 
         {/* ── Main content ── */}
         <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
-          {view === 'overview' && <OverviewView status={status} log={log} agents={agents} />}
+          {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
