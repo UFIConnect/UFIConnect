@@ -116,14 +116,6 @@ function GroupsContent() {
       <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ flex: 1 }}>
           <h1 className="page-title">Discover Groups</h1>
-          <p className="page-subtitle">
-            Real public communities from Reddit, Discord, LinkedIn, News, and more — follow any to personalise your feed with business, creative, and industry conversations.
-            {lastRefresh && (
-              <span style={{ marginLeft: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
-                Updated {lastRefresh.toLocaleTimeString()}
-              </span>
-            )}
-          </p>
         </div>
         <button
           className="btn btn-ghost btn-sm"

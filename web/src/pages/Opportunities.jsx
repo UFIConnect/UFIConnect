@@ -158,21 +158,6 @@ export default function Opportunities() {
         <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
           <div style={{ flex: 1 }}>
             <h1 className="page-title">Opportunities</h1>
-            <p className="page-subtitle">
-              {searchLabel
-                ? <><strong>{searchLabel}</strong> roles ranked first · jobs, gigs, grants, events — matched to your profile.</>
-                : 'Jobs, gigs, grants, events — personalised to your role and skills.'}
-              {liveCount > 0 && (
-                <span style={{ marginLeft: 8, fontSize: '.78rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
-                  🔴 {liveCount} live
-                </span>
-              )}
-              {lastRefresh && (
-                <span style={{ marginLeft: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
-                  Updated {lastRefresh.toLocaleTimeString()}
-                </span>
-              )}
-            </p>
           </div>
           <button
             className="btn btn-ghost btn-sm"
