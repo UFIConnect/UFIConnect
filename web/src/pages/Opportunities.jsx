@@ -49,7 +49,6 @@ export default function Opportunities() {
   const [opps,      setOpps]      = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('all');
-  const [remote,    setRemote]    = useState(false);
   const [liveOnly,  setLiveOnly]  = useState(false);
   const [search,    setSearch]    = useState('');
   const [loading,   setLoading]   = useState(true);
@@ -57,7 +56,6 @@ export default function Opportunities() {
   useEffect(() => {
     const params = {};
     if (filter !== 'all') params.type   = filter;
-    if (remote)           params.remote = 'true';
     if (search)           params.search = search;
     setLoading(true);
     client.get('/opportunities', { params })
@@ -69,19 +67,21 @@ export default function Opportunities() {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [filter, remote, liveOnly, search]);
+  }, [filter, liveOnly, search]);
 
   return (
     <>
       <Helmet>
-        <title>Remote Jobs, Grants & Tech Opportunities | UFIConnect</title>
-        <meta name="description" content="Discover remote jobs, gigs, grants, hackathons, and learning opportunities curated for your role. Find roles that match your skills and interests." />
+        <title>Jobs, Gigs, Grants, Events & Career Opportunities | UFIConnect</title>
+        <meta name="description" content="Browse all career opportunities: full-time jobs, gigs, grants, hackathons, events, open-source opportunities, and learning resources. Discover positions and opportunities for engineers, designers, founders, marketers, product managers, and creatives worldwide." />
+        <meta name="keywords" content="job opportunities, career opportunities, gigs, grants, hackathons, events, open source opportunities, learning opportunities, tech jobs, startup jobs, freelance work, internships, positions, career growth, job listings, employment opportunities, career development, work opportunities" />
+        <link rel="canonical" href="https://uficonnect.org/opportunities" />
       </Helmet>
       <Layout>
         <div className="page-header">
-        <h1 className="page-title">Opportunities</h1>
+        <h1 className="page-title">All Opportunities</h1>
         <p className="page-subtitle">
-          Jobs, gigs, grants, events, hackathons — personalised to your role and skills.
+          Full-time jobs, gigs, grants, hackathons, events, and more — browse all career opportunities worldwide.
           {liveCount > 0 && (
             <span style={{ marginLeft: 8, fontSize: '.78rem', fontWeight: 600, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 4 }}>
               🔴 {liveCount} live listings
@@ -113,17 +113,11 @@ export default function Opportunities() {
           </button>
         ))}
         <button
-          className={`filter-btn${remote ? ' active' : ''}`}
-          onClick={() => setRemote((r) => !r)}
-        >
-          🌍 Remote only
-        </button>
-        <button
           className={`filter-btn${liveOnly ? ' active' : ''}`}
           style={liveOnly ? { background: '#2563EB', color: '#fff', borderColor: '#2563EB' } : {}}
           onClick={() => setLiveOnly((l) => !l)}
         >
-          🔴 Live jobs
+          🔴 Live only
         </button>
       </div>
 

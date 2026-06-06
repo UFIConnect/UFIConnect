@@ -32,8 +32,10 @@ export default function Groups() {
   return (
     <>
       <Helmet>
-        <title>Tech Communities & Developer Groups | UFIConnect</title>
-        <meta name="description" content="Discover 50+ professional communities on UFIConnect. Join Reddit communities, Discord servers, LinkedIn groups, Hacker News, and DEV.to — all curated by your role and interests." />
+        <title>Professional Communities & Groups | Connect with Your People on UFIConnect</title>
+        <meta name="description" content="Discover and connect with 50+ professional communities. Find Reddit communities, Discord servers, LinkedIn groups, Facebook Groups, Twitter communities, Hacker News, GitHub, and DEV.to — all curated by role and interests. Network with engineers, designers, founders, and creatives." />
+        <meta name="keywords" content="professional communities, tech communities, developer groups, connect communities, networking groups, Discord communities, Reddit communities, LinkedIn groups, Facebook Groups, tech groups, engineering communities, design communities, startup communities, news communities, group networking, professional groups, career groups" />
+        <link rel="canonical" href="https://uficonnect.org/groups" />
       </Helmet>
       {GroupsContent()}
     </>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -276,6 +277,12 @@ export default function Feed() {
 
   return (
     <Layout>
+      <Helmet>
+        <title>Professional News Feed | News & Updates for Your Career | UFIConnect</title>
+        <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
+        <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
+        <link rel="canonical" href="https://uficonnect.org/feed" />
+      </Helmet>
       <div className="page-header">
         <h1 className="page-title">
           {firstName ? `Hey ${firstName} 👋` : 'Your Feed'}
