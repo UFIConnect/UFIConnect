@@ -1,0 +1,242 @@
+import { useEffect, useState } from 'react';
+import client from '../api/client';
+
+function timeAgo(iso) {
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function initials(name = '') {
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+export default function PostList({
+  posts = [],
+  loading = false,
+  emptyTitle = 'No posts yet',
+  emptyDesc = 'Posts shared by this member will show up here.',
+  emptyAction = null,
+  showAuthor = true,
+  maxWidth = 640,
+  interactive = true,
+  onPostUpdated = null,
+}) {
+  const [localPosts, setLocalPosts] = useState(posts);
+  const [likeBusy, setLikeBusy] = useState({});
+  const [openComments, setOpenComments] = useState({});
+  const [commentsByPost, setCommentsByPost] = useState({});
+  const [commentsLoading, setCommentsLoading] = useState({});
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [commentBusy, setCommentBusy] = useState({});
+
+  useEffect(() => {
+    setLocalPosts(posts);
+  }, [posts]);
+
+  function updatePost(updatedPost) {
+    if (!updatedPost?.id) return;
+    setLocalPosts(prev => prev.map(post =>
+      post.id === updatedPost.id ? { ...post, ...updatedPost } : post
+    ));
+    onPostUpdated?.(updatedPost);
+  }
+
+  async function toggleLike(post) {
+    if (!interactive || likeBusy[post.id]) return;
+    setLikeBusy(prev => ({ ...prev, [post.id]: true }));
+    try {
+      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/like`);
+      updatePost(data.post || {
+        ...post,
+        likedByMe: data.likedByMe,
+        likesCount: data.likesCount,
+      });
+    } catch {
+      // Keep the existing state if the action fails.
+    } finally {
+      setLikeBusy(prev => ({ ...prev, [post.id]: false }));
+    }
+  }
+
+  async function toggleComments(post) {
+    if (!interactive) return;
+    const isOpen = !!openComments[post.id];
+    setOpenComments(prev => ({ ...prev, [post.id]: !isOpen }));
+    if (isOpen || commentsByPost[post.id]) return;
+
+    setCommentsLoading(prev => ({ ...prev, [post.id]: true }));
+    try {
+      const { data } = await client.get(`/posts/${encodeURIComponent(post.id)}/comments`, { params: { limit: 50 } });
+      setCommentsByPost(prev => ({ ...prev, [post.id]: data.comments || [] }));
+    } catch {
+      setCommentsByPost(prev => ({ ...prev, [post.id]: [] }));
+    } finally {
+      setCommentsLoading(prev => ({ ...prev, [post.id]: false }));
+    }
+  }
+
+  async function submitComment(e, post) {
+    e.preventDefault();
+    const content = (commentDrafts[post.id] || '').trim();
+    if (!content || commentBusy[post.id]) return;
+
+    setCommentBusy(prev => ({ ...prev, [post.id]: true }));
+    try {
+      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
+      setCommentsByPost(prev => ({
+        ...prev,
+        [post.id]: [...(prev[post.id] || []), data.comment],
+      }));
+      setCommentDrafts(prev => ({ ...prev, [post.id]: '' }));
+      updatePost(data.post || { ...post, commentsCount: data.commentsCount });
+    } catch {
+      // Leave the draft in place so the user can retry.
+    } finally {
+      setCommentBusy(prev => ({ ...prev, [post.id]: false }));
+    }
+  }
+
+  if (loading) {
+    return (
+      <div style={{ maxWidth, textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
+        Loading posts...
+      </div>
+    );
+  }
+
+  if (!localPosts.length) {
+    return (
+      <div className="card" style={{ maxWidth, textAlign: 'center', padding: '32px 24px' }}>
+        <div style={{ fontSize: '2rem', marginBottom: 10 }}>Posts</div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>{emptyTitle}</div>
+        <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: emptyAction ? '0 0 16px' : 0 }}>
+          {emptyDesc}
+        </p>
+        {emptyAction}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth }}>
+      {localPosts.map((post) => {
+        const commentsOpen = !!openComments[post.id];
+        const comments = commentsByPost[post.id] || [];
+        return (
+          <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
+            {showAuthor ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
+                  <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {post.author?.title || 'UFIConnect Member'}{post.group ? ` - ${post.group.name}` : ''}
+                  </div>
+                </div>
+                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0 }}>{timeAgo(post.createdAt)}</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+                <span style={{ fontSize: '.76rem', fontWeight: 700, color: 'var(--primary)' }}>
+                  {post.group?.name || 'UFIConnect'}
+                </span>
+                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0 }}>{timeAgo(post.createdAt)}</span>
+              </div>
+            )}
+
+            <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+              {post.content}
+            </p>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <button
+                type="button"
+                onClick={() => toggleLike(post)}
+                disabled={!interactive || likeBusy[post.id]}
+                className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+                style={{ borderRadius: 20, minWidth: 86 }}
+              >
+                {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => toggleComments(post)}
+                disabled={!interactive}
+                className="btn btn-ghost btn-sm"
+                style={{ borderRadius: 20, minWidth: 110 }}
+              >
+                {commentsOpen ? 'Hide' : 'Comment'} {post.commentsCount || 0}
+              </button>
+
+              {post.group && (
+                <span style={{
+                  fontSize: '.72rem', fontWeight: 600, marginLeft: 'auto',
+                  color: 'var(--primary)', background: 'var(--primary-light)',
+                  padding: '2px 8px', borderRadius: 10,
+                }}>
+                  {post.group.name}
+                </span>
+              )}
+            </div>
+
+            {commentsOpen && (
+              <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                {commentsLoading[post.id] ? (
+                  <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                    <span className="spinner spinner-primary" />
+                  </div>
+                ) : comments.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+                    {comments.map(comment => (
+                      <div key={comment.id} style={{ display: 'flex', gap: 10 }}>
+                        <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
+                          {initials(comment.author?.name)}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
+                            <span style={{ fontWeight: 700, fontSize: '.78rem' }}>{comment.author?.name || 'Member'}</span>
+                            <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(comment.createdAt)}</span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '.84rem', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
+                            {comment.content}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '.82rem', color: 'var(--muted)', margin: '0 0 12px' }}>
+                    No comments yet.
+                  </p>
+                )}
+
+                <form onSubmit={(e) => submitComment(e, post)} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    className="form-input"
+                    value={commentDrafts[post.id] || ''}
+                    onChange={e => setCommentDrafts(prev => ({ ...prev, [post.id]: e.target.value }))}
+                    placeholder="Write a comment..."
+                    maxLength={1000}
+                    style={{ flex: 1, fontSize: '.86rem' }}
+                  />
+                  <button
+                    type="submit"
+                    className="btn btn-primary btn-sm"
+                    disabled={commentBusy[post.id] || !(commentDrafts[post.id] || '').trim()}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {commentBusy[post.id] ? <span className="spinner" /> : 'Send'}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}

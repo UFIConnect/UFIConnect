@@ -14,15 +14,25 @@ const CATEGORY_META = {
   'Remote Work': { icon: '🌍', bg: '#EEF2FF', text: '#4338CA' },
   'Education':   { icon: '🎓', bg: '#FFF7ED', text: '#EA580C' },
   'Social':      { icon: '🔗', bg: '#F9FAFB', text: '#6B7280' },
+  'Health':      { icon: '🏃', bg: '#F0FDF4', text: '#16A34A' },
+  'Climate':     { icon: '🌱', bg: '#ECFDF5', text: '#065F46' },
+  'Food':        { icon: '🍳', bg: '#FFF7ED', text: '#C2410C' },
+  'Travel':      { icon: '✈️', bg: '#F0F9FF', text: '#0369A1' },
+  'Gaming':      { icon: '🎮', bg: '#F5F3FF', text: '#6D28D9' },
+  'Music':       { icon: '🎵', bg: '#FDF4FF', text: '#A21CAF' },
+  'Fashion':     { icon: '👗', bg: '#FFF1F2', text: '#BE123C' },
+  'Lifestyle':   { icon: '🌟', bg: '#FFFFF0', text: '#92400E' },
+  'Sports':      { icon: '⚽', bg: '#ECFDF5', text: '#047857' },
+  'Space':       { icon: '🚀', bg: '#EEF2FF', text: '#3730A3' },
 };
 
 const PLATFORM_META = {
-  reddit:      { icon: '🟠', label: 'Reddit',       color: '#FF4500' },
-  discord:     { icon: '💬', label: 'Discord',       color: '#5865F2' },
-  linkedin:    { icon: '💼', label: 'LinkedIn',      color: '#0A66C2' },
-  hackernews:  { icon: '🔶', label: 'Hacker News',   color: '#FF6600' },
-  devto:       { icon: '👩‍💻', label: 'DEV.to',       color: '#3B49DF' },
-  github:      { icon: '🐙', label: 'GitHub',        color: '#24292F' },
+  reddit:      { icon: '🟠', label: 'Reddit',         color: '#FF4500' },
+  discord:     { icon: '💬', label: 'Discord',        color: '#5865F2' },
+  linkedin:    { icon: '💼', label: 'LinkedIn',       color: '#0A66C2' },
+  hackernews:  { icon: '🔶', label: 'News',           color: '#FF6600' },
+  devto:       { icon: '👩‍💻', label: 'DEV Community',  color: '#3B49DF' },
+  github:      { icon: '🐙', label: 'GitHub',         color: '#24292F' },
   uficonnect:  { icon: '🌐', label: 'UFIConnect',    color: '#6366F1' },
 };
 
@@ -44,23 +54,31 @@ export default function Groups() {
 
 function GroupsContent() {
   const navigate = useNavigate();
-  const [groups,     setGroups]     = useState([]);
-  const [joined,     setJoined]     = useState(new Set());
-  const [categories, setCategories] = useState([]);
-  const [filter,     setFilter]     = useState('all');
-  const [loading,    setLoading]    = useState(true);
+  const [groups,      setGroups]      = useState([]);
+  const [joined,      setJoined]      = useState(new Set());
+  const [categories,  setCategories]  = useState([]);
+  const [filter,      setFilter]      = useState('all');
+  const [search,      setSearch]      = useState('');
+  const [loading,     setLoading]     = useState(true);
+  const [refreshing,  setRefreshing]  = useState(false);
+  const [lastRefresh, setLastRefresh] = useState(null);
 
-  useEffect(() => {
+  function loadGroups(bust = false) {
+    if (bust) setRefreshing(true); else setLoading(true);
+    const groupUrl = bust ? '/groups?bust=1' : '/groups';
     Promise.all([
-      client.get('/groups'),
+      client.get(groupUrl),
       client.get('/groups/categories'),
       client.get('/profile'),
     ]).then(([gRes, cRes, pRes]) => {
       setGroups(gRes.data.groups || []);
       setCategories(cRes.data.categories || []);
       setJoined(new Set(pRes.data.joinedGroups || []));
-    }).catch(console.error).finally(() => setLoading(false));
-  }, []);
+      setLastRefresh(new Date());
+    }).catch(console.error).finally(() => { setLoading(false); setRefreshing(false); });
+  }
+
+  useEffect(() => { loadGroups(); }, []);
 
   async function handleJoin(e, groupId) {
     e.stopPropagation();
@@ -78,15 +96,50 @@ function GroupsContent() {
     } catch (err) { console.error(err); }
   }
 
-  const displayed = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  const q = search.trim().toLowerCase();
+  const byFilter = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  const displayed = q
+    ? byFilter.filter(g =>
+        (g.name || '').toLowerCase().includes(q) ||
+        (g.description || '').toLowerCase().includes(q) ||
+        (g.category || '').toLowerCase().includes(q)
+      )
+    : byFilter;
 
   return (
     <Layout>
-      <div className="page-header">
-        <h1 className="page-title">Discover Groups</h1>
-        <p className="page-subtitle">
-          Real public communities from Reddit, Discord, LinkedIn, Hacker News, and more — follow any to personalise your feed.
-        </p>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <h1 className="page-title">Discover Groups</h1>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => loadGroups(true)}
+          disabled={refreshing}
+          style={{ marginTop: 4, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+          {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+
+      {/* Search bar */}
+      <div style={{ marginBottom: 14, position: 'relative', maxWidth: 480 }}>
+        <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: '.9rem', opacity: 0.45, pointerEvents: 'none' }}>🔍</span>
+        <input
+          className="form-input"
+          placeholder="Search groups by name, category, or keyword…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ paddingLeft: 38, borderRadius: 22, padding: '9px 16px 9px 38px', fontSize: '.875rem' }}
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}
+          >×</button>
+        )}
       </div>
 
       {/* Category filter */}

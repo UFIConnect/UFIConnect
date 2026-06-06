@@ -1,11 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+
+const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
+const HANDLE_PLATFORMS  = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
+const ALL_COMING_SOON   = new Set([...SOCIAL_OAUTH_ONLY, ...HANDLE_PLATFORMS]);
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
+  gitlab:    ['Showcase GitLab projects', 'Display CI/CD and open-source work', 'Find developer collaborators'],
   twitter:   ['Surface relevant tech threads', 'Share posts across platforms', 'Follow industry conversations'],
   instagram: ['Display your creative portfolio', 'Import content to your profile', 'Connect with visual designers'],
   facebook:  ['Join professional Facebook Groups', 'Surface industry discussions', 'Expand your network'],
@@ -15,51 +21,92 @@ const PLATFORM_BENEFITS = {
   medium:    ['Import your published articles', 'Share writing with your network', 'Discover great long-form reads'],
   dribbble:  ['Display your design shots', 'Get discovered by hiring managers', 'Connect with top designers'],
   behance:   ['Showcase your full portfolio', 'Import case studies to profile', 'Get design feedback'],
-  indeed:    ['Surface matched job listings', 'Track applications in one place', 'Get salary insights'],
+  tiktok:    ['Follow creators in your niche', 'Surface trending videos in your feed', 'Connect with content creators'],
+  bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 
 export default function ConnectedAccounts() {
-  const [platforms, setPlatforms] = useState([]);
-  const [connected, setConnected] = useState({});
-  const [loading,   setLoading]   = useState(true);
-  const [expanded,  setExpanded]  = useState(null);
+  const { profile: authProfile } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [platforms, setPlatforms]       = useState([]);
+  const [connected, setConnected]       = useState({});
+  const [loading,   setLoading]         = useState(true);
+  const [expanded,  setExpanded]        = useState(null);
+  const [flash,     setFlash]           = useState(null);
+  const [connecting, setConnecting]     = useState(null);
+  const [disconnecting, setDisconnecting] = useState(null);
 
   useEffect(() => {
     Promise.all([
       client.get('/social/platforms'),
       client.get('/profile'),
-    ]).then(([pRes, uRes]) => {
+    ]).then(([pRes]) => {
       setPlatforms(Object.entries(pRes.data.platforms || {}));
-      // connectedPlatforms is an array of keys
-      const keys = uRes.data.connectedPlatforms || [];
-      const map = {};
-      keys.forEach(k => { map[k] = true; });
-      setConnected(map);
+      setConnected(pRes.data.connected || {});
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
 
+  // Handle OAuth callback redirect params (?social_connected=platform or ?social_error=platform)
+  useEffect(() => {
+    const connected_ = searchParams.get('social_connected');
+    const errPlatform = searchParams.get('social_error');
+    const errReason   = searchParams.get('reason');
+    if (connected_) {
+      setConnected(prev => ({ ...prev, [connected_]: true }));
+      flash_('success', `${connected_} connected successfully.`);
+      setSearchParams({}, { replace: true });
+    } else if (errPlatform) {
+      const msg = errReason === 'invalid_state' ? 'Connection expired — please try again.'
+        : errReason === 'access_denied'          ? 'You cancelled the connection.'
+        : `Could not connect ${errPlatform}.`;
+      flash_('error', msg, 6000);
+      setSearchParams({}, { replace: true });
+    }
+  }, []); // eslint-disable-line
+
+  function flash_(type, msg, ms = 4000) {
+    setFlash({ type, msg });
+    setTimeout(() => setFlash(null), ms);
+  }
+
   async function handleConnect(platform) {
-    const p = platforms.find(([key]) => key === platform)?.[1];
-    if (p?.loginUrl) window.open(p.loginUrl, '_blank', 'noopener,noreferrer');
+    setConnecting(platform);
     try {
-      await client.post('/social/connect', {
-        platform,
-        platformUserId: `demo_${platform}_user`,
-        accessToken: 'mock_token',
-      });
-      setConnected((prev) => ({ ...prev, [platform]: true }));
-    } catch (err) { console.error(err); }
+      const { data } = await client.get(`/auth/social/${platform}/start`);
+      if (data?.url) { window.location.href = data.url; return; }
+      throw new Error('Missing provider authorization URL.');
+    } catch (err) {
+      // For handle-based platforms, fall back to mock connect when OAuth isn't configured
+      if (HANDLE_PLATFORMS.has(platform) && err?.response?.status === 501) {
+        try {
+          await client.post('/social/connect', { platform, token: 'connected' });
+          setConnected(prev => ({ ...prev, [platform]: true }));
+          flash_('success', `${platform} connected.`);
+          setConnecting(null);
+          return;
+        } catch {/* fall through to error */}
+      }
+      const detail = err?.response?.data?.detail || err?.response?.data?.error || err.message;
+      flash_('error', detail || 'Could not start this connection.', 7000);
+      setConnecting(null);
+    }
   }
 
   async function handleDisconnect(platform) {
+    setDisconnecting(platform);
     try {
       await client.delete(`/social/connect/${platform}`);
-      setConnected((prev) => { const n = { ...prev }; delete n[platform]; return n; });
-    } catch (err) { console.error(err); }
+      setConnected(prev => { const n = { ...prev }; delete n[platform]; return n; });
+      flash_('success', 'Account disconnected.');
+    } catch (err) {
+      flash_('error', err?.response?.data?.error || 'Could not disconnect.', 6000);
+    } finally {
+      setDisconnecting(null);
+    }
   }
 
-  const connectedList   = platforms.filter(([k]) => connected[k]);
-  const availableList   = platforms.filter(([k]) => !connected[k]);
+  const connectedList   = platforms.filter(([k]) =>  connected[k]);
+  const comingSoonList  = platforms.filter(([k]) => !connected[k] && ALL_COMING_SOON.has(k));
 
   return (
     <Layout>
@@ -72,7 +119,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Link your social profiles to personalise your feed, import content, and expand your reach.
+          Connect your social accounts through each provider's permission screen, then return to UFIConnect automatically.
         </p>
       </div>
 
@@ -82,6 +129,17 @@ export default function ConnectedAccounts() {
         </div>
       ) : (
         <>
+          {flash && (
+            <div style={{
+              marginBottom: 16, padding: '10px 14px', borderRadius: 8, fontSize: '.85rem', fontWeight: 600,
+              background: flash.type === 'success' ? '#ECFDF5' : flash.type === 'info' ? '#EFF6FF' : '#FEF2F2',
+              color:      flash.type === 'success' ? '#059669' : flash.type === 'info' ? '#2563EB' : '#DC2626',
+              border: `1px solid ${flash.type === 'success' ? '#A7F3D0' : flash.type === 'info' ? '#BFDBFE' : '#FECACA'}`,
+            }}>
+              {flash.msg}
+            </div>
+          )}
+
           {/* Summary bar */}
           <div style={{
             display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24,
@@ -94,7 +152,7 @@ export default function ConnectedAccounts() {
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
                 {connectedList.length === 0
-                  ? 'Connect accounts to personalise your feed and unlock features.'
+                  ? 'Connect an account to personalise your feed.'
                   : `Connected: ${connectedList.map(([k, p]) => p.name).join(', ')}`}
               </div>
             </div>
@@ -129,44 +187,49 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onDisconnect={() => handleDisconnect(key)}
                   onConnect={() => handleConnect(key)}
+                  connecting={connecting === key}
+                  disconnecting={disconnecting === key}
                 />
               ))}
             </div>
           )}
 
-          {/* Available section */}
-          {availableList.length > 0 && (
-            <div>
+          {/* Coming Soon — all platforms pending OAuth integration */}
+          {comingSoonList.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                Available to Connect
+                Coming Soon
               </div>
-              {availableList.map(([key, p]) => (
+              {comingSoonList.map(([key, p]) => (
                 <PlatformCard
                   key={key}
                   platformKey={key}
                   p={p}
                   isConnected={false}
+                  comingSoon
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
-                  onDisconnect={() => handleDisconnect(key)}
-                  onConnect={() => handleConnect(key)}
                 />
               ))}
             </div>
           )}
+
         </>
       )}
     </Layout>
   );
 }
 
-function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisconnect, onConnect }) {
+function PlatformCard({
+  platformKey, p, isConnected, comingSoon, expanded, onToggle,
+  onDisconnect, onConnect, connecting, disconnecting,
+}) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px', opacity: comingSoon ? 0.72 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Platform colour icon */}
+        {/* Platform icon */}
         <div style={{
           width: 40, height: 40, borderRadius: 10,
           background: p.color, display: 'flex', alignItems: 'center',
@@ -177,6 +240,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
           </span>
         </div>
 
+        {/* Name + description */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{p.name}</span>
@@ -188,29 +252,36 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                 ✓ Connected
               </span>
             )}
+            {comingSoon && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 700, color: '#92400E',
+                background: '#FEF3C7', padding: '1px 6px', borderRadius: 4,
+              }}>
+                Coming Soon
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
           </div>
         </div>
 
+        {/* Action buttons */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
-          <button
-            onClick={onToggle}
-            className="btn btn-ghost btn-sm"
-            style={{ fontSize: '.72rem', padding: '4px 8px' }}
-          >
+          <button onClick={onToggle} className="btn btn-ghost btn-sm" style={{ fontSize: '.72rem', padding: '4px 8px' }}>
             {expanded ? '▲' : '▼'} Details
           </button>
           {isConnected ? (
-            <button className="btn btn-danger btn-sm" onClick={onDisconnect}>Disconnect</button>
+            <button className="btn btn-danger btn-sm" onClick={onDisconnect} disabled={disconnecting}>
+              {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
+            </button>
+          ) : comingSoon ? (
+            <button className="btn btn-sm btn-outline" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+              Coming Soon
+            </button>
           ) : (
-            <button
-              className="btn btn-sm btn-outline"
-              onClick={onConnect}
-              style={{ borderColor: p.color, color: p.color }}
-            >
-              Connect
+            <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
+              {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
             </button>
           )}
         </div>
@@ -219,8 +290,13 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
       {/* Expanded details */}
       {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
+            Connect opens {p.name}'s authorization page so you can approve UFIConnect access at the original source.
+          </div>
+
+          {/* Benefits */}
           {benefits.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
+            <>
               <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.5px' }}>
                 What you unlock
               </div>
@@ -231,18 +307,7 @@ function PlatformCard({ platformKey, p, isConnected, expanded, onToggle, onDisco
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
-          {p.note && (
-            <div style={{ fontSize: '.72rem', color: 'var(--warning)', background: '#FFFBEB', padding: '6px 10px', borderRadius: 6 }}>
-              ℹ️ {p.note}
-            </div>
-          )}
-          {p.setupUrl && (
-            <a href={p.setupUrl} target="_blank" rel="noopener noreferrer"
-               style={{ fontSize: '.72rem', color: p.color, display: 'block', marginTop: 6 }}>
-              → Developer / API setup guide ↗
-            </a>
+            </>
           )}
         </div>
       )}

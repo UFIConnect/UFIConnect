@@ -2,61 +2,106 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import FollowListModal from '../components/FollowListModal';
+import PostList from '../components/PostList';
 import client from '../api/client';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+const SOCIAL_PLATFORMS = [
+  { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
+  { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Tweets and threads from the people you follow' },
+  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from the creators and brands you follow' },
+  { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'Updates from friends, pages, and groups you follow' },
+  { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Your repos, contributions, and open-source work' },
+  { id: 'gitlab',    emoji: 'GL', name: 'GitLab',      color: '#FC6D26', desc: 'Your GitLab projects, CI/CD work, and open-source portfolio' },
+  { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
+  { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Channels and video content in your areas' },
+  { id: 'reddit',    emoji: '🤖', name: 'Reddit',      color: '#FF4500', desc: 'Posts from subreddits matching your interests' },
+  { id: 'medium',    emoji: '✍️', name: 'Medium',      color: '#000000', desc: 'Articles and long-form reads from writers in your field' },
+  { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and inspiration from top creatives' },
+  { id: 'behance',   emoji: '🎨', name: 'Behance',     color: '#1769FF', desc: 'Creative portfolios and design projects' },
+  { id: 'tiktok',    emoji: '🎵', name: 'TikTok',      color: '#010101', desc: 'Trending videos from creators in your niche' },
+  { id: 'bluesky',   emoji: '🦋', name: 'Bluesky',     color: '#0085FF', desc: 'Posts across the decentralised social network' },
+];
+
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
   { key: 'github',    label: 'GitHub',         icon: '🐙', placeholder: 'https://github.com/yourname' },
+  { key: 'gitlab',    label: 'GitLab',         icon: 'GL', placeholder: 'https://gitlab.com/yourname' },
   { key: 'portfolio', label: 'Portfolio',      icon: '🌐', placeholder: 'https://yourwebsite.com' },
   { key: 'resume',    label: 'Resume / CV',    icon: '📄', placeholder: 'https://drive.google.com/...' },
   { key: 'twitter',   label: 'X / Twitter',   icon: '🐦', placeholder: 'https://x.com/yourhandle' },
   { key: 'other',     label: 'Other link',     icon: '🔗', placeholder: 'https://...' },
 ];
 
-const SOCIALS = [
-  { key: 'linkedin',  label: 'LinkedIn',   icon: '🔷', color: '#0A66C2', loginUrl: 'https://www.linkedin.com/login' },
-  { key: 'github',    label: 'GitHub',     icon: '🐙', color: '#24292F', loginUrl: 'https://github.com/login' },
-  { key: 'twitter',   label: 'X / Twitter',icon: '🐦', color: '#000000', loginUrl: 'https://twitter.com/i/flow/login' },
-  { key: 'instagram', label: 'Instagram',  icon: '📸', color: '#E1306C', loginUrl: 'https://www.instagram.com/accounts/login/' },
-  { key: 'discord',   label: 'Discord',    icon: '💬', color: '#5865F2', loginUrl: 'https://discord.com/login' },
-  { key: 'youtube',   label: 'YouTube',    icon: '▶️', color: '#FF0000', loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube' },
-  { key: 'reddit',    label: 'Reddit',     icon: '🟠', color: '#FF4500', loginUrl: 'https://www.reddit.com/login' },
-  { key: 'medium',    label: 'Medium',     icon: '📝', color: '#000000', loginUrl: 'https://medium.com/m/signin' },
-  { key: 'dribbble',  label: 'Dribbble',   icon: '🎨', color: '#EA4C89', loginUrl: 'https://dribbble.com/session/new' },
-  { key: 'behance',   label: 'Behance',    icon: '🖼️', color: '#1769FF', loginUrl: 'https://www.behance.net/signin' },
-  { key: 'facebook',  label: 'Facebook',   icon: '🔵', color: '#1877F2', loginUrl: 'https://www.facebook.com/login' },
-  { key: 'indeed',    label: 'Indeed',     icon: '💼', color: '#003A9B', loginUrl: 'https://secure.indeed.com/account/login' },
-];
-
-const TABS = ['Overview', 'Socials', 'Attachments'];
+const TABS = ['Overview', 'Posts', 'Skills', 'Attachments'];
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
-  const [tab,       setTab]       = useState('Overview');
-  const [editing,   setEditing]   = useState(false);
-  const [form,      setForm]      = useState(null);
-  const [links,     setLinks]     = useState(null);
-  const [saving,    setSaving]    = useState(false);
-  const [error,     setError]     = useState('');
-  const [connected, setConnected] = useState({});
-  const [platforms, setPlatforms] = useState([]);
+  const [tab,         setTab]         = useState('Overview');
+  const [editing,     setEditing]     = useState(false);
+  const [form,        setForm]        = useState(null);
+  const [links,       setLinks]       = useState(null);
+  const [saving,      setSaving]      = useState(false);
+  const [error,       setError]       = useState('');
+  // Skills tab state
+  const [skillInput,    setSkillInput]    = useState('');
+  const [skills,        setSkills]        = useState([]);
+  const [skillSaving,   setSkillSaving]   = useState(false);
+  // Posts
+  const [posts,        setPosts]        = useState([]);
+  const [postsLoading, setPostsLoading] = useState(false);
+  // Follow stats
+  const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
+  const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
 
+  // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
-    client.get('/social/platforms')
-      .then(({ data }) => {
-        const map = {};
-        (data.platforms || []).forEach(p => { map[p.id] = p; });
-        setPlatforms(data.platforms || []);
-        const conn = {};
-        (data.platforms || []).filter(p => p.connected).forEach(p => { conn[p.id] = true; });
-        setConnected(conn);
-      })
+    if (Array.isArray(profile?.skills)) setSkills(profile.skills);
+  }, [profile, tab]);
+
+  // Load follow counts
+  useEffect(() => {
+    if (!profile?.id) return;
+    client.get(`/users/${profile.id}`)
+      .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
       .catch(() => {});
-  }, []);
+  }, [profile?.id]);
+
+  // Load posts created by this member
+  useEffect(() => {
+    if (!profile?.id) return;
+    setPostsLoading(true);
+    client.get(`/users/${profile.id}/posts`)
+      .then(({ data }) => setPosts(data.posts || []))
+      .catch(() => setPosts([]))
+      .finally(() => setPostsLoading(false));
+  }, [profile?.id]);
+
+
+  function addSkill() {
+    const trimmed = skillInput.trim();
+    if (!trimmed || skills.includes(trimmed)) { setSkillInput(''); return; }
+    setSkills(prev => [...prev, trimmed]);
+    setSkillInput('');
+  }
+
+  function removeSkill(s) {
+    setSkills(prev => prev.filter(x => x !== s));
+  }
+
+  async function saveSkills() {
+    setSkillSaving(true);
+    try {
+      const payload = { name: profile.name, title: profile.title, bio: profile.bio, organization: profile.organization, skills, links: profile.links || {} };
+      const { data } = await client.patch('/profile', payload);
+      updateProfileLocally(data.profile || data);
+    } catch {}
+    finally { setSkillSaving(false); }
+  }
 
   function startEdit() {
     setForm({
@@ -77,22 +122,6 @@ export default function Profile() {
 
   function handleLinkChange(e) {
     setLinks((l) => ({ ...l, [e.target.name]: e.target.value }));
-  }
-
-  async function handleConnect(key) {
-    const s = SOCIALS.find(s => s.key === key);
-    if (s?.loginUrl) window.open(s.loginUrl, '_blank', 'noopener,noreferrer');
-    try {
-      await client.post('/social/connect', { platform: key, platformUserId: `demo_${key}_user`, accessToken: 'mock_token' });
-      setConnected(prev => ({ ...prev, [key]: true }));
-    } catch {}
-  }
-
-  async function handleDisconnect(key) {
-    try {
-      await client.delete(`/social/connect/${key}`);
-      setConnected(prev => { const n = { ...prev }; delete n[key]; return n; });
-    } catch {}
   }
 
   async function handleSave(e) {
@@ -139,28 +168,68 @@ export default function Profile() {
         <div className="profile-title">{profile.title || 'UFIConnect Member'}</div>
         {profile.organization && <div className="profile-org">🏢 {profile.organization}</div>}
 
+        {/* Follow stats */}
+        <div style={{ display: 'flex', gap: 20, marginTop: 14, justifyContent: 'center' }}>
+          {[
+            { type: 'followers', count: followStats.followersCount, label: 'Followers' },
+            { type: 'following', count: followStats.followingCount, label: 'Following' },
+          ].map(({ type, count, label }) => (
+            <button
+              key={type}
+              onClick={() => setFollowModal(type)}
+              style={{ textAlign: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 10px', borderRadius: 8, transition: 'background .15s' }}
+              onMouseOver={e => e.currentTarget.style.background = 'var(--hover)'}
+              onMouseOut={e => e.currentTarget.style.background = 'none'}
+            >
+              <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{count}</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>{label}</div>
+            </button>
+          ))}
+        </div>
+
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
-          <Link to="/profile/connected-accounts">
-            <button className="btn btn-ghost btn-sm">🔗 Connected accounts</button>
+          <Link to={`/u/${profile.id}`}>
+            <button className="btn btn-ghost btn-sm">👁 Public view</button>
           </Link>
         </div>
       </div>
 
+      {followModal && (
+        <FollowListModal
+          userId={profile.id}
+          type={followModal}
+          title={followModal === 'followers'
+            ? `Followers · ${followStats.followersCount}`
+            : `Following · ${followStats.followingCount}`}
+          onClose={() => setFollowModal(null)}
+        />
+      )}
+
       {/* Tabs */}
-      <div style={{ display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid var(--border)', paddingBottom:0 }}>
-        {TABS.map((t) => (
-          <button key={t} onClick={() => { setTab(t); setEditing(false); }}
-            style={{
-              padding:'10px 18px', border:'none', background:'none', cursor:'pointer',
-              fontWeight: tab === t ? 700 : 500,
-              color: tab === t ? 'var(--primary)' : 'var(--muted)',
-              borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
-              fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
-            }}>
-            {t === 'Attachments' ? '📎 Attachments' : '👤 Overview'}
-          </button>
-        ))}
+      <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
+        {TABS.map((t) => {
+          const icons = { Overview: '👤', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
+          const comingSoon = new Set(['Attachments']);
+          return (
+            <button key={t} onClick={() => { setTab(t); setEditing(false); }}
+              style={{
+                padding:'10px 16px', border:'none', background:'none', cursor:'pointer', whiteSpace:'nowrap',
+                fontWeight: tab === t ? 700 : 500,
+                color: tab === t ? 'var(--primary)' : 'var(--muted)',
+                borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
+                fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
+                display:'flex', alignItems:'center', gap:6,
+              }}>
+              {icons[t]} {t}
+              {comingSoon.has(t) && (
+                <span style={{ fontSize:'.6rem', fontWeight:700, background:'var(--primary)', color:'#fff', padding:'1px 6px', borderRadius:10, letterSpacing:'.3px' }}>
+                  Soon
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── OVERVIEW TAB ─────────────────────────────────────── */}
@@ -175,7 +244,7 @@ export default function Profile() {
           </div>
 
           {/* Skills */}
-          {profile.skills?.length > 0 && (
+          {Array.isArray(profile.skills) && profile.skills.length > 0 && (
             <div className="card">
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:10 }}>Skills</h3>
               <div className="tags">
@@ -184,10 +253,85 @@ export default function Profile() {
             </div>
           )}
 
+          {/* Visibility */}
+          <div className="card">
+            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Visibility</h3>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 }}>
+              <div>
+                <div style={{ fontWeight:600, fontSize:'.9rem', marginBottom:3 }}>
+                  🌐 Profile visible to members
+                </div>
+                <div style={{ fontSize:'.8rem', color:'var(--muted)', lineHeight:1.5 }}>
+                  Everyone with an account can find your profile, follow you, view your posts, and message you.
+                </div>
+              </div>
+              <span style={{ flexShrink:0, fontSize:'.72rem', fontWeight:700, color:'#059669', background:'#ECFDF5', padding:'4px 10px', borderRadius:10 }}>
+                Active
+              </span>
+            </div>
+          </div>
+
+          {/* Connected Accounts */}
+          <div className="card" id="social" style={{ position:'relative', overflow:'hidden' }}>
+            {/* Blur + Coming Soon overlay */}
+            <div style={{
+              position:'absolute', inset:0, zIndex:10,
+              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
+              background:'rgba(var(--bg-rgb,255,255,255),.55)',
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
+            }}>
+              <span style={{ fontSize:'1.6rem' }}>🔒</span>
+              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Connected Accounts</div>
+              <span style={{
+                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
+                background:'var(--primary)', color:'#fff',
+                padding:'3px 12px', borderRadius:20,
+              }}>Coming Soon</span>
+              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
+                Social account linking is coming in the next update.
+              </p>
+            </div>
+
+            {/* Blurred content beneath */}
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:4 }}>
+              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Connected Accounts</h3>
+            </div>
+            <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
+              Connect your social accounts to bring your existing feeds into UFIConnect.
+            </p>
+            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+              {SOCIAL_PLATFORMS.slice(0, 4).map(platform => (
+                <div key={platform.id} style={{
+                  borderRadius:10, border:'1.5px solid var(--border)',
+                  background:'var(--surface)', overflow:'hidden',
+                }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px' }}>
+                    <span style={{
+                      width:36, height:36, borderRadius:9, flexShrink:0,
+                      background: platform.color + '18',
+                      border:`1.5px solid ${platform.color}33`,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:'1.1rem',
+                    }}>{platform.emoji}</span>
+                    <div style={{ flex:1 }}>
+                      <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
+                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Preferences */}
           {profile.preferences && (
             <div className="card">
-              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:12 }}>Preferences</h3>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+                <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Preferences</h3>
+                <Link to="/settings?tab=preferences">
+                  <button className="btn btn-ghost btn-sm" type="button">Edit →</button>
+                </Link>
+              </div>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
                 {profile.preferences.role && (
                   <div>
@@ -252,36 +396,75 @@ export default function Profile() {
         </form>
       )}
 
-      {/* ── SOCIALS TAB ──────────────────────────────────────── */}
-      {tab === 'Socials' && (
+      {/* ── POSTS TAB ───────────────────────────────────────── */}
+      {tab === 'Posts' && !editing && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+          <div className="card" style={{ maxWidth: 640 }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+              <div>
+                <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Your Posts</h3>
+                <p style={{ fontSize:'.84rem', color:'var(--muted)', margin:0 }}>Posts you share with the UFIConnect community appear here.</p>
+              </div>
+              <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>
+            </div>
+          </div>
+          <PostList
+            posts={posts}
+            loading={postsLoading}
+            emptyTitle="No posts yet"
+            emptyDesc="Write your first community post and it will appear on your profile."
+            emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>}
+          />
+        </div>
+      )}
+
+      {/* ── SKILLS TAB ───────────────────────────────────────── */}
+      {tab === 'Skills' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="card">
-            <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
-            <p style={{ fontSize:'.8rem', color:'var(--muted)', marginBottom:16 }}>Connect your social profiles. Clicking Connect opens the platform's login page.</p>
-            <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
-              {SOCIALS.map(({ key, label, icon, color, loginUrl }) => {
-                const isConnected = !!connected[key];
-                return (
-                  <div key={key} style={{ display:'flex', alignItems:'center', gap:12, padding:'12px 4px', borderBottom:'1px solid var(--border)' }}>
-                    <span style={{ fontSize:'1.3rem', width:32, textAlign:'center' }}>{icon}</span>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:600, fontSize:'.875rem' }}>{label}</div>
-                      {isConnected && <div style={{ fontSize:'.72rem', color:'var(--success)', fontWeight:600 }}>✓ Connected</div>}
-                    </div>
-                    {isConnected ? (
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDisconnect(key)}>Disconnect</button>
-                    ) : (
-                      <button
-                        className="btn btn-sm"
-                        style={{ borderColor: color, color, border:`1.5px solid ${color}`, background:'transparent' }}
-                        onClick={() => handleConnect(key)}
-                      >
-                        Connect
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+            <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Your Skills</h3>
+
+            {/* Existing badges */}
+            {skills.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                {skills.map(s => (
+                  <span
+                    key={s}
+                    className="tag tag-primary"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: '.82rem' }}
+                  >
+                    {s}
+                    <button
+                      type="button"
+                      onClick={() => removeSkill(s)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, lineHeight: 1, fontSize: '.85rem', opacity: .7 }}
+                    >×</button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '.88rem', marginBottom: 14 }}>No skills added yet. Add some below.</p>
+            )}
+
+            {/* Add input */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                className="form-input"
+                placeholder="Add a skill (e.g. React, Python, UX Design)…"
+                value={skillInput}
+                onChange={e => setSkillInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }}
+                style={{ flex: 1 }}
+              />
+              <button className="btn btn-primary btn-sm" type="button" onClick={addSkill} style={{ flexShrink: 0 }}>
+                Add
+              </button>
+            </div>
+
+            <div style={{ marginTop: 14, display: 'flex', gap: 10 }}>
+              <button className="btn btn-primary btn-sm" onClick={saveSkills} disabled={skillSaving}>
+                {skillSaving ? <span className="spinner" /> : 'Save skills'}
+              </button>
             </div>
           </div>
         </div>
@@ -290,10 +473,28 @@ export default function Profile() {
       {/* ── ATTACHMENTS TAB ──────────────────────────────────── */}
       {tab === 'Attachments' && !editing && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <div className="card">
+          <div className="card" style={{ position:'relative', overflow:'hidden' }}>
+            {/* Coming Soon overlay */}
+            <div style={{
+              position:'absolute', inset:0, zIndex:10,
+              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
+              background:'rgba(var(--bg-rgb,255,255,255),.55)',
+              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
+            }}>
+              <span style={{ fontSize:'1.6rem' }}>📎</span>
+              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Files &amp; Attachments</div>
+              <span style={{
+                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
+                background:'var(--primary)', color:'#fff',
+                padding:'3px 12px', borderRadius:20,
+              }}>Coming Soon</span>
+              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
+                Resume upload and portfolio links are coming in the next update.
+              </p>
+            </div>
+
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Files &amp; Links</h3>
-              <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit</button>
             </div>
             {hasLinks ? (
               <div style={{ display:'flex', flexDirection:'column', gap:10 }}>

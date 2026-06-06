@@ -1,0 +1,971 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+
+const API = import.meta.env.VITE_API_URL || '';
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function fmtUptime(ms) {
+  const s = Math.floor(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m ${s % 60}s`;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '—';
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function fmtAgo(ts) {
+  if (!ts) return '—';
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
+// ─── shared style constants ───────────────────────────────────────────────────
+
+const H1 = { margin: '0 0 6px', fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: '#f1f5f9' };
+const SUBTITLE = { margin: '0 0 28px', color: '#64748b', fontSize: 14, lineHeight: 1.5 };
+const CODE = { background: '#1e293b', padding: '2px 7px', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.88em', color: '#94a3b8' };
+
+// ─── primitive components ─────────────────────────────────────────────────────
+
+function Dot({ ok, pulse }) {
+  return (
+    <span style={{
+      display: 'inline-block', width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+      background: ok ? '#22c55e' : '#ef4444',
+      boxShadow: ok ? '0 0 0 3px rgba(34,197,94,.2)' : 'none',
+      animation: ok && pulse ? 'pulse 2s ease-in-out infinite' : 'none',
+    }} />
+  );
+}
+
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: '#0d0d1a',
+      border: '1px solid rgba(255,255,255,.07)',
+      borderRadius: 12,
+      padding: 20,
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function Btn({ children, onClick, disabled, variant = 'primary', size = 'md', style }) {
+  const pads = size === 'sm' ? '5px 13px' : '9px 20px';
+  const font = size === 'sm' ? 12 : 13;
+  const variants = {
+    primary: { background: disabled ? '#1e2d4a' : '#1d4ed8', color: disabled ? '#475569' : '#fff' },
+    ghost:   { background: 'rgba(59,130,246,.1)',  color: '#60a5fa' },
+    success: { background: 'rgba(34,197,94,.12)',  color: '#4ade80' },
+    danger:  { background: 'rgba(239,68,68,.1)',   color: '#f87171' },
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        border: 'none', borderRadius: 7, cursor: disabled ? 'not-allowed' : 'pointer',
+        fontWeight: 600, transition: 'opacity .15s', opacity: disabled ? .6 : 1,
+        padding: pads, fontSize: font, ...variants[variant], ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Label({ children, color = '#94a3b8' }) {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.3, color }}>
+      {children}
+    </span>
+  );
+}
+
+function StatCard({ icon, label, value, sub, color }) {
+  return (
+    <Card style={{ flex: '1 1 145px', minWidth: 130 }}>
+      <Label>{label}</Label>
+      <div style={{ margin: '8px 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {icon && <span style={{ fontSize: 18 }}>{icon}</span>}
+        <span style={{ fontSize: 26, fontWeight: 800, color: color || '#e2e8f0', lineHeight: 1 }}>
+          {value ?? '—'}
+        </span>
+      </div>
+      {sub && <div style={{ fontSize: 11, color: '#475569' }}>{sub}</div>}
+    </Card>
+  );
+}
+
+function LogEntry({ entry }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '7px 0', borderBottom: '1px solid rgba(255,255,255,.035)',
+    }}>
+      <span style={{ fontSize: 14, lineHeight: 1.5, flexShrink: 0 }}>{entry.emoji}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ color: entry.color || '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>{entry.msg}</div>
+        <div style={{ fontSize: 10, color: '#334155', marginTop: 1 }}>{entry.agentId}</div>
+      </div>
+      <span style={{ fontSize: 10, color: '#475569', whiteSpace: 'nowrap', marginTop: 2 }}>{fmtTime(entry.ts)}</span>
+    </div>
+  );
+}
+
+// ─── Website Optimizer Panel ──────────────────────────────────────────────────
+
+const SUB_AGENT_LABELS = {
+  web_perf: 'Perf', web_seo: 'SEO', web_cache: 'Cache',
+  web_storage: 'Storage', web_api: 'API', web_office: 'Office', web_pwa: 'PWA',
+};
+
+function findingImpact(finding) {
+  if (finding.includes('HTTP status'))  return 35;
+  if (finding.includes('TTFB'))         return 12;
+  if (finding.includes('Total load'))   return 10;
+  if (finding.includes('HTML payload')) return 8;
+  if (finding.includes('Canonical'))    return 8;
+  if (finding.includes('Open Graph'))   return 6;
+  if (finding.includes('Structured'))   return 6;
+  if (finding.includes('manifest'))     return 4;
+  if (finding.includes('cache-control') || finding.includes('ETag')) return 4;
+  return 0;
+}
+
+function WebOptimizerPanel({ web, triggerAgent, triggering }) {
+  if (!web) return null;
+
+  const subEntries = Object.entries(web.subAgents || {});
+  const isRunning  = triggering['website_optimizer'] || web.status === 'running';
+
+  const ttfbColor = !web.lastTtfbMs  ? '#64748b'
+    : web.lastTtfbMs  > 800  ? '#f87171'
+    : web.lastTtfbMs  > 400  ? '#fbbf24' : '#4ade80';
+  const loadColor = !web.lastTotalMs ? '#64748b'
+    : web.lastTotalMs > 2500 ? '#f87171' : '#4ade80';
+  const sizeKb    = web.lastBytes ? (web.lastBytes / 1024).toFixed(1) : null;
+  const sizeColor = !sizeKb ? '#64748b' : web.lastBytes > 460 * 1024 ? '#f87171' : '#4ade80';
+  const scoreColor = web.score >= 80 ? '#4ade80' : web.score >= 60 ? '#fbbf24' : '#f87171';
+
+  return (
+    <Card style={{ marginBottom: 28 }}>
+      {/* Header row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 20 }}>🌐</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>Website Health</div>
+            {web.lastRun && (
+              <div style={{ fontSize: 11, color: '#475569', marginTop: 1 }}>
+                Last audit {fmtAgo(web.lastRun)}
+                {web.publicUrl && <> · <a href={web.publicUrl} target="_blank" rel="noreferrer" style={{ color: '#60a5fa', textDecoration: 'none' }}>{web.publicUrl}</a></>}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 24, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
+            {web.score != null ? `${web.score}/100` : '—'}
+          </span>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('website_optimizer')} disabled={isRunning}>
+            {isRunning ? '...' : '↺ Re-run'}
+          </Btn>
+        </div>
+      </div>
+
+      {/* Metrics row */}
+      <div style={{
+        display: 'flex', gap: 24, flexWrap: 'wrap',
+        padding: '10px 14px', background: 'rgba(255,255,255,.03)',
+        borderRadius: 8, marginBottom: 16,
+      }}>
+        {[
+          { label: 'TTFB',   value: web.lastTtfbMs  != null ? `${web.lastTtfbMs}ms`  : '—', color: ttfbColor },
+          { label: 'Load',   value: web.lastTotalMs != null ? `${web.lastTotalMs}ms` : '—', color: loadColor },
+          { label: 'Size',   value: sizeKb           != null ? `${sizeKb} KB`         : '—', color: sizeColor },
+          { label: 'Status', value: web.lastStatus   ?? '—',
+            color: !web.lastStatus ? '#64748b' : web.lastStatus < 400 ? '#4ade80' : '#f87171' },
+        ].map(({ label, value, color }) => (
+          <div key={label}>
+            <div style={{ fontSize: 10, color: '#475569', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Findings */}
+      <div style={{ marginBottom: 16 }}>
+        <Label>Findings</Label>
+        {!web.findings || web.findings.length === 0 ? (
+          <div style={{ fontSize: 12, color: '#4ade80', marginTop: 8 }}>✓ No issues found</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+            {web.findings.map((f, i) => {
+              const pts = findingImpact(f);
+              return (
+                <div key={i} style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                  padding: '7px 12px',
+                  background: 'rgba(251,191,36,.06)', border: '1px solid rgba(251,191,36,.15)',
+                  borderRadius: 7,
+                }}>
+                  <span style={{ fontSize: 12, color: '#fbbf24' }}>⚠ {f}</span>
+                  {pts > 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#f87171', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      −{pts} pts
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Sub-agent chips */}
+      {subEntries.length > 0 && (
+        <div>
+          <Label>Audit Surfaces</Label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+            {subEntries.map(([id, sub]) => (
+              <div key={id} style={{
+                display: 'flex', alignItems: 'center', gap: 7,
+                padding: '6px 11px',
+                background: 'rgba(255,255,255,.04)',
+                border: `1px solid ${sub.status === 'healthy' ? 'rgba(34,197,94,.2)' : sub.lastError ? 'rgba(239,68,68,.2)' : 'rgba(255,255,255,.07)'}`,
+                borderRadius: 8,
+              }}>
+                <Dot ok={sub.status === 'healthy'} pulse={sub.status === 'running'} />
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#cbd5e1' }}>{SUB_AGENT_LABELS[id] || id}</div>
+                  {sub.lastRun
+                    ? <div style={{ fontSize: 10, color: '#475569' }}>{fmtAgo(sub.lastRun)}</div>
+                    : <div style={{ fontSize: 10, color: '#334155' }}>not run</div>
+                  }
+                  {sub.lastError && (
+                    <div style={{ fontSize: 10, color: '#f87171', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sub.lastError}>
+                      {sub.lastError.slice(0, 60)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ─── Overview view ────────────────────────────────────────────────────────────
+
+function OverviewView({ status, log, agents, triggerAgent, triggering }) {
+  const s = status?.server;
+  const f = status?.feed;
+  const a = status?.agents;
+  const src = status?.sources;
+  const web = status?.websiteOptimizer;
+  const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
+
+  return (
+    <>
+      <h1 style={H1}>Command Center</h1>
+      <p style={SUBTITLE}>Real-time status of all services and autonomous agents</p>
+
+      {pausedWorkers.length > 0 && (
+        <div style={{
+          marginBottom: 20, padding: '10px 16px', borderRadius: 8,
+          background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)',
+          display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontSize: 12, color: '#fca5a5' }}>
+            <strong>{pausedWorkers.length}</strong> source worker{pausedWorkers.length !== 1 ? 's' : ''} paused by circuit breaker
+            {' — '}{pausedWorkers.map(w => w.emoji + ' ' + (w.name?.replace(' Agent','') || w.id)).join(', ')}
+            {'. Will auto-resume in ~5min.'}
+          </span>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
+        <StatCard icon="⏱" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
+        <StatCard icon="📰" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
+        <StatCard icon="🤖" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
+        <StatCard icon="🗄️" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                        color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
+        <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
+        <StatCard
+          icon="🌐"
+          label="Sources"
+          value={src ? `${src.healthy}/${src.total}` : '—'}
+          sub={src?.paused ? `${src.paused} paused` : src?.starting ? `${src.starting} starting` : 'all healthy'}
+          color={src?.paused ? '#f97316' : src?.starting ? '#94a3b8' : '#4ade80'}
+        />
+      </div>
+
+      <WebOptimizerPanel web={web} triggerAgent={triggerAgent} triggering={triggering} />
+
+      <Label color="#475569">Agent Status</Label>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+        gap: 10, margin: '12px 0 28px',
+      }}>
+        {Object.entries(agents).map(([id, ag]) => (
+          <Card key={id} style={{ padding: '13px 15px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+            <span style={{ fontSize: 20, lineHeight: 1.3, flexShrink: 0 }}>{ag.emoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: ag.color }}>{ag.name}</div>
+              <div style={{
+                fontSize: 11, color: '#64748b', marginTop: 2,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {ag.lastAction?.msg || 'Standby...'}
+              </div>
+            </div>
+            <Dot ok pulse />
+          </Card>
+        ))}
+      </div>
+
+      <Label color="#475569">Live Activity Stream</Label>
+      <Card style={{ padding: 0, marginTop: 12 }}>
+        <div style={{
+          padding: '10px 16px', borderBottom: '1px solid rgba(255,255,255,.05)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <Dot ok pulse />
+          <span style={{ fontSize: 12, color: '#64748b' }}>Live · {log.length} entries</span>
+        </div>
+        <div style={{ maxHeight: 400, overflowY: 'auto', padding: '4px 16px 12px' }}>
+          {log.length === 0
+            ? <div style={{ textAlign: 'center', color: '#475569', fontSize: 13, padding: 36 }}>Connecting to agent stream...</div>
+            : log.map(e => <LogEntry key={e.id} entry={e} />)
+          }
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// ─── Agents view ──────────────────────────────────────────────────────────────
+
+function HealthBadge({ health }) {
+  if (!health) return null;
+  const cfg = {
+    healthy:  { bg: 'rgba(34,197,94,.12)',  color: '#4ade80', label: 'Healthy' },
+    ready:    { bg: 'rgba(34,197,94,.12)',  color: '#4ade80', label: 'Ready' },
+    armed:    { bg: 'rgba(34,197,94,.12)',  color: '#4ade80', label: 'Armed' },
+    idle:     { bg: 'rgba(56,189,248,.1)',  color: '#38bdf8', label: 'Idle' },
+    running:  { bg: 'rgba(56,189,248,.12)', color: '#38bdf8', label: 'Running' },
+    skipped:  { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Skipped' },
+    fallback: { bg: 'rgba(56,189,248,.1)',  color: '#38bdf8', label: 'Fallback' },
+    contained:{ bg: 'rgba(168,85,247,.12)', color: '#c084fc', label: 'Contained' },
+    pressure: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Pressure' },
+    critical: { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Critical' },
+    degraded: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Degraded' },
+    paused:   { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Paused' },
+  }[health.status] || { bg: 'rgba(148,163,184,.1)', color: '#94a3b8', label: '—' };
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+      background: cfg.bg, color: cfg.color, textTransform: 'uppercase', letterSpacing: 0.8,
+    }}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function AgentsView({ agents, triggerAgent, triggering }) {
+  return (
+    <>
+      <h1 style={H1}>Agent Control</h1>
+      <p style={SUBTITLE}>Monitor and manually trigger each autonomous agent. All agents run continuously on their own schedules.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 18 }}>
+        {Object.entries(agents).map(([id, ag]) => {
+          const isPaused = ag.health?.status === 'paused';
+          return (
+            <Card key={id} style={isPaused ? { borderColor: 'rgba(239,68,68,.25)' } : {}}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 28, lineHeight: 1 }}>{ag.emoji}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: ag.color }}>{ag.name}</span>
+                    <HealthBadge health={ag.health} />
+                  </div>
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2 }}>
+                    id: <code style={{ ...CODE, padding: '1px 5px' }}>{id}</code>
+                    {' · '}runs every {ag.interval}
+                    {ag.postCount != null && <> · <span style={{ color: '#60a5fa' }}>{ag.postCount.toLocaleString()} posts</span></>}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <Dot ok={!isPaused} pulse={!isPaused} />
+                  <Btn size="sm" variant={isPaused ? 'danger' : 'ghost'} onClick={() => triggerAgent(id)} disabled={triggering[id]}>
+                    {triggering[id] ? '...' : isPaused ? '↺ Reset' : '▶ Run'}
+                  </Btn>
+                </div>
+              </div>
+              <p style={{ fontSize: 12, color: '#64748b', lineHeight: 1.65, margin: '0 0 14px' }}>
+                {ag.description}
+              </p>
+              {ag.health && (
+                <div style={{
+                  display: 'flex', gap: 16, marginBottom: 12, padding: '7px 10px',
+                  background: 'rgba(255,255,255,.03)', borderRadius: 6,
+                  fontSize: 11, color: '#475569',
+                }}>
+                  <span>Fetches: <strong style={{ color: '#94a3b8' }}>{ag.health.fetchCount?.toLocaleString() ?? 0}</strong></span>
+                  <span>Errors: <strong style={{ color: ag.health.totalErrors ? '#f87171' : '#4ade80' }}>{ag.health.totalErrors ?? 0}</strong></span>
+                  {ag.lastFetch && <span>Last fetch: <strong style={{ color: '#94a3b8' }}>{fmtAgo(ag.lastFetch)}</strong></span>}
+                </div>
+              )}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+                <Label>Last 5 actions</Label>
+                <div style={{ marginTop: 8 }}>
+                  {(ag.logs || []).slice(0, 5).map(e => (
+                    <div key={e.id} style={{ display: 'flex', gap: 8, padding: '3px 0', fontSize: 11, alignItems: 'flex-start' }}>
+                      <span style={{ flexShrink: 0 }}>{e.emoji}</span>
+                      <span style={{ color: e.color, flex: 1, lineHeight: 1.5 }}>{e.msg}</span>
+                      <span style={{ color: '#475569', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtAgo(e.ts)}</span>
+                    </div>
+                  ))}
+                  {(!ag.logs || ag.logs.length === 0) && (
+                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>No recent activity — click Run to trigger</div>
+                  )}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+// ─── Deploy view ──────────────────────────────────────────────────────────────
+
+function DeployView({ triggerDeploy, deploying, log }) {
+  const services = [
+    {
+      slug: 'api',
+      name: 'Backend API',
+      desc: 'Node.js Express — REST API + agent system',
+      url: 'https://uficonnect-api.onrender.com',
+      health: 'https://uficonnect-api.onrender.com/health',
+      icon: '⚙️',
+      hook: 'RENDER_HOOK_API',
+    },
+    {
+      slug: 'web',
+      name: 'Web Frontend',
+      desc: 'React SPA — main user-facing app',
+      url: 'https://uficonnect.org',
+      icon: '🌐',
+      hook: 'RENDER_HOOK_WEB',
+    },
+    {
+      slug: 'office',
+      name: 'Office',
+      desc: 'This dashboard — operations & monitoring',
+      url: 'https://office.uficonnect.org',
+      icon: '🏢',
+      hook: 'RENDER_HOOK_OFFICE',
+    },
+  ];
+
+  const deployLogs = log.filter(e => e.agentId === 'deploy').slice(0, 8);
+
+  return (
+    <>
+      <h1 style={H1}>Deploy Center</h1>
+      <p style={SUBTITLE}>
+        Push to <strong style={{ color: '#e2e8f0' }}>main</strong> for automatic deploys, or trigger a manual redeploy here.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 13, maxWidth: 680, marginBottom: 30 }}>
+        {services.map(({ slug, name, desc, url, icon, hook }) => (
+          <Card key={slug} style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 30, flexShrink: 0 }}>{icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>{name}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{desc}</div>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ fontSize: 11, color: '#3b82f6', marginTop: 3, display: 'block' }}
+              >
+                {url} ↗
+              </a>
+              <div style={{ fontSize: 10, color: '#334155', marginTop: 3 }}>
+                Hook env: <code style={{ ...CODE, fontSize: 10 }}>{hook}</code>
+              </div>
+            </div>
+            <Btn onClick={() => triggerDeploy(slug)} disabled={deploying[slug]}>
+              {deploying[slug] ? 'Deploying...' : 'Deploy Now'}
+            </Btn>
+          </Card>
+        ))}
+      </div>
+
+      <Card style={{ maxWidth: 680, background: '#0a1628', borderColor: 'rgba(59,130,246,.18)', marginBottom: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa', marginBottom: 10 }}>
+          Auto-Deploy is Active
+        </div>
+        <div style={{ fontSize: 12, color: '#94a3b8', lineHeight: 1.8 }}>
+          Every push to <code style={CODE}>main</code> automatically triggers a rebuild and deploy via Render's GitHub integration — typically live within 2–3 minutes.
+          <br />
+          For the <em>Deploy Now</em> buttons to work, add deploy hooks or Render API credentials to the backend env vars:
+          <br />
+          <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code>
+          <br />
+          Find your deploy hooks under each service → <em>Settings → Deploy Hook</em> in the Render dashboard.
+        </div>
+      </Card>
+
+      {deployLogs.length > 0 && (
+        <>
+          <Label color="#475569">Recent Deploy Activity</Label>
+          <Card style={{ marginTop: 12, maxWidth: 680, padding: '12px 16px' }}>
+            {deployLogs.map(e => <LogEntry key={e.id} entry={e} />)}
+          </Card>
+        </>
+      )}
+    </>
+  );
+}
+
+// ─── Versions view ────────────────────────────────────────────────────────────
+
+function VersionsView({ versions }) {
+  const repos = [
+    {
+      name: 'ProConnect Monorepo',
+      desc: 'Backend (Node.js) · Web (React) · Mobile (Expo) · Office (React)',
+      url: 'https://github.com/yosufkaka99-alt/proconnect',
+      icon: '📦',
+    },
+  ];
+
+  return (
+    <>
+      <h1 style={H1}>Versions & Repositories</h1>
+      <p style={SUBTITLE}>Installed versions, live service URLs, code repositories, and update instructions.</p>
+
+      {versions ? (
+        <>
+          <Card style={{ maxWidth: 520, marginBottom: 20, display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <div>
+              <Label>Backend Version</Label>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>
+                v{versions.backend.version}
+              </div>
+            </div>
+            <div>
+              <Label>Node.js</Label>
+              <div style={{ fontSize: 28, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>
+                {versions.backend.node}
+              </div>
+            </div>
+            <div>
+              <Label>Package</Label>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>{versions.backend.name}</div>
+            </div>
+          </Card>
+
+          <Label color="#475569">Live Services</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '12px 0 28px', maxWidth: 680 }}>
+            {versions.services.map(svc => (
+              <Card key={svc.slug} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
+                <Dot ok pulse />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{svc.name}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>{svc.domain}</div>
+                </div>
+                <a
+                  href={svc.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    padding: '7px 16px', borderRadius: 7,
+                    border: '1px solid rgba(59,130,246,.3)',
+                    color: '#60a5fa', fontSize: 12, textDecoration: 'none', fontWeight: 600,
+                  }}
+                >
+                  Open ↗
+                </a>
+              </Card>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div style={{ color: '#475569', fontSize: 14, marginBottom: 28 }}>Loading version info...</div>
+      )}
+
+      <Label color="#475569">Repositories</Label>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '12px 0 28px', maxWidth: 680 }}>
+        {repos.map(r => (
+          <Card key={r.name}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <span style={{ fontSize: 22 }}>{r.icon}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{r.name}</div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{r.desc}</div>
+                <a
+                  href={r.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, color: '#3b82f6', marginTop: 4, display: 'block' }}
+                >
+                  {r.url} ↗
+                </a>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Label color="#475569">Installing New Versions</Label>
+      <Card style={{ marginTop: 12, maxWidth: 680, background: '#081a10', borderColor: 'rgba(34,197,94,.15)' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: '#4ade80', marginBottom: 10 }}>
+          How to Update Any Service
+        </div>
+        <ol style={{ fontSize: 12, color: '#94a3b8', lineHeight: 2.1, paddingLeft: 20 }}>
+          <li>Make your code changes locally in the repo</li>
+          <li>Commit: <code style={CODE}>git commit -m "your change"</code></li>
+          <li>Push: <code style={CODE}>git push origin main</code></li>
+          <li>Render detects the push and auto-deploys within ~2 minutes</li>
+          <li>Or use the Deploy Center tab for an instant manual redeploy</li>
+        </ol>
+        <div style={{ marginTop: 12, fontSize: 11, color: '#334155' }}>
+          Each service (API, Web, Office) has its own Render build — pushing once redeploys all three simultaneously.
+        </div>
+      </Card>
+    </>
+  );
+}
+
+// ─── Sources view ─────────────────────────────────────────────────────────────
+
+function SourcesView({ status, triggerAgent, triggering }) {
+  const src = status?.sources;
+  const workers = src?.workers || [];
+
+  const statusCfg = {
+    starting: { dot: '#64748b', bg: 'rgba(148,163,184,.07)', border: 'rgba(148,163,184,.16)', label: 'Starting' },
+    healthy:  { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Healthy' },
+    fallback: { dot: '#38bdf8', bg: 'rgba(56,189,248,.08)', border: 'rgba(56,189,248,.2)', label: 'Fallback' },
+    ready:    { dot: '#22c55e', bg: 'rgba(34,197,94,.08)',  border: 'rgba(34,197,94,.18)',  label: 'Ready' },
+    degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
+    paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
+    pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
+  };
+
+  return (
+    <>
+      <h1 style={H1}>Live Sources</h1>
+      <p style={SUBTITLE}>Real-time health of all {src?.total ?? 'data'} sources, including public workers, curated fallback agents, and Pro OAuth-authenticated per-user sources.</p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
+        <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
+        <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching or fallback-backed" color="#4ade80" />
+        <StatCard icon="⏳" label="Starting"         value={src?.starting ?? '—'} sub="awaiting first fetch"       color="#94a3b8" />
+        <StatCard icon="⚠️" label="Degraded"        value={src?.degraded ?? '—'} sub="≥3 consecutive errors"     color="#fbbf24" />
+        <StatCard icon="🔴" label="Paused"           value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
+        <StatCard icon="📰" label="Total Seen"
+          value={workers.reduce((s, w) => s + (w.postCount || 0), 0).toLocaleString()}
+          sub="posts across all sources" color="#a78bfa" />
+      </div>
+
+      {workers.length === 0 ? (
+        <Card style={{ textAlign: 'center', padding: 40 }}>
+          <div style={{ fontSize: 13, color: '#475569' }}>Workers starting up... check back in a few seconds.</div>
+        </Card>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+          {workers.map(w => {
+            const cfg = statusCfg[w.status] || statusCfg.healthy;
+            const errorRate = w.fetchCount > 0 ? ((w.totalErrors / w.fetchCount) * 100).toFixed(1) : '0.0';
+            return (
+              <div key={w.id} style={{
+                background: cfg.bg, border: `1px solid ${cfg.border}`,
+                borderRadius: 10, padding: '14px 16px',
+                display: 'flex', flexDirection: 'column', gap: 8,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 20, lineHeight: 1 }}>{w.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: w.color || '#e2e8f0' }}>
+                      {w.name?.replace(' Agent', '') || w.id}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 1 }}>{w.id}</div>
+                  </div>
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 20,
+                    background: cfg.border, color: cfg.dot, textTransform: 'uppercase', letterSpacing: 0.8,
+                  }}>
+                    {cfg.label}
+                  </span>
+                  <span style={{
+                    display: 'inline-block', width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                    background: cfg.dot,
+                    boxShadow: w.status === 'healthy' ? `0 0 0 3px ${cfg.dot}33` : 'none',
+                    animation: w.status === 'healthy' ? 'pulse 2s ease-in-out infinite' : 'none',
+                  }} />
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#64748b', flexWrap: 'wrap' }}>
+                  <span>📥 <strong style={{ color: '#e2e8f0' }}>{(w.postCount || 0).toLocaleString()}</strong> posts</span>
+                  <span>🔄 <strong style={{ color: '#e2e8f0' }}>{(w.fetchCount || 0).toLocaleString()}</strong> fetches</span>
+                  <span>❌ <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong> err</span>
+                </div>
+
+                {w.isConnectedSource ? (
+                  <div style={{ fontSize: 10, color: '#22c55e', padding: '4px 8px', background: 'rgba(34,197,94,.06)', borderRadius: 4 }}>
+                    Connected-account source — live requests run when a user connects this account.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 10, color: '#475569' }}>
+                      <span>{w.lastSuccess ? `Last ok: ${fmtAgo(w.lastSuccess)}` : 'No successful fetch yet'}</span>
+                      <button
+                        onClick={() => triggerAgent(w.id)}
+                        disabled={triggering[w.id]}
+                        style={{
+                          fontSize: 10, fontWeight: 600, padding: '3px 10px', borderRadius: 5, border: 'none', cursor: 'pointer',
+                          background: w.paused ? 'rgba(239,68,68,.15)' : 'rgba(59,130,246,.1)',
+                          color: w.paused ? '#f87171' : '#60a5fa',
+                        }}
+                      >
+                        {triggering[w.id] ? '...' : w.paused ? '↺ Reset' : '▶ Run'}
+                      </button>
+                    </div>
+                    {w.paused && (
+                      <div style={{ fontSize: 10, color: '#f87171', padding: '4px 8px', background: 'rgba(239,68,68,.06)', borderRadius: 4 }}>
+                        ⏸ Paused — {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── App (root) ───────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [view, setView] = useState('overview');
+  const [status, setStatus] = useState(null);
+  const [agents, setAgents] = useState({});
+  const [log, setLog] = useState([]);
+  const [deploying, setDeploying] = useState({});
+  const [triggering, setTriggering] = useState({});
+  const [versions, setVersions] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const sseRef = useRef(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/office/status`);
+      if (r.ok) setStatus(await r.json());
+    } catch {}
+  }, []);
+
+  const fetchAgents = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/office/agents`);
+      if (r.ok) { const d = await r.json(); setAgents(d.agents); }
+    } catch {}
+  }, []);
+
+  const fetchVersions = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/office/versions`);
+      if (r.ok) setVersions(await r.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchStatus();
+    fetchAgents();
+    fetchVersions();
+    const t1 = setInterval(fetchStatus,  8000);
+    const t2 = setInterval(fetchAgents, 15000);
+    return () => { clearInterval(t1); clearInterval(t2); };
+  }, [fetchStatus, fetchAgents, fetchVersions]);
+
+  // SSE: real-time agent activity pushed from backend
+  useEffect(() => {
+    let retryTimeout;
+    const connect = () => {
+      const es = new EventSource(`${API}/office/agents/stream`);
+      sseRef.current = es;
+      es.onopen = () => setConnected(true);
+      es.onerror = () => {
+        setConnected(false);
+        es.close();
+        retryTimeout = setTimeout(connect, 4000);
+      };
+      es.onmessage = (evt) => {
+        const data = JSON.parse(evt.data);
+        if (data.backlog) {
+          setLog(data.backlog);
+          // Seed each agent's lastAction from backlog
+          setAgents(prev => {
+            const next = { ...prev };
+            for (const entry of data.backlog) {
+              if (next[entry.agentId] && !next[entry.agentId].lastAction) {
+                next[entry.agentId] = { ...next[entry.agentId], lastAction: entry };
+              }
+            }
+            return next;
+          });
+        } else {
+          setLog(prev => [data, ...prev].slice(0, 300));
+          setAgents(prev => {
+            if (!prev[data.agentId]) return prev;
+            return {
+              ...prev,
+              [data.agentId]: {
+                ...prev[data.agentId],
+                lastAction: data,
+                logs: [data, ...(prev[data.agentId].logs || [])].slice(0, 15),
+              },
+            };
+          });
+        }
+      };
+    };
+    connect();
+    return () => { clearTimeout(retryTimeout); sseRef.current?.close(); };
+  }, []);
+
+  const triggerAgent = async (id) => {
+    setTriggering(prev => ({ ...prev, [id]: true }));
+    try { await fetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' }); } catch {}
+    setTimeout(() => setTriggering(prev => ({ ...prev, [id]: false })), 2000);
+  };
+
+  const triggerDeploy = async (service) => {
+    setDeploying(prev => ({ ...prev, [service]: true }));
+    try { await fetch(`${API}/office/deploy/${service}`, { method: 'POST' }); } catch {}
+    setTimeout(() => setDeploying(prev => ({ ...prev, [service]: false })), 5000);
+  };
+
+  const nav = [
+    { id: 'overview', label: 'Overview',     icon: '◉' },
+    { id: 'sources',  label: 'Live Sources', icon: '🌐' },
+    { id: 'agents',   label: 'Agents',        icon: '⬡' },
+    { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
+    { id: 'versions', label: 'Versions',      icon: '≡' },
+  ];
+
+  return (
+    <>
+      <style>{`
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #080810; color: #e2e8f0; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        a { text-decoration: none; }
+      `}</style>
+
+      <div style={{
+        display: 'flex', minHeight: '100vh',
+        background: '#080810', color: '#e2e8f0',
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+      }}>
+        {/* ── Sidebar ── */}
+        <aside style={{
+          width: 224, flexShrink: 0,
+          background: '#08080f',
+          borderRight: '1px solid rgba(255,255,255,.06)',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          <div style={{ padding: '26px 20px 18px' }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
+              UFIConnect
+            </div>
+            <div style={{ fontSize: 10, color: '#334155', marginTop: 2, textTransform: 'uppercase', letterSpacing: 1.2 }}>
+              Operations Office
+            </div>
+          </div>
+
+          <nav style={{ flex: 1 }}>
+            {nav.map(({ id, label, icon }) => {
+              const active = view === id;
+              return (
+                <button
+                  key={id}
+                  onClick={() => setView(id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                    padding: '11px 20px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    fontSize: 13, fontWeight: active ? 700 : 400,
+                    background: active ? 'rgba(59,130,246,.1)' : 'transparent',
+                    color: active ? '#60a5fa' : '#64748b',
+                    borderRight: `2px solid ${active ? '#3b82f6' : 'transparent'}`,
+                    transition: 'color .15s, background .15s',
+                  }}
+                >
+                  <span style={{ fontSize: 16, opacity: active ? 1 : 0.7 }}>{icon}</span>
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+              <Dot ok={connected} pulse={connected} />
+              <span style={{ fontSize: 11, color: '#475569' }}>
+                {connected ? 'Live stream active' : 'Reconnecting...'}
+              </span>
+            </div>
+            <a
+              href="https://uficonnect.org"
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 10, color: '#334155', display: 'block', marginBottom: 2 }}
+            >
+              uficonnect.org ↗
+            </a>
+            <a
+              href="https://uficonnect-api.onrender.com/health"
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 10, color: '#334155', display: 'block' }}
+            >
+              api health ↗
+            </a>
+          </div>
+        </aside>
+
+        {/* ── Main content ── */}
+        <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
+          {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
+          {view === 'versions' && <VersionsView versions={versions} />}
+        </main>
+      </div>
+    </>
+  );
+}

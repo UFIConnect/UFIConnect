@@ -4,7 +4,7 @@ import axios from 'axios';
 // In production: VITE_API_URL points directly to the backend (no /api prefix needed)
 const baseURL = import.meta.env.VITE_API_URL || '/api';
 
-const client = axios.create({ baseURL });
+const client = axios.create({ baseURL, timeout: 30000 });
 
 // Attach JWT token from localStorage on every request
 client.interceptors.request.use((config) => {

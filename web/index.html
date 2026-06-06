@@ -3,14 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icon-192.png" />
+    <meta name="application-name" content="UFIConnect" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#6366F1" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="UFIConnect" />
 
     <!-- Primary meta -->
     <title>UFIConnect — Professional Networking, News & Communities (LinkedIn Alternative)</title>
     <meta name="description" content="UFIConnect is a clean, ad-free professional network to connect with engineers, designers, founders, and creatives. Join communities, discover news, explore job listings, and network without algorithms. Unlike LinkedIn, Facebook Groups, and Twitter — truly professional." />
     <meta name="keywords" content="professional network, networking platform, connect with professionals, career networking, tech community, engineers, designers, founders, creatives, job listings, opportunities, remote jobs, professional communities, news feed, technology news, LinkedIn alternative, professional networking app, career opportunities, tech careers, startup community, developer network, UX design community, product managers network, marketing professionals, business networking, online communities, professional connection, networking events, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, business professionals, job marketplace, talent network" />
     <meta name="author" content="UFIConnect" />
-    <link rel="canonical" href="https://uficonnect.org" />
+    <link rel="canonical" href="https://uficonnect.org/" />
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
@@ -18,6 +28,7 @@
     <meta property="og:title" content="UFIConnect — Connect with Professionals, No Ads" />
     <meta property="og:description" content="Professional networking without algorithms. Connect with engineers, designers, founders, and creatives. Explore communities, job opportunities, and industry news tailored to your career." />
     <meta property="og:image" content="https://uficonnect.org/og-image.png" />
+    <meta property="og:image:alt" content="UFIConnect professional networking app preview" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:site_name" content="UFIConnect" />
@@ -54,45 +65,175 @@
     <meta name="language" content="English" />
     <meta name="revisit-after" content="7 days" />
 
-    <!-- JSON-LD structured data -->
+    <!-- Search engine verifications -->
+    <meta name="google-site-verification" content="b2389e02302caba3" />
+    <!-- Add Bing Webmaster Tools verification once the real token is issued. -->
+
+    <!-- JSON-LD: WebSite with SearchAction -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "WebSite",
       "name": "UFIConnect",
+      "alternateName": ["UFI", "UFI Connect", "UFIConnect Network"],
       "url": "https://uficonnect.org",
-      "description": "Professional networking platform for engineers, designers, founders and creatives. No ads, no algorithms.",
+      "description": "UFIConnect (UFI) is a free professional networking platform for engineers, designers, founders, and creators. No ads.",
       "potentialAction": {
         "@type": "SearchAction",
-        "target": "https://uficonnect.org/groups?search={search_term_string}",
+        "target": "https://uficonnect.org/search?q={search_term_string}",
         "query-input": "required name=search_term_string"
-      },
-      "sameAs": []
+      }
     }
     </script>
+
+    <!-- JSON-LD: Organization -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "Organization",
       "name": "UFIConnect",
+      "alternateName": ["UFI", "UFI Connect"],
       "url": "https://uficonnect.org",
-      "logo": "https://uficonnect.org/favicon.svg",
-      "description": "Clean professional networking for tech professionals — engineers, designers, founders, and creatives.",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://uficonnect.org/icon-512.png",
+        "width": 512,
+        "height": 512
+      },
+      "description": "UFIConnect is a free professional network for engineers, designers, founders, creators, and professionals across every industry.",
       "foundingDate": "2025",
       "contactPoint": {
         "@type": "ContactPoint",
         "contactType": "customer support",
+        "email": "support@uficonnect.org",
         "url": "https://uficonnect.org"
       }
     }
     </script>
 
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "UFIConnect",
+      "alternateName": "UFI",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web, Android, iOS",
+      "url": "https://uficonnect.org",
+      "description": "UFIConnect (UFI) is a free professional networking app for engineers, designers, founders, and creators. Personalised feed, 80+ communities, and real job listings.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "Personalised professional feed",
+        "80+ live communities",
+        "Real job listings and opportunities",
+        "No ads",
+        "Free to join"
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: FAQ (powers 'People also ask' in Google) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is UFIConnect?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "UFIConnect (often called UFI) is a free professional networking platform for engineers, designers, founders, creators, and professionals across all industries. It offers personalised content feeds, 80+ communities, real job listings, and direct messaging — with no ads."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does UFI stand for?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "In the context of this platform, UFI stands for UFIConnect, a free professional networking community available at uficonnect.org."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is UFIConnect free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes, UFIConnect is completely free to join and use. There are no subscription fees, no ads, and no paywalls. Simply register at uficonnect.org to get started."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is UFIConnect different from LinkedIn?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "UFIConnect has no ads, no sponsored posts, and no algorithm manipulation. Your feed is personalised purely by your role and interests, not by who paid the most. It also aggregates content from Reddit, GitHub, HackerNews, YouTube, and 15+ other sources in one place."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Who is UFIConnect for?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "UFIConnect is built for engineers, software developers, designers, founders, product managers, marketers, data scientists, healthcare professionals, educators, athletes, musicians, chefs, and anyone building a professional career."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <!-- GitHub Pages SPA path restore (pairs with public/404.html) -->
+    <script>
+      (function(l){
+        if(l.search[1]==='p'){
+          var decoded=l.search.slice(1).split('&').map(function(s){return s.replace(/~and~/g,'&')});
+          window.history.replaceState(null,null,
+            l.pathname.slice(0,-1)+(decoded[0].slice(2)||'/') +
+            (decoded[1]?'?'+decoded[1].slice(2):'') + l.hash
+          );
+        }
+      }(window.location));
+    </script>
+
+    <link rel="preload" href="/favicon.svg" as="image" type="image/svg+xml" />
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" /></noscript>
   </head>
   <body>
+    <script>
+      (function() {
+        var MAINTENANCE = true;
+        var p = window.location.pathname;
+        var q = window.location.search;
+        var bypass = p === '/hq' || p.startsWith('/hq') || q.includes('preview') || q.includes('admin');
+        if (MAINTENANCE && !bypass) {
+          document.open();
+          document.write('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Maintenance — UFIConnect</title><style>*{margin:0;padding:0;box-sizing:border-box}body{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:24px;text-align:center;color:#0f172a}.icon{font-size:3rem;margin-bottom:16px}h1{font-size:1.75rem;font-weight:700;margin-bottom:12px}p{font-size:1rem;color:#64748b;max-width:400px;line-height:1.6;margin-bottom:32px}.badge{display:inline-flex;align-items:center;gap:8px;padding:10px 20px;border-radius:24px;background:#6366f1;color:#fff;font-size:.875rem;font-weight:600}.dot{width:8px;height:8px;border-radius:50%;background:#fff;opacity:.7;animation:pulse 1.5s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:.7}50%{opacity:1}}</style></head><body><div class="icon">🔧</div><h1>We\'re making improvements</h1><p>UFIConnect is temporarily offline while we polish a few things. We\'ll be back shortly — thanks for your patience.</p><div class="badge"><span class="dot"></span>Coming back soon</div></body></html>');
+          document.close();
+        }
+      })();
+    </script>
+    <noscript>
+      <main style="font-family: Inter, Arial, sans-serif; max-width: 760px; margin: 48px auto; padding: 0 24px; line-height: 1.6; color: #0f172a;">
+        <h1>UFIConnect</h1>
+        <p>UFIConnect is a free, ad-free professional network for building a profile, finding people, joining communities, messaging, posting, and discovering real opportunities.</p>
+        <p>
+          <a href="/register">Create an account</a> ·
+          <a href="/search">Find people and communities</a> ·
+          <a href="/groups">Browse groups</a> ·
+          <a href="/opportunities">View opportunities</a>
+        </p>
+      </main>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>

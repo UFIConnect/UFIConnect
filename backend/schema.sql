@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
   name            VARCHAR(100)  NOT NULL,
   email           VARCHAR(255)  UNIQUE NOT NULL,
   password_hash   VARCHAR(255)  NOT NULL,
+  auth_provider   VARCHAR(50)   DEFAULT 'local',
+  auth_subject    VARCHAR(255),
   title           VARCHAR(200),
   bio             TEXT,
   organization    VARCHAR(200),
@@ -116,6 +118,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_conn_requester  ON connections(requester_id);
 CREATE INDEX IF NOT EXISTS idx_conn_target     ON connections(target_id);
 CREATE INDEX IF NOT EXISTS idx_users_email     ON users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_auth_subject
+  ON users(auth_provider, auth_subject)
+  WHERE auth_subject IS NOT NULL;
 
 -- ── Auto-update updated_at ────────────────────────────────────
 CREATE OR REPLACE FUNCTION set_updated_at()

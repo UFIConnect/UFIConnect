@@ -1,12 +1,16 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
-  { to: '/groups',        icon: '🔍', label: 'Discover'     },
+  { to: '/post',          icon: '✏️', label: 'Posts'        },
+  { to: '/search',        icon: '🔍', label: 'Search'       },
+  { to: '/messages',      icon: '💬', label: 'Messages'     },
+  { to: '/groups',        icon: '🌐', label: 'Groups'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
+  { to: '/sources',       icon: '📡', label: 'Sources'      },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
-  { to: '/settings',      icon: '⚙️', label: 'Settings'     },
 ];
 
 function initials(name = '') {
@@ -16,6 +20,7 @@ function initials(name = '') {
 export default function Layout({ children }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
+  const { canInstall, installed, triggerInstall } = useInstallPrompt();
 
   function handleLogout() {
     logout();
@@ -45,6 +50,33 @@ export default function Layout({ children }) {
           ))}
         </nav>
 
+        {canInstall && (
+          <button
+            onClick={triggerInstall}
+            style={{
+              margin: '0 12px 12px',
+              padding: '10px 16px',
+              borderRadius: 12,
+              border: '1.5px solid #6366F1',
+              background: 'linear-gradient(135deg,#6366F1,#818CF8)',
+              color: '#fff',
+              fontWeight: 700,
+              fontSize: '.82rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              boxShadow: '0 2px 8px rgba(99,102,241,.25)',
+              transition: 'transform .1s,box-shadow .1s',
+            }}
+            onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+            onMouseOut={e => e.currentTarget.style.transform = ''}
+          >
+            <span style={{ fontSize: '1rem' }}>⬇</span>
+            Get App
+          </button>
+        )}
+
         {profile && (
           <div className="sidebar-user">
             <div className="avatar avatar-sm">{initials(profile.name)}</div>
@@ -54,7 +86,12 @@ export default function Layout({ children }) {
                 {profile.preferences?.role || profile.title || 'Member'}
               </div>
             </div>
-            <button className="sidebar-logout" onClick={handleLogout} title="Log out">⎋</button>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <NavLink to="/settings" title="Settings">
+                <button className="sidebar-logout" title="Settings" style={{ fontSize: '1rem' }}>⚙️</button>
+              </NavLink>
+              <button className="sidebar-logout" onClick={handleLogout} title="Log out">⎋</button>
+            </div>
           </div>
         )}
       </aside>
