@@ -3353,7 +3353,7 @@ function addAndBroadcast(incoming) {
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
-  savePostsToDB(fresh).catch(() => {});
+  if (db.isConnected()) savePostsToDB(fresh).catch(() => {});
   return fresh.length;
 }
 
@@ -4263,10 +4263,12 @@ async function refreshGlobalFeedCache() {
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
-      // Persist to DB in background
-      savePostsToDB(all).then(n => {
-        if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
-      }).catch(() => {});
+      // Persist to DB in background (only if connected)
+      if (db.isConnected()) {
+        savePostsToDB(all).then(n => {
+          if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
+        }).catch(() => {});
+      }
     }
   } catch (e) {
     console.warn('globalFeedCache refresh error:', e.message);
@@ -4776,7 +4778,7 @@ async function runWebStorageSubAgent() {
     const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
-    const saved = await savePostsToDBFast(hotPosts) || 0;
+    const saved = db.isConnected() ? (await savePostsToDBFast(hotPosts) || 0) : 0;
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
@@ -7339,7 +7341,7 @@ app.get('/feed', authenticate, async (req, res) => {
       timeRange,
     });
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
-    savePostsToDB(livePosts).catch(() => {});
+    if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
     const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
