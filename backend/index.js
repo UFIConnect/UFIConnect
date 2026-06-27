@@ -3466,6 +3466,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
             fullCyclesEmpty = 0;
             emptyTopicsThisCycle = 0;
             health.consecutiveErrors = 0;
+            updateAgentStatus(agentId);
           } else {
             emptyTopicsThisCycle++;
           }
@@ -3474,6 +3475,8 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           health.totalErrors++;
           health.lastError = err?.message || String(err);
           emptyTopicsThisCycle++;
+          updateAgentStatus(agentId);
+          console.warn(`[${agentId}] Error fetching ${topic}: ${health.lastError}`);
         }
       }
 
@@ -3487,8 +3490,10 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
             health.paused    = true;
             health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
+            updateAgentStatus(agentId);
+            const fallbacks = getFallbackAgents(agentId);
             logAgentAction(agentId, '⚠️',
-              `Circuit breaker tripped — ${agentId} paused 5min (${fullCyclesEmpty} empty cycles)`, '#F87171');
+              `Circuit breaker tripped — paused 5min (${fullCyclesEmpty} empty cycles). Fallback: ${fallbacks.slice(0, 2).join(', ')}`, '#F87171');
           }
         } else {
           fullCyclesEmpty = 0;
@@ -3713,6 +3718,59 @@ function findPostById(postId) {
 
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
+
+// Agent status tracking and fallback mechanism
+const agentStatusMap = new Map();
+function updateAgentStatus(agentId) {
+  const health = workerHealth.get(agentId);
+  if (!health) return;
+
+  // Determine status based on health metrics
+  if (health.paused) {
+    agentStatusMap.set(agentId, {
+      status: 'paused',
+      lastError: health.lastError,
+      consecutiveErrors: health.consecutiveErrors,
+      pausedUntil: health.pauseUntil,
+    });
+  } else if (health.consecutiveErrors >= 5) {
+    agentStatusMap.set(agentId, {
+      status: 'degraded',
+      lastError: health.lastError,
+      consecutiveErrors: health.consecutiveErrors,
+    });
+  } else if (health.lastSuccess && Date.now() - health.lastSuccess > 30 * 60 * 1000) {
+    agentStatusMap.set(agentId, {
+      status: 'stale',
+      lastSuccess: health.lastSuccess,
+      lastError: health.lastError,
+    });
+  } else {
+    agentStatusMap.set(agentId, {
+      status: 'healthy',
+      lastSuccess: health.lastSuccess,
+      fetchCount: health.fetchCount,
+    });
+  }
+}
+
+// Fallback agents for when primary agents degrade
+const AGENT_FALLBACKS = {
+  reddit: ['hackernews', 'github', 'devto'],
+  hackernews: ['reddit', 'github', 'bluesky'],
+  github: ['hackernews', 'gitlab', 'devto'],
+  devto: ['medium', 'hashnode', 'github'],
+  medium: ['devto', 'hashnode', 'techcrunch'],
+  youtube: ['devto', 'github', 'medium'],
+  mastodon: ['bluesky', 'reddit', 'hackernews'],
+  bluesky: ['mastodon', 'hackernews', 'reddit'],
+  stackoverflow: ['github', 'devto', 'hashnode'],
+  arxiv: ['github', 'devto', 'medium'],
+};
+
+function getFallbackAgents(agentId) {
+  return AGENT_FALLBACKS[agentId] || [];
+}
 
 const MB = 1024 * 1024;
 
@@ -8881,12 +8939,42 @@ app.get('/office/website-optimizer', (_req, res) => {
 });
 
 app.get('/hq/status', (req, res) => {
+  // Build agent health summary
+  const agentHealth = [];
+  for (const [agentId, health] of workerHealth.entries()) {
+    const status = agentStatusMap.get(agentId) || { status: 'unknown' };
+    const def = AGENT_DEFS[agentId];
+    const fallbacks = getFallbackAgents(agentId);
+    agentHealth.push({
+      id: agentId,
+      name: def?.name || agentId,
+      status: status.status,
+      fetchCount: health.fetchCount,
+      consecutiveErrors: health.consecutiveErrors,
+      totalErrors: health.totalErrors,
+      lastSuccess: health.lastSuccess,
+      lastError: health.lastError,
+      paused: health.paused,
+      pausedUntil: health.pauseUntil,
+      fallbacks: fallbacks.slice(0, 3),
+    });
+  }
+
+  const degradedAgents = agentHealth.filter(a => a.status === 'degraded' || a.status === 'paused');
+  const healthyAgents = agentHealth.filter(a => a.status === 'healthy');
+
   res.json({
     agentLog:     agentActionLog,
     feedPostCount: realFeedPosts(globalFeedCache.posts).length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
     agentsActive: Object.keys(AGENT_DEFS).length,
+    agentHealth: {
+      total: agentHealth.length,
+      healthy: healthyAgents.length,
+      degraded: degradedAgents.length,
+      agents: agentHealth,
+    },
     stability: refreshControl,
     refreshQueue: {
       running: sourceRefreshQueue.running,

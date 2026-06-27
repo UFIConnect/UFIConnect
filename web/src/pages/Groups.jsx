@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
@@ -36,6 +36,28 @@ const PLATFORM_META = {
   uficonnect:  { icon: '🌐', label: 'UFIConnect',    color: '#6366F1' },
 };
 
+function debounce(fn, delay) {
+  let timeoutId;
+  return function(...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}
+
+function GroupSkeleton() {
+  return (
+    <div className="card group-card" style={{ marginBottom: 12, opacity: 0.6 }}>
+      <div style={{ height: 16, borderRadius: 4, background: 'var(--border)', marginBottom: 12, width: '40%', animation: 'pulse 2s ease-in-out infinite' }} />
+      <div style={{ height: 12, borderRadius: 4, background: 'var(--border)', marginBottom: 8, animation: 'pulse 2s ease-in-out infinite' }} />
+      <div style={{ height: 12, borderRadius: 4, background: 'var(--border)', marginBottom: 12, width: '70%', animation: 'pulse 2s ease-in-out infinite' }} />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}>
+        <div style={{ height: 10, borderRadius: 4, background: 'var(--border)', width: '30%', animation: 'pulse 2s ease-in-out infinite' }} />
+        <div style={{ height: 24, borderRadius: 4, background: 'var(--border)', width: '20%', animation: 'pulse 2s ease-in-out infinite' }} />
+      </div>
+    </div>
+  );
+}
+
 export default function Groups() {
   const navigate = useNavigate();
 
@@ -58,27 +80,53 @@ function GroupsContent() {
   const [joined,      setJoined]      = useState(new Set());
   const [categories,  setCategories]  = useState([]);
   const [filter,      setFilter]      = useState('all');
+  const [searchInput, setSearchInput] = useState('');
   const [search,      setSearch]      = useState('');
   const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
 
+  const searchRef = useRef('');
+
+  // Debounced search
+  const debouncedSearch = useMemo(
+    () => debounce((query) => {
+      searchRef.current = query.trim();
+      setSearch(query.trim());
+    }, 400),
+    []
+  );
+
   function loadGroups(bust = false) {
-    if (bust) setRefreshing(true); else setLoading(true);
-    const groupUrl = bust ? '/groups?bust=1' : '/groups';
+    if (bust) setRefreshing(true);
+    else setLoading(true);
+    setError(false);
+
     Promise.all([
-      client.get(groupUrl),
+      client.get(bust ? '/groups?bust=1' : '/groups'),
       client.get('/groups/categories'),
       client.get('/profile'),
-    ]).then(([gRes, cRes, pRes]) => {
-      setGroups(gRes.data.groups || []);
-      setCategories(cRes.data.categories || []);
-      setJoined(new Set(pRes.data.joinedGroups || []));
-      setLastRefresh(new Date());
-    }).catch(console.error).finally(() => { setLoading(false); setRefreshing(false); });
+    ])
+      .then(([gRes, cRes, pRes]) => {
+        setGroups(gRes.data.groups || []);
+        setCategories(cRes.data.categories || []);
+        setJoined(new Set(pRes.data.joinedGroups || []));
+        setLastRefresh(new Date());
+      })
+      .catch(err => {
+        console.error('Failed to load groups:', err);
+        setError(true);
+      })
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+      });
   }
 
-  useEffect(() => { loadGroups(); }, []);
+  useEffect(() => {
+    loadGroups();
+  }, []);
 
   async function handleJoin(e, groupId) {
     e.stopPropagation();
@@ -86,141 +134,428 @@ function GroupsContent() {
     try {
       if (isJoined) {
         await client.delete(`/groups/${groupId}/join`);
-        setJoined((prev) => { const s = new Set(prev); s.delete(groupId); return s; });
-        setGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, members: g.members - 1 } : g));
+        setJoined((prev) => {
+          const s = new Set(prev);
+          s.delete(groupId);
+          return s;
+        });
+        setGroups((prev) =>
+          prev.map((g) =>
+            g.id === groupId ? { ...g, members: Math.max(0, g.members - 1) } : g
+          )
+        );
       } else {
         await client.post(`/groups/${groupId}/join`);
         setJoined((prev) => new Set([...prev, groupId]));
-        setGroups((prev) => prev.map((g) => g.id === groupId ? { ...g, members: g.members + 1 } : g));
+        setGroups((prev) =>
+          prev.map((g) =>
+            g.id === groupId ? { ...g, members: g.members + 1 } : g
+          )
+        );
       }
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      console.error('Failed to join/leave group:', err);
+    }
   }
 
   const q = search.trim().toLowerCase();
-  const byFilter = filter === 'all' ? groups : groups.filter((g) => g.category === filter);
+  const byFilter =
+    filter === 'all' ? groups : groups.filter((g) => g.category === filter);
   const displayed = q
-    ? byFilter.filter(g =>
-        (g.name || '').toLowerCase().includes(q) ||
-        (g.description || '').toLowerCase().includes(q) ||
-        (g.category || '').toLowerCase().includes(q)
+    ? byFilter.filter(
+        (g) =>
+          (g.name || '').toLowerCase().includes(q) ||
+          (g.description || '').toLowerCase().includes(q) ||
+          (g.category || '').toLowerCase().includes(q)
       )
     : byFilter;
 
   return (
     <Layout>
-      <div className="page-header" style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+      <div
+        className="page-header"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
         <div style={{ flex: 1 }}>
           <h1 className="page-title">Discover Groups</h1>
         </div>
         <button
           className="btn btn-ghost btn-sm"
+          aria-label="Refresh groups"
           onClick={() => loadGroups(true)}
           disabled={refreshing}
-          style={{ marginTop: 4, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+          style={{
+            marginTop: 0,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
         >
-          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 1s linear infinite' : 'none' }}>↻</span>
+          <span
+            style={{
+              display: 'inline-block',
+              animation: refreshing ? 'spin 1s linear infinite' : 'none',
+            }}
+          >
+            ↻
+          </span>
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
+      {/* Error state */}
+      {error && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: 12,
+            marginBottom: 16,
+            background: '#FEE2E2',
+            color: '#991B1B',
+            fontSize: '.85rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}
+        >
+          <span>⚠️</span>
+          <span>
+            Failed to load groups.{' '}
+            <button
+              onClick={() => loadGroups()}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#991B1B',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                fontWeight: 600,
+              }}
+            >
+              Retry
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* Search bar */}
-      <div style={{ marginBottom: 14, position: 'relative', maxWidth: 480 }}>
-        <span style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', fontSize: '.9rem', opacity: 0.45, pointerEvents: 'none' }}>🔍</span>
-        <input
-          className="form-input"
-          placeholder="Search groups by name, category, or keyword…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ paddingLeft: 38, borderRadius: 22, padding: '9px 16px 9px 38px', fontSize: '.875rem' }}
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => setSearch('')}
-            style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}
-          >×</button>
-        )}
+      <div style={{ marginBottom: 16, position: 'relative' }}>
+        <div style={{ position: 'relative' }}>
+          <span
+            style={{
+              position: 'absolute',
+              left: 13,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              fontSize: '1rem',
+              pointerEvents: 'none',
+              opacity: 0.5,
+            }}
+          >
+            🔍
+          </span>
+          <input
+            className="form-input"
+            placeholder="Search groups by name, category, or keyword…"
+            value={searchInput}
+            onChange={(e) => {
+              setSearchInput(e.target.value);
+              debouncedSearch(e.target.value);
+            }}
+            style={{
+              paddingLeft: 40,
+              borderRadius: 22,
+              fontSize: '.875rem',
+            }}
+            aria-label="Search groups"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => {
+                setSearchInput('');
+                searchRef.current = '';
+                setSearch('');
+              }}
+              style={{
+                position: 'absolute',
+                right: 12,
+                top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '1.2rem',
+                color: 'var(--muted)',
+                padding: 0,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Category filter */}
-      <div className="filter-bar" style={{ flexWrap: 'wrap' }}>
-        <button className={`filter-btn${filter === 'all' ? ' active' : ''}`} onClick={() => setFilter('all')}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          overflowX: 'auto',
+          marginBottom: 16,
+          paddingBottom: 4,
+          scrollbarWidth: 'none',
+        }}
+      >
+        <button
+          className={`filter-btn${filter === 'all' ? ' active' : ''}`}
+          onClick={() => setFilter('all')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            flexShrink: 0,
+            padding: '7px 14px',
+            borderRadius: 20,
+            fontWeight: filter === 'all' ? 700 : 500,
+            fontSize: '.8rem',
+            border: `1.5px solid ${filter === 'all' ? 'var(--primary)' : 'var(--border)'}`,
+            background:
+              filter === 'all' ? 'var(--primary)' : 'var(--surface)',
+            color: filter === 'all' ? '#fff' : 'var(--text)',
+            cursor: 'pointer',
+          }}
+        >
           All
         </button>
-        {categories.map((cat) => (
-          <button
-            key={cat}
-            className={`filter-btn${filter === cat ? ' active' : ''}`}
-            onClick={() => setFilter(cat)}
-          >
-            {CATEGORY_META[cat]?.icon} {cat}
-          </button>
-        ))}
+        {categories.map((cat) => {
+          const meta = CATEGORY_META[cat];
+          const isActive = filter === cat;
+          return (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                flexShrink: 0,
+                padding: '7px 14px',
+                borderRadius: 20,
+                fontWeight: isActive ? 700 : 500,
+                fontSize: '.8rem',
+                border: `1.5px solid ${isActive ? meta?.text || 'var(--primary)' : 'var(--border)'}`,
+                background: isActive
+                  ? meta?.bg || 'var(--surface)'
+                  : 'var(--surface)',
+                color: isActive ? meta?.text || 'var(--primary)' : 'var(--text)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {meta?.icon} {cat}
+            </button>
+          );
+        })}
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <span className="spinner spinner-primary" />
+      {/* Loading state */}
+      {loading && (
+        <div>
+          <div
+            style={{
+              marginBottom: 12,
+              color: 'var(--muted)',
+              fontSize: '.85rem',
+              fontWeight: 600,
+            }}
+          >
+            Loading groups…
+          </div>
+          <GroupSkeleton />
+          <GroupSkeleton />
+          <GroupSkeleton />
         </div>
-      ) : (
-        <>
-          <p style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 12 }}>
-            {displayed.length} public communit{displayed.length !== 1 ? 'ies' : 'y'}
+      )}
+
+      {/* Content */}
+      {!loading && !error && displayed.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-icon">🔍</div>
+          <div className="empty-title">
+            {search ? 'No groups found' : 'No groups in this category'}
+          </div>
+          <div className="empty-desc">
+            {search ? (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => {
+                  setSearchInput('');
+                  searchRef.current = '';
+                  setSearch('');
+                }}
+              >
+                Clear search
+              </button>
+            ) : (
+              <>Try a different category or search for something specific.</>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Groups grid */}
+      {!loading && !error && displayed.length > 0 && (
+        <div>
+          <p
+            style={{
+              fontSize: '.8rem',
+              color: 'var(--muted)',
+              marginBottom: 16,
+              fontWeight: 500,
+            }}
+          >
+            {displayed.length} public communit
+            {displayed.length !== 1 ? 'ies' : 'y'}
           </p>
           <div className="groups-grid">
             {displayed.map((group) => {
-              const meta    = CATEGORY_META[group.category] || { icon: '📌', bg: '#F1F5F9', text: '#64748B' };
-              const isJoin  = joined.has(group.id);
-              const platMeta = group.platform ? PLATFORM_META[group.platform] : null;
+              const meta = CATEGORY_META[group.category] || {
+                icon: '📌',
+                bg: '#F1F5F9',
+                text: '#64748B',
+              };
+              const isJoined = joined.has(group.id);
+              const platMeta = group.platform
+                ? PLATFORM_META[group.platform]
+                : null;
 
               return (
                 <div
                   key={group.id}
                   className="card group-card"
-                  onClick={() => group.isExternal
-                    ? window.open(group.externalUrl, '_blank', 'noopener,noreferrer')
-                    : navigate(`/groups/${group.id}`)
+                  onClick={() =>
+                    group.isExternal
+                      ? window.open(
+                          group.externalUrl,
+                          '_blank',
+                          'noopener,noreferrer'
+                        )
+                      : navigate(`/groups/${group.id}`)
                   }
                   style={{ cursor: 'pointer', position: 'relative' }}
                 >
-                  {/* Origin badge — always shown */}
+                  {/* Origin badge */}
                   {(() => {
                     const origin = group.isExternal
-                      ? (platMeta || PLATFORM_META.uficonnect)
+                      ? platMeta || PLATFORM_META.uficonnect
                       : PLATFORM_META.uficonnect;
                     return (
-                      <div style={{
-                        position: 'absolute', top: 10, right: 10,
-                        fontSize: '.65rem', fontWeight: 700,
-                        color: origin.color, background: `${origin.color}18`,
-                        padding: '2px 7px', borderRadius: 4,
-                        display: 'flex', alignItems: 'center', gap: 3,
-                      }}>
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 10,
+                          right: 10,
+                          fontSize: '.65rem',
+                          fontWeight: 700,
+                          color: origin.color,
+                          background: `${origin.color}18`,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
                         {origin.icon} {origin.label}
                       </div>
                     );
                   })()}
 
-                  <div className="group-card-header">
-                    <span className="group-icon">{meta.icon}</span>
+                  {/* Header */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 10,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '2rem',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {meta.icon}
+                    </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="group-name" style={{ paddingRight: group.isExternal ? 80 : 0 }}>
+                      <h3
+                        style={{
+                          fontSize: '.95rem',
+                          fontWeight: 700,
+                          margin: '0 0 4px',
+                          lineHeight: 1.3,
+                          paddingRight: group.isExternal ? 80 : 0,
+                          color: 'var(--text)',
+                        }}
+                      >
                         {group.name}
-                      </div>
+                      </h3>
                       <span
-                        className="group-category-badge"
-                        style={{ background: meta.bg, color: meta.text }}
+                        style={{
+                          display: 'inline-block',
+                          fontSize: '.7rem',
+                          fontWeight: 700,
+                          background: meta.bg,
+                          color: meta.text,
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                        }}
                       >
                         {group.category}
                       </span>
                     </div>
                   </div>
 
-                  <p className="group-desc">{group.description}</p>
+                  {/* Description */}
+                  <p
+                    style={{
+                      fontSize: '.85rem',
+                      lineHeight: 1.5,
+                      margin: '0 0 10px',
+                      color: 'var(--text)',
+                    }}
+                  >
+                    {group.description}
+                  </p>
 
-                  <div className="group-footer">
-                    <span className="group-members">
-                      👥 {group.members?.toLocaleString()} members
+                  {/* Footer */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      paddingTop: 10,
+                      borderTop: '1px solid var(--border)',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: '.75rem',
+                        color: 'var(--muted)',
+                        fontWeight: 500,
+                      }}
+                    >
+                      👥 {group.members?.toLocaleString() || 0}
                     </span>
                     {group.isExternal ? (
                       <a
@@ -229,16 +564,26 @@ function GroupsContent() {
                         rel="noopener noreferrer"
                         onClick={(e) => e.stopPropagation()}
                         className="btn btn-sm btn-outline"
-                        style={{ borderColor: platMeta?.color || 'var(--primary)', color: platMeta?.color || 'var(--primary)' }}
+                        style={{
+                          borderColor: platMeta?.color || 'var(--primary)',
+                          color: platMeta?.color || 'var(--primary)',
+                        }}
                       >
                         Visit →
                       </a>
                     ) : (
                       <button
-                        className={`btn btn-sm${isJoin ? ' btn-ghost' : ' btn-primary'}`}
+                        className={`btn btn-sm${
+                          isJoined ? ' btn-ghost' : ' btn-primary'
+                        }`}
                         onClick={(e) => handleJoin(e, group.id)}
+                        aria-label={
+                          isJoined
+                            ? `Leave ${group.name} group`
+                            : `Join ${group.name} group`
+                        }
                       >
-                        {isJoin ? 'Joined ✓' : 'Join'}
+                        {isJoined ? '✓ Joined' : 'Join'}
                       </button>
                     )}
                   </div>
@@ -246,8 +591,26 @@ function GroupsContent() {
               );
             })}
           </div>
-        </>
+
+          {/* Last refresh info */}
+          {lastRefresh && (
+            <div
+              style={{
+                textAlign: 'center',
+                marginTop: 20,
+                fontSize: '.75rem',
+                color: 'var(--muted)',
+              }}
+            >
+              Updated {new Date(lastRefresh).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
       )}
+
+      <style>{`
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      `}</style>
     </Layout>
   );
 }
