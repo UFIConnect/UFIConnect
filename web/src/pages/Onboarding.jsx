@@ -355,6 +355,46 @@ export default function Onboarding() {
               </div>
             )}
 
+            {/* Role about section — shows selected role details */}
+            {role && role !== '__custom__' && (() => {
+              const selectedRole = filteredRoles.find(r => r.value === role) || ROLES.find(r => r.value === role) || ALL_ROLES.find(r => r.value === role);
+              return selectedRole ? (
+                <div style={{
+                  marginBottom: 16, padding: '12px 14px', borderRadius: 10,
+                  background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{ fontSize: '1.8rem' }}>{selectedRole.icon}</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
+                      {selectedRole.label}
+                    </div>
+                    <div style={{ fontSize: '.8rem', color: 'var(--primary)', opacity: 0.8, lineHeight: 1.4 }}>
+                      {selectedRole.desc}
+                    </div>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {role === '__custom__' && customRole.trim().length > 0 && (
+              <div style={{
+                marginBottom: 16, padding: '12px 14px', borderRadius: 10,
+                background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <div style={{ fontSize: '1.8rem' }}>✏️</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
+                    {customRole.trim()}
+                  </div>
+                  <div style={{ fontSize: '.8rem', color: 'var(--primary)', opacity: 0.8 }}>
+                    Custom role
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 4, marginBottom: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 4 }}>
               {filteredRoles.map(({ value, icon, label, desc }) => (
