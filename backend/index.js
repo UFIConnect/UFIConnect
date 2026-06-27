@@ -1239,50 +1239,68 @@ async function fetchRedditSub(sub, keyword) {
         { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIConnect/1.0 by /u/uficonnect' }
       );
       const posts = parseRedditJSON(data, keyword);
-      if (posts.length) return posts;
+      if (posts.length) {
+        console.log(`[Reddit] OAuth: fetched ${posts.length} posts from r/${sub}`);
+        return posts;
+      }
     } catch (e) {
       console.warn(`[Reddit] OAuth API failed for r/${sub}: ${e.message}`);
       // Clear token on auth errors so next call re-fetches it
       if (e.message.includes('401') || e.message.includes('403')) {
         _redditToken = null;
         _redditTokenExpiry = 0;
+        console.warn(`[Reddit] OAuth token invalidated due to ${e.message.match(/40[13]/)?.[0] || 'auth error'}`);
       }
     }
   }
-  // Anonymous fallback (may get 429 from Render IPs, but worth trying)
+  // Anonymous fallback with longer timeout for API
   try {
     const data = await fetchJSON(
       `https://www.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
       REDDIT_HEADERS
     );
     const posts = parseRedditJSON(data, keyword);
-    if (posts.length) return posts;
+    if (posts.length) {
+      console.log(`[Reddit] Anon: fetched ${posts.length} posts from r/${sub}`);
+      return posts;
+    }
   } catch (e) {
     console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
   }
-  // RSS fallback
+  // RSS fallback (most reliable, always works even with rate limits)
   try {
     const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
     const posts = parseRedditRSSFeed(xml, keyword);
-    if (posts.length) return posts;
+    if (posts.length) {
+      console.log(`[Reddit] RSS: fetched ${posts.length} posts from r/${sub}`);
+      return posts;
+    }
   } catch (e) {
     console.warn(`[Reddit] RSS failed for r/${sub}: ${e.message}`);
   }
+  console.warn(`[Reddit] All methods exhausted for r/${sub} (${keyword}), returning 0 posts`);
   return [];
 }
 
 async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`[Reddit] Cache hit for "${keyword}" → ${cached.length} posts`);
+    return cached;
+  }
+
+  console.log(`[Reddit] Fetching for keyword: "${keyword}"`);
 
   // If keyword looks like a raw subreddit name, fetch it directly
   const looksLikeSubreddit = /^[A-Za-z0-9_]+$/.test(keyword) && keyword.length < 30 && !TOPIC_SUBREDDITS[keyword];
   if (looksLikeSubreddit) {
+    console.log(`[Reddit] "${keyword}" looks like a subreddit, trying direct fetch`);
     const posts = await fetchRedditSub(keyword, keyword);
     if (posts.length) {
       posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setCached(key, posts);
+      console.log(`[Reddit] Direct fetch succeeded: ${posts.length} posts`);
       return posts;
     }
   }
@@ -1292,21 +1310,36 @@ async function fetchRedditByKeyword(keyword) {
     || Object.entries(TOPIC_SUBREDDITS).find(([k]) => keyword.toLowerCase().includes(k.toLowerCase()))?.[1]
     || ['programming', 'technology', 'webdev'];
 
+  console.log(`[Reddit] Fetching from ${subs.length} subreddits for "${keyword}": ${subs.join(', ')}`);
+
   const allPosts = [];
-  await Promise.allSettled(subs.map(async sub => {
-    const posts = await fetchRedditSub(sub, keyword);
-    allPosts.push(...posts);
-  }));
+  const fetchPromises = subs.map(sub =>
+    fetchRedditSub(sub, keyword)
+      .then(posts => {
+        if (posts.length) allPosts.push(...posts);
+        return posts;
+      })
+      .catch(e => {
+        console.error(`[Reddit] Unexpected error fetching r/${sub}: ${e.message}`);
+        return [];
+      })
+  );
+
+  await Promise.allSettled(fetchPromises);
 
   if (allPosts.length) {
     const seen = new Set();
     const result = allPosts
       .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    console.log(`[Reddit] Success for "${keyword}": ${result.length} posts from ${subs.length} subreddits`);
     setCached(key, result);
     return result;
   }
-  return getCached(key) || [];
+
+  const fallback = getCached(key) || [];
+  console.warn(`[Reddit] Failed to fetch fresh posts for "${keyword}" (${subs.length} subs), using stale cache (${fallback.length} posts)`);
+  return fallback;
 }
 
 // ─── News: search by keyword via Algolia ───────────────────────────────────
@@ -1485,7 +1518,10 @@ async function getRedditToken() {
   if (_redditToken && Date.now() < _redditTokenExpiry - 60_000) return _redditToken;
   const clientId = process.env.REDDIT_CLIENT_ID;
   const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
+  if (!clientId || !clientSecret) {
+    console.warn('[Reddit] OAuth credentials not set (REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET)');
+    return null;
+  }
   try {
     const body = 'grant_type=client_credentials';
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
@@ -1501,6 +1537,12 @@ async function getRedditToken() {
           'Content-Length': Buffer.byteLength(body),
         },
       }, (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let raw = '';
+          res.on('data', c => raw += c);
+          res.on('end', () => reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 100)}`)));
+          return;
+        }
         let raw = '';
         res.on('data', c => raw += c);
         res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
@@ -1510,13 +1552,13 @@ async function getRedditToken() {
       req.write(body);
       req.end();
     });
-    if (data.access_token) {
+    if (data && data.access_token) {
       _redditToken = data.access_token;
       _redditTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
       console.log(`[Reddit] OAuth token obtained, expires in ${data.expires_in}s`);
       return _redditToken;
     }
-    console.warn('[Reddit] OAuth token failed:', JSON.stringify(data).slice(0, 200));
+    console.warn('[Reddit] OAuth token response missing access_token:', JSON.stringify(data).slice(0, 200));
     return null;
   } catch (e) {
     console.warn('[Reddit] OAuth token error:', e.message);
