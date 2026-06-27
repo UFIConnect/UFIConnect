@@ -219,14 +219,27 @@ function PostText({ text }) {
 /** Video modal for non-YouTube platforms */
 function VideoModal({ post, onClose }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
+  const modalRef = useRef(null);
+
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
+    // Focus trap
+    const prev = document.activeElement;
+    if (modalRef.current) modalRef.current.focus();
+    return () => {
+      document.removeEventListener('keydown', h);
+      if (prev && prev.focus) prev.focus();
+    };
   }, [onClose]);
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${post.title || 'Post'} from ${src.label}`}
+      ref={modalRef}
+      tabIndex={-1}
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 2000,
@@ -250,7 +263,7 @@ function VideoModal({ post, onClose }) {
                 <span style={{ color: '#fff', fontSize: '2rem', marginLeft: 4 }}>▶</span>
               </div>
             </div>
-            <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         )}
         <div style={{ padding: '16px 20px 20px' }}>
@@ -547,6 +560,7 @@ function commentToFeedComment(comment) {
 /** Unified post card */
 function commentUrl(post) {
   const u = post.sourceUrl || '';
+  if (!u) return null; // No valid URL to link to
   switch (post.source) {
     case 'hackernews':   return u;
     case 'reddit':       return u;
@@ -1367,7 +1381,7 @@ export default function Feed() {
               style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
             />
             {searchInput && (
-              <button type="button" onClick={() => {
+              <button type="button" aria-label="Clear search" onClick={() => {
                 searchRef.current = '';
                 setSearchInput('');
                 setSearch('');
@@ -1400,6 +1414,8 @@ export default function Feed() {
         <div style={{ position: 'relative' }}>
           <button
             ref={filterBtnRef}
+            aria-label="Open filter panel"
+            aria-expanded={filterOpen}
             onClick={() => setFilterOpen(o => !o)}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
@@ -1639,9 +1655,9 @@ export default function Feed() {
         <>
           <FeedErrorBoundary>
           <div>
-            {displayed.map(post => (
+            {displayed.map((post, idx) => (
               <PostCard
-                key={post.id || String(Math.random())}
+                key={post.id || `temp-${idx}-${post.createdAt}`}
                 post={post}
                 onVideoOpen={setVideoPost}
                 onPostUpdated={updateFeedPost}
@@ -1665,6 +1681,9 @@ export default function Feed() {
           )}
         </>
       )}
+
+      {/* Padding to prevent sticky banner from covering content */}
+      {!profile && <div style={{ height: 70 }} />}
 
       {/* Guest sign-in sticky bottom banner */}
       {!profile && (
