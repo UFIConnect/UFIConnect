@@ -1707,19 +1707,33 @@ export default function Feed() {
       {/* Social connect prompt — logged-in users with no social accounts connected */}
       {profile && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
-          padding: '10px 14px', borderRadius: 12,
-          background: '#FFF7ED', border: '1.5px solid #FED7AA',
-          fontSize: '.82rem', fontWeight: 500, color: '#92400E',
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+          padding: '12px 16px', borderRadius: 12,
+          background: 'linear-gradient(135deg, #FFF7ED 0%, #FEF3C7 100%)',
+          border: '1.5px solid #FED7AA',
+          fontSize: '.85rem', fontWeight: 500, color: '#92400E',
+          boxShadow: '0 2px 8px rgba(234, 88, 12, 0.1)',
         }}>
-          <span style={{ fontSize: '1rem' }}>🔗</span>
-          <span>Connect your social accounts to see personalised content in your feed.</span>
-          <Link to="/connected-accounts" style={{ marginLeft: 4, fontWeight: 700, color: '#EA580C', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-            Connect accounts
+          <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>🚀</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>Personalize your feed</div>
+            <div style={{ fontSize: '.78rem', opacity: 0.9 }}>Connect social accounts to discover content tailored to your interests</div>
+          </div>
+          <Link to="/connected-accounts" style={{
+            background: '#EA580C', color: '#fff', fontWeight: 700, fontSize: '.8rem',
+            padding: '7px 14px', borderRadius: 6, textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
+            display: 'inline-block',
+            transition: 'background 0.2s'
+          }}>
+            Connect now
           </Link>
           <button
             onClick={() => setSocialBannerDismissed(true)}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#92400E', fontSize: '.9rem', opacity: 0.7, padding: '0 2px' }}
+            style={{
+              marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#92400E',
+              fontSize: '1.1rem', opacity: 0.6, padding: '0 4px', flexShrink: 0,
+              transition: 'opacity 0.2s'
+            }}
             aria-label="Dismiss"
           >×</button>
         </div>
@@ -1727,25 +1741,43 @@ export default function Feed() {
 
       {/* Last refresh time */}
       {lastRefresh && (
-        <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
-          {activeTabs.length > 0 && (
-            <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 6 }}>
-              {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
-            </span>
-          )}
-          Last updated {timeAgo(lastRefresh.toISOString())}
-          {posts.length > 0 && ` · ${posts.length.toLocaleString()} post${posts.length !== 1 ? 's' : ''} loaded`}
-          {search && ` for "${search}"`}
+        <div style={{
+          fontSize: '.78rem', color: 'var(--muted)', marginBottom: 16,
+          padding: '8px 12px', borderRadius: 8, background: 'var(--card)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          border: '1px solid var(--border)'
+        }}>
+          <div>
+            {activeTabs.length > 0 && (
+              <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 8 }}>
+                {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
+              </span>
+            )}
+            <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
+            {posts.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {posts.length.toLocaleString()} post{posts.length !== 1 ? 's' : ''}</span>}
+            {search && <span style={{ marginLeft: 8, opacity: 0.7 }}>· searching "{search}"</span>}
+          </div>
         </div>
       )}
 
       {loading ? (
         <div>
-          {activeTabs.length > 0 && (
-            <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 600 }}>
-              Fetching {selectedSourceLabel} posts…
-            </div>
-          )}
+          <div style={{
+            marginBottom: 16,
+            color: 'var(--primary)',
+            fontSize: '.85rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8
+          }}>
+            <span style={{
+              display: 'inline-block',
+              animation: 'spin 1s linear infinite',
+              transformOrigin: 'center'
+            }}>⚡</span>
+            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts…` : 'Loading your feed…'}
+          </div>
           <PostCardSkeleton />
           <PostCardSkeleton />
           <PostCardSkeleton />
@@ -1778,15 +1810,18 @@ export default function Feed() {
               </>
             ) : activeTabs.length > 0 ? (
               <>
-                <p style={{ marginBottom: 8 }}>No posts from {selectedSourceLabel} yet. Check back soon!</p>
-                <button className="btn btn-ghost btn-sm" onClick={() => toggleTab('all')}>View all sources</button>
+                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources!</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current)}>Refresh now</button>
+                </div>
               </>
             ) : (
               <>
-                <p style={{ marginBottom: 8 }}>Get started by joining communities and connecting your social accounts.</p>
+                <p style={{ marginBottom: 12 }}>Your feed is ready! Start by connecting your social accounts to personalize your experience.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Link to="/groups" className="btn btn-primary btn-sm">Join communities</Link>
-                  <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connect accounts</Link>
+                  <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect accounts</Link>
+                  <Link to="/groups" className="btn btn-ghost btn-sm">Join communities</Link>
                 </div>
               </>
             )}
@@ -1816,8 +1851,13 @@ export default function Feed() {
             </div>
           )}
           {!hasMore && displayed.length > 0 && (
-            <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.78rem', marginBottom: 24 }}>
-              All {displayed.length.toLocaleString()} posts shown · Hit Refresh for latest content
+            <div style={{
+              textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', marginBottom: 24,
+              padding: '12px 16px', borderRadius: 8, background: 'var(--card)',
+              border: '1px dashed var(--border)'
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>📍 You've reached the end</div>
+              Showing {displayed.length.toLocaleString()} post{displayed.length !== 1 ? 's' : ''} · Pull to refresh for new content
             </div>
           )}
         </>
