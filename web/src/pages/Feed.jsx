@@ -1299,7 +1299,8 @@ export default function Feed() {
     function setupSSE() {
       try {
         const base = import.meta.env.VITE_API_URL || '/api';
-        es = new EventSource(`${base}/feed/stream`);
+        const token = localStorage.getItem('pc_token') || '';
+        es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
         setLiveActive(false);
 
         es.onopen = () => {
