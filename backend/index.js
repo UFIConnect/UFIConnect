@@ -1139,6 +1139,8 @@ const TOPIC_SUBREDDITS = {
   'DJing & Remixing':       ['DJs', 'edmproduction', 'beatproduction'],
   'Python':                 ['Python', 'learnpython', 'django', 'flask'],
   'JavaScript':             ['javascript', 'node', 'reactjs', 'typescript'],
+  'React':                  ['reactjs', 'javascript', 'typescript', 'webdev'],
+  'Node':                   ['node', 'javascript', 'webdev', 'learnjavascript'],
   'Rust':                   ['rust', 'learnrust', 'rustjerk'],
   'Go':                     ['golang', 'golangnews'],
   'TypeScript':             ['typescript', 'reactjs', 'javascript'],
@@ -1156,7 +1158,10 @@ const TOPIC_SUBREDDITS = {
   'Architecture':           ['softwarearchitecture', 'programming', 'ExperiencedDevs'],
   'Astronomy':              ['Astronomy', 'space', 'astrophysics'],
   'Science':                ['science', 'askscience', 'Physics'],
+  'Science & Research':     ['science', 'askscience', 'EverythingScience', 'Physics'],
   'Economics':              ['economics', 'AskEconomics', 'MacroEconomics'],
+  'Creator Economy':        ['NewTubers', 'juststart', 'blogging', 'youtube'],
+  'Mental Health & Wellness': ['mentalhealth', 'anxiety', 'psychology', 'meditation'],
 };
 
 function parseRedditRSSFeed(xml, topicKeyword) {
@@ -1249,7 +1254,7 @@ async function fetchRedditSub(sub, keyword) {
       }
     }
   }
-  // Anonymous fallback (may get 429 from Render IPs, but worth trying)
+  // Anonymous JSON — www.reddit.com
   try {
     const data = await fetchJSON(
       `https://www.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
@@ -1260,9 +1265,20 @@ async function fetchRedditSub(sub, keyword) {
   } catch (e) {
     console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
   }
+  // Anonymous JSON — old.reddit.com (sometimes different rate limits from server IPs)
+  try {
+    const data = await fetchJSON(
+      `https://old.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
+      REDDIT_HEADERS
+    );
+    const posts = parseRedditJSON(data, keyword);
+    if (posts.length) return posts;
+  } catch (e) {
+    console.warn(`[Reddit] old.reddit JSON failed for r/${sub}: ${e.message}`);
+  }
   // RSS fallback
   try {
-    const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_HEADERS);
+    const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_RSS_HEADERS);
     const posts = parseRedditRSSFeed(xml, keyword);
     if (posts.length) return posts;
   } catch (e) {
@@ -1475,6 +1491,11 @@ function fetchText(url, extraHeaders = {}) {
 const REDDIT_HEADERS = {
   'User-Agent':      'UFIConnect/1.0 by /u/uficonnect',
   'Accept':          'application/json',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+const REDDIT_RSS_HEADERS = {
+  'User-Agent':      'UFIConnect/1.0 by /u/uficonnect',
+  'Accept':          'application/atom+xml, text/xml, application/xml, */*',
   'Accept-Language': 'en-US,en;q=0.9',
 };
 
@@ -3580,7 +3601,7 @@ function startContinuousWorkers() {
   // Start times are staggered so the initial burst is spread out.
   const SOURCES = [
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
-    ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     kw,      0],
+    ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
     ['hn',            '🔶', '#FF6600', fetchHNByKeyword,         kw,   1000],
     ['github',        '🐙', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
     ['devto',         '💻', '#8B5CF6', fetchDevToByTag,          dev,  3000],
@@ -6484,6 +6505,14 @@ function pickOnboardingGroups(prefs, count = 5) {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
+// authenticateSSE: EventSource can't send headers, so accept token as ?token= query param
+function authenticateSSE(req, res, next) {
+  if (!req.headers.authorization && req.query.token) {
+    req.headers = { ...req.headers, authorization: `Bearer ${req.query.token}` };
+  }
+  return authenticate(req, res, next);
+}
+
 async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).json({ message: 'Authorization header missing.' });
@@ -6891,10 +6920,12 @@ app.delete('/profile', authenticate, async (req, res) => {
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
 app.get('/groups', async (req, res) => {
-  if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
-  const { category } = req.query;
-  const result = category ? groups.filter((g) => g.category === category) : groups;
-  res.json({ groups: result });
+  try {
+    if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
+    const { category } = req.query;
+    const result = category ? groups.filter((g) => g.category === category) : groups;
+    res.json({ groups: result });
+  } catch (e) { console.error('GET /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/groups/internal', authenticate, (req, res) => {
@@ -6929,34 +6960,38 @@ app.get('/groups/:id/members', authenticate, (req, res) => {
 });
 
 app.post('/groups/:id/join', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
-  const group = groups.find((g) => g.id === req.params.id);
-  if (!user || !group) return res.status(404).json({ message: 'Not found.' });
-  if (!user.joinedGroups.includes(group.id)) {
-    user.joinedGroups.push(group.id);
-    group.members += 1;
-    if (db.isConnected() && isDBId(user.id)) {
-      db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
-        .catch(e => console.error('group join DB:', e.message));
+  try {
+    const user = await getUser(req.user.id);
+    const group = groups.find((g) => g.id === req.params.id);
+    if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    if (!user.joinedGroups.includes(group.id)) {
+      user.joinedGroups.push(group.id);
+      group.members += 1;
+      if (db.isConnected() && isDBId(user.id)) {
+        db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
+          .catch(e => console.error('group join DB:', e.message));
+      }
     }
-  }
-  res.json({ joinedGroups: user.joinedGroups, recommended: recommendGroups(user.id, group.id, 3) });
+    res.json({ joinedGroups: user.joinedGroups, recommended: recommendGroups(user.id, group.id, 3) });
+  } catch (e) { console.error('POST /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.delete('/groups/:id/join', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
-  const group = groups.find((g) => g.id === req.params.id);
-  if (!user || !group) return res.status(404).json({ message: 'Not found.' });
-  const idx = user.joinedGroups.indexOf(group.id);
-  if (idx > -1) {
-    user.joinedGroups.splice(idx, 1);
-    group.members = Math.max(0, group.members - 1);
-    if (db.isConnected() && isDBId(user.id)) {
-      db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
-        .catch(e => console.error('group leave DB:', e.message));
+  try {
+    const user = await getUser(req.user.id);
+    const group = groups.find((g) => g.id === req.params.id);
+    if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    const idx = user.joinedGroups.indexOf(group.id);
+    if (idx > -1) {
+      user.joinedGroups.splice(idx, 1);
+      group.members = Math.max(0, group.members - 1);
+      if (db.isConnected() && isDBId(user.id)) {
+        db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
+          .catch(e => console.error('group leave DB:', e.message));
+      }
     }
-  }
-  res.json({ joinedGroups: user.joinedGroups });
+    res.json({ joinedGroups: user.joinedGroups });
+  } catch (e) { console.error('DELETE /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
@@ -7539,7 +7574,7 @@ app.get('/feed', authenticate, async (req, res) => {
 });
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
-app.get('/feed/stream', (req, res) => {
+app.get('/feed/stream', authenticateSSE, (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection',    'keep-alive');
@@ -7548,18 +7583,22 @@ app.get('/feed/stream', (req, res) => {
 
   const clientId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   sseClients.set(clientId, res);
+  let hb = null;
+  function cleanup() { if (hb) clearInterval(hb); sseClients.delete(clientId); }
 
   // Send the most recent posts immediately so the client has something to show
-  const initial = realFeedPosts(globalFeedCache.posts).slice(0, 200);
-  if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
+  try {
+    const initial = realFeedPosts(globalFeedCache.posts).slice(0, 200);
+    if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
+  } catch { cleanup(); return; }
 
   // Heartbeat every 20 s to keep the connection alive through proxies
-  const hb = setInterval(() => {
+  hb = setInterval(() => {
     try { res.write(':ping\n\n'); }
-    catch { clearInterval(hb); sseClients.delete(clientId); }
+    catch { cleanup(); }
   }, 20000);
 
-  req.on('close', () => { clearInterval(hb); sseClients.delete(clientId); });
+  req.on('close', cleanup);
 });
 
 // ─── Manual feed refresh trigger ─────────────────────────────────────────────
@@ -8919,109 +8958,118 @@ app.post('/hq/trigger/:agentId', (req, res) => {
 
 // Create a post in a group
 app.get('/posts', authenticate, async (req, res) => {
-  const limit = boundedLimit(req.query.limit, 50, 100);
-  const communityPosts = await getCommunityPosts({ viewerId: req.user.id, limit });
-  res.json({ posts: communityPosts });
+  try {
+    const limit = boundedLimit(req.query.limit, 50, 100);
+    const communityPosts = await getCommunityPosts({ viewerId: req.user.id, limit });
+    res.json({ posts: communityPosts });
+  } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 async function toggleCommunityPostLike(req, res) {
-  const post = await getCommunityPostById(req.params.postId);
-  if (!post) return res.status(404).json({ message: 'Post not found.' });
-  if (!Array.isArray(post.likes)) post.likes = [];
+  try {
+    const post = await getCommunityPostById(req.params.postId);
+    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    if (!Array.isArray(post.likes)) post.likes = [];
 
-  const idx = post.likes.indexOf(req.user.id);
-  if (idx > -1) post.likes.splice(idx, 1);
-  else post.likes.push(req.user.id);
+    const uid = req.user.id;
+    const idx = post.likes.indexOf(uid);
+    if (idx > -1) post.likes.splice(idx, 1);
+    else if (!post.likes.includes(uid)) post.likes.push(uid);
 
-  if (db.isConnected()) {
-    db.query(
-      `UPDATE community_posts SET likes=$1 WHERE id=$2`,
-      [post.likes, post.id]
-    ).catch(e => console.error('post like DB:', e.message));
-  }
+    if (db.isConnected()) {
+      db.query(
+        `UPDATE community_posts SET likes=$1 WHERE id=$2`,
+        [post.likes, post.id]
+      ).catch(e => console.error('post like DB:', e.message));
+    }
 
-  res.json({
-    likedByMe: post.likes.includes(req.user.id),
-    likesCount: post.likes.length,
-    post: serializeCommunityPost(post, req.user.id),
-  });
+    res.json({
+      likedByMe: post.likes.includes(uid),
+      likesCount: post.likes.length,
+      post: serializeCommunityPost(post, uid),
+    });
+  } catch (e) { console.error('toggleCommunityPostLike:', e); res.status(500).json({ error: 'Internal server error' }); }
 }
 
 app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
 
 app.get('/posts/:postId/comments', authenticate, async (req, res) => {
-  const post = await getCommunityPostById(req.params.postId);
-  if (!post) return res.status(404).json({ message: 'Post not found.' });
-  const limit = boundedLimit(req.query.limit, 50, 100);
-  const comments = await getCommentsForPost(post.id, limit);
-  res.json({ comments, commentsCount: comments.length });
+  try {
+    const post = await getCommunityPostById(req.params.postId);
+    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    const limit = boundedLimit(req.query.limit, 50, 100);
+    const comments = await getCommentsForPost(post.id, limit);
+    res.json({ comments, commentsCount: comments.length });
+  } catch (e) { console.error('GET /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/posts/:postId/comments', authenticate, async (req, res) => {
-  const post = await getCommunityPostById(req.params.postId);
-  if (!post) return res.status(404).json({ message: 'Post not found.' });
+  try {
+    const post = await getCommunityPostById(req.params.postId);
+    if (!post) return res.status(404).json({ message: 'Post not found.' });
 
-  const content = (req.body.content || '').trim();
-  if (!content) return res.status(400).json({ message: 'Comment is required.' });
-  if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+    const content = (req.body.content || '').trim();
+    if (!content) return res.status(400).json({ message: 'Comment is required.' });
+    if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
 
-  const comment = {
-    id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    postId: post.id,
-    authorId: req.user.id,
-    content,
-    createdAt: new Date().toISOString(),
-  };
-  postComments.push(comment);
-  post.commentsCount = (post.commentsCount || 0) + 1;
+    const comment = {
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      postId: post.id,
+      authorId: req.user.id,
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    postComments.push(comment);
+    post.commentsCount = (post.commentsCount || 0) + 1;
 
-  if (db.isConnected()) {
-    db.query(
-      `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
-       VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-      [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
-    ).catch(e => console.error('post comment DB:', e.message));
-    db.query(
-      `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
-      [post.id]
-    ).catch(e => console.error('post comment count DB:', e.message));
-  }
+    if (db.isConnected()) {
+      db.query(
+        `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+        [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
+      ).catch(e => console.error('post comment DB:', e.message));
+      db.query(
+        `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
+        [post.id]
+      ).catch(e => console.error('post comment count DB:', e.message));
+    }
 
-  res.status(201).json({
-    comment: serializePostComment(comment),
-    commentsCount: post.commentsCount,
-    post: serializeCommunityPost(post, req.user.id),
-  });
+    res.status(201).json({
+      comment: serializePostComment(comment),
+      commentsCount: post.commentsCount,
+      post: serializeCommunityPost(post, req.user.id),
+    });
+  } catch (e) { console.error('POST /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/groups/:id/posts', authenticate, async (req, res) => {
-  const user  = await getUser(req.user.id);
-  const group = groups.find((g) => g.id === req.params.id);
-  if (!user || !group) return res.status(404).json({ message: 'Not found.' });
-  const { content } = req.body;
-  if (!content?.trim()) return res.status(400).json({ message: 'Content is required.' });
+  try {
+    const user  = await getUser(req.user.id);
+    const group = groups.find((g) => g.id === req.params.id);
+    if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ message: 'Content is required.' });
 
-  const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-  const post = {
-    id, authorId: user.id, groupId: group.id,
-    content: content.trim(), likes: [], commentsCount: 0,
-    createdAt: new Date().toISOString(),
-    source: 'uficonnect', sourceLabel: 'UFIConnect',
-  };
-  posts.unshift(post);
-  // Broadcast to all connected feed clients immediately so the post
-  // appears in every user's feed without waiting for the next refresh.
-  const serialized = serializeCommunityPost(post, req.user.id);
-  broadcastSSE([serialized]);
+    const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const post = {
+      id, authorId: user.id, groupId: group.id,
+      content: content.trim(), likes: [], commentsCount: 0,
+      createdAt: new Date().toISOString(),
+      source: 'uficonnect', sourceLabel: 'UFIConnect',
+    };
+    posts.unshift(post);
+    const serialized = serializeCommunityPost(post, req.user.id);
+    broadcastSSE([serialized]);
 
-  if (db.isConnected()) {
-    db.query(
-      `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
-       VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIConnect',$6) ON CONFLICT DO NOTHING`,
-      [id, group.id, user.id, user.name, content.trim(), post.createdAt]
-    ).catch(e => console.error('create post DB:', e.message));
-  }
-  res.status(201).json({ post: serialized });
+    if (db.isConnected()) {
+      db.query(
+        `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
+         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIConnect',$6) ON CONFLICT DO NOTHING`,
+        [id, group.id, user.id, user.name, content.trim(), post.createdAt]
+      ).catch(e => console.error('create post DB:', e.message));
+    }
+    res.status(201).json({ post: serialized });
+  } catch (e) { console.error('POST /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
@@ -9108,96 +9156,108 @@ app.get('/users/search', authenticate, (req, res) => {
 });
 
 app.get('/users/:id', authenticate, async (req, res) => {
-  const user = await getUser(req.params.id);
-  if (!user) return res.status(404).json({ message: 'User not found.' });
-  const followersCount = follows.filter(f => f.followingId === user.id).length;
-  const followingCount = follows.filter(f => f.followerId === user.id).length;
-  const isFollowing    = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
-  const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
-  res.json({
-    id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
-    organization: user.organization || '', skills: user.skills || [],
-    role: user.preferences?.role || '',
-    interests: user.preferences?.interests || [],
-    goals: user.preferences?.goals || [],
-    experience: user.preferences?.experience || '',
-    roleSettings: user.roleSettings || {},
-    followersCount, followingCount, isFollowing, followsYouBack,
-    links: user.links || {},
-  });
+  try {
+    const user = await getUser(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    const followersCount = follows.filter(f => f.followingId === user.id).length;
+    const followingCount = follows.filter(f => f.followerId === user.id).length;
+    const isFollowing    = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
+    const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
+    res.json({
+      id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
+      organization: user.organization || '', skills: user.skills || [],
+      role: user.preferences?.role || '',
+      interests: user.preferences?.interests || [],
+      goals: user.preferences?.goals || [],
+      experience: user.preferences?.experience || '',
+      roleSettings: user.roleSettings || {},
+      followersCount, followingCount, isFollowing, followsYouBack,
+      links: user.links || {},
+    });
+  } catch (e) { console.error('GET /users/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/users/:id/posts', authenticate, async (req, res) => {
-  const user = await getUser(req.params.id);
-  if (!user) return res.status(404).json({ message: 'User not found.' });
-  const limit = boundedLimit(req.query.limit, 50, 100);
-  const userPosts = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit });
-  res.json({ posts: userPosts });
+  try {
+    const user = await getUser(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    const limit = boundedLimit(req.query.limit, 50, 100);
+    const userPosts = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit });
+    res.json({ posts: userPosts });
+  } catch (e) { console.error('GET /users/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/users/:id/follow', authenticate, async (req, res) => {
-  const followingId = req.params.id;
-  const followerId  = req.user.id;
-  if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
-  if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
-    follows.push({ followerId, followingId });
-    if (db.isConnected()) {
-      db.query(
-        `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-        [followerId, followingId]
-      ).catch(e => console.error('follow DB:', e.message));
+  try {
+    const followingId = req.params.id;
+    const followerId  = req.user.id;
+    if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
+    if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
+      follows.push({ followerId, followingId });
+      if (db.isConnected()) {
+        db.query(
+          `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [followerId, followingId]
+        ).catch(e => console.error('follow DB:', e.message));
+      }
     }
-  }
-  res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+    res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+  } catch (e) { console.error('POST /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.delete('/users/:id/follow', authenticate, async (req, res) => {
-  const followingId = req.params.id;
-  const followerId  = req.user.id;
-  const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
-  if (idx >= 0) follows.splice(idx, 1);
-  if (db.isConnected()) {
-    db.query(
-      `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
-      [followerId, followingId]
-    ).catch(e => console.error('unfollow DB:', e.message));
-  }
-  res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+  try {
+    const followingId = req.params.id;
+    const followerId  = req.user.id;
+    const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
+    if (idx >= 0) follows.splice(idx, 1);
+    if (db.isConnected()) {
+      db.query(
+        `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
+        [followerId, followingId]
+      ).catch(e => console.error('unfollow DB:', e.message));
+    }
+    res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
+  } catch (e) { console.error('DELETE /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Followers / Following lists ──────────────────────────────────────────────
 app.get('/users/:id/followers', authenticate, async (req, res) => {
-  const userId  = req.params.id;
-  const myId    = req.user.id;
-  const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
-  const followerIds    = follows.filter(f => f.followingId === userId).map(f => f.followerId);
-  const followerUsers  = (await Promise.all(followerIds.map(id => getUser(id)))).filter(Boolean);
-  res.json({
-    users: followerUsers.map(u => ({
-      id: u.id, name: u.name, title: u.title || '',
-      organization: u.organization || '', role: u.preferences?.role || '',
-      followersCount: follows.filter(f => f.followingId === u.id).length,
-      isFollowing: myFollowingSet.has(u.id),
-      isSelf: u.id === myId,
-    })),
-  });
+  try {
+    const userId  = req.params.id;
+    const myId    = req.user.id;
+    const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+    const followerIds    = follows.filter(f => f.followingId === userId).map(f => f.followerId);
+    const followerUsers  = (await Promise.all(followerIds.map(id => getUser(id)))).filter(Boolean);
+    res.json({
+      users: followerUsers.map(u => ({
+        id: u.id, name: u.name, title: u.title || '',
+        organization: u.organization || '', role: u.preferences?.role || '',
+        followersCount: follows.filter(f => f.followingId === u.id).length,
+        isFollowing: myFollowingSet.has(u.id),
+        isSelf: u.id === myId,
+      })),
+    });
+  } catch (e) { console.error('GET /users/:id/followers:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/users/:id/following', authenticate, async (req, res) => {
-  const userId       = req.params.id;
-  const myId         = req.user.id;
-  const myFollowingSet  = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
-  const followingIds    = follows.filter(f => f.followerId === userId).map(f => f.followingId);
-  const followingUsers  = (await Promise.all(followingIds.map(id => getUser(id)))).filter(Boolean);
-  res.json({
-    users: followingUsers.map(u => ({
-      id: u.id, name: u.name, title: u.title || '',
-      organization: u.organization || '', role: u.preferences?.role || '',
-      followersCount: follows.filter(f => f.followingId === u.id).length,
-      isFollowing: myFollowingSet.has(u.id),
-      isSelf: u.id === myId,
-    })),
-  });
+  try {
+    const userId       = req.params.id;
+    const myId         = req.user.id;
+    const myFollowingSet  = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+    const followingIds    = follows.filter(f => f.followerId === userId).map(f => f.followingId);
+    const followingUsers  = (await Promise.all(followingIds.map(id => getUser(id)))).filter(Boolean);
+    res.json({
+      users: followingUsers.map(u => ({
+        id: u.id, name: u.name, title: u.title || '',
+        organization: u.organization || '', role: u.preferences?.role || '',
+        followersCount: follows.filter(f => f.followingId === u.id).length,
+        isFollowing: myFollowingSet.has(u.id),
+        isSelf: u.id === myId,
+      })),
+    });
+  } catch (e) { console.error('GET /users/:id/following:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Connections ──────────────────────────────────────────────────────────────
@@ -9734,8 +9794,8 @@ app.get('/opportunities', authenticate, async (req, res) => {
   results = results.map((o) => {
     let score = 0;
     const reasons = [];
-    const oppTitleLower = o.title.toLowerCase();
-    const tagTokens     = (o.tags || []).map(t => t.toLowerCase());
+    const oppTitleLower = (o.title || '').toLowerCase();
+    const tagTokens     = (o.tags || []).map(t => (t || '').toLowerCase());
     const tagStr        = tagTokens.join(' ');
 
     // 1. Profile skills → exact tag match (highest weight; rare unless user filled skills section)
@@ -9904,107 +9964,112 @@ async function getDirectMessagesFromDB(userId, otherId) {
 }
 
 app.get('/messages', authenticate, async (req, res) => {
-  const uid = req.user.id;
-  const myConvs = conversations.filter((c) => c.participants.includes(uid));
-  const result = myConvs.map((c) => {
-    const other = getOtherUser(c, uid);
-    const last = c.messages[c.messages.length - 1];
-    const unread = c.messages.filter((m) => m.senderId !== uid && !m.read).length;
-    return {
-      id: c.id,
-      participant: other ? { id: other.id, name: other.name, title: other.title, organization: other.organization } : null,
-      lastMessage: last ? { content: last.content, createdAt: last.createdAt, isMe: last.senderId === uid } : null,
-      unreadCount: unread,
-    };
-  });
-
-  const byParticipant = new Map();
-  [...result, ...(await getDirectMessageSummariesFromDB(uid))].forEach((conv) => {
-    const key = conv.participant?.id || conv.id;
-    const existing = byParticipant.get(key);
-    if (!existing) {
-      byParticipant.set(key, conv);
-      return;
-    }
-    const existingTime = new Date(existing.lastMessage?.createdAt || 0).getTime();
-    const incomingTime = new Date(conv.lastMessage?.createdAt || 0).getTime();
-    const mergedUnread = (existing.unreadCount || 0) + (conv.unreadCount || 0);
-    byParticipant.set(key, {
-      ...(incomingTime >= existingTime ? conv : existing),
-      unreadCount: mergedUnread,
+  try {
+    const uid = req.user.id;
+    const myConvs = conversations.filter((c) => c.participants.includes(uid));
+    const result = myConvs.map((c) => {
+      const other = getOtherUser(c, uid);
+      const last = c.messages[c.messages.length - 1];
+      const unread = c.messages.filter((m) => m.senderId !== uid && !m.read).length;
+      return {
+        id: c.id,
+        participant: other ? { id: other.id, name: other.name, title: other.title, organization: other.organization } : null,
+        lastMessage: last ? { content: last.content, createdAt: last.createdAt, isMe: last.senderId === uid } : null,
+        unreadCount: unread,
+      };
     });
-  });
 
-  const merged = [...byParticipant.values()]
-    .sort((a, b) => new Date(b.lastMessage?.createdAt || 0) - new Date(a.lastMessage?.createdAt || 0));
-  res.json({ conversations: merged });
+    const byParticipant = new Map();
+    [...result, ...(await getDirectMessageSummariesFromDB(uid))].forEach((conv) => {
+      const key = conv.participant?.id || conv.id;
+      const existing = byParticipant.get(key);
+      if (!existing) {
+        byParticipant.set(key, conv);
+        return;
+      }
+      const existingTime = new Date(existing.lastMessage?.createdAt || 0).getTime();
+      const incomingTime = new Date(conv.lastMessage?.createdAt || 0).getTime();
+      const mergedUnread = (existing.unreadCount || 0) + (conv.unreadCount || 0);
+      byParticipant.set(key, {
+        ...(incomingTime >= existingTime ? conv : existing),
+        unreadCount: mergedUnread,
+      });
+    });
+
+    const merged = [...byParticipant.values()]
+      .sort((a, b) => new Date(b.lastMessage?.createdAt || 0) - new Date(a.lastMessage?.createdAt || 0));
+    res.json({ conversations: merged });
+  } catch (e) { console.error('GET /messages:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/messages/:userId', authenticate, async (req, res) => {
-  const uid = req.user.id;
-  const otherId = req.params.userId;
-  const otherUser = await getUser(otherId);
-  if (!otherUser) return res.status(404).json({ message: 'User not found.' });
-  let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
-  // Mark as read
-  if (conv) conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
-  const dbMessages = await getDirectMessagesFromDB(uid, otherId);
-  const seen = new Set();
-  const mergedMessages = [
-    ...(conv?.messages || []),
-    ...dbMessages,
-  ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-    .filter((m) => {
-      if (seen.has(m.id)) return false;
-      seen.add(m.id);
-      return true;
+  try {
+    const uid = req.user.id;
+    const otherId = req.params.userId;
+    const otherUser = await getUser(otherId);
+    if (!otherUser) return res.status(404).json({ message: 'User not found.' });
+    let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
+    if (conv) conv.messages.forEach((m) => { if (m.senderId !== uid) m.read = true; });
+    const dbMessages = await getDirectMessagesFromDB(uid, otherId);
+    const seen = new Set();
+    const mergedMessages = [
+      ...(conv?.messages || []),
+      ...dbMessages,
+    ].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .filter((m) => {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+    res.json({
+      conversationId: conv?.id || directConversationId(uid, otherId),
+      participant: sanitizeUser(otherUser),
+      messages: mergedMessages,
     });
-  res.json({
-    conversationId: conv?.id || directConversationId(uid, otherId),
-    participant: sanitizeUser(otherUser),
-    messages: mergedMessages,
-  });
+  } catch (e) { console.error('GET /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/messages/:userId', authenticate, async (req, res) => {
-  const uid = req.user.id;
-  const otherId = req.params.userId;
-  const { content, attachment } = req.body;
-  if (!content?.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
-  if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
-  const otherUser = await getUser(otherId);
-  if (!otherUser) return res.status(404).json({ message: 'User not found.' });
+  try {
+    const uid = req.user.id;
+    const otherId = req.params.userId;
+    const { content, attachment } = req.body;
+    if (!content?.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
+    if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
+    const otherUser = await getUser(otherId);
+    if (!otherUser) return res.status(404).json({ message: 'User not found.' });
 
-  let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
-  if (!conv) {
-    conv = { id: directConversationId(uid, otherId), participants: [uid, otherId], messages: [] };
-    conversations.push(conv);
-  }
+    let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
+    if (!conv) {
+      conv = { id: directConversationId(uid, otherId), participants: [uid, otherId], messages: [] };
+      conversations.push(conv);
+    }
 
-  const newMsg = {
-    id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-    senderId: uid,
-    content: content?.trim() || '',
-    attachment: attachment || null,   // { name, size, mimeType, uri }
-    createdAt: new Date().toISOString(),
-    read: false,
-  };
-  conv.messages.push(newMsg);
+    const newMsg = {
+      id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      senderId: uid,
+      content: content?.trim() || '',
+      attachment: attachment || null,
+      createdAt: new Date().toISOString(),
+      read: false,
+    };
+    conv.messages.push(newMsg);
 
-  if (db.isConnected()) {
-    db.query(
-      `INSERT INTO direct_messages
-       (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,false,$7)
-       ON CONFLICT DO NOTHING`,
-      [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
-    ).catch(e => console.error('direct message DB:', e.message));
-  }
+    if (db.isConnected()) {
+      db.query(
+        `INSERT INTO direct_messages
+         (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,false,$7)
+         ON CONFLICT DO NOTHING`,
+        [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
+      ).catch(e => console.error('direct message DB:', e.message));
+    }
 
-  res.json({
-    message: newMsg,
-    participant: sanitizeUser(otherUser),
-  });
+    res.json({
+      message: newMsg,
+      participant: sanitizeUser(otherUser),
+    });
+  } catch (e) { console.error('POST /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────

@@ -134,14 +134,19 @@ export default function Messages() {
   const navigate = useNavigate();
   const [convs,      setConvs]      = useState([]);
   const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(false);
   const [showModal,  setShowModal]  = useState(false);
 
-  useEffect(() => {
+  function loadMessages() {
+    setError(false);
+    setLoading(true);
     client.get('/messages')
       .then(({ data }) => setConvs(data.conversations || []))
-      .catch(console.error)
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { loadMessages(); }, []);
 
   // Close modal on Escape
   useEffect(() => {
@@ -186,6 +191,13 @@ export default function Messages() {
       {loading ? (
         <div style={{ textAlign:'center', padding:48 }}>
           <span className="spinner spinner-primary" />
+        </div>
+      ) : error ? (
+        <div className="empty-state">
+          <div className="empty-icon">⚠️</div>
+          <div className="empty-title">Couldn't load messages</div>
+          <div className="empty-desc">Check your connection and try again.</div>
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={loadMessages}>Try again</button>
         </div>
       ) : convs.length === 0 ? (
         <div className="empty-state">

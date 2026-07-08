@@ -186,7 +186,7 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
-  'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
+  'stackoverflow', 'mastodon', 'lobsters', 'arxiv', 'hackernews',
   'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
@@ -954,6 +954,7 @@ export default function Feed() {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
+  const abortRef      = useRef(null);
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
     const {
@@ -965,6 +966,10 @@ export default function Feed() {
       mode: requestedMode,
       replace = false,
     } = options || {};
+    // Cancel any in-flight request so stale tab switches can't overwrite newer ones
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
     const activeMode = requestedMode || viewModeRef.current;
@@ -992,7 +997,8 @@ export default function Feed() {
         params.set('live', '1');
       }
       const url = `/feed?${params.toString()}`;
-      const { data } = await client.get(url);
+      const { data } = await client.get(url, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       const incoming = data.posts || [];
       const previous = postsRef.current;
       const shouldMerge = (manual || live) && !replace;
@@ -1006,7 +1012,8 @@ export default function Feed() {
         if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      if (manual && nextPosts.length === 0 && previous.length > 0) {
+      // Don't wipe the feed if the backend returned nothing — keep previous posts
+      if (nextPosts.length === 0 && previous.length > 0) {
         setLastRefresh(new Date());
         return;
       }
@@ -1016,7 +1023,9 @@ export default function Feed() {
       if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if (e?.name !== 'CanceledError' && e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') console.error(e);
+    }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
@@ -1084,24 +1093,15 @@ export default function Feed() {
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      // Silent background refresh — don't block UI
-      loadFeed(false, [], {
-        silent: true,
-        live: viewModeRef.current === 'feed',
-        replace: true,
-      });
+      loadFeed(false, [], { replace: true });
       return;
     }
     const prev = activeTabsRef.current;
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
-    // Filter client-side immediately; silently fetch more source posts in background
-    loadFeed(false, next, {
-      silent: true,
-      live: viewModeRef.current === 'feed',
-      replace: true,
-    });
+    // Use cached posts only — live workers keep cache fresh, no need for a live fetch here
+    loadFeed(false, next, { replace: true });
   }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
@@ -1176,7 +1176,8 @@ export default function Feed() {
   // SSE: stream new posts from all source workers in real time
   useEffect(() => {
     const base = import.meta.env.VITE_API_URL || '/api';
-    const es = new EventSource(`${base}/feed/stream`);
+    const token = localStorage.getItem('pc_token') || '';
+    const es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
     setLiveActive(false);
 
     es.onopen = () => setLiveActive(true);

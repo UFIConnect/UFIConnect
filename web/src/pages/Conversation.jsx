@@ -21,17 +21,22 @@ export default function Conversation() {
   const [text,         setText]         = useState('');
   const [sending,      setSending]      = useState(false);
   const [loading,      setLoading]      = useState(true);
+  const [error,        setError]        = useState(false);
   const bottomRef = useRef(null);
 
-  useEffect(() => {
+  function loadConversation() {
+    setError(false);
+    setLoading(true);
     client.get(`/messages/${userId}`)
       .then(({ data }) => {
         setMessages(data.messages || []);
         setParticipant(data.participant || null);
       })
-      .catch(console.error)
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [userId]);
+  }
+
+  useEffect(() => { loadConversation(); }, [userId]); // eslint-disable-line
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -79,7 +84,16 @@ export default function Conversation() {
             <span className="spinner spinner-primary" />
           </div>
         )}
-        {!loading && messages.length === 0 && (
+        {!loading && error && (
+          <div style={{ textAlign:'center', color:'var(--muted)', marginTop:48, fontSize:'.875rem' }}>
+            <div style={{ fontSize:'1.5rem', marginBottom:8 }}>⚠️</div>
+            Couldn't load messages.{' '}
+            <button style={{ background:'none', border:'none', cursor:'pointer', color:'var(--primary)', textDecoration:'underline', fontSize:'.875rem' }} onClick={loadConversation}>
+              Try again
+            </button>
+          </div>
+        )}
+        {!loading && !error && messages.length === 0 && (
           <div style={{ textAlign:'center', color:'var(--muted)', marginTop:48, fontSize:'.875rem' }}>
             Send a message to start the conversation.
           </div>

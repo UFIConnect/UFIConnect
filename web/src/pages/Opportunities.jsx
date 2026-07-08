@@ -64,6 +64,7 @@ export default function Opportunities() {
   const [liveOnly,    setLiveOnly]    = useState(false);
   const [search,      setSearch]      = useState('');
   const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
   const [page,        setPage]        = useState(1);
   const [searchUrls,  setSearchUrls]  = useState(null);
@@ -79,6 +80,7 @@ export default function Opportunities() {
     const finalParams = bust ? { ...params, bust: '1' } : params;
     client.get('/opportunities', { params: finalParams })
       .then(({ data }) => {
+        setError(false);
         let list = data.opportunities || [];
         if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive' || o.source === 'The Muse');
         setOpps(list);
@@ -89,7 +91,7 @@ export default function Opportunities() {
         if (data.userTitle) setUserTitle(data.userTitle);
         if (data.userRole) setUserRole(data.userRole);
       })
-      .catch(console.error)
+      .catch(e => { console.error(e); setError(true); })
       .finally(() => { setLoading(false); setRefreshing(false); });
   }, [liveOnly]); // eslint-disable-line
 
@@ -234,6 +236,15 @@ export default function Opportunities() {
         {loading ? (
           <div style={{ textAlign: 'center', padding: 48 }}>
             <span className="spinner spinner-primary" />
+          </div>
+        ) : error ? (
+          <div className="empty-state">
+            <div className="empty-icon">⚠️</div>
+            <div className="empty-title">Couldn't load opportunities</div>
+            <div className="empty-desc">Check your connection and try refreshing.</div>
+            <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={handleRefresh}>
+              Try again
+            </button>
           </div>
         ) : opps.length === 0 ? (
           <div className="empty-state">
