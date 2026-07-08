@@ -91,20 +91,14 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFIConnect | UFI — Free Professional Network for Engineers, Creators & Founders</title>
-        <meta name="description" content="UFIConnect (UFI) is a free professional networking platform for engineers, designers, founders, creators, and every career path. Join UFI communities, find real jobs, and get a personalised content feed — no ads, no noise." />
-        <meta name="keywords" content="UFI, UFIConnect, UFI Connect, UFI network, UFI professional, professional network, engineering community, tech jobs, remote work, founders, designers, creators, career growth, job listings, no ads, developer network, startup community" />
-        <link rel="canonical" href={SHARE_URL} />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content={SHARE_URL} />
-        <meta property="og:title" content="UFIConnect | Free Professional Network, No Ads" />
-        <meta property="og:description" content={SHARE_TEXT} />
-        <meta property="og:image" content={`${SHARE_URL}/og-image.png`} />
-        <meta property="og:image:alt" content="UFIConnect professional networking app preview" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="UFIConnect | Free Professional Network, No Ads" />
-        <meta name="twitter:description" content={SHARE_TEXT} />
-        <meta name="twitter:image" content={`${SHARE_URL}/og-image.png`} />
+        <title>UFIConnect — Professional Networking, Connect & News (LinkedIn Alternative)</title>
+        <meta name="description" content="UFIConnect is a clean, ad-free professional network to connect with engineers, designers, founders, and creatives. News feed, communities, job listings, and networking — all tailored to you. Better than LinkedIn, Facebook Groups, and Twitter for professional connections." />
+        <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news" />
+        <meta name="author" content="UFIConnect" />
+        <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+        <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+        <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+        <link rel="canonical" href="https://uficonnect.org" />
       </Helmet>
 
       <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>

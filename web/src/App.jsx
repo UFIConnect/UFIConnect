@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 
-const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
+const MAINTENANCE = false;
 
 function MaintenancePage() {
   return (

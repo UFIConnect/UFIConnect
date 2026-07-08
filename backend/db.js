@@ -18,31 +18,41 @@ async function initDB() {
     return;
   }
 
-  try {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl:
-        process.env.NODE_ENV === 'production'
-          ? { rejectUnauthorized: false }   // AWS RDS / Heroku PG
-          : false,
-      max: 10,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
-    });
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔗 Connecting to PostgreSQL (attempt ${attempt}/${maxRetries})...`);
+      pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl:
+          process.env.NODE_ENV === 'production'
+            ? { rejectUnauthorized: false }   // AWS RDS / Heroku / Render
+            : false,
+        max: 10,
+        idleTimeoutMillis: 30_000,
+        connectionTimeoutMillis: 15_000,    // Increased for Render
+        statement_timeout: 30_000,           // Add statement timeout
+      });
 
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    _connected = true;
-    console.log('✅ PostgreSQL connected');
-  } catch (err) {
-    console.warn(
-      '⚠️  PostgreSQL unavailable — falling back to in-memory data.\n  ',
-      err.message,
-    );
-    pool = null;
-    _connected = false;
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      _connected = true;
+      console.log('✅ PostgreSQL connected');
+      return;
+    } catch (err) {
+      console.warn(
+        `⚠️  PostgreSQL connection failed (attempt ${attempt}/${maxRetries}):\n  ` +
+        `Error: ${err.message}\n  Code: ${err.code || 'unknown'}`,
+      );
+      pool = null;
+      _connected = false;
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+      }
+    }
   }
+  console.warn('⚠️  PostgreSQL unavailable after all retries — using in-memory data.');
 }
 
 /** Run a parameterised query. Throws if DB is not connected. */

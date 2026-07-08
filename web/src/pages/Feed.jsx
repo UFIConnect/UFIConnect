@@ -5,6 +5,15 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
+// Utility: debounce function for search input
+function debounce(fn, delay) {
+  let timeoutId;
+  return function(...args) {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+}
+
 function timeAgo(iso) {
   if (!iso) return '';
   const t = new Date(iso).getTime();
@@ -146,6 +155,7 @@ const SOURCE_META = {
 };
 
 const SOURCE_TABS = [
+  { key: 'mix',        label: 'Mix',         icon: '🎭' },
   { key: 'all',        label: 'All',         icon: '⚡' },
   { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
   { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
@@ -186,7 +196,7 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
-  'stackoverflow', 'mastodon', 'lobsters', 'arxiv', 'hackernews',
+  'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
@@ -216,17 +226,44 @@ function PostText({ text }) {
   );
 }
 
+function PostCardSkeleton() {
+  return (
+    <div className="card post-card" style={{ marginBottom: 12, opacity: 0.6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--border)', animation: 'pulse 2s ease-in-out infinite' }} />
+        <div style={{ flex: 1, height: 12, borderRadius: 4, background: 'var(--border)', animation: 'pulse 2s ease-in-out infinite' }} />
+      </div>
+      <div style={{ height: 16, borderRadius: 4, background: 'var(--border)', marginBottom: 10, animation: 'pulse 2s ease-in-out infinite' }} />
+      <div style={{ height: 12, borderRadius: 4, background: 'var(--border)', marginBottom: 20, width: '85%', animation: 'pulse 2s ease-in-out infinite' }} />
+      <div style={{ height: 200, borderRadius: 12, background: 'var(--border)', animation: 'pulse 2s ease-in-out infinite' }} />
+    </div>
+  );
+}
+
 /** Video modal for non-YouTube platforms */
 function VideoModal({ post, onClose }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
+  const modalRef = useRef(null);
+
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', h);
-    return () => document.removeEventListener('keydown', h);
+    // Focus trap
+    const prev = document.activeElement;
+    if (modalRef.current) modalRef.current.focus();
+    return () => {
+      document.removeEventListener('keydown', h);
+      if (prev && prev.focus) prev.focus();
+    };
   }, [onClose]);
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${post.title || 'Post'} from ${src.label}`}
+      ref={modalRef}
+      tabIndex={-1}
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 2000,
@@ -250,7 +287,7 @@ function VideoModal({ post, onClose }) {
                 <span style={{ color: '#fff', fontSize: '2rem', marginLeft: 4 }}>▶</span>
               </div>
             </div>
-            <button onClick={onClose} style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
           </div>
         )}
         <div style={{ padding: '16px 20px 20px' }}>
@@ -317,8 +354,10 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       style={{
         position: 'absolute', top: '100%', right: 0, zIndex: 500, marginTop: 6,
         background: 'var(--surface)', border: '1.5px solid var(--border)',
-        borderRadius: 16, padding: '18px 20px', width: 'min(320px, 92vw)',
+        borderRadius: 16, padding: '18px 20px', width: 'min(320px, calc(100vw - 24px))',
+        maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',
         boxShadow: '0 8px 32px rgba(0,0,0,.12)',
+        right: 'clamp(12px, calc(50vw - 150px), 0px)',
       }}
     >
       {/* Sort */}
@@ -483,9 +522,21 @@ function YouTubeCard({ post }) {
               allowFullScreen style={{ display: 'block' }} />
           </div>
         ) : (
-          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10 }} onClick={() => setPlaying(true)}>
-            {post.mediaUrl && <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }} />}
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10, background: 'var(--border)' }} onClick={() => setPlaying(true)}>
+            {post.mediaUrl && <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
+              onError={e => {
+                e.currentTarget.style.display = 'none';
+                const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
+                if (fallback) fallback.style.display = 'flex';
+              }} />}
+            <div data-youtube-fallback style={{
+              display: post.mediaUrl ? 'none' : 'flex', position: 'absolute', inset: 0,
+              alignItems: 'center', justifyContent: 'center',
+              background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
+            }}>
+              🎥 Thumbnail unavailable
+            </div>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
               <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
                 <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
               </div>
@@ -493,8 +544,19 @@ function YouTubeCard({ post }) {
           </div>
         )
       ) : post.mediaUrl ? (
-        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10 }}>
-          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }} />
+        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
+          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
+            onError={e => {
+              e.currentTarget.style.display = 'none';
+              const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-img-fallback]');
+              if (fallback) fallback.style.display = 'flex';
+            }} />
+          <div data-youtube-img-fallback style={{
+            display: 'none', alignItems: 'center', justifyContent: 'center',
+            height: 200, color: 'var(--muted)', fontSize: '.85rem',
+          }}>
+            📷 Image unavailable
+          </div>
         </div>
       ) : null}
       {post.content && <PostText text={post.content} />}
@@ -547,6 +609,7 @@ function commentToFeedComment(comment) {
 /** Unified post card */
 function commentUrl(post) {
   const u = post.sourceUrl || '';
+  if (!u) return null; // No valid URL to link to
   switch (post.source) {
     case 'hackernews':   return u;
     case 'reddit':       return u;
@@ -701,10 +764,20 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
       )}
 
       {post.mediaUrl && post.mediaType === 'image' && (
-        <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
           <img src={post.mediaUrl} alt={post.title || 'Post image'}
             style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
-            onError={e => { e.currentTarget.style.display = 'none'; }} />
+            onError={e => {
+              e.currentTarget.style.display = 'none';
+              const placeholder = e.currentTarget.parentElement.querySelector('[data-img-placeholder]');
+              if (placeholder) placeholder.style.display = 'flex';
+            }} />
+          <div data-img-placeholder style={{
+            display: 'none', alignItems: 'center', justifyContent: 'center',
+            height: 200, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 500,
+          }}>
+            📷 Image unavailable
+          </div>
         </div>
       )}
 
@@ -713,7 +786,18 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
             <img src={post.mediaUrl} alt="Video"
               style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
-              onError={e => { e.currentTarget.style.display = 'none'; }} />
+              onError={e => {
+                e.currentTarget.style.display = 'none';
+                const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
+                if (fallback) fallback.style.display = 'flex';
+              }} />
+            <div data-video-fallback style={{
+              display: 'none', position: 'absolute', inset: 0,
+              alignItems: 'center', justifyContent: 'center',
+              background: 'rgba(0,0,0,0.5)', color: 'var(--muted)', fontSize: '.85rem',
+            }}>
+              🎬 Video unavailable
+            </div>
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ width: 60, height: 60, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
                 <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
@@ -954,7 +1038,6 @@ export default function Feed() {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
-  const abortRef      = useRef(null);
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
     const {
@@ -966,10 +1049,6 @@ export default function Feed() {
       mode: requestedMode,
       replace = false,
     } = options || {};
-    // Cancel any in-flight request so stale tab switches can't overwrite newer ones
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
     const activeMode = requestedMode || viewModeRef.current;
@@ -997,8 +1076,7 @@ export default function Feed() {
         params.set('live', '1');
       }
       const url = `/feed?${params.toString()}`;
-      const { data } = await client.get(url, { signal: controller.signal });
-      if (controller.signal.aborted) return;
+      const { data } = await client.get(url);
       const incoming = data.posts || [];
       const previous = postsRef.current;
       const shouldMerge = (manual || live) && !replace;
@@ -1012,8 +1090,7 @@ export default function Feed() {
         if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      // Don't wipe the feed if the backend returned nothing — keep previous posts
-      if (nextPosts.length === 0 && previous.length > 0) {
+      if (manual && nextPosts.length === 0 && previous.length > 0) {
         setLastRefresh(new Date());
         return;
       }
@@ -1023,9 +1100,7 @@ export default function Feed() {
       if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date());
-    } catch (e) {
-      if (e?.name !== 'CanceledError' && e?.code !== 'ERR_CANCELED' && e?.name !== 'AbortError') console.error(e);
-    }
+    } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
@@ -1086,22 +1161,62 @@ export default function Feed() {
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
   }, [loadFeed]);
 
+  // Debounced search handler
+  const debouncedSearch = useMemo(
+    () => debounce((query) => {
+      searchRef.current = query.trim();
+      setSearch(query.trim());
+      setRemotePage(2);
+      setRemoteHasMore(true);
+      loadFeed(false, activeTabsRef.current, { q: query.trim(), replace: true });
+    }, 400),
+    [loadFeed]
+  );
+
   const toggleTab = useCallback((key) => {
     searchRef.current = '';
     setSearch('');
     setSearchInput('');
+    if (key === 'mix') {
+      activeTabsRef.current = [];
+      setActiveTabs([]);
+      const nextFilters = { ...filtersRef.current, sort: 'balanced' };
+      filtersRef.current = nextFilters;
+      setFilters(nextFilters);
+      // Silent background refresh with balanced sorting
+      loadFeed(false, [], {
+        silent: true,
+        live: viewModeRef.current === 'feed',
+        replace: true,
+        filters: nextFilters,
+      });
+      return;
+    }
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      loadFeed(false, [], { replace: true });
+      const nextFilters = { ...filtersRef.current, sort: 'ranked' };
+      filtersRef.current = nextFilters;
+      setFilters(nextFilters);
+      // Silent background refresh — don't block UI
+      loadFeed(false, [], {
+        silent: true,
+        live: viewModeRef.current === 'feed',
+        replace: true,
+        filters: nextFilters,
+      });
       return;
     }
     const prev = activeTabsRef.current;
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
-    // Use cached posts only — live workers keep cache fresh, no need for a live fetch here
-    loadFeed(false, next, { replace: true });
+    // Filter client-side immediately; silently fetch more source posts in background
+    loadFeed(false, next, {
+      silent: true,
+      live: viewModeRef.current === 'feed',
+      replace: true,
+    });
   }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
@@ -1173,57 +1288,95 @@ export default function Feed() {
   }, [profile]);
 
 
-  // SSE: stream new posts from all source workers in real time
+  // SSE: stream new posts from all source workers in real time — with reconnection logic
   useEffect(() => {
-    const base = import.meta.env.VITE_API_URL || '/api';
-    const token = localStorage.getItem('pc_token') || '';
-    const es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
-    setLiveActive(false);
+    let es = null;
+    let reconnectAttempt = 0;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const BASE_RECONNECT_DELAY = 1000;
+    let reconnectTimeoutId;
 
-    es.onopen = () => setLiveActive(true);
-
-    es.onmessage = (e) => {
+    function setupSSE() {
       try {
-        const { init, posts: incoming } = JSON.parse(e.data);
-        if (!incoming?.length) return;
-        if (init) {
-          incoming.forEach(p => knownIds.current.add(p.id));
-          return;
-        }
-        const fresh = incoming.filter(p => !knownIds.current.has(p.id));
-        if (!fresh.length) return;
-        fresh.forEach(p => knownIds.current.add(p.id));
-        if (viewModeRef.current !== 'feed') return;
-        // Only surface posts that match the active source tabs.
-        const tabs = activeTabsRef.current;
-        const activeFilters = filtersRef.current;
-        const q = searchRef.current.trim().toLowerCase();
-        const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
-        const filterFresh = tabFresh.filter(p => {
-          if (activeFilters.sources?.length && !activeFilters.sources.includes(p.source)) return false;
-          if (activeFilters.timeRange && activeFilters.timeRange !== 'all') {
-            const cutoff = timeRangeCutoff(activeFilters.timeRange);
-            if (feedPostTime(p) < cutoff) return false;
+        const base = import.meta.env.VITE_API_URL || '/api';
+        es = new EventSource(`${base}/feed/stream`);
+        setLiveActive(false);
+
+        es.onopen = () => {
+          setLiveActive(true);
+          reconnectAttempt = 0; // Reset backoff on successful connection
+        };
+
+        es.onmessage = (e) => {
+          try {
+            const { init, posts: incoming } = JSON.parse(e.data);
+            if (!incoming?.length) return;
+            if (init) {
+              incoming.forEach(p => knownIds.current.add(p.id));
+              return;
+            }
+            const fresh = incoming.filter(p => !knownIds.current.has(p.id));
+            if (!fresh.length) return;
+            fresh.forEach(p => knownIds.current.add(p.id));
+            if (viewModeRef.current !== 'feed') return;
+            // Only surface posts that match the active source tabs.
+            const tabs = activeTabsRef.current;
+            const activeFilters = filtersRef.current;
+            const q = searchRef.current.trim().toLowerCase();
+            const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
+            const filterFresh = tabFresh.filter(p => {
+              if (activeFilters.sources?.length && !activeFilters.sources.includes(p.source)) return false;
+              if (activeFilters.timeRange && activeFilters.timeRange !== 'all') {
+                const cutoff = timeRangeCutoff(activeFilters.timeRange);
+                if (feedPostTime(p) < cutoff) return false;
+              }
+              if (q) {
+                const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || ''}`.toLowerCase();
+                if (!text.includes(q)) return false;
+              }
+              return true;
+            });
+            if (!filterFresh.length) return;
+            setPosts(prev => {
+              const next = mergeFeedPosts([...filterFresh, ...prev], activeFilters.sort);
+              knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
+              return next;
+            });
+            setLastRefresh(new Date());
+          } catch (err) {
+            console.error('[SSE] Error parsing message:', err);
           }
-          if (q) {
-            const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || ''}`.toLowerCase();
-            if (!text.includes(q)) return false;
+        };
+
+        es.onerror = () => {
+          setLiveActive(false);
+          es?.close();
+          es = null;
+          // Exponential backoff reconnection with max attempts
+          if (reconnectAttempt < MAX_RECONNECT_ATTEMPTS) {
+            const delay = BASE_RECONNECT_DELAY * Math.pow(1.5, reconnectAttempt);
+            reconnectTimeoutId = window.setTimeout(() => {
+              reconnectAttempt += 1;
+              setupSSE();
+            }, delay);
           }
-          return true;
-        });
-        if (!filterFresh.length) return;
-        setPosts(prev => {
-          const next = mergeFeedPosts([...filterFresh, ...prev], activeFilters.sort);
-          knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
-          return next;
-        });
-        setLastRefresh(new Date());
-      } catch {}
+        };
+      } catch (err) {
+        console.error('[SSE] Setup error:', err);
+        setLiveActive(false);
+      }
+    }
+
+    setupSSE();
+
+    return () => {
+      if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
+      if (es) {
+        es.close();
+        es = null;
+      }
+      setLiveActive(false);
     };
-
-    es.onerror = () => { setLiveActive(false); };
-
-    return () => { es.close(); setLiveActive(false); };
   }, []);
 
   // Time range cutoff helper
@@ -1323,11 +1476,11 @@ export default function Feed() {
   return (
     <Layout>
       <Helmet>
-        <title>Feed | UFIConnect</title>
-        <meta name="description" content="Your live professional feed — top stories from Reddit, GitHub, GitLab, HN, YouTube, DEV, Remote OK, YC, Crunchbase, Behance, and 30+ sources, filtered to your interests." />
+        <title>Professional News Feed | News & Updates for Your Career | UFIConnect</title>
+        <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
+        <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
+        <link rel="canonical" href="https://uficonnect.org/feed" />
       </Helmet>
-      {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
-
       <div className="page-header">
         <h1 className="page-title">
           {firstName ? `Welcome back, ${firstName}` : 'Your Feed'}
@@ -1356,19 +1509,24 @@ export default function Feed() {
               className="form-input"
               placeholder="Search posts…"
               value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
+              onChange={e => {
+                setSearchInput(e.target.value);
+                debouncedSearch(e.target.value);
+              }}
               onKeyDown={e => {
                 if (e.key === 'Enter') {
                   const nextQ = searchInput.trim();
                   searchRef.current = nextQ;
                   setSearch(nextQ);
+                  setRemotePage(2);
+                  setRemoteHasMore(true);
                   loadFeed(false, activeTabsRef.current, { q: nextQ, replace: true });
                 }
               }}
               style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
             />
             {searchInput && (
-              <button type="button" onClick={() => {
+              <button type="button" aria-label="Clear search" onClick={() => {
                 searchRef.current = '';
                 setSearchInput('');
                 setSearch('');
@@ -1401,6 +1559,8 @@ export default function Feed() {
         <div style={{ position: 'relative' }}>
           <button
             ref={filterBtnRef}
+            aria-label="Open filter panel"
+            aria-expanded={filterOpen}
             onClick={() => setFilterOpen(o => !o)}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
@@ -1460,8 +1620,10 @@ export default function Feed() {
         {SOURCE_TABS.map(tab => {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
-          const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
-          const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
+          const active = tab.key === 'mix'
+            ? (activeTabs.length === 0 && filters.sort === 'balanced')
+            : (tab.key === 'all' ? activeTabs.length === 0 && filters.sort !== 'balanced' : activeTabs.includes(tab.key));
+          const activeColor = tab.key === 'all' || tab.key === 'mix' ? 'var(--primary)' : color;
           return (
             <button
               key={tab.key}
@@ -1567,19 +1729,33 @@ export default function Feed() {
       {/* Social connect prompt — logged-in users with no social accounts connected */}
       {profile && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
-          padding: '10px 14px', borderRadius: 12,
-          background: '#FFF7ED', border: '1.5px solid #FED7AA',
-          fontSize: '.82rem', fontWeight: 500, color: '#92400E',
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
+          padding: '12px 16px', borderRadius: 12,
+          background: 'linear-gradient(135deg, #FFF7ED 0%, #FEF3C7 100%)',
+          border: '1.5px solid #FED7AA',
+          fontSize: '.85rem', fontWeight: 500, color: '#92400E',
+          boxShadow: '0 2px 8px rgba(234, 88, 12, 0.1)',
         }}>
-          <span style={{ fontSize: '1rem' }}>🔗</span>
-          <span>Connect your social accounts to see personalised content in your feed.</span>
-          <Link to="/connected-accounts" style={{ marginLeft: 4, fontWeight: 700, color: '#EA580C', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-            Connect accounts
+          <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>🚀</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>Personalize your feed</div>
+            <div style={{ fontSize: '.78rem', opacity: 0.9 }}>Connect social accounts to discover content tailored to your interests</div>
+          </div>
+          <Link to="/connected-accounts" style={{
+            background: '#EA580C', color: '#fff', fontWeight: 700, fontSize: '.8rem',
+            padding: '7px 14px', borderRadius: 6, textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0,
+            display: 'inline-block',
+            transition: 'background 0.2s'
+          }}>
+            Connect now
           </Link>
           <button
             onClick={() => setSocialBannerDismissed(true)}
-            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#92400E', fontSize: '.9rem', opacity: 0.7, padding: '0 2px' }}
+            style={{
+              marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#92400E',
+              fontSize: '1.1rem', opacity: 0.6, padding: '0 4px', flexShrink: 0,
+              transition: 'opacity 0.2s'
+            }}
             aria-label="Dismiss"
           >×</button>
         </div>
@@ -1587,51 +1763,88 @@ export default function Feed() {
 
       {/* Last refresh time */}
       {lastRefresh && (
-        <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginBottom: 12 }}>
-          {activeTabs.length > 0 && (
-            <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 6 }}>
-              {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
-            </span>
-          )}
-          Last updated {timeAgo(lastRefresh.toISOString())}
-          {posts.length > 0 && ` · ${posts.length.toLocaleString()} post${posts.length !== 1 ? 's' : ''} loaded`}
-          {search && ` for "${search}"`}
+        <div style={{
+          fontSize: '.78rem', color: 'var(--muted)', marginBottom: 16,
+          padding: '8px 12px', borderRadius: 8, background: 'var(--card)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          border: '1px solid var(--border)'
+        }}>
+          <div>
+            {activeTabs.length > 0 && (
+              <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 8 }}>
+                {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
+              </span>
+            )}
+            <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
+            {posts.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {posts.length.toLocaleString()} post{posts.length !== 1 ? 's' : ''}</span>}
+            {search && <span style={{ marginLeft: 8, opacity: 0.7 }}>· searching "{search}"</span>}
+          </div>
         </div>
       )}
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 48 }}>
-          <span className="spinner spinner-primary" />
-          {activeTabs.length > 0 && (
-            <div style={{ marginTop: 12, color: 'var(--muted)', fontSize: '.85rem' }}>
-              Fetching {selectedSourceLabel} posts…
-            </div>
-          )}
+        <div>
+          <div style={{
+            marginBottom: 16,
+            color: 'var(--primary)',
+            fontSize: '.85rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8
+          }}>
+            <span style={{
+              display: 'inline-block',
+              animation: 'spin 1s linear infinite',
+              transformOrigin: 'center'
+            }}>⚡</span>
+            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts…` : 'Loading your feed…'}
+          </div>
+          <PostCardSkeleton />
+          <PostCardSkeleton />
+          <PostCardSkeleton />
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">{search ? '🔍' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || '📭'}</div>
           <div className="empty-title">
-            {search ? `No results for "${search}"` : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts found` : 'No posts found'}
+            {search ? `No posts match "${search}"` : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Your feed is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => {
-                searchRef.current = '';
-                setSearch('');
-                setSearchInput('');
-                loadFeed(false, activeTabsRef.current, { q: '', replace: true });
-              }}>Clear search</button>
+              <>
+                <p style={{ marginBottom: 8 }}>Try a different search term or clear your filters.</p>
+                <button className="btn btn-ghost btn-sm" onClick={() => {
+                  searchRef.current = '';
+                  setSearch('');
+                  setSearchInput('');
+                  setRemotePage(2);
+                  setRemoteHasMore(true);
+                  loadFeed(false, activeTabsRef.current, { q: '', replace: true });
+                }}>Clear search</button>
+              </>
             ) : activeFilterCount > 0 ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => applyFilters(DEFAULT_FILTERS)}>
-                Reset filters
-              </button>
+              <>
+                <p style={{ marginBottom: 8 }}>No posts match your current filters.</p>
+                <button className="btn btn-ghost btn-sm" onClick={() => applyFilters(DEFAULT_FILTERS)}>
+                  Reset filters
+                </button>
+              </>
             ) : activeTabs.length > 0 ? (
-              <button className="btn btn-ghost btn-sm" onClick={() => toggleTab('all')}>Back to All</button>
+              <>
+                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources!</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current)}>Refresh now</button>
+                </div>
+              </>
             ) : (
               <>
-                <Link to="/groups">Join some communities</Link> or complete your{' '}
-                <Link to="/onboarding">profile preferences</Link>.
+                <p style={{ marginBottom: 12 }}>Your feed is ready! Start by connecting your social accounts to personalize your experience.</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect accounts</Link>
+                  <Link to="/groups" className="btn btn-ghost btn-sm">Join communities</Link>
+                </div>
               </>
             )}
           </div>
@@ -1640,9 +1853,9 @@ export default function Feed() {
         <>
           <FeedErrorBoundary>
           <div>
-            {displayed.map(post => (
+            {displayed.map((post, idx) => (
               <PostCard
-                key={post.id || String(Math.random())}
+                key={post.id || `temp-${idx}-${post.createdAt}`}
                 post={post}
                 onVideoOpen={setVideoPost}
                 onPostUpdated={updateFeedPost}
@@ -1660,12 +1873,20 @@ export default function Feed() {
             </div>
           )}
           {!hasMore && displayed.length > 0 && (
-            <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.78rem', marginBottom: 24 }}>
-              All {displayed.length.toLocaleString()} posts shown · Hit Refresh for latest content
+            <div style={{
+              textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', marginBottom: 24,
+              padding: '12px 16px', borderRadius: 8, background: 'var(--card)',
+              border: '1px dashed var(--border)'
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>📍 You've reached the end</div>
+              Showing {displayed.length.toLocaleString()} post{displayed.length !== 1 ? 's' : ''} · Pull to refresh for new content
             </div>
           )}
         </>
       )}
+
+      {/* Padding to prevent sticky banner from covering content */}
+      {!profile && <div style={{ height: 70 }} />}
 
       {/* Guest sign-in sticky bottom banner */}
       {!profile && (
@@ -1696,6 +1917,7 @@ export default function Feed() {
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
     </Layout>
   );

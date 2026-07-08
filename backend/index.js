@@ -1244,13 +1244,17 @@ async function fetchRedditSub(sub, keyword) {
         { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIConnect/1.0 by /u/uficonnect' }
       );
       const posts = parseRedditJSON(data, keyword);
-      if (posts.length) return posts;
+      if (posts.length) {
+        console.log(`[Reddit] OAuth: fetched ${posts.length} posts from r/${sub}`);
+        return posts;
+      }
     } catch (e) {
       console.warn(`[Reddit] OAuth API failed for r/${sub}: ${e.message}`);
       // Clear token on auth errors so next call re-fetches it
       if (e.message.includes('401') || e.message.includes('403')) {
         _redditToken = null;
         _redditTokenExpiry = 0;
+        console.warn(`[Reddit] OAuth token invalidated due to ${e.message.match(/40[13]/)?.[0] || 'auth error'}`);
       }
     }
   }
@@ -1261,7 +1265,10 @@ async function fetchRedditSub(sub, keyword) {
       REDDIT_HEADERS
     );
     const posts = parseRedditJSON(data, keyword);
-    if (posts.length) return posts;
+    if (posts.length) {
+      console.log(`[Reddit] Anon: fetched ${posts.length} posts from r/${sub}`);
+      return posts;
+    }
   } catch (e) {
     console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
   }
@@ -1276,29 +1283,40 @@ async function fetchRedditSub(sub, keyword) {
   } catch (e) {
     console.warn(`[Reddit] old.reddit JSON failed for r/${sub}: ${e.message}`);
   }
-  // RSS fallback
+  // RSS fallback (most reliable, always works even with rate limits)
   try {
     const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_RSS_HEADERS);
     const posts = parseRedditRSSFeed(xml, keyword);
-    if (posts.length) return posts;
+    if (posts.length) {
+      console.log(`[Reddit] RSS: fetched ${posts.length} posts from r/${sub}`);
+      return posts;
+    }
   } catch (e) {
     console.warn(`[Reddit] RSS failed for r/${sub}: ${e.message}`);
   }
+  console.warn(`[Reddit] All methods exhausted for r/${sub} (${keyword}), returning 0 posts`);
   return [];
 }
 
 async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
-  if (cached) return cached;
+  if (cached) {
+    console.log(`[Reddit] Cache hit for "${keyword}" → ${cached.length} posts`);
+    return cached;
+  }
+
+  console.log(`[Reddit] Fetching for keyword: "${keyword}"`);
 
   // If keyword looks like a raw subreddit name, fetch it directly
   const looksLikeSubreddit = /^[A-Za-z0-9_]+$/.test(keyword) && keyword.length < 30 && !TOPIC_SUBREDDITS[keyword];
   if (looksLikeSubreddit) {
+    console.log(`[Reddit] "${keyword}" looks like a subreddit, trying direct fetch`);
     const posts = await fetchRedditSub(keyword, keyword);
     if (posts.length) {
       posts.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       setCached(key, posts);
+      console.log(`[Reddit] Direct fetch succeeded: ${posts.length} posts`);
       return posts;
     }
   }
@@ -1308,21 +1326,36 @@ async function fetchRedditByKeyword(keyword) {
     || Object.entries(TOPIC_SUBREDDITS).find(([k]) => keyword.toLowerCase().includes(k.toLowerCase()))?.[1]
     || ['programming', 'technology', 'webdev'];
 
+  console.log(`[Reddit] Fetching from ${subs.length} subreddits for "${keyword}": ${subs.join(', ')}`);
+
   const allPosts = [];
-  await Promise.allSettled(subs.map(async sub => {
-    const posts = await fetchRedditSub(sub, keyword);
-    allPosts.push(...posts);
-  }));
+  const fetchPromises = subs.map(sub =>
+    fetchRedditSub(sub, keyword)
+      .then(posts => {
+        if (posts.length) allPosts.push(...posts);
+        return posts;
+      })
+      .catch(e => {
+        console.error(`[Reddit] Unexpected error fetching r/${sub}: ${e.message}`);
+        return [];
+      })
+  );
+
+  await Promise.allSettled(fetchPromises);
 
   if (allPosts.length) {
     const seen = new Set();
     const result = allPosts
       .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    console.log(`[Reddit] Success for "${keyword}": ${result.length} posts from ${subs.length} subreddits`);
     setCached(key, result);
     return result;
   }
-  return getCached(key) || [];
+
+  const fallback = getCached(key) || [];
+  console.warn(`[Reddit] Failed to fetch fresh posts for "${keyword}" (${subs.length} subs), using stale cache (${fallback.length} posts)`);
+  return fallback;
 }
 
 // ─── News: search by keyword via Algolia ───────────────────────────────────
@@ -1506,7 +1539,10 @@ async function getRedditToken() {
   if (_redditToken && Date.now() < _redditTokenExpiry - 60_000) return _redditToken;
   const clientId = process.env.REDDIT_CLIENT_ID;
   const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
+  if (!clientId || !clientSecret) {
+    console.warn('[Reddit] OAuth credentials not set (REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET)');
+    return null;
+  }
   try {
     const body = 'grant_type=client_credentials';
     const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
@@ -1522,6 +1558,12 @@ async function getRedditToken() {
           'Content-Length': Buffer.byteLength(body),
         },
       }, (res) => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          let raw = '';
+          res.on('data', c => raw += c);
+          res.on('end', () => reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 100)}`)));
+          return;
+        }
         let raw = '';
         res.on('data', c => raw += c);
         res.on('end', () => { try { resolve(JSON.parse(raw)); } catch (e) { reject(e); } });
@@ -1531,13 +1573,13 @@ async function getRedditToken() {
       req.write(body);
       req.end();
     });
-    if (data.access_token) {
+    if (data && data.access_token) {
       _redditToken = data.access_token;
       _redditTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000;
       console.log(`[Reddit] OAuth token obtained, expires in ${data.expires_in}s`);
       return _redditToken;
     }
-    console.warn('[Reddit] OAuth token failed:', JSON.stringify(data).slice(0, 200));
+    console.warn('[Reddit] OAuth token response missing access_token:', JSON.stringify(data).slice(0, 200));
     return null;
   } catch (e) {
     console.warn('[Reddit] OAuth token error:', e.message);
@@ -3332,7 +3374,7 @@ function addAndBroadcast(incoming) {
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
-  savePostsToDB(fresh).catch(() => {});
+  if (db.isConnected()) savePostsToDB(fresh).catch(() => {});
   return fresh.length;
 }
 
@@ -3445,6 +3487,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
             fullCyclesEmpty = 0;
             emptyTopicsThisCycle = 0;
             health.consecutiveErrors = 0;
+            updateAgentStatus(agentId);
           } else {
             emptyTopicsThisCycle++;
           }
@@ -3453,6 +3496,8 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           health.totalErrors++;
           health.lastError = err?.message || String(err);
           emptyTopicsThisCycle++;
+          updateAgentStatus(agentId);
+          console.warn(`[${agentId}] Error fetching ${topic}: ${health.lastError}`);
         }
       }
 
@@ -3466,8 +3511,10 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           if (fullCyclesEmpty >= CIRCUIT_EMPTY_CYCLES && !health.paused) {
             health.paused    = true;
             health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
+            updateAgentStatus(agentId);
+            const fallbacks = getFallbackAgents(agentId);
             logAgentAction(agentId, '⚠️',
-              `Circuit breaker tripped — ${agentId} paused 5min (${fullCyclesEmpty} empty cycles)`, '#F87171');
+              `Circuit breaker tripped — paused 5min (${fullCyclesEmpty} empty cycles). Fallback: ${fallbacks.slice(0, 2).join(', ')}`, '#F87171');
           }
         } else {
           fullCyclesEmpty = 0;
@@ -3692,6 +3739,59 @@ function findPostById(postId) {
 
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
+
+// Agent status tracking and fallback mechanism
+const agentStatusMap = new Map();
+function updateAgentStatus(agentId) {
+  const health = workerHealth.get(agentId);
+  if (!health) return;
+
+  // Determine status based on health metrics
+  if (health.paused) {
+    agentStatusMap.set(agentId, {
+      status: 'paused',
+      lastError: health.lastError,
+      consecutiveErrors: health.consecutiveErrors,
+      pausedUntil: health.pauseUntil,
+    });
+  } else if (health.consecutiveErrors >= 5) {
+    agentStatusMap.set(agentId, {
+      status: 'degraded',
+      lastError: health.lastError,
+      consecutiveErrors: health.consecutiveErrors,
+    });
+  } else if (health.lastSuccess && Date.now() - health.lastSuccess > 30 * 60 * 1000) {
+    agentStatusMap.set(agentId, {
+      status: 'stale',
+      lastSuccess: health.lastSuccess,
+      lastError: health.lastError,
+    });
+  } else {
+    agentStatusMap.set(agentId, {
+      status: 'healthy',
+      lastSuccess: health.lastSuccess,
+      fetchCount: health.fetchCount,
+    });
+  }
+}
+
+// Fallback agents for when primary agents degrade
+const AGENT_FALLBACKS = {
+  reddit: ['hackernews', 'github', 'devto'],
+  hackernews: ['reddit', 'github', 'bluesky'],
+  github: ['hackernews', 'gitlab', 'devto'],
+  devto: ['medium', 'hashnode', 'github'],
+  medium: ['devto', 'hashnode', 'techcrunch'],
+  youtube: ['devto', 'github', 'medium'],
+  mastodon: ['bluesky', 'reddit', 'hackernews'],
+  bluesky: ['mastodon', 'hackernews', 'reddit'],
+  stackoverflow: ['github', 'devto', 'hashnode'],
+  arxiv: ['github', 'devto', 'medium'],
+};
+
+function getFallbackAgents(agentId) {
+  return AGENT_FALLBACKS[agentId] || [];
+}
 
 const MB = 1024 * 1024;
 
@@ -4184,10 +4284,12 @@ async function refreshGlobalFeedCache() {
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
-      // Persist to DB in background
-      savePostsToDB(all).then(n => {
-        if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
-      }).catch(() => {});
+      // Persist to DB in background (only if connected)
+      if (db.isConnected()) {
+        savePostsToDB(all).then(n => {
+          if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
+        }).catch(() => {});
+      }
     }
   } catch (e) {
     console.warn('globalFeedCache refresh error:', e.message);
@@ -4697,7 +4799,7 @@ async function runWebStorageSubAgent() {
     const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
-    const saved = await savePostsToDBFast(hotPosts) || 0;
+    const saved = db.isConnected() ? (await savePostsToDBFast(hotPosts) || 0) : 0;
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
@@ -7274,7 +7376,7 @@ app.get('/feed', authenticate, async (req, res) => {
       timeRange,
     });
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
-    savePostsToDB(livePosts).catch(() => {});
+    if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
     const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
@@ -8878,12 +8980,42 @@ app.get('/office/website-optimizer', (_req, res) => {
 });
 
 app.get('/hq/status', (req, res) => {
+  // Build agent health summary
+  const agentHealth = [];
+  for (const [agentId, health] of workerHealth.entries()) {
+    const status = agentStatusMap.get(agentId) || { status: 'unknown' };
+    const def = AGENT_DEFS[agentId];
+    const fallbacks = getFallbackAgents(agentId);
+    agentHealth.push({
+      id: agentId,
+      name: def?.name || agentId,
+      status: status.status,
+      fetchCount: health.fetchCount,
+      consecutiveErrors: health.consecutiveErrors,
+      totalErrors: health.totalErrors,
+      lastSuccess: health.lastSuccess,
+      lastError: health.lastError,
+      paused: health.paused,
+      pausedUntil: health.pauseUntil,
+      fallbacks: fallbacks.slice(0, 3),
+    });
+  }
+
+  const degradedAgents = agentHealth.filter(a => a.status === 'degraded' || a.status === 'paused');
+  const healthyAgents = agentHealth.filter(a => a.status === 'healthy');
+
   res.json({
     agentLog:     agentActionLog,
     feedPostCount: realFeedPosts(globalFeedCache.posts).length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
     agentsActive: Object.keys(AGENT_DEFS).length,
+    agentHealth: {
+      total: agentHealth.length,
+      healthy: healthyAgents.length,
+      degraded: degradedAgents.length,
+      agents: agentHealth,
+    },
     stability: refreshControl,
     refreshQueue: {
       running: sourceRefreshQueue.running,

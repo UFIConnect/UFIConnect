@@ -355,6 +355,46 @@ export default function Onboarding() {
               </div>
             )}
 
+            {/* Role about section — shows selected role details */}
+            {role && role !== '__custom__' && (() => {
+              const selectedRole = filteredRoles.find(r => r.value === role) || ROLES.find(r => r.value === role) || ALL_ROLES.find(r => r.value === role);
+              return selectedRole ? (
+                <div style={{
+                  marginBottom: 16, padding: '12px 14px', borderRadius: 10,
+                  background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                }}>
+                  <div style={{ fontSize: '1.8rem' }}>{selectedRole.icon}</div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
+                      {selectedRole.label}
+                    </div>
+                    <div style={{ fontSize: '.8rem', color: 'var(--primary)', opacity: 0.8, lineHeight: 1.4 }}>
+                      {selectedRole.desc}
+                    </div>
+                  </div>
+                </div>
+              ) : null;
+            })()}
+
+            {role === '__custom__' && customRole.trim().length > 0 && (
+              <div style={{
+                marginBottom: 16, padding: '12px 14px', borderRadius: 10,
+                background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
+                display: 'flex', alignItems: 'center', gap: 12,
+              }}>
+                <div style={{ fontSize: '1.8rem' }}>✏️</div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
+                    {customRole.trim()}
+                  </div>
+                  <div style={{ fontSize: '.8rem', color: 'var(--primary)', opacity: 0.8 }}>
+                    Custom role
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 4, marginBottom: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 4 }}>
               {filteredRoles.map(({ value, icon, label, desc }) => (
@@ -462,29 +502,31 @@ export default function Onboarding() {
                 <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)', marginBottom: 10, letterSpacing: '.3px', textTransform: 'uppercase' }}>
                   ✦ Recommended for you
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {unlocked.map(topic => {
-                    const isSelected = interests.includes(topic);
-                    const isSuggested = suggested.includes(topic);
-                    const isNew = related.includes(topic) && !suggested.includes(topic) && topic === lastPicked;
-                    return (
-                      <button
-                        key={topic}
-                        onClick={() => toggleInterest(topic)}
-                        style={{
-                          padding: '8px 14px', borderRadius: 22,
-                          border: `2px solid ${isSelected ? 'var(--primary)' : isSuggested ? '#93C5FD' : 'var(--border)'}`,
-                          background: isSelected ? 'var(--primary)' : isSuggested ? '#EFF6FF' : 'var(--surface)',
-                          color: isSelected ? '#fff' : 'var(--text)',
-                          fontWeight: isSelected ? 700 : 500, fontSize: '.83rem',
-                          cursor: 'pointer', transition: 'all .2s',
-                          boxShadow: isSelected ? '0 2px 8px rgba(0,98,255,.25)' : 'none',
-                        }}
-                      >
-                        {isSelected ? '✓ ' : ''}{topic}
-                      </button>
-                    );
-                  })}
+                <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4, marginBottom: remaining.length > 0 ? 20 : 0 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {unlocked.map(topic => {
+                      const isSelected = interests.includes(topic);
+                      const isSuggested = suggested.includes(topic);
+                      const isNew = related.includes(topic) && !suggested.includes(topic) && topic === lastPicked;
+                      return (
+                        <button
+                          key={topic}
+                          onClick={() => toggleInterest(topic)}
+                          style={{
+                            padding: '8px 14px', borderRadius: 22,
+                            border: `2px solid ${isSelected ? 'var(--primary)' : isSuggested ? '#93C5FD' : 'var(--border)'}`,
+                            background: isSelected ? 'var(--primary)' : isSuggested ? '#EFF6FF' : 'var(--surface)',
+                            color: isSelected ? '#fff' : 'var(--text)',
+                            fontWeight: isSelected ? 700 : 500, fontSize: '.83rem',
+                            cursor: 'pointer', transition: 'all .2s',
+                            boxShadow: isSelected ? '0 2px 8px rgba(0,98,255,.25)' : 'none',
+                          }}
+                        >
+                          {isSelected ? '✓ ' : ''}{topic}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
@@ -495,26 +537,28 @@ export default function Onboarding() {
                 <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 10, letterSpacing: '.3px', textTransform: 'uppercase' }}>
                   More topics
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {remaining.map(topic => {
-                    const isSelected = interests.includes(topic);
-                    return (
-                      <button
-                        key={topic}
-                        onClick={() => toggleInterest(topic)}
-                        style={{
-                          padding: '7px 13px', borderRadius: 22,
-                          border: `2px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
-                          background: isSelected ? 'var(--primary)' : 'var(--surface)',
-                          color: isSelected ? '#fff' : 'var(--text)',
-                          fontWeight: isSelected ? 700 : 400, fontSize: '.8rem',
-                          cursor: 'pointer', transition: 'all .2s',
-                        }}
-                      >
-                        {isSelected ? '✓ ' : ''}{topic}
-                      </button>
-                    );
-                  })}
+                <div style={{ maxHeight: 280, overflowY: 'auto', paddingRight: 4 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {remaining.map(topic => {
+                      const isSelected = interests.includes(topic);
+                      return (
+                        <button
+                          key={topic}
+                          onClick={() => toggleInterest(topic)}
+                          style={{
+                            padding: '7px 13px', borderRadius: 22,
+                            border: `2px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
+                            background: isSelected ? 'var(--primary)' : 'var(--surface)',
+                            color: isSelected ? '#fff' : 'var(--text)',
+                            fontWeight: isSelected ? 700 : 400, fontSize: '.8rem',
+                            cursor: 'pointer', transition: 'all .2s',
+                          }}
+                        >
+                          {isSelected ? '✓ ' : ''}{topic}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}
