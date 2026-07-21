@@ -10255,16 +10255,28 @@ async function preloadUsersFromDB() {
   } catch (_) {}
 }
 
+// Start server immediately, load data in background
+app.listen(PORT, () =>
+  console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
+);
+
+// Run heavy initialization in background without blocking startup
 db.initDB().then(async () => {
-  await migrateDB();
-  const purgedFallbackPosts = await purgeFallbackFeedCache();
-  if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);
-  await preloadUsersFromDB();
-  await seedAndLoadGroups();
-  await loadPostsFromDB();
-  // Pre-populate seenPostIds so workers don't re-broadcast historical posts
-  globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
-  globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
+  console.log('[startup] Beginning background data initialization...');
+  try {
+    await migrateDB();
+    const purgedFallbackPosts = await purgeFallbackFeedCache();
+    if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);
+    await preloadUsersFromDB();
+    await seedAndLoadGroups();
+    await loadPostsFromDB();
+    // Pre-populate seenPostIds so workers don't re-broadcast historical posts
+    globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
+    globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
+    console.log('[startup] Background initialization complete');
+  } catch (err) {
+    console.warn('[startup] Background initialization error:', err.message);
+  }
 
   // Weekly: clear opportunity caches so Remotive + Muse re-fetch fresh live jobs
   scheduleRecurring(() => {
@@ -10279,8 +10291,4 @@ db.initDB().then(async () => {
       .then(() => logAgentAction('feed', '🔄', `Monthly groups refresh — ${groups.length} communities loaded`, '#4ADE80'))
       .catch(e => console.warn('Monthly group refresh:', e.message));
   }, 30 * 24 * 60 * 60 * 1000);
-
-  app.listen(PORT, () =>
-    console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
-  );
 });
