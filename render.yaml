@@ -11,7 +11,7 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=400 index.js
+    startCommand: node --max-old-space-size=400 server.js
     plan: starter
     healthCheckPath: /health
     envVars:

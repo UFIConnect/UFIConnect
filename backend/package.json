@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "node --max-old-space-size=6144 index.js",
+    "start": "node --max-old-space-size=400 server.js",
+    "start:single": "node --max-old-space-size=400 index.js",
     "dev": "node --watch index.js"
   },
   "dependencies": {

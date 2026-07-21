@@ -1,0 +1,102 @@
+# Enhanced docker-compose with load balancing via nginx
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       proconnect
+      POSTGRES_USER:     pc_user
+      POSTGRES_PASSWORD: pc_password
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./backend/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pc_user -d proconnect"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend Worker 1 ────────────────────────────────────────
+  backend-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV:     production
+      PORT:         3001
+      JWT_SECRET:   ${JWT_SECRET:-change-me-in-production}
+      DATABASE_URL: postgresql://pc_user:pc_password@db:5432/proconnect
+      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:80
+    expose:
+      - "3001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Backend Worker 2 ────────────────────────────────────────
+  backend-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV:     production
+      PORT:         3002
+      JWT_SECRET:   ${JWT_SECRET:-change-me-in-production}
+      DATABASE_URL: postgresql://pc_user:pc_user:pc_password@db:5432/proconnect
+      ALLOWED_ORIGINS: http://localhost:5173,http://localhost:80
+    expose:
+      - "3002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx Load Balancer ──────────────────────────────────────
+  api-lb:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - backend-1
+      - backend-2
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Web (React SPA via nginx) ────────────────────────────────
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:3000  # Points to load balancer
+    restart: unless-stopped
+    depends_on:
+      - api-lb
+    ports:
+      - "80:80"
+
+volumes:
+  pg_data:
