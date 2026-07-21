@@ -6,32 +6,32 @@ const FEATURES = [
   {
     icon: '🎯',
     title: 'Personalized from day one',
-    desc: 'Pick your role and experience level during signup. Your feed, communities, and opportunities are tailored instantly — no setup required.',
+    desc: 'Select your role and experience level during signup. Your feed, communities, and opportunities are customized automatically with no additional configuration required.',
   },
   {
     icon: '🌐',
-    title: '80+ Live Communities',
-    desc: 'Real professional communities across engineering, design, startups, finance, wellness, gaming, and more — curated around your role and interests.',
+    title: '80+ Professional Communities',
+    desc: 'Access verified communities spanning engineering, design, startups, finance, healthcare, and additional industries — thoughtfully organized by role and professional interests.',
   },
   {
     icon: '💼',
-    title: 'Real Opportunities',
-    desc: 'Jobs, gigs, grants, events, and learning resources across creative, corporate, and startup paths. Filtered to match your goals.',
+    title: 'Curated Opportunities',
+    desc: 'Discover positions, contracts, grants, industry events, and educational resources across corporate, startup, and independent paths. All filtered to align with your career objectives.',
   },
   {
     icon: '🔍',
-    title: 'Find your people',
-    desc: 'Search professionals by name, role, skill, or interest. Follow the people who inspire you and build your professional circle.',
+    title: 'Professional Discovery',
+    desc: 'Search and connect with professionals by name, role, expertise, or industry focus. Follow industry leaders and expand your professional network strategically.',
   },
   {
     icon: '📰',
-    title: 'A feed that learns you',
-    desc: 'Posts from Reddit, LinkedIn, GitHub, Twitter, Instagram, TikTok, and more — round-robin mixed so no single platform dominates.',
+    title: 'Intelligent Content Feed',
+    desc: 'Aggregates posts from LinkedIn, GitHub, Reddit, Twitter, and other professional platforms — balanced distribution ensures diverse perspectives without any single source dominating.',
   },
   {
     icon: '✏️',
-    title: 'Post to your community',
-    desc: 'Share insights, ask questions, and build in public inside UFIConnect groups. Your community, your voice.',
+    title: 'Community Publishing',
+    desc: 'Share professional insights, pose questions, and showcase your work within UFIConnect communities. Engage directly with your professional peers.',
   },
 ];
 
@@ -55,7 +55,7 @@ const ROLE_PREVIEWS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'UFIConnect is a free, ad-free professional network with personalized feeds, communities, messaging, posts, and real opportunities.';
+const SHARE_TEXT = 'UFIConnect is a professional networking platform featuring personalized content feeds, vetted communities, secure messaging, professional publishing, and curated career opportunities.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -135,13 +135,13 @@ export default function Landing() {
           {/* Hero */}
           <section style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '80px 32px 60px' }}>
             <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
-              No ads. No noise. Just your career.
+              Professional Networking Without Compromise
             </div>
             <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-              UFIConnect — Professional Networking for Every Career
+              Personalized Networking for Ambitious Professionals
             </h1>
             <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '680px', margin: '0 auto 36px' }}>
-              UFI (UFIConnect) gives you a personalized feed, curated communities, and real opportunities — the moment you sign up. No algorithm gaming, no corporate ads.
+              Get a personalized feed, access to vetted communities, and curated opportunities instantly upon signup. Built for professionals who want signal without noise.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
               <Link to="/register"
@@ -163,7 +163,7 @@ export default function Landing() {
             {/* Role pills preview */}
             <div style={{ marginBottom: 0 }}>
               <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
-                Built for every professional — choose your role at signup
+                Designed for diverse professional backgrounds — select your role during registration
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
                 {ROLE_PREVIEWS.map(({ icon, label, color }) => (
@@ -187,10 +187,10 @@ export default function Landing() {
           <section id="features" style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
             <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
               <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '10px' }}>
-                What makes UFIConnect different?
+                A comprehensive platform for professional growth
               </h2>
               <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
-                UFI is one platform for your feed, your network, and your opportunities — personalized around who you are and where you're going.
+                UFIConnect combines your professional feed, network, and opportunity discovery in one place — intelligently tailored to your role, experience, and career goals.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
                 {FEATURES.map(({ icon, title, desc }) => (
@@ -209,10 +209,10 @@ export default function Landing() {
             <div style={{ maxWidth: 800, margin: '0 auto' }}>
               <div style={{ display: 'flex', justifyContent: 'center', gap: '48px', flexWrap: 'wrap' }}>
                 {[
-                  { stat: '80+', label: 'Live Communities' },
-                  { stat: '500+', label: 'Professional Roles' },
-                  { stat: '14+', label: 'Social Platforms' },
-                  { stat: '100%', label: 'Ad-free' },
+                  { stat: '80+', label: 'Professional Communities' },
+                  { stat: '500+', label: 'Professional Roles Supported' },
+                  { stat: '14+', label: 'Content Sources Aggregated' },
+                  { stat: '100%', label: 'Advertisement-Free' },
                 ].map(({ stat, label }) => (
                   <div key={label}>
                     <div style={{ fontSize: '2rem', fontWeight: 900, marginBottom: 4 }}>{stat}</div>
@@ -228,13 +228,13 @@ export default function Landing() {
             <div style={{ maxWidth: 960, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 28, alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase', color: '#93C5FD', marginBottom: 10 }}>
-                  Grow the network
+                  Build the network
                 </div>
                 <h2 style={{ fontSize: '1.55rem', fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
-                  Share UFIConnect with people building their next move.
+                  Invite colleagues pursuing their career objectives.
                 </h2>
                 <p style={{ color: '#CBD5E1', fontSize: '.95rem', lineHeight: 1.65, margin: 0, maxWidth: 650 }}>
-                  Every shared link helps the right professionals discover a cleaner place to post, connect, and find opportunities.
+                  Help professionals in your network discover a focused platform for collaboration, professional connections, and career advancement opportunities.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -263,12 +263,12 @@ export default function Landing() {
           {/* How it works */}
           <section style={{ padding: '70px 32px', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)' }}>
             <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>Up and running in 3 steps</h2>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>Get started in three steps</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px', marginBottom: '44px' }}>
                 {[
-                  { step: '1', icon: '🎯', title: 'Pick your role', desc: 'Choose from 16+ professional roles. Get a bio template, title suggestions, and matching interests pre-loaded.' },
-                  { step: '2', icon: '🎨', title: 'Tune your feed', desc: 'Select interests and goals in a 4-step onboarding that connects directly to your registration choices.' },
-                  { step: '3', icon: '🚀', title: 'Start connecting', desc: 'Your personalized feed is live. Discover people to follow, communities to join, and opportunities to pursue.' },
+                  { step: '1', icon: '🎯', title: 'Select your professional role', desc: 'Choose from 16+ career paths. Receive customized bio templates, relevant role suggestions, and aligned professional interests.' },
+                  { step: '2', icon: '🎨', title: 'Customize your feed preferences', desc: 'Define your professional interests and career goals through our guided setup experience tailored to your selections.' },
+                  { step: '3', icon: '🚀', title: 'Begin professional engagement', desc: 'Access your personalized feed immediately. Connect with relevant professionals, explore communities, and discover career opportunities.' },
                 ].map(({ step, icon, title, desc }) => (
                   <div key={step} style={{ background: '#fff', padding: '28px 20px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--primary)', color: '#fff', fontWeight: 800, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>{step}</div>
@@ -284,9 +284,9 @@ export default function Landing() {
           {/* Bottom CTA */}
           <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Ready to join the network?</h3>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Join the professional network</h3>
               <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '28px', lineHeight: 1.6 }}>
-                Free forever. Pick your role, personalize your feed, and start connecting with ambitious professionals in minutes.
+                Always free, always ad-free. Select your role, configure your preferences, and connect with professionals in your field within minutes.
               </p>
               <Link to="/register"
                 style={{ padding: '14px 40px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
@@ -301,7 +301,7 @@ export default function Landing() {
 
         {/* Footer */}
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-          <p style={{ marginBottom: 8 }}>© 2025 UFIConnect (UFI). A cleaner way to network and grow.</p>
+          <p style={{ marginBottom: 8 }}>© 2025 UFIConnect. Professional networking without compromise.</p>
           <p>
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}
