@@ -11,7 +11,7 @@ const FEATURES = [
   {
     icon: '🌐',
     title: '80+ Professional Communities',
-    desc: 'Access verified communities spanning engineering, design, startups, finance, healthcare, and additional industries — thoughtfully organized by role and professional interests.',
+    desc: 'Communities spanning engineering, design, startups, finance, healthcare, and additional industries — organized by role and professional interests.',
   },
   {
     icon: '💼',
@@ -25,8 +25,8 @@ const FEATURES = [
   },
   {
     icon: '📰',
-    title: 'Intelligent Content Feed',
-    desc: 'Aggregates posts from LinkedIn, GitHub, Reddit, Twitter, and other professional platforms — balanced distribution ensures diverse perspectives without any single source dominating.',
+    title: 'Content Feed',
+    desc: 'Aggregates posts from LinkedIn, GitHub, Reddit, Twitter, and other professional platforms — with balanced distribution across sources.',
   },
   {
     icon: '✏️',
@@ -91,8 +91,8 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFIConnect — Professional Networking, Connect & News (LinkedIn Alternative)</title>
-        <meta name="description" content="UFIConnect is a clean, ad-free professional network to connect with engineers, designers, founders, and creatives. News feed, communities, job listings, and networking — all tailored to you. Better than LinkedIn, Facebook Groups, and Twitter for professional connections." />
+        <title>UFIConnect — Professional Networking Platform</title>
+        <meta name="description" content="UFIConnect is a professional networking platform offering personalized feeds, communities, messaging, and career opportunities tailored to your role and interests." />
         <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news" />
         <meta name="author" content="UFIConnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -135,13 +135,13 @@ export default function Landing() {
           {/* Hero */}
           <section style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '80px 32px 60px' }}>
             <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
-              Professional Networking Without Compromise
+              All-in-one professional networking
             </div>
             <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-              Personalized Networking for Ambitious Professionals
+              Professional Networking Platform
             </h1>
             <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '680px', margin: '0 auto 36px' }}>
-              Get a personalized feed, access to vetted communities, and curated opportunities instantly upon signup. Built for professionals who want signal without noise.
+              A personalized feed, communities, messaging, and career opportunities — all tailored to your role and professional interests.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
               <Link to="/register"
@@ -187,10 +187,10 @@ export default function Landing() {
           <section id="features" style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
             <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
               <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '10px' }}>
-                A comprehensive platform for professional growth
+                Key features
               </h2>
               <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
-                UFIConnect combines your professional feed, network, and opportunity discovery in one place — intelligently tailored to your role, experience, and career goals.
+                UFIConnect combines your professional feed, network, and career discovery in one platform, tailored to your role and interests.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
                 {FEATURES.map(({ icon, title, desc }) => (
@@ -228,13 +228,13 @@ export default function Landing() {
             <div style={{ maxWidth: 960, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 28, alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase', color: '#93C5FD', marginBottom: 10 }}>
-                  Build the network
+                  Share UFIConnect
                 </div>
                 <h2 style={{ fontSize: '1.55rem', fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
-                  Invite colleagues pursuing their career objectives.
+                  Invite colleagues to join the platform.
                 </h2>
                 <p style={{ color: '#CBD5E1', fontSize: '.95rem', lineHeight: 1.65, margin: 0, maxWidth: 650 }}>
-                  Help professionals in your network discover a focused platform for collaboration, professional connections, and career advancement opportunities.
+                  Share UFIConnect with professionals in your network who would benefit from a dedicated platform for collaboration and career opportunities.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -284,9 +284,9 @@ export default function Landing() {
           {/* Bottom CTA */}
           <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Join the professional network</h3>
+              <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Get started</h3>
               <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '28px', lineHeight: 1.6 }}>
-                Always free, always ad-free. Select your role, configure your preferences, and connect with professionals in your field within minutes.
+                Sign up free. Select your role, customize your preferences, and start connecting with professionals in your field.
               </p>
               <Link to="/register"
                 style={{ padding: '14px 40px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
@@ -301,7 +301,7 @@ export default function Landing() {
 
         {/* Footer */}
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-          <p style={{ marginBottom: 8 }}>© 2025 UFIConnect. Professional networking without compromise.</p>
+          <p style={{ marginBottom: 8 }}>© 2025 UFIConnect</p>
           <p>
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}
