@@ -31,7 +31,7 @@ async function initDB() {
         max: 10,
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 15_000,    // Increased for Render
-        statement_timeout: 30_000,           // Add statement timeout
+        statement_timeout: 120_000,          // Increased to 2 minutes for slow queries
       });
 
       const client = await pool.connect();
