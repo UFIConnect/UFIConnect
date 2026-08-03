@@ -25,6 +25,10 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 const app = express();
+
+// Health-check endpoint FIRST - before any middleware
+app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
+
 app.use(helmet());
 
 // Allow web frontend origin in production, all origins in dev
@@ -38,9 +42,6 @@ try {
   const holomine = require('./holomine');
   holomine.register(app, { externalUrl: process.env.HOLOMINE_URL || null });
 } catch (err) { console.warn('holomine module not loaded:', err.message); }
-
-// Health-check endpoint (used by AWS load balancer / monitoring)
-app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
 
 // Maintenance mode — set MAINTENANCE=true env var to activate
 if (process.env.MAINTENANCE === 'true') {
