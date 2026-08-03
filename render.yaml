@@ -11,8 +11,9 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=350 index.js
+    startCommand: node --max-old-space-size=256 --abort-on-uncaught-exception index.js
     plan: starter
+    restartPolicyInterval: 5
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
