@@ -13,6 +13,17 @@ const filestore  = require('./filestore');
 
 dotenv.config();
 
+// Prevent crashes from unhandled exceptions
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err.message);
+  // Don't exit - try to keep running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - try to keep running
+});
+
 const app = express();
 app.use(helmet());
 
