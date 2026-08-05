@@ -1,5 +1,5 @@
 const CACHE_NAME = 'uficonnect-v3';
-const API_ORIGIN = 'https://uficonnect-api.onrender.com';
+const API_ORIGIN = 'https://uficonnect-api-708r.onrender.com';
 
 const SHELL_ASSETS = [
   '/',
