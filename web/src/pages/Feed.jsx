@@ -155,7 +155,6 @@ const SOURCE_META = {
 };
 
 const SOURCE_TABS = [
-  { key: 'mix',        label: 'Mix',         icon: '🎭' },
   { key: 'all',        label: 'All',         icon: '⚡' },
   { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
   { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
@@ -1177,33 +1176,15 @@ export default function Feed() {
     searchRef.current = '';
     setSearch('');
     setSearchInput('');
-    if (key === 'mix') {
-      activeTabsRef.current = [];
-      setActiveTabs([]);
-      const nextFilters = { ...filtersRef.current, sort: 'balanced' };
-      filtersRef.current = nextFilters;
-      setFilters(nextFilters);
-      // Silent background refresh with balanced sorting
-      loadFeed(false, [], {
-        silent: true,
-        live: viewModeRef.current === 'feed',
-        replace: true,
-        filters: nextFilters,
-      });
-      return;
-    }
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      const nextFilters = { ...filtersRef.current, sort: 'ranked' };
-      filtersRef.current = nextFilters;
-      setFilters(nextFilters);
-      // Silent background refresh — don't block UI
+      // Clears source filtering only — sort stays whatever's set in the Sort
+      // filter (Ranked by default, Balanced still available there).
       loadFeed(false, [], {
         silent: true,
         live: viewModeRef.current === 'feed',
         replace: true,
-        filters: nextFilters,
       });
       return;
     }
@@ -1621,10 +1602,8 @@ export default function Feed() {
         {SOURCE_TABS.map(tab => {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
-          const active = tab.key === 'mix'
-            ? (activeTabs.length === 0 && filters.sort === 'balanced')
-            : (tab.key === 'all' ? activeTabs.length === 0 && filters.sort !== 'balanced' : activeTabs.includes(tab.key));
-          const activeColor = tab.key === 'all' || tab.key === 'mix' ? 'var(--primary)' : color;
+          const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
+          const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
           return (
             <button
               key={tab.key}
