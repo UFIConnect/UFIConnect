@@ -54,6 +54,26 @@ const ROLE_PREVIEWS = [
   { icon: '🌐', label: 'Community', color: '#0284C7' },
 ];
 
+// Same labels/colors/icons used for source badges in the live feed (Feed.jsx SOURCE_META) —
+// a curated, recognizable subset of the 30+ sources actually aggregated, kept consistent
+// with the "14+ Content Sources Aggregated" stat below.
+const CONTENT_PLATFORMS = [
+  { icon: '🟠', label: 'Reddit',          color: '#FF4500' },
+  { icon: '🐙', label: 'GitHub',          color: '#24292F' },
+  { icon: '💼', label: 'LinkedIn',        color: '#0A66C2' },
+  { icon: '𝕏',  label: 'X (Twitter)',     color: '#000000' },
+  { icon: '▶️', label: 'YouTube',         color: '#FF0000' },
+  { icon: '🗞', label: 'Hacker News',     color: '#FF6600' },
+  { icon: '📚', label: 'Stack Overflow',  color: '#F48024' },
+  { icon: 'GL', label: 'GitLab',          color: '#FC6D26' },
+  { icon: '👩‍💻', label: 'DEV Community', color: '#3B49DF' },
+  { icon: '📝', label: 'Medium',          color: '#1A8917' },
+  { icon: '🚀', label: 'Product Hunt',    color: '#DA552F' },
+  { icon: '📰', label: 'TechCrunch',      color: '#0D9F3F' },
+  { icon: '⬛', label: 'The Verge',       color: '#FF3333' },
+  { icon: 'YC', label: 'Y Combinator',    color: '#FF6600' },
+];
+
 const SHARE_URL = 'https://uficonnect.org';
 const SHARE_TEXT = 'UFIConnect is a professional networking platform featuring personalized content feeds, vetted communities, secure messaging, professional publishing, and curated career opportunities.';
 const SHARE_LINKS = [
@@ -177,6 +197,29 @@ export default function Landing() {
                   </span>
                 ))}
                 <span style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.8rem' }}>
+                  + more
+                </span>
+              </div>
+            </div>
+          </section>
+
+          {/* Content platforms strip */}
+          <section style={{ background: '#fff', padding: '40px 32px', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ maxWidth: '1100px', margin: '0 auto', textAlign: 'center' }}>
+              <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: '.02em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 20 }}>
+                Content aggregated from the platforms you already use
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+                {CONTENT_PLATFORMS.map(({ icon, label, color }) => (
+                  <span key={label} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7,
+                    padding: '7px 15px', borderRadius: 20, background: 'var(--surface)',
+                    border: `1.5px solid ${color}30`, color, fontWeight: 700, fontSize: '.82rem',
+                  }}>
+                    <span aria-hidden="true">{icon}</span> {label}
+                  </span>
+                ))}
+                <span style={{ padding: '7px 15px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.82rem', fontWeight: 600 }}>
                   + more
                 </span>
               </div>
