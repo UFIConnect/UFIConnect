@@ -3830,7 +3830,7 @@ const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000
 const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
 const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
-const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api.onrender.com';
+const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api-708r.onrender.com';
 const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
 const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
 const WEB_STORAGE_BATCH_LIMIT = envNumber('WEB_STORAGE_BATCH_LIMIT', 2500, 100, 15000);
@@ -5011,7 +5011,7 @@ async function runDeployCheck() {
 }
 async function runDeployCheckAll() {
   const targets = [
-    { name: 'API',    url: 'https://uficonnect-api.onrender.com/health' },
+    { name: 'API',    url: 'https://uficonnect-api-708r.onrender.com/health' },
     { name: 'Web',    url: 'https://uficonnect.org' },
     { name: 'Office', url: 'https://office.uficonnect.org' },
   ];
@@ -8979,7 +8979,7 @@ app.get('/office/versions', (req, res) => {
   res.json({
     backend: { version: pkg.version, name: pkg.name, node: process.version },
     services: [
-      { name: 'Backend API',  slug: 'api',    url: 'https://uficonnect-api.onrender.com', domain: 'uficonnect-api.onrender.com' },
+      { name: 'Backend API',  slug: 'api',    url: 'https://uficonnect-api-708r.onrender.com', domain: 'uficonnect-api-708r.onrender.com' },
       { name: 'Web Frontend', slug: 'web',    url: 'https://uficonnect.org',              domain: 'uficonnect.org' },
       { name: 'Office',       slug: 'office', url: 'https://office.uficonnect.org',        domain: 'office.uficonnect.org' },
     ],
