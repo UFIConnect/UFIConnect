@@ -58,11 +58,14 @@ const ROLE_PREVIEWS = [
 // a curated, recognizable subset of the 30+ sources actually aggregated, kept consistent
 // with the "14+ Content Sources Aggregated" stat below.
 const CONTENT_PLATFORMS = [
-  { icon: '🟠', label: 'Reddit',          color: '#FF4500' },
-  { icon: '🐙', label: 'GitHub',          color: '#24292F' },
+  { icon: '🔵', label: 'Facebook',        color: '#1877F2' },
+  { icon: '📸', label: 'Instagram',       color: '#E1306C' },
   { icon: '💼', label: 'LinkedIn',        color: '#0A66C2' },
   { icon: '𝕏',  label: 'X (Twitter)',     color: '#000000' },
+  { icon: '💼', label: 'Indeed',          color: '#2557A7' },
+  { icon: '🟠', label: 'Reddit',          color: '#FF4500' },
   { icon: '▶️', label: 'YouTube',         color: '#FF0000' },
+  { icon: '🐙', label: 'GitHub',          color: '#24292F' },
   { icon: '🗞', label: 'Hacker News',     color: '#FF6600' },
   { icon: '📚', label: 'Stack Overflow',  color: '#F48024' },
   { icon: 'GL', label: 'GitLab',          color: '#FC6D26' },
@@ -201,25 +204,24 @@ export default function Landing() {
                 </span>
               </div>
             </div>
-          </section>
 
-          {/* Content platforms strip */}
-          <section style={{ background: '#fff', padding: '40px 32px', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ maxWidth: '1100px', margin: '0 auto', textAlign: 'center' }}>
-              <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: '.02em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 20 }}>
+            {/* Content platforms preview */}
+            <div style={{ marginTop: 32 }}>
+              <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
                 Content aggregated from the platforms you already use
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
                 {CONTENT_PLATFORMS.map(({ icon, label, color }) => (
                   <span key={label} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 7,
-                    padding: '7px 15px', borderRadius: 20, background: 'var(--surface)',
-                    border: `1.5px solid ${color}30`, color, fontWeight: 700, fontSize: '.82rem',
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '6px 14px', borderRadius: 20, background: '#fff',
+                    border: `1.5px solid ${color}40`, color, fontWeight: 600, fontSize: '.8rem',
+                    boxShadow: 'var(--shadow)',
                   }}>
                     <span aria-hidden="true">{icon}</span> {label}
                   </span>
                 ))}
-                <span style={{ padding: '7px 15px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.82rem', fontWeight: 600 }}>
+                <span style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.8rem' }}>
                   + more
                 </span>
               </div>
