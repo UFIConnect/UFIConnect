@@ -63,6 +63,11 @@ const auth0Enabled = Boolean(AUTH0_DOMAIN && AUTH0_AUDIENCE && AUTH0_ISSUER);
 let auth0Jwks = null;
 const joseModulePromise = import('jose');
 
+// Older/malformed PATCH /profile requests could store a non-array value into
+// user.skills; every read site normalizes through this so a bad stored value
+// can't crash .map/.filter calls downstream.
+const asArray = (v) => Array.isArray(v) ? v : [];
+
 // ─── Time helpers ─────────────────────────────────────────────────────────────
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 const H = 3600000;
@@ -3134,6 +3139,8 @@ function generateSocialSearchCards(interests = []) {
 }
 
 async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals = [], title = '', org = '', sourceFilter = null) {
+  skills = asArray(skills);
+  goals = asArray(goals);
   // Base: interest → primary keyword
   const keywords = interests.flatMap(i => {
     const primary = interestKeyword(i);
@@ -5747,7 +5754,7 @@ function getConnectionStatus(fromId, toId) {
 }
 
 function sanitizeUser(u) {
-  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: u.skills || [] };
+  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: asArray(u.skills) };
 }
 
 function serializeCommunityPost(post, viewerId = null) {
@@ -5952,12 +5959,12 @@ function dbRowToMemUser(row) {
     avatarUrl: row.avatar_url || '',
     title: row.title || '',
     bio: row.bio || '',
-    skills: row.skills || [],
+    skills: asArray(row.skills),
     organization: row.organization || '',
     joinedGroups: row.joined_groups || [],
     onboardingComplete: row.onboarding_complete || false,
     profileHidden: false,
-    preferences: row.role ? { role: row.role, goals: row.goals || [], interests: row.interests || [], experience: row.experience } : null,
+    preferences: row.role ? { role: row.role, goals: asArray(row.goals), interests: asArray(row.interests), experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
@@ -6948,7 +6955,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
-  if (skills) user.skills = skills;
+  if (skills !== undefined) user.skills = asArray(skills).filter(s => typeof s === 'string');
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
@@ -6972,6 +6979,8 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
     role: req.body.role, goals: req.body.goals,
     interests: req.body.interests, experience: req.body.experience,
   };
+  prefs.goals = asArray(prefs.goals);
+  prefs.interests = asArray(prefs.interests);
   user.preferences = prefs;
   user.onboardingComplete = true;
   // Optional fields carried from registration context
@@ -7549,7 +7558,7 @@ app.get('/feed', authenticate, async (req, res) => {
   // DB-persisted posts — topic-filtered using interests + skills
   const userTopics = [
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-    ...(user?.skills || []).map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+    ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
   const dbPosts = (await getPostsFromDB(userTopics, 5000, 0, null, {
     sort: sortMode,
@@ -9236,7 +9245,7 @@ app.get('/users/search', authenticate, (req, res) => {
       (u.title || '').toLowerCase().includes(q) ||
       (u.organization || '').toLowerCase().includes(q) ||
       (u.bio || '').toLowerCase().includes(q) ||
-      (u.skills || []).some(s => s.toLowerCase().includes(q)) ||
+      asArray(u.skills).some(s => typeof s === 'string' && s.toLowerCase().includes(q)) ||
       (u.preferences?.role || '').toLowerCase().includes(q) ||
       (u.preferences?.interests || []).some(i => i.toLowerCase().includes(q))
     );
@@ -9288,7 +9297,7 @@ app.get('/users/search', authenticate, (req, res) => {
   res.json({
     users: scored.map(({ u, sharedInterests }) => ({
       id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
-      organization: u.organization || '', skills: u.skills || [],
+      organization: u.organization || '', skills: asArray(u.skills),
       role: u.preferences?.role || '',
       interests: (u.preferences?.interests || []).slice(0, 6),
       followersCount: followerCount[u.id] || 0,
@@ -9309,7 +9318,7 @@ app.get('/users/:id', authenticate, async (req, res) => {
     const followsYouBack = follows.some(f => f.followerId === user.id && f.followingId === req.user.id);
     res.json({
       id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
-      organization: user.organization || '', skills: user.skills || [],
+      organization: user.organization || '', skills: asArray(user.skills),
       role: user.preferences?.role || '',
       interests: user.preferences?.interests || [],
       goals: user.preferences?.goals || [],
@@ -9887,7 +9896,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const role       = user?.preferences?.role || '';
   const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
   const experience = user?.preferences?.experience || 'mid';
-  const skills     = new Set((user?.skills || []).map((s) => s.toLowerCase()));
+  const skills     = new Set(asArray(user?.skills).filter(s => typeof s === 'string').map((s) => s.toLowerCase()));
   const rawInterests = (user?.preferences?.interests || []);
   const goals      = (user?.preferences?.goals || []);
   const roleTypes  = ROLE_OP_TYPES[role] || new Set();
