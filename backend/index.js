@@ -6293,6 +6293,23 @@ async function migrateDB() {
 // ─── Save external posts to persistent DB cache ───────────────────────────────
 const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000000);
 
+// savePostsToDB/savePostsToDBFast fire on every fetch batch from any of the 30
+// source workers (plus live user requests) — potentially dozens of times a
+// minute. The trim below is an ORDER BY ... OFFSET scan over the whole table,
+// so running it on every single save call is what was actually starving the
+// connection pool. Only let it really execute once per TRIM_INTERVAL_MS.
+let lastFeedPostsTrimAt = 0;
+const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
+function trimFeedPostsCache() {
+  if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
+  lastFeedPostsTrimAt = Date.now();
+  db.query(
+    `DELETE FROM feed_posts_cache WHERE id IN (
+       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
+     )`, [MAX_CACHED_DB_POSTS]
+  ).catch(() => {});
+}
+
 async function savePostsToDB(posts) {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
@@ -6332,12 +6349,7 @@ async function savePostsToDB(posts) {
       saved++;
     } catch { /* skip individual bad rows */ }
   }
-  // Trim to cap — keep newest posts
-  db.query(
-    `DELETE FROM feed_posts_cache WHERE id IN (
-       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
-     )`, [MAX_CACHED_DB_POSTS]
-  ).catch(() => {});
+  trimFeedPostsCache();
   return saved;
 }
 
@@ -6408,11 +6420,7 @@ async function savePostsToDBFast(posts) {
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
-  db.query(
-    `DELETE FROM feed_posts_cache WHERE id IN (
-       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
-     )`, [MAX_CACHED_DB_POSTS]
-  ).catch(() => {});
+  trimFeedPostsCache();
   return result.rowCount || rows.length;
 }
 
