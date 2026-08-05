@@ -352,7 +352,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
     <div
       ref={panelRef}
       style={{
-        position: 'absolute', top: '100%', right: 0, zIndex: 500, marginTop: 6,
+        position: 'absolute', top: '100%', zIndex: 500, marginTop: 6,
         background: 'var(--surface)', border: '1.5px solid var(--border)',
         borderRadius: 16, padding: '18px 20px', width: 'min(320px, calc(100vw - 24px))',
         maxHeight: 'calc(100vh - 200px)', overflowY: 'auto',

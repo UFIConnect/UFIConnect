@@ -1275,6 +1275,12 @@ async function fetchRedditSub(sub, keyword) {
       }
     }
   }
+  // Anonymous fallbacks are frequently blocked wholesale for extended periods —
+  // skip straight to returning empty during a known outage window rather than
+  // spending two more failing requests per subreddit.
+  if (Date.now() < redditAnonOutageUntil) {
+    return [];
+  }
   // Anonymous JSON — www.reddit.com
   try {
     const data = await fetchJSON(
@@ -1289,18 +1295,7 @@ async function fetchRedditSub(sub, keyword) {
   } catch (e) {
     console.warn(`[Reddit] anon JSON failed for r/${sub}: ${e.message}`);
   }
-  // Anonymous JSON — old.reddit.com (sometimes different rate limits from server IPs)
-  try {
-    const data = await fetchJSON(
-      `https://old.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
-      REDDIT_HEADERS
-    );
-    const posts = parseRedditJSON(data, keyword);
-    if (posts.length) return posts;
-  } catch (e) {
-    console.warn(`[Reddit] old.reddit JSON failed for r/${sub}: ${e.message}`);
-  }
-  // RSS fallback (most reliable, always works even with rate limits)
+  // RSS fallback
   try {
     const xml = await fetchText(`https://www.reddit.com/r/${sub}/new.rss?limit=100`, REDDIT_RSS_HEADERS);
     const posts = parseRedditRSSFeed(xml, keyword);
@@ -1343,6 +1338,11 @@ async function fetchRedditByKeyword(keyword) {
     || Object.entries(TOPIC_SUBREDDITS).find(([k]) => keyword.toLowerCase().includes(k.toLowerCase()))?.[1]
     || ['programming', 'technology', 'webdev'];
 
+  if (Date.now() < redditAnonOutageUntil) {
+    const fallback = getCached(key) || [];
+    return fallback;
+  }
+
   console.log(`[Reddit] Fetching from ${subs.length} subreddits for "${keyword}": ${subs.join(', ')}`);
 
   const allPosts = [];
@@ -1361,6 +1361,7 @@ async function fetchRedditByKeyword(keyword) {
   await Promise.allSettled(fetchPromises);
 
   if (allPosts.length) {
+    redditConsecutiveFullMisses = 0;
     const seen = new Set();
     const result = allPosts
       .filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; })
@@ -1368,6 +1369,13 @@ async function fetchRedditByKeyword(keyword) {
     console.log(`[Reddit] Success for "${keyword}": ${result.length} posts from ${subs.length} subreddits`);
     setCached(key, result);
     return result;
+  }
+
+  redditConsecutiveFullMisses++;
+  if (redditConsecutiveFullMisses >= REDDIT_OUTAGE_MISS_THRESHOLD && Date.now() >= redditAnonOutageUntil) {
+    redditAnonOutageUntil = Date.now() + REDDIT_OUTAGE_COOLDOWN_MS;
+    redditConsecutiveFullMisses = 0;
+    console.warn(`[Reddit] ${REDDIT_OUTAGE_MISS_THRESHOLD} consecutive empty fetches — pausing anon/RSS requests for ${REDDIT_OUTAGE_COOLDOWN_MS / 60000}min`);
   }
 
   const fallback = getCached(key) || [];
@@ -1551,6 +1559,17 @@ const REDDIT_RSS_HEADERS = {
 
 let _redditToken = null;
 let _redditTokenExpiry = 0;
+
+// Anonymous Reddit access is frequently blocked wholesale from cloud-host IP
+// ranges (not transient — every subreddit fails the same way for extended
+// periods). Once a few consecutive keyword fetches come back completely
+// empty, stop spending anon/RSS requests for a while instead of retrying
+// every subreddit on every 15s cycle. OAuth (when credentials are set) is
+// unaffected by this and always still attempted.
+let redditAnonOutageUntil = 0;
+let redditConsecutiveFullMisses = 0;
+const REDDIT_OUTAGE_MISS_THRESHOLD = 3;
+const REDDIT_OUTAGE_COOLDOWN_MS = 20 * 60 * 1000;
 
 async function getRedditToken() {
   if (_redditToken && Date.now() < _redditTokenExpiry - 60_000) return _redditToken;
