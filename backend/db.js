@@ -28,9 +28,9 @@ async function initDB() {
           process.env.NODE_ENV === 'production'
             ? { rejectUnauthorized: false }   // AWS RDS / Heroku / Render
             : false,
-        max: 10,
+        max: 20,                             // Standard plan has ~97 connection headroom; was 10
         idleTimeoutMillis: 30_000,
-        connectionTimeoutMillis: 15_000,    // Increased for Render
+        connectionTimeoutMillis: 30_000,    // Was 15s — background jobs were queuing past that under load
         statement_timeout: 120_000,          // Increased to 2 minutes for slow queries
       });
 
