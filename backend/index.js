@@ -7371,6 +7371,29 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
   } catch (e) { console.error('DELETE /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+// Creator-only. Seeded/external groups have no createdBy, so this can never
+// touch them — only groups created via POST /groups.
+app.delete('/groups/:id', authenticate, async (req, res) => {
+  try {
+    const group = groups.find((g) => g.id === req.params.id);
+    if (!group) return res.status(404).json({ message: 'Group not found.' });
+    if (!group.createdBy || group.createdBy !== req.user.id) {
+      return res.status(403).json({ message: 'Only the group creator can delete it.' });
+    }
+    groups.splice(groups.indexOf(group), 1);
+    users.forEach((u) => {
+      const idx = (u.joinedGroups || []).indexOf(group.id);
+      if (idx > -1) u.joinedGroups.splice(idx, 1);
+    });
+    if (db.isConnected()) {
+      await db.query('DELETE FROM community_groups WHERE id=$1', [group.id]).catch((e) => console.error('group delete DB:', e.message));
+    } else {
+      filestore.saveUsers(users);
+    }
+    res.json({ deleted: true });
+  } catch (e) { console.error('DELETE /groups/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
 // ─── Feed (internal + cached external posts, personalized by interests & role) ──
 // Shared by /feed (legacy — used by the mobile app) and /office/feed (web feed
 // tab): posts only ever come from what the office source-agent pipeline has
