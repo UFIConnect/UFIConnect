@@ -1243,6 +1243,15 @@ const TOPIC_SUBREDDITS = {
   'Economics':              ['economics', 'AskEconomics', 'MacroEconomics'],
   'Creator Economy':        ['NewTubers', 'juststart', 'blogging', 'youtube'],
   'Mental Health & Wellness': ['mentalhealth', 'anxiety', 'psychology', 'meditation'],
+  // — Casual / all-in-one browsing —
+  'Sports':                 ['sports', 'nba', 'nfl', 'soccer', 'formula1'],
+  'Fashion':                ['malefashionadvice', 'femalefashionadvice', 'streetwear', 'Sneakers'],
+  'Pets & Animals':         ['pets', 'aww', 'AnimalsBeingBros', 'AnimalsBeingDerps'],
+  'Home & Garden':          ['DIY', 'gardening', 'HomeImprovement', 'houseplants'],
+  'Food & Drink':           ['food', 'Cooking', 'Baking', 'Coffee'],
+  'Travel':                 ['travel', 'solotravel', 'backpacking'],
+  'Movies & Shows':         ['movies', 'television', 'Filmmakers'],
+  'Books':                  ['books', 'suggestmeabook', 'literature'],
 };
 
 function parseRedditRSSFeed(xml, topicKeyword) {
@@ -1278,7 +1287,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
       isExternal:  true,
       group:       matchedGroup
         ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
-        : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+        : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
     });
   }
   return posts;
@@ -1310,7 +1319,7 @@ function parseRedditJSON(data, topicKeyword) {
         isExternal:  true,
         group:       matchedGroup
           ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
-          : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Engineering' },
+          : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
       };
     });
 }
@@ -3515,6 +3524,10 @@ const FEED_TOPICS = [
   'Content Creator', 'Remote Work', 'EdTech', 'Health Tech', 'Climate Tech',
   'Fitness & Gym', 'Travel & Adventure', 'Cooking & Recipes', 'Music Discovery',
   'Science & Research', 'Personal Finance', 'Leadership', 'Mental Health',
+  // Entertainment & Casual — keeps the feed feeling like an all-in-one browse,
+  // not a work-only stream.
+  'Gaming', 'Sports', 'Fashion', 'Film & TV', 'Movies & Shows', 'Pets & Animals',
+  'Home & Garden', 'Food & Drink', 'Travel', 'Books',
 ];
 
 // Each source agent continuously cycles through FEED_TOPICS one at a time.
@@ -7908,25 +7921,22 @@ async function handleFeedRequest(req, res) {
   const behancePosts   = behanceRaw.map(p => mapExternalPost(p, 'behance'));
   const designwebPosts = designwebRaw.map(p => mapExternalPost(p, 'designweb'));
 
-  // DB-persisted posts — topic-filtered using interests + skills
+  // userTopics still power connected-social personalization below, but the main
+  // feed itself is NOT filtered down to them — the feed is a shared, all-in-one
+  // mix (professional + casual) rather than a narrow "work topics only" stream.
+  // Hard-filtering every post to a user's professional interests/skills made the
+  // feed read as a job board instead of something to casually browse.
   const userTopics = [
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
-  const dbPosts = (await getPostsFromDB(userTopics, 5000, 0, null, {
+  const dbPosts = (await getPostsFromDB([], 5000, 0, null, {
     sort: sortMode,
     timeRange,
   })).map(p => mapExternalPost(p, p.source || 'reddit'));
 
-  // Background-cached global posts — filter by user topics when available to reduce noise
-  const allCachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
-  const userTopicSet = new Set(userTopics.map(t => t.toLowerCase()));
-  const cachedMapped = userTopics.length > 0
-    ? allCachedMapped.filter(p => {
-        const t = (p.topic || p.source || '').toLowerCase();
-        return [...userTopicSet].some(kw => t.includes(kw));
-      })
-    : allCachedMapped;
+  // Background-cached global posts — unfiltered, same shared all-in-one pool.
+  const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Per-user social platform posts (only when user has connected a social account)
   const socialKws = userTopics.slice(0, 3);
