@@ -7206,6 +7206,17 @@ async function purgeUser(uid) {
   for (let i = conversations.length - 1; i >= 0; i--) {
     if (conversations[i].participants.includes(uid)) conversations.splice(i, 1);
   }
+  // Groups this user created would otherwise become orphaned (createdBy
+  // pointing at a deleted user, permanently un-deletable since DELETE
+  // /groups/:id only allows the creator).
+  const ownedGroupIds = groups.filter(g => g.createdBy === uid).map(g => g.id);
+  for (const gid of ownedGroupIds) {
+    const gIdx = groups.findIndex(g => g.id === gid);
+    if (gIdx > -1) groups.splice(gIdx, 1);
+  }
+  if (ownedGroupIds.length) {
+    users.forEach(u => { u.joinedGroups = (u.joinedGroups || []).filter(id => !ownedGroupIds.includes(id)); });
+  }
   if (db.isConnected() && isDBId(uid)) {
     // NB: social_accounts/connections tables don't exist in the live schema
     // (migrateDB never creates them — social tokens live on users.social_tokens,
@@ -7218,11 +7229,28 @@ async function purgeUser(uid) {
     await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
     await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
     await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
+    await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
     await db.query('DELETE FROM users WHERE id=$1', [uid]);
   } else {
     filestore.saveUsers(users);
   }
 }
+
+// TEMPORARY — one-time cleanup for a leftover live-testing account whose
+// login was lost. Remove immediately after use.
+const TEMP_ADMIN_CLEANUP_SECRET_2 = '37bfad35b2c03e5e34fb721a7245d0120a577ebe8dfd094a';
+app.post('/admin/temp-delete-users-2', async (req, res) => {
+  const { secret, userIds } = req.body || {};
+  if (secret !== TEMP_ADMIN_CLEANUP_SECRET_2) return res.status(403).json({ error: 'forbidden' });
+  const ids = Array.isArray(userIds) ? userIds : [];
+  const deleted = [];
+  const failed = [];
+  for (const uid of ids) {
+    try { await purgeUser(uid); deleted.push(uid); }
+    catch (e) { console.error('admin temp delete 2:', uid, e.message); failed.push(uid); }
+  }
+  res.json({ deleted, failed });
+});
 
 app.delete('/profile', authenticate, async (req, res) => {
   try {
