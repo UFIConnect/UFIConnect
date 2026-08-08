@@ -6887,14 +6887,21 @@ app.post('/auth/reset-password', async (req, res) => {
   const user = await getUser(userId);
   if (!user) return res.status(404).json({ message: 'Account not found.' });
   const hash = bcrypt.hashSync(password, 10);
-  user.passwordHash = hash;
-  if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, userId])
-      .catch((e) => console.error('reset-password DB:', e.message));
-  } else {
-    filestore.saveUsers(users);
+  const prevHash = user.passwordHash;
+  try {
+    if (db.isConnected() && isDBId(userId)) {
+      await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, userId]);
+    } else {
+      user.passwordHash = hash;
+      filestore.saveUsers(users);
+    }
+    user.passwordHash = hash;
+    res.json({ ok: true, message: 'Password updated — you can now sign in.' });
+  } catch (e) {
+    console.error('reset-password DB:', e.message);
+    user.passwordHash = prevHash;
+    res.status(500).json({ message: 'Could not reset your password. Please try again.' });
   }
-  res.json({ ok: true, message: 'Password updated — you can now sign in.' });
 });
 
 // ─── Social token helpers ─────────────────────────────────────────────────────
@@ -6904,8 +6911,8 @@ async function saveSocialToken(userId, platform, token) {
   if (!user.socialTokens) user.socialTokens = {};
   user.socialTokens[platform] = token;
   if (db.isConnected() && isDBId(userId)) {
-    db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
-      [JSON.stringify(user.socialTokens), userId]).catch(e => console.error('saveSocialToken:', e.message));
+    await db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
+      [JSON.stringify(user.socialTokens), userId]);
   } else {
     filestore.saveUsers(users);
   }
@@ -6916,8 +6923,8 @@ async function removeSocialToken(userId, platform) {
   if (!user) return;
   if (user.socialTokens) delete user.socialTokens[platform];
   if (db.isConnected() && isDBId(userId)) {
-    db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
-      [JSON.stringify(user.socialTokens || {}), userId]).catch(e => console.error('removeSocialToken:', e.message));
+    await db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
+      [JSON.stringify(user.socialTokens || {}), userId]);
   } else {
     filestore.saveUsers(users);
   }
@@ -7109,16 +7116,26 @@ app.post('/social/connect', authenticate, async (req, res) => {
 app.delete('/profile/social/:platform', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!SOCIAL_CFG[platform]) return res.status(404).json({ error: 'Unknown platform' });
-  await removeSocialToken(req.user.id, platform);
-  res.json({ ok: true, disconnected: platform });
+  try {
+    await removeSocialToken(req.user.id, platform);
+    res.json({ ok: true, disconnected: platform });
+  } catch (e) {
+    console.error('DELETE /profile/social/:platform:', e.message);
+    res.status(500).json({ ok: false, error: 'Failed to disconnect. Please try again.' });
+  }
 });
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 app.delete('/social/connect/:platform', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
-  await removeSocialToken(req.user.id, platform);
-  res.json({ ok: true, disconnected: platform });
+  try {
+    await removeSocialToken(req.user.id, platform);
+    res.json({ ok: true, disconnected: platform });
+  } catch (e) {
+    console.error('DELETE /social/connect/:platform:', e.message);
+    res.status(500).json({ ok: false, error: 'Failed to disconnect. Please try again.' });
+  }
 });
 
 app.get('/profile', authenticate, async (req, res) => {
@@ -7132,6 +7149,11 @@ app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   const { name, title, bio, skills, organization, links, roleSettings } = req.body;
+  // Snapshot in case the DB write fails and in-memory needs to roll back to
+  // what's actually durable — an "ok" response should mean it's really saved.
+  const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
+    organization: user.organization, links: user.links, roleSettings: user.roleSettings,
+    profileHidden: user.profileHidden };
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
@@ -7140,16 +7162,22 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
   user.profileHidden = false;
-  if (db.isConnected() && isDBId(user.id)) {
-    db.query(
-      `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8 WHERE id=$9`,
-      [user.name, user.title, user.bio, user.skills, user.organization,
-       JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false, user.id]
-    ).catch(e => console.error('PATCH profile DB:', e.message));
-  } else {
-    filestore.saveUsers(users);
+  try {
+    if (db.isConnected() && isDBId(user.id)) {
+      await db.query(
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8 WHERE id=$9`,
+        [user.name, user.title, user.bio, user.skills, user.organization,
+         JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false, user.id]
+      );
+    } else {
+      filestore.saveUsers(users);
+    }
+    res.json(fullProfile(user));
+  } catch (e) {
+    console.error('PATCH /profile DB:', e.message);
+    Object.assign(user, prev);
+    res.status(500).json({ message: 'Failed to save changes. Please try again.' });
   }
-  res.json(fullProfile(user));
 });
 
 app.post('/profile/onboarding', authenticate, async (req, res) => {
@@ -7174,28 +7202,43 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
       if (g) g.members += 1;
     }
   });
-  if (db.isConnected() && isDBId(user.id)) {
-    db.query(
-      `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8`,
-      [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', user.id]
-    ).catch(e => console.error('onboarding DB:', e.message));
-  } else {
-    filestore.saveUsers(users);
+  try {
+    if (db.isConnected() && isDBId(user.id)) {
+      await db.query(
+        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8`,
+        [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', user.id]
+      );
+    } else {
+      filestore.saveUsers(users);
+    }
+    res.json({ profile: fullProfile(user), autoJoined: suggested });
+  } catch (e) {
+    console.error('POST /profile/onboarding DB:', e.message);
+    // Leave the in-memory state as-is (still onboarded for this session) but
+    // tell the client the save didn't durably land, since onboardingComplete
+    // getting silently lost on the next restart would trap the user in a
+    // re-onboarding loop with no explanation.
+    res.status(500).json({ message: 'Onboarding was not saved — please try again.' });
   }
-  res.json({ profile: fullProfile(user), autoJoined: suggested });
 });
 
 // ─── Plan upgrade (stub — wire real payment before going live) ───────────────────
 app.post('/user/plan/upgrade', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  user.plan = 'pro';
-  if (db.isConnected() && isDBId(user.id)) {
-    await db.query('UPDATE users SET plan=$1 WHERE id=$2', ['pro', user.id]).catch(e => console.error('upgrade plan:', e.message));
-  } else {
-    filestore.saveUsers(users);
+  try {
+    if (db.isConnected() && isDBId(user.id)) {
+      await db.query('UPDATE users SET plan=$1 WHERE id=$2', ['pro', user.id]);
+    } else {
+      user.plan = 'pro';
+      filestore.saveUsers(users);
+    }
+    user.plan = 'pro';
+    res.json({ plan: 'pro', isPro: true });
+  } catch (e) {
+    console.error('upgrade plan:', e.message);
+    res.status(500).json({ message: 'Could not complete the upgrade. Please try again.' });
   }
-  res.json({ plan: 'pro', isPro: true });
 });
 
 // ─── Delete account ─────────────────────────────────────────────────────────────
@@ -7302,24 +7345,26 @@ app.post('/groups', authenticate, async (req, res) => {
       isExternal: false, relatedGroups: [],
       createdBy: user.id, isPrivate: Boolean(isPrivate),
     };
-    groups.push(group);
-    user.joinedGroups = [...(user.joinedGroups || []), id];
-
-    if (db.isConnected()) {
-      try {
+    const prevJoinedGroups = user.joinedGroups || [];
+    try {
+      if (db.isConnected()) {
         await db.query(`
           INSERT INTO community_groups
             (id,name,category,description,member_count,is_external,related_groups,created_by,is_private)
           VALUES ($1,$2,$3,$4,1,false,'{}',$5,$6)
         `, [group.id, group.name, group.category, group.description, user.id, group.isPrivate]);
         if (isDBId(user.id)) {
-          await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
+          await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [[...prevJoinedGroups, id], user.id]);
         }
-      } catch (e) { console.error('POST /groups DB:', e.message); }
-    } else {
-      filestore.saveUsers(users);
+      }
+      groups.push(group);
+      user.joinedGroups = [...prevJoinedGroups, id];
+      if (!db.isConnected()) filestore.saveUsers(users);
+      res.status(201).json({ group });
+    } catch (e) {
+      console.error('POST /groups DB:', e.message);
+      res.status(500).json({ message: 'Failed to create the group. Please try again.' });
     }
-    res.status(201).json({ group });
   } catch (e) { console.error('POST /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -7374,8 +7419,7 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
       user.joinedGroups.push(group.id);
       group.members += 1;
       if (db.isConnected() && isDBId(user.id)) {
-        db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
-          .catch(e => console.error('group join DB:', e.message));
+        await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
       }
     }
     res.json({ joinedGroups: user.joinedGroups, recommended: recommendGroups(user.id, group.id, 3) });
@@ -7392,8 +7436,7 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
       user.joinedGroups.splice(idx, 1);
       group.members = Math.max(0, group.members - 1);
       if (db.isConnected() && isDBId(user.id)) {
-        db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id])
-          .catch(e => console.error('group leave DB:', e.message));
+        await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
       }
     }
     res.json({ joinedGroups: user.joinedGroups });
@@ -7409,16 +7452,16 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
     if (!group.createdBy || group.createdBy !== req.user.id) {
       return res.status(403).json({ message: 'Only the group creator can delete it.' });
     }
+    if (db.isConnected()) {
+      await db.query('DELETE FROM community_groups WHERE id=$1', [group.id]);
+    } else {
+      filestore.saveUsers(users);
+    }
     groups.splice(groups.indexOf(group), 1);
     users.forEach((u) => {
       const idx = (u.joinedGroups || []).indexOf(group.id);
       if (idx > -1) u.joinedGroups.splice(idx, 1);
     });
-    if (db.isConnected()) {
-      await db.query('DELETE FROM community_groups WHERE id=$1', [group.id]).catch((e) => console.error('group delete DB:', e.message));
-    } else {
-      filestore.saveUsers(users);
-    }
     res.json({ deleted: true });
   } catch (e) { console.error('DELETE /groups/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -9447,10 +9490,10 @@ async function toggleCommunityPostLike(req, res) {
     else if (!post.likes.includes(uid)) post.likes.push(uid);
 
     if (db.isConnected()) {
-      db.query(
+      await db.query(
         `UPDATE community_posts SET likes=$1 WHERE id=$2`,
         [post.likes, post.id]
-      ).catch(e => console.error('post like DB:', e.message));
+      );
     }
 
     res.json({
@@ -9493,11 +9536,16 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
     post.commentsCount = (post.commentsCount || 0) + 1;
 
     if (db.isConnected()) {
-      db.query(
+      // The comment itself is the part that matters — await it so a DB
+      // failure here actually surfaces as an error instead of a lost
+      // comment reported as posted. The counter is a denormalized cache of
+      // COUNT(*); worth keeping in sync but not worth failing an already-
+      // saved comment over, so it stays best-effort.
+      await db.query(
         `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
          VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
         [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
-      ).catch(e => console.error('post comment DB:', e.message));
+      );
       db.query(
         `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
         [post.id]
@@ -9534,17 +9582,19 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       createdAt: new Date().toISOString(),
       source: 'uficonnect', sourceLabel: 'UFIConnect',
     };
-    posts.unshift(post);
-    const serialized = serializeCommunityPost(post, req.user.id);
-    broadcastSSE([serialized]);
-
+    // Confirm the DB write before mutating in-memory state / broadcasting to
+    // other users — otherwise a failed write still looks like a live post to
+    // everyone until the next restart quietly drops it.
     if (db.isConnected()) {
-      db.query(
+      await db.query(
         `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
          VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIConnect',$6) ON CONFLICT DO NOTHING`,
         [id, group.id, user.id, user.name, content.trim(), post.createdAt]
-      ).catch(e => console.error('create post DB:', e.message));
+      );
     }
+    posts.unshift(post);
+    const serialized = serializeCommunityPost(post, req.user.id);
+    broadcastSSE([serialized]);
     res.status(201).json({ post: serialized });
   } catch (e) { console.error('POST /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -9672,10 +9722,10 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
     if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
       follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
       if (db.isConnected()) {
-        db.query(
+        await db.query(
           `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
           [followerId, followingId]
-        ).catch(e => console.error('follow DB:', e.message));
+        );
       }
     }
     res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
@@ -9689,10 +9739,10 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
     const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
     if (idx >= 0) follows.splice(idx, 1);
     if (db.isConnected()) {
-      db.query(
+      await db.query(
         `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
         [followerId, followingId]
-      ).catch(e => console.error('unfollow DB:', e.message));
+      );
     }
     res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
   } catch (e) { console.error('DELETE /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
@@ -10577,17 +10627,20 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
       createdAt: new Date().toISOString(),
       read: false,
     };
-    conv.messages.push(newMsg);
-
+    // Await before mutating in-memory conv.messages — GET /messages merges
+    // this in-memory array with a summary rebuilt from direct_messages, so a
+    // silently-failed insert here would make the sender see the message
+    // (from memory) while the recipient's DB-derived view never gets it.
     if (db.isConnected()) {
-      db.query(
+      await db.query(
         `INSERT INTO direct_messages
          (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,false,$7)
          ON CONFLICT DO NOTHING`,
         [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
-      ).catch(e => console.error('direct message DB:', e.message));
+      );
     }
+    conv.messages.push(newMsg);
 
     res.json({
       message: newMsg,
