@@ -9,7 +9,6 @@ const NAV = [
   { to: '/notifications', icon: '🔔', label: 'Notifications' },
   { to: '/groups',        icon: '🌐', label: 'Groups'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
-  { to: '/sources',       icon: '📡', label: 'Sources'      },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
 ];
 
