@@ -5975,9 +5975,11 @@ async function getCommentsForPost(postId, limit = 50) {
     .map(serializePostComment);
 }
 
-async function getCommunityPosts({ viewerId = null, authorId = null, limit = 50 } = {}) {
+async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, limit = 50 } = {}) {
   let result = posts.filter((p) =>
-    (p.source || 'uficonnect') === 'uficonnect' && (!authorId || p.authorId === authorId)
+    (p.source || 'uficonnect') === 'uficonnect'
+    && (!authorId || p.authorId === authorId)
+    && (!groupId || p.groupId === groupId)
   );
 
   if (db.isConnected()) {
@@ -5987,6 +5989,10 @@ async function getCommunityPosts({ viewerId = null, authorId = null, limit = 50 
       if (authorId) {
         params.push(authorId);
         clauses.push(`author_id=$${params.length}`);
+      }
+      if (groupId) {
+        params.push(groupId);
+        clauses.push(`group_id=$${params.length}`);
       }
       params.push(limit);
       const { rows } = await db.query(
@@ -7346,6 +7352,17 @@ app.get('/groups/:id/members', authenticate, (req, res) => {
   }));
 
   res.json({ members: membersWithStatus, total: group.members });
+});
+
+app.get('/groups/:id/posts', authenticate, async (req, res) => {
+  try {
+    const group = groups.find((g) => g.id === req.params.id);
+    if (!group) return res.status(404).json({ message: 'Group not found.' });
+    if (!canSeeGroup(group, req.user.id)) return res.status(404).json({ message: 'Group not found.' });
+    const limit = boundedLimit(req.query.limit, 50, 100);
+    const groupPosts = await getCommunityPosts({ viewerId: req.user.id, groupId: group.id, limit });
+    res.json({ posts: groupPosts });
+  } catch (e) { console.error('GET /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.post('/groups/:id/join', authenticate, async (req, res) => {
@@ -9499,7 +9516,14 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
   try {
     const user  = await getUser(req.user.id);
     const group = groups.find((g) => g.id === req.params.id);
-    if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    if (!user || !group || !canSeeGroup(group, user.id)) return res.status(404).json({ message: 'Not found.' });
+    // Only enforced for user-created groups (createdBy set) — legacy seeded
+    // internal groups (ufi-general etc.) stay open, since onboarding's
+    // preference-scored auto-join doesn't guarantee membership in those and
+    // gating them now would silently break the existing default posting flow.
+    if (group.createdBy && !(user.joinedGroups || []).includes(group.id)) {
+      return res.status(403).json({ message: 'Join the group before posting.' });
+    }
     const { content } = req.body;
     if (!content?.trim()) return res.status(400).json({ message: 'Content is required.' });
 
