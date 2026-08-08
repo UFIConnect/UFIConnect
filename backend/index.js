@@ -7236,22 +7236,6 @@ async function purgeUser(uid) {
   }
 }
 
-// TEMPORARY — one-time cleanup for a leftover live-testing account whose
-// login was lost. Remove immediately after use.
-const TEMP_ADMIN_CLEANUP_SECRET_2 = '37bfad35b2c03e5e34fb721a7245d0120a577ebe8dfd094a';
-app.post('/admin/temp-delete-users-2', async (req, res) => {
-  const { secret, userIds } = req.body || {};
-  if (secret !== TEMP_ADMIN_CLEANUP_SECRET_2) return res.status(403).json({ error: 'forbidden' });
-  const ids = Array.isArray(userIds) ? userIds : [];
-  const deleted = [];
-  const failed = [];
-  for (const uid of ids) {
-    try { await purgeUser(uid); deleted.push(uid); }
-    catch (e) { console.error('admin temp delete 2:', uid, e.message); failed.push(uid); }
-  }
-  res.json({ deleted, failed });
-});
-
 app.delete('/profile', authenticate, async (req, res) => {
   try {
     await purgeUser(req.user.id);
