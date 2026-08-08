@@ -7673,10 +7673,15 @@ async function handleFeedRequest(req, res) {
     if (srcCounts[src] <= SRC_CAP) cappedPosts.push(p);
     else overflowPosts.push(p);
   }
-  // Always apply the cap; fall back to overflow posts if needed to fill the page.
+  // Always apply the cap; when there aren't enough capped posts to fill the page
+  // (common — most sources only have a handful of posts at any moment), top up
+  // from overflow through the diversifier too. Dumping overflow in raw
+  // liveSorted order defeated the cap entirely: overflow is exactly the tail of
+  // whichever source(s) had the deepest pool, so it still landed as one long
+  // same-source run at the end of the page.
   const responsePosts = cappedPosts.length >= feedLimit
     ? cappedPosts.slice(0, feedLimit)
-    : [...cappedPosts, ...overflowPosts].slice(0, feedLimit);
+    : [...cappedPosts, ...diversifyBySource(overflowPosts, feedLimit - cappedPosts.length, 1)].slice(0, feedLimit);
 
   res.json({
     posts: responsePosts,
