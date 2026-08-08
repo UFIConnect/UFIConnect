@@ -234,7 +234,7 @@ function PlatformCard({
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
   return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px', opacity: comingSoon ? 0.72 : 1 }}>
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {/* Platform icon */}
         <div style={{
