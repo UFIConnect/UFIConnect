@@ -1,0 +1,134 @@
+import { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import Layout from '../components/Layout';
+import client from '../api/client';
+
+function initials(name = '') {
+  return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60)    return 'just now';
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+export default function Notifications() {
+  const navigate = useNavigate();
+  const [items,      setItems]      = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(false);
+  const [accepting,  setAccepting]  = useState(null);
+  const [accepted,   setAccepted]   = useState(new Set());
+
+  function load() {
+    setError(false);
+    setLoading(true);
+    client.get('/notifications')
+      .then(({ data }) => setItems(data.notifications || []))
+      .catch(() => setError(true))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleAccept(notification) {
+    setAccepting(notification.id);
+    try {
+      await client.post(`/users/${notification.user.id}/connect`);
+      setAccepted(prev => new Set(prev).add(notification.id));
+    } catch {
+      // leave as pending — user can retry
+    } finally {
+      setAccepting(null);
+    }
+  }
+
+  return (
+    <Layout>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div>
+          <h1 className="page-title">Notifications</h1>
+          <p className="page-subtitle">
+            {items.length > 0 ? `${items.length} update${items.length > 1 ? 's' : ''}` : 'All caught up ✓'}
+          </p>
+        </div>
+        <button
+          className="btn btn-primary btn-sm"
+          onClick={() => navigate('/messages')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+        >
+          💬 Messages
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 48 }}>
+          <span className="spinner spinner-primary" />
+        </div>
+      ) : error ? (
+        <div className="empty-state">
+          <div className="empty-icon">⚠️</div>
+          <div className="empty-title">Couldn't load notifications</div>
+          <div className="empty-desc">Check your connection and try again.</div>
+          <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={load}>Try again</button>
+        </div>
+      ) : items.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">🔔</div>
+          <div className="empty-title">No notifications yet</div>
+          <div className="empty-desc">Connection requests and new followers will show up here.</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
+            <Link to="/search" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
+              Find people
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <div className="conv-list">
+          {items.map((n) => {
+            const isRequest = n.type === 'connection_request';
+            const isAccepted = accepted.has(n.id);
+            return (
+              <div key={n.id} className="conv-item" style={{ cursor: 'default' }}>
+                <Link to={`/u/${n.user.id}`} style={{ flexShrink: 0 }}>
+                  <div className="avatar avatar-md">{initials(n.user.name)}</div>
+                </Link>
+                <div className="conv-info">
+                  <div className="conv-name">
+                    <Link to={`/u/${n.user.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                      {n.user.name}
+                    </Link>
+                  </div>
+                  <div className="conv-last">
+                    {isRequest ? 'wants to connect with you' : 'started following you'}
+                    {n.user.title ? ` · ${n.user.title}` : ''}
+                  </div>
+                </div>
+                <div className="conv-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="conv-time">{timeAgo(n.createdAt)}</div>
+                  {isRequest && (
+                    isAccepted ? (
+                      <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Connected</span>
+                    ) : (
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={accepting === n.id}
+                        onClick={() => handleAccept(n)}
+                      >
+                        {accepting === n.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Accept'}
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Layout>
+  );
+}

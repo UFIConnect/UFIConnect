@@ -6,7 +6,7 @@ const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/post',          icon: '✏️', label: 'Posts'        },
   { to: '/search',        icon: '🔍', label: 'Search'       },
-  { to: '/messages',      icon: '💬', label: 'Messages'     },
+  { to: '/notifications', icon: '🔔', label: 'Notifications' },
   { to: '/groups',        icon: '🌐', label: 'Groups'       },
   { to: '/opportunities', icon: '💼', label: 'Opportunities' },
   { to: '/sources',       icon: '📡', label: 'Sources'      },

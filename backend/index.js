@@ -9422,7 +9422,7 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
     const followerId  = req.user.id;
     if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
     if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
-      follows.push({ followerId, followingId });
+      follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
       if (db.isConnected()) {
         db.query(
           `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
@@ -9523,6 +9523,47 @@ app.get('/users/connections', authenticate, (req, res) => {
     })
     .filter(Boolean);
   res.json({ connections: myConnections });
+});
+
+// ─── Notifications: pending connection requests + new followers ───────────────
+app.get('/notifications', authenticate, (req, res) => {
+  try {
+    const uid = req.user.id;
+
+    const receivedRequests = connections
+      .filter(c => c.toId === uid && c.status === 'pending')
+      .map(c => {
+        const from = users.find(u => u.id === c.fromId);
+        return from ? {
+          id:        `connreq_${c.id}`,
+          type:      'connection_request',
+          createdAt: c.createdAt,
+          user:      sanitizeUser(from),
+        } : null;
+      })
+      .filter(Boolean);
+
+    const newFollowers = follows
+      .filter(f => f.followingId === uid)
+      .map(f => {
+        const follower = users.find(u => u.id === f.followerId);
+        return follower ? {
+          id:        `follow_${f.followerId}`,
+          type:      'new_follower',
+          createdAt: f.createdAt || null,
+          user:      sanitizeUser(follower),
+        } : null;
+      })
+      .filter(Boolean);
+
+    const notifications = [...receivedRequests, ...newFollowers]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    res.json({ notifications, pendingConnections: receivedRequests.length });
+  } catch (e) {
+    console.error('GET /notifications:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // ─── Opportunities data ───────────────────────────────────────────────────────

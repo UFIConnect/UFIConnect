@@ -43,6 +43,7 @@ const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
 const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const Messages       = lazy(() => import('./pages/Messages'));
 const Conversation   = lazy(() => import('./pages/Conversation'));
+const Notifications  = lazy(() => import('./pages/Notifications'));
 const Profile        = lazy(() => import('./pages/Profile'));
 const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Post           = lazy(() => import('./pages/Post'));
@@ -115,6 +116,9 @@ export default function App() {
       }/>
       <Route path="/messages/:userId" element={
         <RequireAuth><RequireOnboarding><Conversation /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/notifications" element={
+        <RequireAuth><RequireOnboarding><Notifications /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/profile" element={
         <RequireAuth><RequireOnboarding><Profile /></RequireOnboarding></RequireAuth>
