@@ -7084,30 +7084,49 @@ app.post('/user/plan/upgrade', authenticate, async (req, res) => {
 });
 
 // ─── Delete account ─────────────────────────────────────────────────────────────
-app.delete('/profile', authenticate, async (req, res) => {
-  const uid = req.user.id;
-  // Remove from in-memory store
+// Removes a user from every in-memory + DB store. Used by both DELETE
+// /profile (self) and the temporary admin cleanup route below.
+async function purgeUser(uid) {
   const idx = users.findIndex(u => u.id === uid);
   if (idx > -1) users.splice(idx, 1);
   const authoredPostIds = new Set(posts.filter(p => p.authorId === uid).map(p => p.id));
   postComments = postComments.filter(c => c.authorId !== uid && !authoredPostIds.has(c.postId));
   posts = posts.filter(p => p.authorId !== uid);
-  // Remove from DB (cascade: social_accounts, community_posts, then users)
+  follows = follows.filter(f => f.followerId !== uid && f.followingId !== uid);
+  connections = connections.filter(c => c.fromId !== uid && c.toId !== uid);
+  for (let i = conversations.length - 1; i >= 0; i--) {
+    if (conversations[i].participants.includes(uid)) conversations.splice(i, 1);
+  }
   if (db.isConnected() && isDBId(uid)) {
-    try {
-      await db.query('DELETE FROM social_accounts WHERE user_id=$1', [uid]);
-      await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
-      await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
-      await db.query('DELETE FROM users WHERE id=$1', [uid]);
-    } catch (e) { console.error('delete account DB:', e.message); }
+    // NB: social_accounts/connections tables don't exist in the live schema
+    // (migrateDB never creates them — social tokens live on users.social_tokens,
+    // connections/follows besides the `follows` table are in-memory only), so
+    // only touch tables that actually exist. A prior version of this function
+    // deleted from a nonexistent social_accounts table first, which threw and
+    // silently aborted every subsequent statement — including DELETE FROM
+    // users — while still reporting success.
+    await db.query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1', [uid]);
+    await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
+    await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
+    await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
+    await db.query('DELETE FROM users WHERE id=$1', [uid]);
   } else {
     filestore.saveUsers(users);
   }
-  res.json({ deleted: true, message: 'Account permanently deleted.' });
+}
+
+app.delete('/profile', authenticate, async (req, res) => {
+  try {
+    await purgeUser(req.user.id);
+    res.json({ deleted: true, message: 'Account permanently deleted.' });
+  } catch (e) {
+    console.error('delete account:', e.message);
+    res.status(500).json({ deleted: false, message: 'Failed to delete account.' });
+  }
 });
 
 // TEMPORARY — one-time cleanup for accounts whose passwords were lost.
-// Mirrors DELETE /profile's cascade but targets an explicit id list under a
+// Same purgeUser() as DELETE /profile but targets an explicit id list under a
 // secret instead of the caller's own session. Remove this route right after use.
 const TEMP_ADMIN_CLEANUP_SECRET = '7a973dad7b1b456c422c4e1d8760a1ee1f49703c5a992edc';
 app.post('/admin/temp-delete-users', async (req, res) => {
@@ -7115,23 +7134,12 @@ app.post('/admin/temp-delete-users', async (req, res) => {
   if (secret !== TEMP_ADMIN_CLEANUP_SECRET) return res.status(403).json({ error: 'forbidden' });
   const ids = Array.isArray(userIds) ? userIds : [];
   const deleted = [];
+  const failed = [];
   for (const uid of ids) {
-    const idx = users.findIndex(u => u.id === uid);
-    if (idx > -1) users.splice(idx, 1);
-    if (db.isConnected() && isDBId(uid)) {
-      try {
-        await db.query('DELETE FROM social_accounts WHERE user_id=$1', [uid]);
-        await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
-        await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
-        await db.query('DELETE FROM users WHERE id=$1', [uid]);
-        deleted.push(uid);
-      } catch (e) { console.error('admin temp delete:', e.message); }
-    } else {
-      deleted.push(uid);
-    }
+    try { await purgeUser(uid); deleted.push(uid); }
+    catch (e) { console.error('admin temp delete:', uid, e.message); failed.push(uid); }
   }
-  filestore.saveUsers(users);
-  res.json({ deleted });
+  res.json({ deleted, failed });
 });
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
