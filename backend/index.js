@@ -7125,23 +7125,6 @@ app.delete('/profile', authenticate, async (req, res) => {
   }
 });
 
-// TEMPORARY — one-time cleanup for accounts whose passwords were lost.
-// Same purgeUser() as DELETE /profile but targets an explicit id list under a
-// secret instead of the caller's own session. Remove this route right after use.
-const TEMP_ADMIN_CLEANUP_SECRET = '7a973dad7b1b456c422c4e1d8760a1ee1f49703c5a992edc';
-app.post('/admin/temp-delete-users', async (req, res) => {
-  const { secret, userIds } = req.body || {};
-  if (secret !== TEMP_ADMIN_CLEANUP_SECRET) return res.status(403).json({ error: 'forbidden' });
-  const ids = Array.isArray(userIds) ? userIds : [];
-  const deleted = [];
-  const failed = [];
-  for (const uid of ids) {
-    try { await purgeUser(uid); deleted.push(uid); }
-    catch (e) { console.error('admin temp delete:', uid, e.message); failed.push(uid); }
-  }
-  res.json({ deleted, failed });
-});
-
 // ─── Groups ───────────────────────────────────────────────────────────────────
 app.get('/groups', async (req, res) => {
   try {
