@@ -2,9 +2,9 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --primary:        #2563EB;
-  --primary-hover:  #1D4ED8;
-  --primary-light:  #EFF6FF;
+  --primary:        #20157B;
+  --primary-hover:  #170F5C;
+  --primary-light:  #EDECF4;
   --secondary:      #7C3AED;
   --secondary-light:#F3EEFF;
   --bg:             #F8FAFC;

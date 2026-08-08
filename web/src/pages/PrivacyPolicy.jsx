@@ -56,13 +56,13 @@ export default function PrivacyPolicy() {
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         height: 56,
       }}>
-        <Link to="/" style={{ fontWeight: 900, fontSize: '1.1rem', color: '#2563EB', textDecoration: 'none' }}>
+        <Link to="/" style={{ fontWeight: 900, fontSize: '1.1rem', color: 'var(--primary)', textDecoration: 'none' }}>
           {APP_NAME}
         </Link>
         <div style={{ display: 'flex', gap: 16, fontSize: '.85rem' }}>
           <Link to="/login"    style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
           <Link to="/register" style={{
-            color: '#fff', background: '#2563EB',
+            color: '#fff', background: 'var(--primary)',
             padding: '6px 16px', borderRadius: 8,
             textDecoration: 'none', fontWeight: 700,
           }}>Join free</Link>
@@ -74,7 +74,7 @@ export default function PrivacyPolicy() {
 
         {/* Header */}
         <div style={{ marginBottom: 40 }}>
-          <div style={{ fontSize: '.78rem', fontWeight: 700, color: '#2563EB', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
+          <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
             Legal
           </div>
           <h1 style={{ fontSize: '2rem', fontWeight: 900, color: '#0F172A', marginBottom: 12 }}>
@@ -93,7 +93,7 @@ export default function PrivacyPolicy() {
             and how you can control it.
           </P>
           <P>
-            Questions? Email us at <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: '#2563EB' }}>{CONTACT_EMAIL}</a>.
+            Questions? Email us at <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a>.
           </P>
         </Section>
 
@@ -199,7 +199,7 @@ export default function PrivacyPolicy() {
           ]} />
           <P>
             To exercise any of these rights, email us at{' '}
-            <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: '#2563EB' }}>{CONTACT_EMAIL}</a>.
+            <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a>.
             We will respond within 30 days.
           </P>
         </Section>
@@ -217,7 +217,7 @@ export default function PrivacyPolicy() {
           ]} />
           <P>
             No system is 100% secure. If you discover a security vulnerability, please report it
-            responsibly to <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: '#2563EB' }}>{CONTACT_EMAIL}</a>.
+            responsibly to <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a>.
           </P>
         </Section>
 
@@ -240,8 +240,8 @@ export default function PrivacyPolicy() {
         <Section title="13. Contact">
           <P>
             <strong>{APP_NAME}</strong><br />
-            Email: <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: '#2563EB' }}>{CONTACT_EMAIL}</a><br />
-            Website: <a href={APP_URL} style={{ color: '#2563EB' }}>{APP_URL}</a>
+            Email: <a href={`mailto:${CONTACT_EMAIL}`} style={{ color: 'var(--primary)' }}>{CONTACT_EMAIL}</a><br />
+            Website: <a href={APP_URL} style={{ color: 'var(--primary)' }}>{APP_URL}</a>
           </P>
         </Section>
 
