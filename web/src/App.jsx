@@ -35,6 +35,8 @@ function MaintenancePage() {
 
 const Login          = lazy(() => import('./pages/Login'));
 const Register       = lazy(() => import('./pages/Register'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword  = lazy(() => import('./pages/ResetPassword'));
 const Landing        = lazy(() => import('./pages/Landing'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const Feed           = lazy(() => import('./pages/Feed'));
@@ -94,6 +96,8 @@ export default function App() {
       {/* Public */}
       <Route path="/login"    element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password"  element={<ResetPassword />} />
 
       {/* Auth-only */}
       <Route path="/onboarding" element={

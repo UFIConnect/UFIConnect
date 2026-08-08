@@ -7,6 +7,7 @@ const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const v8 = require('v8');
 const db        = require('./db');
 const filestore  = require('./filestore');
@@ -608,6 +609,57 @@ function verifyOAuthState(state, platform) {
   }
 }
 function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
+
+// ─── Password reset ───────────────────────────────────────────────────────────
+function createPasswordResetToken(userId) {
+  return jwt.sign({ id: userId, purpose: 'password-reset' }, JWT_SECRET, { expiresIn: '30m' });
+}
+function verifyPasswordResetToken(token) {
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload.purpose === 'password-reset' ? payload.id : null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Outbound email (password reset, etc.) ────────────────────────────────────
+// Requires SMTP_HOST/SMTP_USER/SMTP_PASS to be set — any SMTP provider works
+// (Gmail with an app password, SendGrid/Mailgun/etc. SMTP relay, ...). Without
+// them, reset links are logged server-side instead of emailed, same
+// unconfigured-but-not-broken pattern used for the social OAuth platforms.
+function emailConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+let _mailTransport = null;
+function getMailTransport() {
+  if (!emailConfigured()) return null;
+  if (!_mailTransport) {
+    const port = Number(process.env.SMTP_PORT) || 587;
+    _mailTransport = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure: port === 465,
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+  }
+  return _mailTransport;
+}
+async function sendPasswordResetEmail(toEmail, resetUrl) {
+  const transport = getMailTransport();
+  if (!transport) {
+    console.warn(`[email] SMTP not configured — password reset link for ${toEmail}: ${resetUrl}`);
+    return;
+  }
+  await transport.sendMail({
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    to: toEmail,
+    subject: 'Reset your UFIConnect password',
+    html: `<p>We received a request to reset your UFIConnect password.</p>
+      <p><a href="${resetUrl}">Reset your password</a></p>
+      <p>This link expires in 30 minutes. If you didn't request this, you can safely ignore this email.</p>`,
+  });
+}
 
 // POST application/x-www-form-urlencoded and return parsed JSON
 function postForm(url, params, headers = {}) {
@@ -6780,6 +6832,44 @@ app.post('/auth/login', async (req, res) => {
   if (!user || !user.passwordHash || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, profile: fullProfile(user) });
+});
+
+app.post('/auth/forgot-password', async (req, res) => {
+  const email = (req.body?.email || '').toLowerCase().trim();
+  // Always respond the same way whether or not the email is registered —
+  // don't let this endpoint reveal which emails have accounts.
+  const generic = { ok: true, message: "If an account exists for that email, we've sent a reset link." };
+  if (!email) return res.json(generic);
+  try {
+    const user = db.isConnected()
+      ? await fetchAndSyncUserByEmail(email)
+      : users.find((u) => u.email === email);
+    if (user) {
+      const resetToken = createPasswordResetToken(user.id);
+      const resetUrl = `${FRONTEND_BASE}/reset-password?token=${resetToken}`;
+      await sendPasswordResetEmail(user.email, resetUrl);
+    }
+  } catch (e) { console.error('forgot-password:', e.message); }
+  res.json(generic);
+});
+
+app.post('/auth/reset-password', async (req, res) => {
+  const { token, password } = req.body || {};
+  if (!token || !password) return res.status(400).json({ message: 'Token and new password are required.' });
+  if (password.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' });
+  const userId = verifyPasswordResetToken(token);
+  if (!userId) return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
+  const user = await getUser(userId);
+  if (!user) return res.status(404).json({ message: 'Account not found.' });
+  const hash = bcrypt.hashSync(password, 10);
+  user.passwordHash = hash;
+  if (db.isConnected() && isDBId(userId)) {
+    await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, userId])
+      .catch((e) => console.error('reset-password DB:', e.message));
+  } else {
+    filestore.saveUsers(users);
+  }
+  res.json({ ok: true, message: 'Password updated — you can now sign in.' });
 });
 
 // ─── Social token helpers ─────────────────────────────────────────────────────
