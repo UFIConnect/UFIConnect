@@ -58,6 +58,138 @@ function GroupSkeleton() {
   );
 }
 
+function CreateGroupModal({ categories, onClose, onCreate }) {
+  const [name,        setName]        = useState('');
+  const [description, setDescription] = useState('');
+  const [category,    setCategory]    = useState(categories[0] || '');
+  const [isPrivate,   setIsPrivate]   = useState(false);
+  const [error,       setError]       = useState('');
+  const [saving,      setSaving]      = useState(false);
+
+  useEffect(() => {
+    const h = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!name.trim()) { setError('Give your group a name.'); return; }
+    if (!category.trim()) { setError('Pick a category.'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await onCreate({ name: name.trim(), description: description.trim(), category, isPrivate });
+    } catch (err) {
+      setError(err.response?.data?.message || 'Could not create the group. Please try again.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(0,0,0,0.45)',
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+        paddingTop: 80, overflowY: 'auto',
+      }}
+    >
+      <form
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={handleSubmit}
+        className="card"
+        style={{ width: 'min(480px, 92vw)', boxShadow: '0 16px 48px rgba(0,0,0,.18)' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <h2 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0 }}>Create a group</h2>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)', lineHeight: 1 }}>×</button>
+        </div>
+
+        {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
+
+        <div className="form-group">
+          <label className="form-label">Group name</label>
+          <input
+            className="form-input"
+            value={name}
+            onChange={(e) => { setName(e.target.value); setError(''); }}
+            placeholder="e.g. Frontend Engineers of NYC"
+            autoFocus
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Description</label>
+          <textarea
+            className="form-textarea"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What's this group about?"
+            rows={3}
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Category</label>
+          {categories.length > 0 ? (
+            <select
+              className="form-input"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          ) : (
+            <input
+              className="form-input"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="e.g. Engineering"
+            />
+          )}
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Visibility</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[
+              { value: false, label: '🌐 Public', desc: 'Listed for everyone, anyone can join' },
+              { value: true,  label: '🔒 Private', desc: 'Hidden from the directory — join by invite only' },
+            ].map(({ value, label, desc }) => {
+              const active = isPrivate === value;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setIsPrivate(value)}
+                  style={{
+                    flex: 1, textAlign: 'left', padding: '10px 12px', borderRadius: 10,
+                    border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                    background: active ? 'var(--primary-light)' : 'var(--surface)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: '.85rem', color: active ? 'var(--primary)' : 'var(--text)' }}>{label}</div>
+                  <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button className="btn btn-primary" type="submit" disabled={saving}>
+            {saving ? <span className="spinner" /> : 'Create group'}
+          </button>
+          <button className="btn btn-ghost" type="button" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function Groups() {
   const navigate = useNavigate();
 
@@ -86,6 +218,7 @@ function GroupsContent() {
   const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [showCreate,  setShowCreate]  = useState(false);
 
   const searchRef = useRef('');
 
@@ -158,6 +291,14 @@ function GroupsContent() {
     }
   }
 
+  async function handleCreateGroup({ name, description, category, isPrivate }) {
+    const { data } = await client.post('/groups', { name, description, category, isPrivate });
+    setGroups((prev) => [data.group, ...prev]);
+    setJoined((prev) => new Set([...prev, data.group.id]));
+    setShowCreate(false);
+    navigate(`/groups/${data.group.id}`);
+  }
+
   const q = search.trim().toLowerCase();
   const byFilter =
     filter === 'all' ? groups : groups.filter((g) => g.category === filter);
@@ -185,6 +326,13 @@ function GroupsContent() {
           <h1 className="page-title">Discover Groups</h1>
         </div>
         <button
+          className="btn btn-primary btn-sm"
+          onClick={() => setShowCreate(true)}
+          style={{ marginTop: 0, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+        >
+          + Create Group
+        </button>
+        <button
           className="btn btn-ghost btn-sm"
           aria-label="Refresh groups"
           onClick={() => loadGroups(true)}
@@ -208,6 +356,14 @@ function GroupsContent() {
           {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
+
+      {showCreate && (
+        <CreateGroupModal
+          categories={categories}
+          onClose={() => setShowCreate(false)}
+          onCreate={handleCreateGroup}
+        />
+      )}
 
       {/* Error state */}
       {error && (
@@ -478,6 +634,18 @@ function GroupsContent() {
                       </div>
                     );
                   })()}
+
+                  {group.isPrivate && (
+                    <div style={{
+                      position: 'absolute', top: 10, left: 10,
+                      fontSize: '.65rem', fontWeight: 700,
+                      color: '#92400E', background: '#FEF3C7',
+                      padding: '2px 8px', borderRadius: 4,
+                      display: 'flex', alignItems: 'center', gap: 3,
+                    }}>
+                      🔒 Private
+                    </div>
+                  )}
 
                   {/* Header */}
                   <div

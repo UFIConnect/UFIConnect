@@ -6276,6 +6276,9 @@ async function migrateDB() {
     await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT true`);
     // Backfill any NULL values to true (all seeded groups are external)
     await db.query(`UPDATE community_groups SET is_external = true WHERE is_external IS NULL`);
+    // User-created groups
+    await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS created_by TEXT`);
+    await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false`);
 
     // Follows table
     await db.query(`
@@ -6677,12 +6680,14 @@ async function seedAndLoadGroups() {
         g.relatedGroups || [],
       ]);
     }
-    // Groups are seed-only (no user-creation route), so anything in the table
-    // that's no longer in GROUPS_SEED is a stale leftover from a prior version
-    // of the seed list — safe to remove now that every current entry has just
-    // been upserted above.
+    // Only seeded (created_by IS NULL) groups are reconciled against
+    // GROUPS_SEED — user-created groups (created_by set) are never touched
+    // here regardless of what's in the seed list. Anything seeded that's no
+    // longer in GROUPS_SEED is a stale leftover from a prior version of the
+    // seed list, safe to remove now that every current entry has just been
+    // upserted above.
     const seedIds = GROUPS_SEED.map(g => g.id);
-    await db.query('DELETE FROM community_groups WHERE NOT (id = ANY($1))', [seedIds]);
+    await db.query('DELETE FROM community_groups WHERE created_by IS NULL AND NOT (id = ANY($1))', [seedIds]);
     const { rows } = await db.query('SELECT * FROM community_groups ORDER BY member_count DESC');
     // Only replace in-memory list if DB returned real data
     if (rows.length > 0) {
@@ -6694,6 +6699,7 @@ async function seedAndLoadGroups() {
         platformUrl: r.platform_url,
         externalUrl: r.external_url, subreddit: r.subreddit,
         isExternal: r.is_external, relatedGroups: r.related_groups || [],
+        createdBy: r.created_by || null, isPrivate: Boolean(r.is_private),
       }));
       console.log(`✅ Loaded ${groups.length} groups from DB`);
     } else {
@@ -7229,17 +7235,78 @@ app.delete('/profile', authenticate, async (req, res) => {
 });
 
 // ─── Groups ───────────────────────────────────────────────────────────────────
+// /groups is called both logged-out (public directory) and logged-in, so this
+// reads the token if one is present rather than requiring it — anonymous
+// viewers just see no private groups.
+function optionalViewerId(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return null;
+  try { return jwt.verify(authHeader.split(' ')[1], JWT_SECRET).id; } catch { return null; }
+}
+function canSeeGroup(group, viewerId) {
+  if (!group.isPrivate) return true;
+  if (!viewerId) return false;
+  if (group.createdBy === viewerId) return true;
+  const viewer = users.find((u) => u.id === viewerId);
+  return Boolean(viewer?.joinedGroups?.includes(group.id));
+}
+function slugifyGroupName(name) {
+  return (name || 'group').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'group';
+}
+
 app.get('/groups', async (req, res) => {
   try {
     if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
     const { category } = req.query;
-    const result = category ? groups.filter((g) => g.category === category) : groups;
+    const viewerId = optionalViewerId(req);
+    let result = category ? groups.filter((g) => g.category === category) : groups;
+    result = result.filter((g) => canSeeGroup(g, viewerId));
     res.json({ groups: result });
   } catch (e) { console.error('GET /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+app.post('/groups', authenticate, async (req, res) => {
+  try {
+    const { name, description, category, isPrivate } = req.body || {};
+    if (!name?.trim()) return res.status(400).json({ message: 'Group name is required.' });
+    if (!category?.trim()) return res.status(400).json({ message: 'Category is required.' });
+    const user = await getUser(req.user.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    let id = slugifyGroupName(name);
+    if (groups.some((g) => g.id === id)) id = `${id}-${Date.now().toString(36)}`;
+
+    const group = {
+      id, name: name.trim(), category: category.trim(),
+      description: (description || '').trim(), members: 1,
+      platform: null, platformUrl: null, externalUrl: null, subreddit: null,
+      isExternal: false, relatedGroups: [],
+      createdBy: user.id, isPrivate: Boolean(isPrivate),
+    };
+    groups.push(group);
+    user.joinedGroups = [...(user.joinedGroups || []), id];
+
+    if (db.isConnected()) {
+      try {
+        await db.query(`
+          INSERT INTO community_groups
+            (id,name,category,description,member_count,is_external,related_groups,created_by,is_private)
+          VALUES ($1,$2,$3,$4,1,false,'{}',$5,$6)
+        `, [group.id, group.name, group.category, group.description, user.id, group.isPrivate]);
+        if (isDBId(user.id)) {
+          await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
+        }
+      } catch (e) { console.error('POST /groups DB:', e.message); }
+    } else {
+      filestore.saveUsers(users);
+    }
+    res.status(201).json({ group });
+  } catch (e) { console.error('POST /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
 app.get('/groups/internal', authenticate, (req, res) => {
-  res.json({ groups: groups.filter((g) => !g.isExternal) });
+  res.json({ groups: groups.filter((g) => !g.isExternal && canSeeGroup(g, req.user.id)) });
 });
 
 app.get('/groups/categories', (req, res) => {
