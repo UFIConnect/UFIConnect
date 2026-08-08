@@ -1019,7 +1019,7 @@ const SOURCE_CONFIG = {
   //               TTL (ms)          DELAY/topic    shards
   reddit:        { ttl: 15*60000, delay: 15000, shards: 4 },  // high-volume RSS — 4 parallel shards
   hn:            { ttl: 10*60000, delay: 10000, shards: 4 },  // Algolia — generous
-  github:        { ttl: 25*60000, delay: 30000, shards: 2 },  // 60 req/hr unauthed — kept conservative
+  github:        { ttl: 45*60000, delay: 60000, shards: 1 },  // 60 req/hr unauthed — slowed further, was crowding out other sources
   devto:         { ttl: 12*60000, delay: 12000, shards: 3 },  // REST API — generous
   medium:        { ttl: 12*60000, delay: 15000, shards: 3 },  // CDN RSS
   youtube:       { ttl: 12*60000, delay: 15000, shards: 3 },  // channel RSS
@@ -1042,7 +1042,7 @@ const SOURCE_CONFIG = {
   phoronix:      { ttl: 10*60000, delay: 15000, shards: 2 },  // RSS — Linux/hardware
   infoq:         { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — enterprise/cloud
   mittr:         { ttl: 15*60000, delay: 20000, shards: 2 },  // RSS — deep tech
-  gitlab:        { ttl: 30*60000, delay: 45000, shards: 1 },  // public project API
+  gitlab:        { ttl: 45*60000, delay: 75000, shards: 1 },  // public project API — slowed, was crowding out other sources
   remoteok:      { ttl: 20*60000, delay: 45000, shards: 1 },  // remote jobs RSS
   yc:            { ttl: 20*60000, delay: 45000, shards: 1 },  // startup/professional RSS
   crunchbase:    { ttl: 20*60000, delay: 45000, shards: 1 },  // business/funding RSS
