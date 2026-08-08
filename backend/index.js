@@ -1048,9 +1048,10 @@ const SOURCE_CONFIG = {
   crunchbase:    { ttl: 20*60000, delay: 45000, shards: 1 },  // business/funding RSS
   behance:       { ttl: 20*60000, delay: 45000, shards: 1 },  // creative portfolios RSS
   designweb:     { ttl: 20*60000, delay: 45000, shards: 1 },  // design/web industry RSS bundle
-  // No free public API — runs on a borrowed connected-user token (see
-  // getSharedSocialToken). Kept slow/single-shard to go easy on that token's
-  // rate limit; simply idles (0 posts, no error) while no token is connected.
+  // No free public API — runs only on a genuine app-level public token
+  // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
+  // env vars), never a member's personal connected-account token. Idles at
+  // 0 posts, no error, until one is configured.
   twitter:       { ttl: 45*60000, delay: 60000, shards: 1 },
   linkedin:      { ttl: 45*60000, delay: 60000, shards: 1 },
   instagram:     { ttl: 45*60000, delay: 60000, shards: 1 },
@@ -3101,14 +3102,20 @@ async function fetchFacebook(keyword, userToken = null) {
 }
 
 // Continuous-agent wrappers for the office source pipeline (single-arg
-// fetchFn(keyword) signature makeTopicCycler expects). These platforms have
-// no free public API, so they resolve a token via getSharedSocialToken —
-// whichever connected user's OAuth token is available — and simply return no
-// posts (not an error) when nobody has connected one yet.
-async function fetchTwitterShared(keyword)   { return fetchTwitter(keyword,   getSharedSocialToken('twitter')); }
-async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword,  getSharedSocialToken('linkedin')); }
-async function fetchInstagramShared(keyword) { return fetchInstagram(keyword, getSharedSocialToken('instagram')); }
-async function fetchFacebookShared(keyword)  { return fetchFacebook(keyword,  getSharedSocialToken('facebook')); }
+// fetchFn(keyword) signature makeTopicCycler expects). Deliberately do NOT
+// pass a connected member's personal OAuth token here — that would mean one
+// user's account powering public content for every visitor, which is outside
+// what these platforms' terms of service intend a personal token for. These
+// only use a genuine app-level public token (TWITTER_BEARER_TOKEN /
+// LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN env vars — see the
+// fetch* functions above), and simply idle at 0 posts, no error, until one
+// is configured. Per-user personalized content from a member's own connected
+// account is separate and stays scoped to just that member — see the
+// FEED_SOCIAL_TABS / socialPlatformPosts handling below in handleFeedRequest.
+async function fetchTwitterShared(keyword)   { return fetchTwitter(keyword); }
+async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword); }
+async function fetchInstagramShared(keyword) { return fetchInstagram(keyword); }
+async function fetchFacebookShared(keyword)  { return fetchFacebook(keyword); }
 
 // ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
 // These platforms have no free public post APIs; we generate deep-link search
@@ -3738,7 +3745,7 @@ function startContinuousWorkers() {
     ['crunchbase',    'CB', '#146AFF', fetchCrunchbaseNews,      kw,  28000],
     ['behance',       'Be', '#053EFF', fetchBehanceProjects,     kw,  29000],
     ['designweb',     'UX', '#DB2777', fetchDesignWeb,           kw,  30000],
-    // No free public API — see fetch*Shared / getSharedSocialToken above.
+    // No free public API — app-level token only, see fetch*Shared above.
     ['twitter',       '𝕏',  '#000000', fetchTwitterShared,       kw,  31000],
     ['linkedin',      '💼', '#0A66C2', fetchLinkedInShared,      kw,  32000],
     ['instagram',     '📸', '#E1306C', fetchInstagramShared,     kw,  33000],
@@ -6799,19 +6806,6 @@ async function removeSocialToken(userId, platform) {
   } else {
     filestore.saveUsers(users);
   }
-}
-
-// Twitter/LinkedIn/Instagram/Facebook have no free public API — the continuous
-// office source agents for these platforms borrow whichever connected user's
-// OAuth token is available (falls back to a dedicated *_TOKEN env var inside
-// fetchTwitter/fetchLinkedIn/etc. if nobody has connected one). Only account
-// for this deliberately: using a member's personal token to power the shared
-// public feed for every visitor is outside what most platforms' terms of
-// service intend a user token for, and could get that member's account
-// rate-limited or flagged. Prefer connecting an account you control for this.
-function getSharedSocialToken(platform) {
-  const owner = users.find(u => u?.socialTokens?.[platform]);
-  return owner?.socialTokens?.[platform] || null;
 }
 
 // ─── Social OAuth: initiate (returns URL so the SPA can navigate) ────────────
