@@ -23,6 +23,8 @@ export default function PostList({
   maxWidth = 640,
   interactive = true,
   onPostUpdated = null,
+  currentUserId = null,
+  onPostDeleted = null,
 }) {
   const [localPosts, setLocalPosts] = useState(posts);
   const [likeBusy, setLikeBusy] = useState({});
@@ -31,6 +33,7 @@ export default function PostList({
   const [commentsLoading, setCommentsLoading] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
+  const [deleteBusy, setDeleteBusy] = useState({});
 
   useEffect(() => {
     setLocalPosts(posts);
@@ -99,6 +102,21 @@ export default function PostList({
     }
   }
 
+  async function handleDelete(post) {
+    if (deleteBusy[post.id]) return;
+    if (!window.confirm('Delete this post? This cannot be undone.')) return;
+    setDeleteBusy(prev => ({ ...prev, [post.id]: true }));
+    try {
+      await client.delete(`/posts/${encodeURIComponent(post.id)}`);
+      setLocalPosts(prev => prev.filter(p => p.id !== post.id));
+      onPostDeleted?.(post.id);
+    } catch {
+      // Leave the post in place if deletion failed.
+    } finally {
+      setDeleteBusy(prev => ({ ...prev, [post.id]: false }));
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ maxWidth, textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
@@ -136,14 +154,40 @@ export default function PostList({
                     {post.author?.title || 'UFIConnect Member'}{post.group ? ` - ${post.group.name}` : ''}
                   </div>
                 </div>
-                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0 }}>{timeAgo(post.createdAt)}</span>
+                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {timeAgo(post.createdAt)}
+                  {currentUserId && post.authorId === currentUserId && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(post)}
+                      disabled={deleteBusy[post.id]}
+                      title="Delete post"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
+                    >
+                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '🗑'}
+                    </button>
+                  )}
+                </span>
               </div>
             ) : (
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: '.76rem', fontWeight: 700, color: 'var(--primary)' }}>
                   {post.group?.name || 'UFIConnect'}
                 </span>
-                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0 }}>{timeAgo(post.createdAt)}</span>
+                <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {timeAgo(post.createdAt)}
+                  {currentUserId && post.authorId === currentUserId && (
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(post)}
+                      disabled={deleteBusy[post.id]}
+                      title="Delete post"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
+                    >
+                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '🗑'}
+                    </button>
+                  )}
+                </span>
               </div>
             )}
 

@@ -200,6 +200,7 @@ export default function Post() {
           emptyTitle="Nothing here yet"
           emptyDesc="Be the first to post to the UFIConnect community."
           emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
+          currentUserId={profile?.id}
         />
       </div>
     </Layout>

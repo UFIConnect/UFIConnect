@@ -168,6 +168,8 @@ export default function GroupDetail() {
           emptyTitle="No posts yet"
           emptyDesc={joined ? 'Be the first to post in this group.' : 'Join the group to start the conversation.'}
           emptyAction={joined ? <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button> : null}
+          currentUserId={profile?.id}
+          onPostDeleted={(id) => setGroupPosts((prev) => prev.filter((p) => p.id !== id))}
         />
       </div>
 

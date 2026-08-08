@@ -9560,6 +9560,29 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
+// Author-only. Only ever applies to UFIConnect-native posts (community_posts) —
+// external aggregated content has no delete concept here.
+app.delete('/posts/:postId', authenticate, async (req, res) => {
+  try {
+    const post = await getCommunityPostById(req.params.postId);
+    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    if (post.authorId !== req.user.id) {
+      return res.status(403).json({ message: 'You can only delete your own posts.' });
+    }
+    if (db.isConnected()) {
+      await db.query('DELETE FROM post_comments WHERE post_id=$1', [post.id]);
+      await db.query('DELETE FROM community_posts WHERE id=$1', [post.id]);
+    }
+    const idx = posts.findIndex((p) => p.id === post.id);
+    if (idx > -1) posts.splice(idx, 1);
+    postComments = postComments.filter((c) => c.postId !== post.id);
+    res.json({ deleted: true });
+  } catch (e) {
+    console.error('DELETE /posts/:postId:', e.message);
+    res.status(500).json({ message: 'Failed to delete the post. Please try again.' });
+  }
+});
+
 app.post('/groups/:id/posts', authenticate, async (req, res) => {
   try {
     const user  = await getUser(req.user.id);

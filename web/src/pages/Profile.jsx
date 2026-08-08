@@ -366,6 +366,8 @@ export default function Profile() {
             emptyTitle="No posts yet"
             emptyDesc="Write your first community post and it will appear on your profile."
             emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>}
+            currentUserId={profile?.id}
+            onPostDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
           />
         </div>
       )}
