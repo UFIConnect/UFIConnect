@@ -10259,7 +10259,13 @@ app.get('/messages', authenticate, async (req, res) => {
       }
       const existingTime = new Date(existing.lastMessage?.createdAt || 0).getTime();
       const incomingTime = new Date(conv.lastMessage?.createdAt || 0).getTime();
-      const mergedUnread = (existing.unreadCount || 0) + (conv.unreadCount || 0);
+      // Every message is dual-written to the in-memory conversations array AND
+      // the direct_messages DB table, so these two summaries represent the
+      // same messages, not complementary ones — summing double-counts unread.
+      // max() gives the right number when both sources agree (the common
+      // case) while still surfacing the fuller count if one source is
+      // genuinely missing a message (e.g. a DB write that failed).
+      const mergedUnread = Math.max(existing.unreadCount || 0, conv.unreadCount || 0);
       byParticipant.set(key, {
         ...(incomingTime >= existingTime ? conv : existing),
         unreadCount: mergedUnread,
