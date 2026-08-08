@@ -35,14 +35,14 @@ export default function ResetPassword() {
   return (
     <>
       <Helmet>
-        <title>Reset Password | UFIConnect</title>
+        <title>Reset Password | UFconnect</title>
         <meta name="robots" content="noindex" />
       </Helmet>
       <div className="auth-page">
         <div className="auth-card">
           <div className="auth-logo">
             <div className="auth-logo-icon">UF</div>
-            <span className="auth-logo-name">UFIConnect</span>
+            <span className="auth-logo-name">UFconnect</span>
           </div>
 
           <h1 className="auth-heading">Set a new password</h1>

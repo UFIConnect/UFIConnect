@@ -3,7 +3,7 @@ import { Helmet } from 'react-helmet-async';
 
 const EFFECTIVE_DATE = 'May 28, 2026';
 const CONTACT_EMAIL  = 'privacy@uficonnect.org';
-const APP_NAME       = 'UFIConnect';
+const APP_NAME       = 'UFconnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,13 +39,13 @@ export default function PrivacyPolicy() {
   return (
     <>
       <Helmet>
-        <title>Privacy Policy — UFIConnect</title>
-        <meta name="description" content="UFIConnect privacy policy — how we collect, use, and protect your data." />
+        <title>Privacy Policy — UFconnect</title>
+        <meta name="description" content="UFconnect privacy policy — how we collect, use, and protect your data." />
         <link rel="canonical" href="https://uficonnect.org/privacy" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/privacy" />
-        <meta property="og:title" content="Privacy Policy | UFIConnect" />
-        <meta property="og:description" content="How UFIConnect collects, uses, and protects your data." />
+        <meta property="og:title" content="Privacy Policy | UFconnect" />
+        <meta property="og:description" content="How UFconnect collects, uses, and protects your data." />
       </Helmet>
 
       {/* Nav bar */}
@@ -160,7 +160,7 @@ export default function PrivacyPolicy() {
           <UL items={[
             'Service providers: our hosting provider (Render) and database (PostgreSQL on Render) process data to operate the platform. They are contractually bound to keep it confidential.',
             'Legal requirements: if required by law, court order, or to protect our rights and users\' safety.',
-            'Business transfer: if UFIConnect is acquired or merges, data may transfer to the new entity under the same policy.',
+            'Business transfer: if UFconnect is acquired or merges, data may transfer to the new entity under the same policy.',
           ]} />
           <P>We do not share your data with advertisers, data brokers, or analytics platforms.</P>
         </Section>

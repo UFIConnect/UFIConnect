@@ -62,8 +62,8 @@ async function main() {
   const twaManifest = new TwaManifest({
     packageId:            'org.uficonnect.app',
     host:                 'uficonnect.org',
-    name:                 'UFIConnect',
-    launcherName:         'UFIConnect',
+    name:                 'UFconnect',
+    launcherName:         'UFconnect',
     display:              'standalone',
     themeColor:           '#6366F1',
     themeColorDark:       '#4F46E5',

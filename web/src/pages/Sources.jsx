@@ -46,7 +46,7 @@ const SOURCE_META = {
   behance:       { label: 'Behance',           icon: '🖼️', color: '#053EFF', desc: 'Creative portfolio projects' },
   designweb:     { label: 'Design & Web',      icon: '✏️', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
   indeed:        { label: 'Indeed',            icon: '💼', color: '#2557A7', desc: 'Remote job listings' },
-  uficonnect:    { label: 'UFIConnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
+  uficonnect:    { label: 'UFconnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
 };
 
 const CATEGORIES = [
@@ -57,7 +57,7 @@ const CATEGORIES = [
   { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
   { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok'] },
   { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
-  { id: 'community',  label: 'UFIConnect',            sources: ['uficonnect'] },
+  { id: 'community',  label: 'UFconnect',            sources: ['uficonnect'] },
 ];
 
 function Toggle({ enabled, onChange }) {
@@ -281,8 +281,8 @@ export default function Sources() {
   return (
     <Layout>
       <Helmet>
-        <title>Feed Sources | UFIConnect</title>
-        <meta name="description" content="Control which sources appear in your UFIConnect feed." />
+        <title>Feed Sources | UFconnect</title>
+        <meta name="description" content="Control which sources appear in your UFconnect feed." />
       </Helmet>
 
       <div className="page-header">

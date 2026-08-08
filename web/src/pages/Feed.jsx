@@ -151,7 +151,7 @@ const SOURCE_META = {
   crunchbase:    { label: 'Crunchbase',      color: '#146AFF', icon: 'CB' },
   behance:       { label: 'Behance',         color: '#053EFF', icon: 'Be' },
   designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
-  uficonnect:    { label: 'UFIConnect',      color: 'var(--primary)', icon: '🌐' },
+  uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
 const SOURCE_TABS = [
@@ -453,7 +453,7 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
   const meta = SOURCE_META[platform] || {};
   const descriptions = {
     twitter:   'See posts, threads, and trending topics from the people you follow on X (Twitter).',
-    linkedin:  'Bring your LinkedIn feed into UFIConnect — professional updates, articles, and job posts.',
+    linkedin:  'Bring your LinkedIn feed into UFconnect — professional updates, articles, and job posts.',
     instagram: 'View posts and reels from the creators and brands you follow on Instagram.',
     facebook:  'See updates from your Facebook friends and the pages you follow.',
   };
@@ -1475,7 +1475,7 @@ export default function Feed() {
   return (
     <Layout>
       <Helmet>
-        <title>Professional News Feed | News & Updates for Your Career | UFIConnect</title>
+        <title>Professional News Feed | News & Updates for Your Career | UFconnect</title>
         <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         <link rel="canonical" href="https://uficonnect.org/feed" />

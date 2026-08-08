@@ -151,7 +151,7 @@ export default function PostList({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
                   <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {post.author?.title || 'UFIConnect Member'}{post.group ? ` - ${post.group.name}` : ''}
+                    {post.author?.title || 'UFconnect Member'}{post.group ? ` - ${post.group.name}` : ''}
                   </div>
                 </div>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -172,7 +172,7 @@ export default function PostList({
             ) : (
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: '.76rem', fontWeight: 700, color: 'var(--primary)' }}>
-                  {post.group?.name || 'UFIConnect'}
+                  {post.group?.name || 'UFconnect'}
                 </span>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                   {timeAgo(post.createdAt)}

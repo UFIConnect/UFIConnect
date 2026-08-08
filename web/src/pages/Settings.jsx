@@ -74,7 +74,7 @@ const ROLE_META = {
   'Content Creator':         { icon: '🎬', color: '#D97706', bg: '#FFFBEB', tagline: 'Video, writing, podcasts',      fields: [{ key: 'platforms', label: 'Platforms', placeholder: 'e.g. YouTube, Newsletter, Podcast, TikTok' }, { key: 'niche', label: 'Niche / topic', placeholder: 'e.g. Tech, Finance, Productivity, Fitness' }, { key: 'audienceSize', label: 'Audience size', placeholder: 'e.g. 10k followers' }, { key: 'openToCollabs', label: 'Open to collaborations', type: 'toggle' }] },
   'HR / People Ops':         { icon: '👥', color: '#DB2777', bg: '#FDF2F8', tagline: 'Recruiting, culture, L&D',      fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Recruiting, L&D, HRBP, Comp & Ben' }, { key: 'companySize', label: 'Company size focus', placeholder: 'e.g. Startup, Mid-size, Enterprise' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Finance, Healthcare' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
 };
-const DEFAULT_META = { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIConnect Member', fields: [] };
+const DEFAULT_META = { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFconnect Member', fields: [] };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 function Toggle({ value, onChange }) {
@@ -463,7 +463,7 @@ export default function Settings() {
           <div className="card">
             <SectionHeading>🔒 Privacy</SectionHeading>
             {[
-              { key: 'publicProfile',  label: 'Public profile',    desc: 'Allow anyone on UFIConnect to view your profile.' },
+              { key: 'publicProfile',  label: 'Public profile',    desc: 'Allow anyone on UFconnect to view your profile.' },
               { key: 'showEmail',      label: 'Show email address', desc: 'Display your email on your public profile.' },
               { key: 'showSkills',     label: 'Show skills',        desc: 'Display your skill tags on your profile card.' },
               { key: 'showGroups',     label: 'Show groups',        desc: 'Let others see which groups you belong to.' },

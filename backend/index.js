@@ -399,7 +399,7 @@ function fetchJSON(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent':      'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/json',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control':   'no-cache',
@@ -654,8 +654,8 @@ async function sendPasswordResetEmail(toEmail, resetUrl) {
   await transport.sendMail({
     from: process.env.EMAIL_FROM || process.env.SMTP_USER,
     to: toEmail,
-    subject: 'Reset your UFIConnect password',
-    html: `<p>We received a request to reset your UFIConnect password.</p>
+    subject: 'Reset your UFconnect password',
+    html: `<p>We received a request to reset your UFconnect password.</p>
       <p><a href="${resetUrl}">Reset your password</a></p>
       <p>This link expires in 30 minutes. If you didn't request this, you can safely ignore this email.</p>`,
   });
@@ -1322,7 +1322,7 @@ async function fetchRedditSub(sub, keyword) {
     try {
       const data = await fetchJSON(
         `https://oauth.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
-        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIConnect/1.0 by /u/uficonnect' }
+        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
       );
       const posts = parseRedditJSON(data, keyword);
       if (posts.length) {
@@ -1586,7 +1586,7 @@ function fetchText(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent':      'UFIConnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/rss+xml, application/xml, text/xml',
         'Accept-Language': 'en-US,en;q=0.9',
         ...extraHeaders,
@@ -1611,12 +1611,12 @@ function fetchText(url, extraHeaders = {}) {
 // Reddit blocks anonymous server requests with 429. Use OAuth client_credentials
 // when REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET are set in env.
 const REDDIT_HEADERS = {
-  'User-Agent':      'UFIConnect/1.0 by /u/uficonnect',
+  'User-Agent':      'UFconnect/1.0 by /u/uficonnect',
   'Accept':          'application/json',
   'Accept-Language': 'en-US,en;q=0.9',
 };
 const REDDIT_RSS_HEADERS = {
-  'User-Agent':      'UFIConnect/1.0 by /u/uficonnect',
+  'User-Agent':      'UFconnect/1.0 by /u/uficonnect',
   'Accept':          'application/atom+xml, text/xml, application/xml, */*',
   'Accept-Language': 'en-US,en;q=0.9',
 };
@@ -1653,7 +1653,7 @@ async function getRedditToken() {
         method: 'POST',
         headers: {
           'Authorization':  `Basic ${auth}`,
-          'User-Agent':     'UFIConnect/1.0 by /u/uficonnect',
+          'User-Agent':     'UFconnect/1.0 by /u/uficonnect',
           'Content-Type':   'application/x-www-form-urlencoded',
           'Content-Length': Buffer.byteLength(body),
         },
@@ -2562,7 +2562,7 @@ async function fetchIndieHackers(keyword) {
   ];
   for (const url of IH_RSS_URLS) {
     try {
-      const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
@@ -2637,7 +2637,7 @@ async function fetchTheRegister(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.theregister.com/headlines.atom', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2657,7 +2657,7 @@ async function fetchVentureBeat(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://venturebeat.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2681,7 +2681,7 @@ async function fetchSmashingMagazine(keyword) {
   ];
   for (const url of FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2699,7 +2699,7 @@ async function fetchPhoronix(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.phoronix.com/rss.php', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2723,7 +2723,7 @@ async function fetchInfoQ(keyword) {
   ];
   for (const url of FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2741,7 +2741,7 @@ async function fetchMITTechReview(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.technologyreview.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2766,7 +2766,7 @@ async function fetchArsTechnica(keyword) {
   ];
   for (const url of ARS_FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2784,7 +2784,7 @@ async function fetchWired(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.wired.com/feed/rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -2845,7 +2845,7 @@ async function fetchRemoteOKJobs(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://remoteok.com/remote-dev-jobs.rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -2865,7 +2865,7 @@ async function fetchYCombinator(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.ycombinator.com/blog/rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -2885,7 +2885,7 @@ async function fetchCrunchbaseNews(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://news.crunchbase.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -2905,7 +2905,7 @@ async function fetchBehanceProjects(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.behance.net/feeds/projects', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -2932,7 +2932,7 @@ async function fetchDesignWeb(keyword) {
   const posts = [];
   for (const feed of feeds) {
     try {
-      const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIConnect/1.0)' });
+      const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
       posts.push(...filterAndSlice(items, keyword, 250).map(it =>
         rssPost(it, 'designweb', feed.label, 'ext_designweb', 'Design Web', 'Design', keyword)));
@@ -2950,7 +2950,7 @@ async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFIConnect/1.0 which bsky rate-limits)
+  // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFconnect/1.0 which bsky rate-limits)
   const mapPost = (p) => {
     const text   = (p.record?.text || '').slice(0, 500);
     const handle = p.author?.handle || p.author?.did || 'unknown';
@@ -4722,7 +4722,7 @@ function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
       hostname: requestUrl.hostname,
       port: requestUrl.port || (requestUrl.protocol === 'http:' ? 80 : 443),
       path: requestUrl.pathname + requestUrl.search,
-      headers: { 'User-Agent': 'UFIConnect-WebOptimizer/1.0' },
+      headers: { 'User-Agent': 'UFconnect-WebOptimizer/1.0' },
     }, (res) => {
       const location = res.headers.location;
       if ([301, 302, 307, 308].includes(res.statusCode) && location && redirects > 0) {
@@ -5296,7 +5296,7 @@ function runAgentActivityCheck(fullSweep = false) {
 // Seed immediately on startup (non-blocking)
 installCrashGuard();
 runStabilityGuard();
-logAgentAction('feed',      '🚀', 'UFIConnect Agent System initialized', '#60A5FA');
+logAgentAction('feed',      '🚀', 'UFconnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
 // Warm Reddit OAuth token on startup so the first fetch uses authenticated access
 if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
@@ -5780,7 +5780,7 @@ const INTERNAL_GROUPS_SEED = [
     id: 'ufi-general',
     category: 'Community',
     name: 'General',
-    description: 'Open discussion for UFIConnect members.',
+    description: 'Open discussion for UFconnect members.',
     members: 0,
     isExternal: false,
   },
@@ -5873,7 +5873,7 @@ function serializeCommunityPost(post, viewerId = null) {
     likesCount:  (post.likes || []).length,
     commentsCount: Math.max(post.commentsCount || 0, postComments.filter(c => c.postId === post.id).length),
     source:      post.source || 'uficonnect',
-    sourceLabel: post.sourceLabel || 'UFIConnect',
+    sourceLabel: post.sourceLabel || 'UFconnect',
     sourceUrl:   post.sourceUrl || null,
     isExternal:  false,
   };
@@ -5889,7 +5889,7 @@ function dbCommunityPostToMemPost(row) {
     commentsCount: row.comments_count || 0,
     createdAt: row.created_at,
     source: row.source || 'uficonnect',
-    sourceLabel: row.source_label || 'UFIConnect',
+    sourceLabel: row.source_label || 'UFconnect',
     url: row.url,
   };
 }
@@ -6143,7 +6143,7 @@ async function verifyAuth0Token(token) {
 async function provisionAuth0User(payload) {
   const subject = payload.sub;
   const email = (payload.email || `${subject.replace(/[^a-z0-9_-]/gi, '_')}@auth0.local`).toLowerCase();
-  const name = payload.name || payload.nickname || email.split('@')[0] || 'UFIConnect Member';
+  const name = payload.name || payload.nickname || email.split('@')[0] || 'UFconnect Member';
   const avatarUrl = payload.picture || '';
 
   const existingBySubject = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
@@ -6779,7 +6779,7 @@ async function authenticate(req, res, next) {
     req.user = jwt.verify(token, JWT_SECRET);
     return next();
   } catch {
-    // Not a local UFIConnect JWT; try Auth0 when configured.
+    // Not a local UFconnect JWT; try Auth0 when configured.
   }
 
   try {
@@ -9247,7 +9247,7 @@ async function triggerRenderServiceDeploy(service, hook) {
         hostname: url.hostname,
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { 'User-Agent': 'UFIConnect-Office/1.0' },
+        headers: { 'User-Agent': 'UFconnect-Office/1.0' },
       })),
     };
   }
@@ -9269,7 +9269,7 @@ async function triggerRenderServiceDeploy(service, hook) {
       headers: {
         'Authorization': `Bearer ${process.env.RENDER_API_KEY}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'UFIConnect-Office/1.0',
+        'User-Agent': 'UFconnect-Office/1.0',
       },
     }, { clearCache: 'do_not_clear' })),
   };
@@ -9560,7 +9560,7 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// Author-only. Only ever applies to UFIConnect-native posts (community_posts) —
+// Author-only. Only ever applies to UFconnect-native posts (community_posts) —
 // external aggregated content has no delete concept here.
 app.delete('/posts/:postId', authenticate, async (req, res) => {
   try {
@@ -9603,7 +9603,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       id, authorId: user.id, groupId: group.id,
       content: content.trim(), likes: [], commentsCount: 0,
       createdAt: new Date().toISOString(),
-      source: 'uficonnect', sourceLabel: 'UFIConnect',
+      source: 'uficonnect', sourceLabel: 'UFconnect',
     };
     // Confirm the DB write before mutating in-memory state / broadcasting to
     // other users — otherwise a failed write still looks like a live post to
@@ -9611,7 +9611,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     if (db.isConnected()) {
       await db.query(
         `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
-         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIConnect',$6) ON CONFLICT DO NOTHING`,
+         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6) ON CONFLICT DO NOTHING`,
         [id, group.id, user.id, user.name, content.trim(), post.createdAt]
       );
     }
@@ -10686,7 +10686,7 @@ async function loadPostsFromDB() {
       commentsCount: r.comments_count || 0,
       createdAt: r.created_at, url: r.url,
       source: r.source || 'uficonnect',
-      sourceLabel: r.source_label || 'UFIConnect',
+      sourceLabel: r.source_label || 'UFconnect',
     }));
     if (rows.length) console.log(`✅ Loaded ${rows.length} posts from DB`);
   } catch (err) { console.warn('loadPostsFromDB:', err.message); }
@@ -10725,7 +10725,7 @@ async function preloadUsersFromDB() {
 
 // Start server immediately, load data in background
 app.listen(PORT, () =>
-  console.log(`UFIConnect backend listening on http://localhost:${PORT}`)
+  console.log(`UFconnect backend listening on http://localhost:${PORT}`)
 );
 
 // Run heavy initialization in background without blocking startup

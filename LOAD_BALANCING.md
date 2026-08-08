@@ -1,4 +1,4 @@
-# UFIConnect Load Balancing & Server Configuration
+# UFconnect Load Balancing & Server Configuration
 
 ## 🔧 Issues Fixed
 

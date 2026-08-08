@@ -32,12 +32,12 @@ for (let i = 0; i <= 630; i += 60) {
   ctx.stroke();
 }
 
-// Main text: UFIConnect
+// Main text: UFconnect
 ctx.fillStyle = '#ffffff';
 ctx.font = 'bold 100px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
 ctx.textAlign = 'center';
 ctx.textBaseline = 'middle';
-ctx.fillText('UFIConnect', 600, 260);
+ctx.fillText('UFconnect', 600, 260);
 
 // Tagline
 ctx.fillStyle = 'rgba(255,255,255,0.85)';

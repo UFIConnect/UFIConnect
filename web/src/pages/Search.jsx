@@ -159,13 +159,13 @@ export default function Search() {
   return (
     <Layout>
       <Helmet>
-        <title>Find People & Communities | UFIConnect</title>
+        <title>Find People & Communities | UFconnect</title>
         <meta name="description" content="Search professionals by role, skill, or organization. Discover 160+ communities across tech, design, startups, and more." />
         <link rel="canonical" href="https://uficonnect.org/search" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/search" />
-        <meta property="og:title" content="Find People & Communities | UFIConnect" />
-        <meta property="og:description" content="Search professionals by role, skill, or organization. Discover UFIConnect communities across tech, design, startups, and more." />
+        <meta property="og:title" content="Find People & Communities | UFconnect" />
+        <meta property="og:description" content="Search professionals by role, skill, or organization. Discover UFconnect communities across tech, design, startups, and more." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
       </Helmet>

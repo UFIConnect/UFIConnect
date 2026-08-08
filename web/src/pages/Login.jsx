@@ -36,15 +36,15 @@ export default function Login() {
   return (
     <>
       <Helmet>
-        <title>Sign In | UFIConnect</title>
-        <meta name="description" content="Sign in to your UFIConnect account to access your personalized feed, manage your profile, and follow communities." />
+        <title>Sign In | UFconnect</title>
+        <meta name="description" content="Sign in to your UFconnect account to access your personalized feed, manage your profile, and follow communities." />
         <meta name="robots" content="noindex" />
       </Helmet>
       <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">UF</div>
-          <span className="auth-logo-name">UFIConnect</span>
+          <span className="auth-logo-name">UFconnect</span>
         </div>
         <p className="auth-tagline">Professional networking, no ads.</p>
 

@@ -16,7 +16,7 @@ function MaintenancePage() {
         We're making improvements
       </h1>
       <p style={{ fontSize: '1rem', color: 'var(--muted, #64748b)', maxWidth: 400, lineHeight: 1.6, marginBottom: 32 }}>
-        UFIConnect is temporarily offline while we polish a few things.
+        UFconnect is temporarily offline while we polish a few things.
         We'll be back shortly — thanks for your patience.
       </p>
       <div style={{

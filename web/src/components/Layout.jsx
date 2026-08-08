@@ -32,7 +32,7 @@ export default function Layout({ children }) {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">UF</div>
-          <span className="sidebar-logo-text">UFIConnect</span>
+          <span className="sidebar-logo-text">UFconnect</span>
         </div>
 
         <nav className="sidebar-nav">

@@ -33,7 +33,7 @@ const PLATFORM_META = {
   hackernews:  { icon: '🔶', label: 'News',           color: '#FF6600' },
   devto:       { icon: '👩‍💻', label: 'DEV Community',  color: '#3B49DF' },
   github:      { icon: '🐙', label: 'GitHub',         color: '#24292F' },
-  uficonnect:  { icon: '🌐', label: 'UFIConnect',    color: '#6366F1' },
+  uficonnect:  { icon: '🌐', label: 'UFconnect',    color: '#6366F1' },
 };
 
 function debounce(fn, delay) {
@@ -196,7 +196,7 @@ export default function Groups() {
   return (
     <>
       <Helmet>
-        <title>Professional Communities & Groups | Connect with Your People on UFIConnect</title>
+        <title>Professional Communities & Groups | Connect with Your People on UFconnect</title>
         <meta name="description" content="Discover and connect with 50+ professional communities. Find Reddit communities, Discord servers, LinkedIn groups, Facebook Groups, Twitter communities, Hacker News, GitHub, and DEV.to — all curated by role and interests. Network with engineers, designers, founders, and creatives." />
         <meta name="keywords" content="professional communities, tech communities, developer groups, connect communities, networking groups, Discord communities, Reddit communities, LinkedIn groups, Facebook Groups, tech groups, engineering communities, design communities, startup communities, news communities, group networking, professional groups, career groups" />
         <link rel="canonical" href="https://uficonnect.org/groups" />

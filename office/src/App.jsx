@@ -900,7 +900,7 @@ export default function App() {
         }}>
           <div style={{ padding: '26px 20px 18px' }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
-              UFIConnect
+              UFconnect
             </div>
             <div style={{ fontSize: 10, color: '#334155', marginTop: 2, textTransform: 'uppercase', letterSpacing: 1.2 }}>
               Operations Office

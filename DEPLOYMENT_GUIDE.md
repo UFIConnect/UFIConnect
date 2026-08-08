@@ -1,4 +1,4 @@
-# UFIConnect Deployment & Load Balancing Guide
+# UFconnect Deployment & Load Balancing Guide
 
 ## 🚀 Quick Start
 

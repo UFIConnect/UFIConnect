@@ -24,8 +24,8 @@ def twaManifest = [
     applicationId: 'org.uficonnect.app',
     hostName: 'uficonnect.org', // The domain being opened in the TWA.
     launchUrl: '/', // The start path for the TWA. Must be relative to the domain.
-    name: 'UFIConnect', // The application name.
-    launcherName: 'UFIConnect', // The name shown on the Android Launcher.
+    name: 'UFconnect', // The application name.
+    launcherName: 'UFconnect', // The name shown on the Android Launcher.
     themeColor: '#6366F1', // The color used for the status bar.
     themeColorDark: '#4F46E5', // The color used for the dark status bar.
     navigationColor: '#6366F1', // The color used for the navigation bar.

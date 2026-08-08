@@ -106,7 +106,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Connect your social accounts through each provider's permission screen, then return to UFIConnect automatically.
+          Connect your social accounts through each provider's permission screen, then return to UFconnect automatically.
         </p>
       </div>
 
@@ -300,7 +300,7 @@ function PlatformCard({
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
             {comingSoon
               ? `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`
-              : `Connect opens ${p.name}'s authorization page so you can approve UFIConnect access at the original source.`}
+              : `Connect opens ${p.name}'s authorization page so you can approve UFconnect access at the original source.`}
           </div>
 
           {/* Benefits */}
