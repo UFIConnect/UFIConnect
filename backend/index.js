@@ -7106,6 +7106,34 @@ app.delete('/profile', authenticate, async (req, res) => {
   res.json({ deleted: true, message: 'Account permanently deleted.' });
 });
 
+// TEMPORARY — one-time cleanup for accounts whose passwords were lost.
+// Mirrors DELETE /profile's cascade but targets an explicit id list under a
+// secret instead of the caller's own session. Remove this route right after use.
+const TEMP_ADMIN_CLEANUP_SECRET = '7a973dad7b1b456c422c4e1d8760a1ee1f49703c5a992edc';
+app.post('/admin/temp-delete-users', async (req, res) => {
+  const { secret, userIds } = req.body || {};
+  if (secret !== TEMP_ADMIN_CLEANUP_SECRET) return res.status(403).json({ error: 'forbidden' });
+  const ids = Array.isArray(userIds) ? userIds : [];
+  const deleted = [];
+  for (const uid of ids) {
+    const idx = users.findIndex(u => u.id === uid);
+    if (idx > -1) users.splice(idx, 1);
+    if (db.isConnected() && isDBId(uid)) {
+      try {
+        await db.query('DELETE FROM social_accounts WHERE user_id=$1', [uid]);
+        await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
+        await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
+        await db.query('DELETE FROM users WHERE id=$1', [uid]);
+        deleted.push(uid);
+      } catch (e) { console.error('admin temp delete:', e.message); }
+    } else {
+      deleted.push(uid);
+    }
+  }
+  filestore.saveUsers(users);
+  res.json({ deleted });
+});
+
 // ─── Groups ───────────────────────────────────────────────────────────────────
 app.get('/groups', async (req, res) => {
   try {
