@@ -6385,6 +6385,10 @@ const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000
 // connection pool. Only let it really execute once per TRIM_INTERVAL_MS.
 let lastFeedPostsTrimAt = 0;
 const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
+// Aggregated content goes stale — a 6-week-old post has no business resurfacing
+// in the main feed. Age-based cleanup piggybacks on the same throttled pass as
+// the count-based cap so it adds no extra query volume.
+const STALE_POST_MAX_AGE_MS = 42 * 24 * 60 * 60 * 1000;
 function trimFeedPostsCache() {
   if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
@@ -6392,6 +6396,9 @@ function trimFeedPostsCache() {
     `DELETE FROM feed_posts_cache WHERE id IN (
        SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
      )`, [MAX_CACHED_DB_POSTS]
+  ).catch(() => {});
+  db.query(
+    `DELETE FROM feed_posts_cache WHERE post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds'`
   ).catch(() => {});
 }
 
@@ -6670,6 +6677,12 @@ async function seedAndLoadGroups() {
         g.relatedGroups || [],
       ]);
     }
+    // Groups are seed-only (no user-creation route), so anything in the table
+    // that's no longer in GROUPS_SEED is a stale leftover from a prior version
+    // of the seed list — safe to remove now that every current entry has just
+    // been upserted above.
+    const seedIds = GROUPS_SEED.map(g => g.id);
+    await db.query('DELETE FROM community_groups WHERE NOT (id = ANY($1))', [seedIds]);
     const { rows } = await db.query('SELECT * FROM community_groups ORDER BY member_count DESC');
     // Only replace in-memory list if DB returned real data
     if (rows.length > 0) {
