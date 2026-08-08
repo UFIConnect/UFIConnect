@@ -1,10 +1,10 @@
-# UFIConnect
+# UFconnect
 
-UFIConnect is a free, ad-free professional networking platform at https://uficonnect.org.
+UFconnect is a free, ad-free professional networking platform at https://uficonnect.org.
 
 ## What It Is
 
-UFIConnect helps professionals build profiles, post updates, message each other, join communities, discover people, and find jobs, gigs, grants, events, and learning opportunities. The product is built for engineers, designers, founders, creators, students, operators, marketers, healthcare professionals, athletes, musicians, chefs, real estate professionals, and other career paths.
+UFconnect helps professionals build profiles, post updates, message each other, join communities, discover people, and find jobs, gigs, grants, events, and learning opportunities. The product is built for engineers, designers, founders, creators, students, operators, marketers, healthcare professionals, athletes, musicians, chefs, real estate professionals, and other career paths.
 
 ## Important Pages
 
@@ -17,7 +17,7 @@ UFIConnect helps professionals build profiles, post updates, message each other,
 
 ## Positioning
 
-UFIConnect is designed as a cleaner professional network: no ads, real communities, personalized feeds, public profiles for account holders, messaging, posts, likes, comments, and opportunity discovery.
+UFconnect is designed as a cleaner professional network: no ads, real communities, personalized feeds, public profiles for account holders, messaging, posts, likes, comments, and opportunity discovery.
 
 ## Contact
 
