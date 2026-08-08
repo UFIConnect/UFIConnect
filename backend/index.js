@@ -7144,8 +7144,12 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
   } catch (e) { console.error('DELETE /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Feed (internal + live Reddit posts, personalized by interests & role) ────
-app.get('/feed', authenticate, async (req, res) => {
+// ─── Feed (internal + cached external posts, personalized by interests & role) ──
+// Shared by /feed (legacy — used by the mobile app) and /office/feed (web feed
+// tab): posts only ever come from what the office source-agent pipeline has
+// already fetched into globalFeedCache/agentSourceCache/DB — no per-request
+// live external fetch. See shouldFetchLive below.
+async function handleFeedRequest(req, res) {
   try {
   // Manual refresh is stale-while-revalidate: serve the best current feed now, then
   // ask the workers to refresh in the background so a slow source cannot blank a tab.
@@ -7388,10 +7392,10 @@ app.get('/feed', authenticate, async (req, res) => {
     gitlab: [], remoteok: [], yc: [], crunchbase: [], behance: [], designweb: [],
   };
 
-  // Default feed responses should be fast and cache-first. The continuous
-  // workers keep globalFeedCache fresh; explicit live=1 is available for
-  // diagnostics or manual one-off fetches without slowing every user load.
-  const shouldFetchLive = req.query.live === '1';
+  // Posts always come from the office source-agent pipeline (globalFeedCache /
+  // agentSourceCache / DB) — no per-request live external fetch. Use
+  // ?bust=1 (above) to nudge the agents to refresh sooner instead.
+  const shouldFetchLive = false;
   const liveResult = shouldFetchLive
     ? await Promise.race([
         fetchAllTopicPosts(
@@ -7721,7 +7725,9 @@ app.get('/feed', authenticate, async (req, res) => {
     console.error('[/feed] unhandled error:', e.message || e);
     if (!res.headersSent) res.json({ posts: [], hasMore: false, totalAvailable: 0, error: true });
   }
-});
+}
+app.get('/feed', authenticate, handleFeedRequest);
+app.get('/office/feed', authenticate, handleFeedRequest);
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
 app.get('/feed/stream', authenticateSSE, (req, res) => {

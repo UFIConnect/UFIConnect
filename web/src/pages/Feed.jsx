@@ -166,9 +166,9 @@ const SOURCE_TABS = [
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
-const DEFAULT_FILTERS = { sort: 'ranked', sources: [], timeRange: 'all' };
+const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
-const FEED_AUTO_REFRESH_MS = 90 * 1000;
+const FEED_AUTO_REFRESH_MS = 10 * 60 * 1000;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
@@ -1071,10 +1071,7 @@ export default function Feed() {
       if (manual) {
         params.set('bust', '1');
       }
-      if (live || manual) {
-        params.set('live', '1');
-      }
-      const url = `/feed?${params.toString()}`;
+      const url = `/office/feed?${params.toString()}`;
       const { data } = await client.get(url);
       const incoming = data.posts || [];
       const previous = postsRef.current;
@@ -1219,7 +1216,7 @@ export default function Feed() {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      const { data } = await client.get(`/feed?${params.toString()}`);
+      const { data } = await client.get(`/office/feed?${params.toString()}`);
       const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => knownIds.current.add(p.id));
       if (incoming.length > 0) {
@@ -1260,6 +1257,26 @@ export default function Feed() {
       window.removeEventListener('focus', refreshQuietly);
       document.removeEventListener('visibilitychange', handleVisibility);
     };
+  }, [loadFeed]);
+
+  // Scroll-to-refresh: scrolling back up to the very top acts as pull-to-refresh
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+    let lastPullAt = 0;
+    const PULL_COOLDOWN_MS = 8000;
+    const handleScroll = () => {
+      const y = window.scrollY;
+      const pulledToTop = y <= 0 && lastScrollY > 40;
+      lastScrollY = y;
+      if (!pulledToTop || viewModeRef.current !== 'feed') return;
+      const state = loadStateRef.current;
+      if (state.loading || state.refreshing || state.loadingMore) return;
+      if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
+      lastPullAt = Date.now();
+      loadFeed(true, activeTabsRef.current, { preserveScroll: true });
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, [loadFeed]);
 
   // Fetch social connection status for personalisation banners
@@ -1452,7 +1469,7 @@ export default function Feed() {
   const hasMore   = remoteHasMore;
 
   const firstName = profile?.name?.split(' ')[0] || '';
-  const activeFilterCount = filters.sources.length + (filters.sort !== 'ranked' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
+  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -1664,7 +1681,7 @@ export default function Feed() {
             </span>
           )}
 
-          {filters.sort !== 'ranked' && (
+          {filters.sort !== 'newest' && (
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '3px 9px', borderRadius: 12,
@@ -1672,7 +1689,7 @@ export default function Feed() {
               border: '1px solid var(--border)',
             }}>
               Sort: {filters.sort}
-              <button onClick={() => applyFilters({ ...filtersRef.current, sort: 'ranked' })} style={{
+              <button onClick={() => applyFilters({ ...filtersRef.current, sort: 'newest' })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>
@@ -1758,6 +1775,7 @@ export default function Feed() {
             <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
             {posts.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {posts.length.toLocaleString()} post{posts.length !== 1 ? 's' : ''}</span>}
             {search && <span style={{ marginLeft: 8, opacity: 0.7 }}>· searching "{search}"</span>}
+            {refreshing && <span style={{ marginLeft: 8, opacity: 0.7 }}>· refreshing…</span>}
           </div>
         </div>
       )}
