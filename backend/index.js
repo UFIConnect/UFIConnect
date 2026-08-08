@@ -6916,10 +6916,15 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
   }));
-  const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => [
-    key,
-    { ...PLATFORMS[key], connected: connected[key] },
-  ]));
+  const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => {
+    const status = socialCredentialStatus(key);
+    return [key, {
+      ...PLATFORMS[key],
+      connected: connected[key],
+      configured: status.configured,
+      missingEnv: status.missingEnv,
+    }];
+  }));
   res.json({
     platforms,
     connected,

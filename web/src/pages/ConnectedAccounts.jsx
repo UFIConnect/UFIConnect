@@ -4,10 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
-const SOCIAL_OAUTH_ONLY = new Set(['linkedin', 'twitter', 'instagram', 'facebook', 'discord']);
-const HANDLE_PLATFORMS  = new Set(['github', 'gitlab', 'reddit', 'youtube', 'medium', 'dribbble', 'behance', 'tiktok', 'bluesky']);
-const ALL_COMING_SOON   = new Set([...SOCIAL_OAUTH_ONLY, ...HANDLE_PLATFORMS]);
-
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
@@ -76,16 +72,6 @@ export default function ConnectedAccounts() {
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (err) {
-      // For handle-based platforms, fall back to mock connect when OAuth isn't configured
-      if (HANDLE_PLATFORMS.has(platform) && err?.response?.status === 501) {
-        try {
-          await client.post('/social/connect', { platform, token: 'connected' });
-          setConnected(prev => ({ ...prev, [platform]: true }));
-          flash_('success', `${platform} connected.`);
-          setConnecting(null);
-          return;
-        } catch {/* fall through to error */}
-      }
       const detail = err?.response?.data?.detail || err?.response?.data?.error || err.message;
       flash_('error', detail || 'Could not start this connection.', 7000);
       setConnecting(null);
@@ -106,7 +92,8 @@ export default function ConnectedAccounts() {
   }
 
   const connectedList   = platforms.filter(([k]) =>  connected[k]);
-  const comingSoonList  = platforms.filter(([k]) => !connected[k] && ALL_COMING_SOON.has(k));
+  const availableList   = platforms.filter(([k, p]) => !connected[k] &&  p.configured);
+  const comingSoonList  = platforms.filter(([k, p]) => !connected[k] && !p.configured);
 
   return (
     <Layout>
@@ -195,6 +182,26 @@ export default function ConnectedAccounts() {
           )}
 
           {/* Coming Soon — all platforms pending OAuth integration */}
+          {availableList.length > 0 && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
+                Available
+              </div>
+              {availableList.map(([key, p]) => (
+                <PlatformCard
+                  key={key}
+                  platformKey={key}
+                  p={p}
+                  isConnected={false}
+                  expanded={expanded === key}
+                  onToggle={() => setExpanded(expanded === key ? null : key)}
+                  onConnect={() => handleConnect(key)}
+                  connecting={connecting === key}
+                />
+              ))}
+            </div>
+          )}
+
           {comingSoonList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
@@ -291,7 +298,9 @@ function PlatformCard({
       {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
-            Connect opens {p.name}'s authorization page so you can approve UFIConnect access at the original source.
+            {comingSoon
+              ? `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`
+              : `Connect opens ${p.name}'s authorization page so you can approve UFIConnect access at the original source.`}
           </div>
 
           {/* Benefits */}
