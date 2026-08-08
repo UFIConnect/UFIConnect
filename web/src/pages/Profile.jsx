@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
@@ -9,23 +9,6 @@ import client from '../api/client';
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
-
-const SOCIAL_PLATFORMS = [
-  { id: 'linkedin',  emoji: '💼', name: 'LinkedIn',    color: '#0A66C2', desc: 'Posts & articles from your professional network' },
-  { id: 'twitter',   emoji: '𝕏',  name: 'X (Twitter)', color: '#000000', desc: 'Tweets and threads from the people you follow' },
-  { id: 'instagram', emoji: '📸', name: 'Instagram',   color: '#E1306C', desc: 'Posts from the creators and brands you follow' },
-  { id: 'facebook',  emoji: '🔵', name: 'Facebook',    color: '#1877F2', desc: 'Updates from friends, pages, and groups you follow' },
-  { id: 'github',    emoji: '🐙', name: 'GitHub',      color: '#24292F', desc: 'Your repos, contributions, and open-source work' },
-  { id: 'gitlab',    emoji: 'GL', name: 'GitLab',      color: '#FC6D26', desc: 'Your GitLab projects, CI/CD work, and open-source portfolio' },
-  { id: 'discord',   emoji: '💬', name: 'Discord',     color: '#5865F2', desc: 'Servers and communities in your field' },
-  { id: 'youtube',   emoji: '▶️', name: 'YouTube',     color: '#FF0000', desc: 'Channels and video content in your areas' },
-  { id: 'reddit',    emoji: '🤖', name: 'Reddit',      color: '#FF4500', desc: 'Posts from subreddits matching your interests' },
-  { id: 'medium',    emoji: '✍️', name: 'Medium',      color: '#000000', desc: 'Articles and long-form reads from writers in your field' },
-  { id: 'dribbble',  emoji: '🏀', name: 'Dribbble',    color: '#EA4C89', desc: 'Design shots and inspiration from top creatives' },
-  { id: 'behance',   emoji: '🎨', name: 'Behance',     color: '#1769FF', desc: 'Creative portfolios and design projects' },
-  { id: 'tiktok',    emoji: '🎵', name: 'TikTok',      color: '#010101', desc: 'Trending videos from creators in your niche' },
-  { id: 'bluesky',   emoji: '🦋', name: 'Bluesky',     color: '#0085FF', desc: 'Posts across the decentralised social network' },
-];
 
 const LINK_FIELDS = [
   { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
@@ -37,10 +20,13 @@ const LINK_FIELDS = [
   { key: 'other',     label: 'Other link',     icon: '🔗', placeholder: 'https://...' },
 ];
 
-const TABS = ['Overview', 'Posts', 'Skills', 'Attachments'];
+const TABS = ['Overview', 'Connected Accounts', 'Sources', 'Posts', 'Skills', 'Attachments'];
+// These two navigate to their existing standalone pages instead of rendering inline.
+const NAV_TABS = { 'Connected Accounts': '/connected-accounts', 'Sources': '/sources' };
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
+  const navigate = useNavigate();
   const [tab,         setTab]         = useState('Overview');
   const [editing,     setEditing]     = useState(false);
   const [form,        setForm]        = useState(null);
@@ -209,10 +195,13 @@ export default function Profile() {
       {/* Tabs */}
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
-          const icons = { Overview: '👤', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
+          const icons = { Overview: '👤', 'Connected Accounts': '🔗', Sources: '📡', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
           const comingSoon = new Set(['Attachments']);
           return (
-            <button key={t} onClick={() => { setTab(t); setEditing(false); }}
+            <button key={t} onClick={() => {
+              if (NAV_TABS[t]) { navigate(NAV_TABS[t]); return; }
+              setTab(t); setEditing(false);
+            }}
               style={{
                 padding:'10px 16px', border:'none', background:'none', cursor:'pointer', whiteSpace:'nowrap',
                 fontWeight: tab === t ? 700 : 500,
@@ -272,54 +261,17 @@ export default function Profile() {
           </div>
 
           {/* Connected Accounts */}
-          <div className="card" id="social" style={{ position:'relative', overflow:'hidden' }}>
-            {/* Blur + Coming Soon overlay */}
-            <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
-              background:'rgba(var(--bg-rgb,255,255,255),.55)',
-              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
-            }}>
-              <span style={{ fontSize:'1.6rem' }}>🔒</span>
-              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Connected Accounts</div>
-              <span style={{
-                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
-                background:'var(--primary)', color:'#fff',
-                padding:'3px 12px', borderRadius:20,
-              }}>Coming Soon</span>
-              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
-                Social account linking is coming in the next update.
-              </p>
-            </div>
-
-            {/* Blurred content beneath */}
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, marginBottom:4 }}>
-              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>Connected Accounts</h3>
-            </div>
-            <p style={{ fontSize:'.78rem', color:'var(--muted)', marginBottom:14, lineHeight:1.5 }}>
-              Connect your social accounts to bring your existing feeds into UFIConnect.
-            </p>
-            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-              {SOCIAL_PLATFORMS.slice(0, 4).map(platform => (
-                <div key={platform.id} style={{
-                  borderRadius:10, border:'1.5px solid var(--border)',
-                  background:'var(--surface)', overflow:'hidden',
-                }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px' }}>
-                    <span style={{
-                      width:36, height:36, borderRadius:9, flexShrink:0,
-                      background: platform.color + '18',
-                      border:`1.5px solid ${platform.color}33`,
-                      display:'flex', alignItems:'center', justifyContent:'center',
-                      fontSize:'1.1rem',
-                    }}>{platform.emoji}</span>
-                    <div style={{ flex:1 }}>
-                      <span style={{ fontWeight:700, fontSize:'.88rem' }}>{platform.name}</span>
-                      <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{platform.desc}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
+          <div className="card" id="social">
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+              <div>
+                <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
+                <p style={{ fontSize:'.78rem', color:'var(--muted)', margin:0, lineHeight:1.5 }}>
+                  Connect your social accounts to bring your existing feeds into UFIConnect.
+                </p>
+              </div>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => navigate('/connected-accounts')} style={{ flexShrink:0 }}>
+                Manage →
+              </button>
             </div>
           </div>
 
