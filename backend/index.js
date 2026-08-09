@@ -6591,6 +6591,7 @@ function feedTimeRangeMs(range) {
   if (range === '6h') return 6 * H;
   if (range === 'today' || range === '24h') return D;
   if (range === 'week' || range === '7d') return 7 * D;
+  if (range === 'month' || range === '30d') return 30 * D;
   return 0;
 }
 
@@ -7536,6 +7537,12 @@ async function handleFeedRequest(req, res) {
   const feedMode = req.query.mode === 'archive' ? 'archive' : 'feed';
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
   const timeRange = req.query.timeRange || req.query.range || 'all';
+  // 'ranked' sort computes its score per row with no supporting index, so an
+  // unfiltered, unbounded 'all' range means Postgres ranks the whole table
+  // on every request. Bound the default case to 30 days (index-backed via
+  // post_created_at) for any DB query that isn't already narrowed by a
+  // specific source/topic filter. Explicit narrower/wider ranges still win.
+  const dbTimeRange = (timeRange === 'all' && sortMode === 'ranked') ? '30d' : timeRange;
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
@@ -7643,7 +7650,7 @@ async function handleFeedRequest(req, res) {
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
     const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, pageSources, {
       sort: sortMode,
-      timeRange,
+      timeRange: dbTimeRange,
     });
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = dbRows.slice(0, feedLimit);
@@ -7948,7 +7955,7 @@ async function handleFeedRequest(req, res) {
   ];
   const dbPosts = (await getPostsFromDB([], 5000, 0, null, {
     sort: sortMode,
-    timeRange,
+    timeRange: dbTimeRange,
   })).map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Background-cached global posts — unfiltered, same shared all-in-one pool.
