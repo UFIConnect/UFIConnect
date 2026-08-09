@@ -64,7 +64,8 @@ function SourceBadge({ opp }) {
   const badges = {
     'LinkedIn': { icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
     'Remotive': { icon: '🔴', label: 'Live · Remotive', color: '#2563EB', bg: '#EFF6FF' },
-    'The Muse': { icon: '✦', color: '#7C3AED', bg: '#F3EEFF' },
+    'The Muse': { icon: '✦', label: 'Live · The Muse', color: '#7C3AED', bg: '#F3EEFF' },
+    'Remote OK': { icon: '🔴', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
   };
   const badge = badges[opp.source];
   return (
@@ -84,6 +85,7 @@ export default function Opportunities() {
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('all');
+  const [sort,      setSort]      = useState('newest');
   const [remote,    setRemote]    = useState(false);
   const [liveOnly,  setLiveOnly]  = useState(false);
   const [searchInput, setSearchInput] = useState('');
@@ -106,7 +108,7 @@ export default function Opportunities() {
 
   // Fetch opportunities with current filters
   useEffect(() => {
-    const params = {};
+    const params = { sort };
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
@@ -126,7 +128,7 @@ export default function Opportunities() {
         setAllOpps([]);
       })
       .finally(() => setLoading(false));
-  }, [filter, remote, liveOnly, search]);
+  }, [filter, sort, remote, liveOnly, search]);
 
   // Paginated display
   const displayed = allOpps.slice(0, page * PAGE_SIZE);
@@ -235,6 +237,23 @@ export default function Opportunities() {
           >
             🔴 Live only
           </button>
+        </div>
+
+        {/* Sort */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <label htmlFor="opp-sort" style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>
+            Sort by
+          </label>
+          <select
+            id="opp-sort"
+            value={sort}
+            onChange={e => { setSort(e.target.value); setPage(1); }}
+            className="form-input"
+            style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem', borderRadius: 20 }}
+          >
+            <option value="newest">🕐 Newest</option>
+            <option value="match">⭐ Best match</option>
+          </select>
         </div>
 
         {/* Status messages */}

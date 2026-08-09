@@ -10219,15 +10219,43 @@ async function fetchMuseJobs(role, experience) {
   }
 }
 
+// RemoteOK posts come from the shared feed pipeline (real RSS items, each
+// sourceUrl already points at the specific job posting) — reshape them into
+// the same opportunity shape used by Remotive/Muse so they can merge in.
+async function fetchRemoteOKOpportunities(role) {
+  const query = ROLE_JOB_QUERIES[role] || role || 'developer';
+  try {
+    const posts = await fetchRemoteOKJobs(query);
+    return posts.slice(0, 20).map(p => ({
+      id:        `remoteok_${p.id}`,
+      type:      'job',
+      title:     p.title,
+      org:       p.author?.name || p.author?.organization || 'Company',
+      location:  'Remote',
+      pay:       '',
+      tags:      [],
+      source:    'Remote OK',
+      sourceUrl: p.sourceUrl,
+      posted:    p.createdAt || new Date().toISOString(),
+      remote:    true,
+      isLive:    true,
+      logo:      null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function getLiveJobs(role, experience) {
   const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
   const uniqCats = [...new Set(cats)];
-  const [remotiveResults, museResults] = await Promise.all([
+  const [remotiveResults, museResults, remoteOkResults] = await Promise.all([
     Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
     fetchMuseJobs(role, experience),
+    fetchRemoteOKOpportunities(role),
   ]);
   const seen = new Set();
-  return [...remotiveResults, ...museResults].filter((j) => {
+  return [...remotiveResults, ...museResults, ...remoteOkResults].filter((j) => {
     if (seen.has(j.id)) return false;
     seen.add(j.id);
     return true;
@@ -10374,7 +10402,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
 
   // Combine curated list + live jobs
   const seenIds = new Set();
-  const allOps = [...OPPORTUNITIES, ...liveJobs].filter((o) => {
+  // Curated "job" entries are illustrative sample data with links to
+  // platform homepages/search pages, not a specific posting — that fails
+  // the "one click to apply" bar, so real jobs come only from live sources
+  // (Remotive, The Muse, Remote OK) whose sourceUrl is the actual listing.
+  // Non-job types (gigs, grants, events, etc.) don't have a live API yet,
+  // so the curated list still fills those in.
+  const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs].filter((o) => {
     if (seenIds.has(o.id)) return false;
     seenIds.add(o.id);
     return true;
@@ -10437,16 +10471,23 @@ app.get('/opportunities', authenticate, async (req, res) => {
     results = results.filter(o => o.isLive || o.matchScore > 0 || roleTypes.has(o.type));
   }
 
-  // Sort: by matchScore desc, then daily rotation for equal-score items so list rotates each day
-  const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
-  results.sort((a, b) => {
-    if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
-    let ha = 5381, hb = 5381;
-    const ka = String(a.id) + dayBucket, kb = String(b.id) + dayBucket;
-    for (let i = 0; i < ka.length; i++) ha = (Math.imul(ha, 31) + ka.charCodeAt(i)) | 0;
-    for (let i = 0; i < kb.length; i++) hb = (Math.imul(hb, 31) + kb.charCodeAt(i)) | 0;
-    return Math.abs(ha) - Math.abs(hb);
-  });
+  // Sort — default newest-first (by posted date); 'match' sorts by relevance
+  // score instead, with a daily rotation tiebreaker so equal-score items
+  // don't freeze in the same order all day.
+  const sortMode = req.query.sort === 'match' ? 'match' : 'newest';
+  if (sortMode === 'match') {
+    const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+    results.sort((a, b) => {
+      if (b.matchScore !== a.matchScore) return b.matchScore - a.matchScore;
+      let ha = 5381, hb = 5381;
+      const ka = String(a.id) + dayBucket, kb = String(b.id) + dayBucket;
+      for (let i = 0; i < ka.length; i++) ha = (Math.imul(ha, 31) + ka.charCodeAt(i)) | 0;
+      for (let i = 0; i < kb.length; i++) hb = (Math.imul(hb, 31) + kb.charCodeAt(i)) | 0;
+      return Math.abs(ha) - Math.abs(hb);
+    });
+  } else {
+    results.sort((a, b) => new Date(b.posted) - new Date(a.posted));
+  }
 
   res.json({
     opportunities: results,
@@ -10454,6 +10495,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     liveCount: liveJobs.length,
     userRole: role,
     userTitle: userTitle || null,
+    sort: sortMode,
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle) : null,
   });
 });
