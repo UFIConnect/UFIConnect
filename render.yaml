@@ -55,6 +55,12 @@ services:
         sync: false
       - key: RENDER_SERVICE_OFFICE_ID
         sync: false
+      # Shared secret gating /office/* (status, manual refresh triggers, and
+      # the deploy trigger). Until this is set the API accepts unauthenticated
+      # office requests (backward compatible) — set a value here, then enter
+      # the same value in the office dashboard when prompted.
+      - key: OFFICE_TOKEN
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false

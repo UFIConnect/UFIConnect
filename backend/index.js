@@ -6830,6 +6830,26 @@ async function authenticate(req, res, next) {
   }
 }
 
+// ─── Office admin gate ──────────────────────────────────────────────────────
+// /office/* control-plane routes (agent status, manual refresh triggers, and
+// — critically — the deploy trigger) previously had NO authentication at
+// all: CORS restricts which browser origins can call them, but that's not a
+// real barrier since it doesn't apply to non-browser clients (curl, scripts,
+// scanners), and the office frontend embeds no credential of its own. That
+// meant anyone who found the API's base URL could force-refresh every
+// source worker or trigger a real production deploy on demand — exactly the
+// kind of uncontrolled load spike this check was meant to rule out.
+// Fails open (unauthenticated access still allowed) until OFFICE_TOKEN is
+// set in the Render dashboard, so this can't itself take the dashboard down
+// before the env var is configured.
+function requireOfficeToken(req, res, next) {
+  const expected = process.env.OFFICE_TOKEN;
+  if (!expected) return next();
+  const provided = req.headers['x-office-token'] || req.query.token;
+  if (provided === expected) return next();
+  return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 app.get('/auth/config', (_req, res) => {
   res.json({
@@ -9036,7 +9056,7 @@ function getAgentPostCount(id, cache) {
 
 // ─── Office API endpoints ─────────────────────────────────────────────────────
 
-app.get('/office/status', (req, res) => {
+app.get('/office/status', requireOfficeToken, (req, res) => {
   // Build per-source health snapshot
   const sourceHealthArr = Object.keys(SOURCE_CONFIG).map((id) => {
     const h = workerHealth.get(id);
@@ -9184,7 +9204,7 @@ app.get('/office/status', (req, res) => {
   });
 });
 
-app.get('/office/agents', (req, res) => {
+app.get('/office/agents', requireOfficeToken, (req, res) => {
   const result = {};
   for (const [id, def] of Object.entries(AGENT_DEFS)) {
     const logs   = agentActionLog.filter(e => e.agentId === id).slice(0, 15);
@@ -9209,7 +9229,7 @@ app.get('/office/agents', (req, res) => {
 });
 
 // SSE: push every new agent log entry to office browsers in real time
-app.get('/office/agents/stream', (req, res) => {
+app.get('/office/agents/stream', requireOfficeToken, (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -9224,7 +9244,7 @@ app.get('/office/agents/stream', (req, res) => {
   req.on('close', () => officeClients.delete(cid));
 });
 
-app.post('/office/agents/:id/trigger', (req, res) => {
+app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
   const sourceFn = SOURCE_FETCHERS[req.params.id];
   const triggers = {
     // Operational agents
@@ -9325,7 +9345,7 @@ async function triggerRenderServiceDeploy(service, hook) {
   };
 }
 
-app.post('/office/deploy/:service', async (req, res) => {
+app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   const service = req.params.service;
   if (!['api', 'web', 'office'].includes(service)) {
     return res.status(404).json({ ok: false, msg: `Unknown deploy service "${service}"` });
@@ -9369,7 +9389,7 @@ app.post('/office/deploy/:service', async (req, res) => {
   }
 });
 
-app.post('/office/deploy-legacy/:service', (req, res) => {
+app.post('/office/deploy-legacy/:service', requireOfficeToken, (req, res) => {
   const hooks = {
     api:    process.env.RENDER_HOOK_API,
     web:    process.env.RENDER_HOOK_WEB,
@@ -9393,7 +9413,7 @@ app.post('/office/deploy-legacy/:service', (req, res) => {
   res.json({ ok: true, service: req.params.service });
 });
 
-app.get('/office/versions', (req, res) => {
+app.get('/office/versions', requireOfficeToken, (req, res) => {
   const pkg = require('./package.json');
   res.json({
     backend: { version: pkg.version, name: pkg.name, node: process.version },
@@ -9406,7 +9426,7 @@ app.get('/office/versions', (req, res) => {
 });
 
 // ─── HQ status endpoint (no auth — feeds the internal control room) ──────────
-app.get('/office/website-optimizer', (_req, res) => {
+app.get('/office/website-optimizer', requireOfficeToken, (_req, res) => {
   res.json({ websiteOptimizer: websiteOptimizerState });
 });
 
@@ -9461,7 +9481,7 @@ app.get('/hq/status', (req, res) => {
 });
 
 // ─── Office: per-source cache stats ──────────────────────────────────────────
-app.get('/office/sources', (_req, res) => {
+app.get('/office/sources', requireOfficeToken, (_req, res) => {
   const sources = [];
   for (const [id, d] of agentSourceCache) {
     const posts = realFeedPosts(d.posts || []);

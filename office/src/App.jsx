@@ -1,6 +1,41 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
+const OFFICE_TOKEN_KEY = 'ufi_office_token';
+
+// ─── office auth ────────────────────────────────────────────────────────────
+// The API accepts requests with no token until OFFICE_TOKEN is set server-side
+// (Render dashboard), so this stays a no-op until that's configured — nothing
+// changes here until then. Once it is, requests need a matching x-office-token
+// header (or ?token= for the EventSource, which can't set custom headers).
+function getOfficeToken() {
+  try { return localStorage.getItem(OFFICE_TOKEN_KEY) || ''; } catch { return ''; }
+}
+function setOfficeToken(token) {
+  try {
+    if (token) localStorage.setItem(OFFICE_TOKEN_KEY, token);
+    else localStorage.removeItem(OFFICE_TOKEN_KEY);
+  } catch {}
+}
+async function officeFetch(url, opts = {}) {
+  const token = getOfficeToken();
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers['x-office-token'] = token;
+  const res = await fetch(url, { ...opts, headers });
+  if (res.status === 401) {
+    const entered = window.prompt('Office access token required (set in Render as OFFICE_TOKEN):');
+    if (entered) {
+      setOfficeToken(entered);
+      const retryHeaders = { ...(opts.headers || {}), 'x-office-token': entered };
+      return fetch(url, { ...opts, headers: retryHeaders });
+    }
+  }
+  return res;
+}
+function officeStreamUrl(path) {
+  const token = getOfficeToken();
+  return token ? `${API}${path}?token=${encodeURIComponent(token)}` : `${API}${path}`;
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -780,21 +815,21 @@ export default function App() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/office/status`);
+      const r = await officeFetch(`${API}/office/status`);
       if (r.ok) setStatus(await r.json());
     } catch {}
   }, []);
 
   const fetchAgents = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/office/agents`);
+      const r = await officeFetch(`${API}/office/agents`);
       if (r.ok) { const d = await r.json(); setAgents(d.agents); }
     } catch {}
   }, []);
 
   const fetchVersions = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/office/versions`);
+      const r = await officeFetch(`${API}/office/versions`);
       if (r.ok) setVersions(await r.json());
     } catch {}
   }, []);
@@ -812,7 +847,7 @@ export default function App() {
   useEffect(() => {
     let retryTimeout;
     const connect = () => {
-      const es = new EventSource(`${API}/office/agents/stream`);
+      const es = new EventSource(officeStreamUrl('/office/agents/stream'));
       sseRef.current = es;
       es.onopen = () => setConnected(true);
       es.onerror = () => {
@@ -856,13 +891,13 @@ export default function App() {
 
   const triggerAgent = async (id) => {
     setTriggering(prev => ({ ...prev, [id]: true }));
-    try { await fetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' }); } catch {}
+    try { await officeFetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' }); } catch {}
     setTimeout(() => setTriggering(prev => ({ ...prev, [id]: false })), 2000);
   };
 
   const triggerDeploy = async (service) => {
     setDeploying(prev => ({ ...prev, [service]: true }));
-    try { await fetch(`${API}/office/deploy/${service}`, { method: 'POST' }); } catch {}
+    try { await officeFetch(`${API}/office/deploy/${service}`, { method: 'POST' }); } catch {}
     setTimeout(() => setDeploying(prev => ({ ...prev, [service]: false })), 5000);
   };
 
