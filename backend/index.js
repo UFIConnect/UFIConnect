@@ -6590,6 +6590,7 @@ function feedTimeRangeMs(range) {
   if (range === '1h') return H;
   if (range === '6h') return 6 * H;
   if (range === 'today' || range === '24h') return D;
+  if (range === '2d') return 2 * D;
   if (range === 'week' || range === '7d') return 7 * D;
   if (range === 'month' || range === '30d') return 30 * D;
   return 0;
@@ -7545,15 +7546,14 @@ async function handleFeedRequest(req, res) {
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
   const timeRange = req.query.timeRange || req.query.range || 'all';
   // 'ranked' sort computes its score per row with no supporting index, so an
-  // unfiltered, unbounded 'all' range means Postgres ranks the whole table
-  // on every request. Bound the default case to 30 days (index-backed via
-  // post_created_at) for any DB query that isn't already narrowed by a
-  // specific source/topic filter. Explicit narrower/wider ranges still win.
-  // 7 days, not 30 — the table can hold up to 250k rows over a 42-day
-  // window (see MAX_CACHED_DB_POSTS/STALE_POST_MAX_AGE_MS), so a 30-day
-  // bound barely trimmed anything. 7 days is still far more inventory than
-  // a feed page needs given 30+ sources fetching continuously.
-  const dbTimeRange = (timeRange === 'all' && sortMode === 'ranked') ? '7d' : timeRange;
+  // unfiltered, unbounded 'all' range means Postgres sorts the whole table
+  // on every request. dbFeedOrder() wraps post_created_at in COALESCE() for
+  // BOTH 'ranked' and 'newest' — so the ORDER BY can't use the plain index
+  // either way; the WHERE-clause row count is the only real lever. Applies
+  // regardless of sort mode, and tight (2 days, not 7/30) because rows carry
+  // wide TEXT columns (content up to 2000 chars) that make even a "modest"
+  // multi-thousand-row sort spill to disk on a constrained instance.
+  const dbTimeRange = timeRange === 'all' ? '2d' : timeRange;
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
