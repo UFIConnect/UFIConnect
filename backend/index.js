@@ -7659,10 +7659,10 @@ async function handleFeedRequest(req, res) {
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
-    const dbRows     = await getPostsFromDB([], feedLimit + 1, offset, pageSources, {
-      sort: sortMode,
-      timeRange: dbTimeRange,
-    });
+    const dbRows     = await Promise.race([
+      getPostsFromDB([], feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+      new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
+    ]);
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = dbRows.slice(0, feedLimit);
 
@@ -7964,10 +7964,16 @@ async function handleFeedRequest(req, res) {
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
-  const dbPosts = (await getPostsFromDB([], 5000, 0, null, {
-    sort: sortMode,
-    timeRange: dbTimeRange,
-  })).map(p => mapExternalPost(p, p.source || 'reddit'));
+  // However well-tuned the query, a live feed request must never hang on the
+  // DB — degrade to the in-memory cache instead of blocking the response if
+  // it doesn't come back quickly (this is what actually took /feed down:
+  // several rounds of query tuning still weren't a guarantee against slow
+  // I/O on a shared instance, so the endpoint needs its own hard ceiling).
+  const dbPostsRaw = await Promise.race([
+    getPostsFromDB([], 5000, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+    new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
+  ]);
+  const dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
 
   // Background-cached global posts — unfiltered, same shared all-in-one pool.
   const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
