@@ -3950,8 +3950,11 @@ const LAG_CRITICAL_MS = envNumber('LAG_CRITICAL_MS', 2500, LAG_PRESSURE_MS, 6000
 const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12, 1, 60);
 const SORT_AGENT_INPUT_LIMIT = envNumber('SORT_AGENT_INPUT_LIMIT', 5000, 1000, 50000);
 const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIMIT', 2000, 1000, SORT_AGENT_INPUT_LIMIT);
-const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 6 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
-const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+// Floored at the 60s minimum — any faster and the sort/diversify passes
+// would compete with the source workers for CPU without enough new posts
+// between runs to make it worthwhile.
+const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
 const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
 const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api-708r.onrender.com';
@@ -5359,10 +5362,12 @@ setInterval(runWebStorageSubAgent,    WEB_STORAGE_INTERVAL_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
-// Sort agent — run every 3 min (was 6)
-setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, 3 * 60 * 1000); }, 2 * 60 * 1000);
-// Distribution agent refills empty sources and diversifies the global feed every 2 minutes
-setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, 2 * 60 * 1000); }, 90 * 1000);
+// Sort agent — re-sorts the global + per-source caches at SORT_AGENT_INTERVAL_MS
+// (floored at 60s; was previously hardcoded to 3min and ignoring this constant).
+setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 30 * 1000);
+// Distribution agent refills empty sources and diversifies the global feed at
+// SORT_DISTRIB_INTERVAL_MS (floored at 60s; was previously hardcoded to 2min).
+setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 30 * 1000);
 // Activity agent — sweep every 2 min so new/stale agents get heartbeats fast
 setTimeout(() => runAgentActivityCheck(true), 20 * 1000);
 setInterval(runAgentActivityCheck, 2 * 60 * 1000);
