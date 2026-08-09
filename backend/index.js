@@ -6637,8 +6637,15 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     }
     const rangeMs = feedTimeRangeMs(options.timeRange);
     if (rangeMs > 0) {
+      // Plain post_created_at (not COALESCE-wrapped) so Postgres can actually
+      // use fpc_time_idx — savePostsToDB always sets post_created_at via
+      // normalizeFeedPost's Date.now() fallback, so it's never really null.
+      // Wrapping it in COALESCE made the earlier attempt at this fix a no-op:
+      // the planner can't index-scan a column hidden inside a function call,
+      // so it was still sequentially scanning + computing the rank expression
+      // across the entire (up to 250k-row) table on every request.
       params.push(new Date(Date.now() - rangeMs).toISOString());
-      clauses.push(`COALESCE(post_created_at, fetched_at) >= $${params.length}`);
+      clauses.push(`post_created_at >= $${params.length}`);
     }
     params.push(limit);
     const limitParam = params.length;
@@ -7542,7 +7549,11 @@ async function handleFeedRequest(req, res) {
   // on every request. Bound the default case to 30 days (index-backed via
   // post_created_at) for any DB query that isn't already narrowed by a
   // specific source/topic filter. Explicit narrower/wider ranges still win.
-  const dbTimeRange = (timeRange === 'all' && sortMode === 'ranked') ? '30d' : timeRange;
+  // 7 days, not 30 — the table can hold up to 250k rows over a 42-day
+  // window (see MAX_CACHED_DB_POSTS/STALE_POST_MAX_AGE_MS), so a 30-day
+  // bound barely trimmed anything. 7 days is still far more inventory than
+  // a feed page needs given 30+ sources fetching continuously.
+  const dbTimeRange = (timeRange === 'all' && sortMode === 'ranked') ? '7d' : timeRange;
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
