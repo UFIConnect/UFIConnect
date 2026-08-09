@@ -196,7 +196,7 @@ const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
   'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
-  'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
 ];
@@ -586,6 +586,9 @@ const ARTICLE_SOURCES = new Set([
   'medium','techcrunch','theverge','arstechnica','wired','theregister',
   'venturebeat','smashing','phoronix','infoq','mittr','hashnode',
 ]);
+// Job-listing sources — sourceUrl is the specific posting, so the card gets
+// an explicit "Job" badge + "Apply" CTA instead of blending in as an article.
+const JOB_SOURCES = new Set(['indeed', 'remoteok']);
 
 function commentSectionLabel(source) {
   if (source === 'stackoverflow') return 'Answers';
@@ -660,6 +663,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
   if (post.source === 'youtube') return <YouTubeCard post={post} />;
 
   const isExternal     = post.isExternal;
+  const isJob          = JOB_SOURCES.has(post.source);
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
   const commentCount   = post.commentsCount || 0;
   const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
@@ -716,6 +720,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
+        {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>💼 Job</span>}
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
@@ -829,7 +834,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
             onClick={e => e.stopPropagation()}
             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 8px', borderRadius: 5 }}>
-              {hasVideo ? 'Watch' : 'Open'} on {src.label} ↗
+              {isJob ? 'Apply' : hasVideo ? 'Watch' : 'Open'} on {src.label} ↗
             </span>
           </a>
         )}

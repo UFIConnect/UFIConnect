@@ -1079,7 +1079,7 @@ const SOURCE_CONFIG = {
   mastodon:      { ttl:  8*60000, delay: 10000, shards: 4 },  // public federated timelines
   lobsters:      { ttl: 12*60000, delay: 20000, shards: 2 },  // small site
   arxiv:         { ttl: 30*60000, delay: 45000, shards: 1 },  // OAI-PMH 1 req/20s
-  indeed:        { ttl: 15*60000, delay: 20000, shards: 2 },  // RSS job feeds
+  indeed:        { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS job feeds — sped up so real jobs stay in the feed
   producthunt:   { ttl: 15*60000, delay: 25000, shards: 2 },  // RSS daily launches
   techcrunch:    { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   theverge:      { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
@@ -1095,7 +1095,7 @@ const SOURCE_CONFIG = {
   infoq:         { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — enterprise/cloud
   mittr:         { ttl: 15*60000, delay: 20000, shards: 2 },  // RSS — deep tech
   gitlab:        { ttl: 45*60000, delay: 75000, shards: 1 },  // public project API — slowed, was crowding out other sources
-  remoteok:      { ttl: 20*60000, delay: 45000, shards: 1 },  // remote jobs RSS
+  remoteok:      { ttl: 15*60000, delay: 20000, shards: 2 },  // remote jobs RSS — sped up so real jobs stay in the feed
   yc:            { ttl: 20*60000, delay: 45000, shards: 1 },  // startup/professional RSS
   crunchbase:    { ttl: 20*60000, delay: 45000, shards: 1 },  // business/funding RSS
   behance:       { ttl: 20*60000, delay: 45000, shards: 1 },  // creative portfolios RSS
