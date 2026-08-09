@@ -3950,11 +3950,14 @@ const LAG_CRITICAL_MS = envNumber('LAG_CRITICAL_MS', 2500, LAG_PRESSURE_MS, 6000
 const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12, 1, 60);
 const SORT_AGENT_INPUT_LIMIT = envNumber('SORT_AGENT_INPUT_LIMIT', 5000, 1000, 50000);
 const SORT_AGENT_PRESSURE_INPUT_LIMIT = envNumber('SORT_AGENT_PRESSURE_INPUT_LIMIT', 2000, 1000, SORT_AGENT_INPUT_LIMIT);
-// Floored at the 60s minimum — any faster and the sort/diversify passes
-// would compete with the source workers for CPU without enough new posts
-// between runs to make it worthwhile.
-const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 60 * 1000, 60 * 1000, 30 * 60 * 1000);
-const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+// A brief attempt at flooring both of these at 60s caused sustained 502s in
+// production (this process runs with --abort-on-uncaught-exception and a
+// tight 256MB heap cap, so running these full-cache sort passes 3x more
+// often was enough to tip it over). Back to the known-stable cadence;
+// still env-overridable if you want to tune it down after confirming
+// memory headroom, but the floor stays enforced at 60s either way.
+const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 3 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
+const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
 const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
 const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api-708r.onrender.com';
@@ -4567,6 +4570,10 @@ function runSortAgentCheck() {
     return;
   }
 
+  // The process runs with --abort-on-uncaught-exception, so any exception in
+  // here — however unlikely — takes the whole server down instantly. Guard it.
+  try {
+
   const beforeGlobal = globalFeedCache.posts.length;
   globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
@@ -4586,6 +4593,10 @@ function runSortAgentCheck() {
 
   logAgentAction('sort_agent', '🧮',
     `Sorted ${beforeGlobal.toLocaleString()} global posts and ${sourcePosts.toLocaleString()} posts across ${sourcePools} source caches`, '#A78BFA');
+
+  } catch (e) {
+    logAgentAction('sort_agent', '⚠️', `Sort pass failed: ${e.message}`, '#F87171');
+  }
 }
 
 // ─── Sort Distribution Agent: refills empty sources + diversifies global feed ──
@@ -5363,11 +5374,11 @@ setInterval(runWebStorageSubAgent,    WEB_STORAGE_INTERVAL_MS);
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
 // Sort agent — re-sorts the global + per-source caches at SORT_AGENT_INTERVAL_MS
-// (floored at 60s; was previously hardcoded to 3min and ignoring this constant).
-setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 30 * 1000);
+// (was previously hardcoded to 3min and ignoring this constant — now wired in).
+setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 2 * 60 * 1000);
 // Distribution agent refills empty sources and diversifies the global feed at
-// SORT_DISTRIB_INTERVAL_MS (floored at 60s; was previously hardcoded to 2min).
-setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 30 * 1000);
+// SORT_DISTRIB_INTERVAL_MS (was previously hardcoded to 2min — now wired in).
+setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 90 * 1000);
 // Activity agent — sweep every 2 min so new/stale agents get heartbeats fast
 setTimeout(() => runAgentActivityCheck(true), 20 * 1000);
 setInterval(runAgentActivityCheck, 2 * 60 * 1000);
