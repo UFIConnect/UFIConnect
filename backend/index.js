@@ -7989,8 +7989,13 @@ async function handleFeedRequest(req, res) {
   // it doesn't come back quickly (this is what actually took /feed down:
   // several rounds of query tuning still weren't a guarantee against slow
   // I/O on a shared instance, so the endpoint needs its own hard ceiling).
+  // Fetch limit dropped from 5000: sortFeedBatch below never keeps more than
+  // ~1000 of these (feedLimit*4), so the other ~4000 rows — each carrying up
+  // to ~2.5KB of title/content text — were pure wasted memory on every
+  // single feed request, concurrent ones included. That's real contributing
+  // weight toward the OOM crash a burst of concurrent requests triggered.
   const dbPostsRaw = await Promise.race([
-    getPostsFromDB([], 5000, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+    getPostsFromDB([], 1200, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
     new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
   ]);
   const dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
