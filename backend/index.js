@@ -1080,26 +1080,26 @@ const SOURCE_CONFIG = {
   lobsters:      { ttl: 12*60000, delay: 20000, shards: 2 },  // small site
   arxiv:         { ttl: 30*60000, delay: 45000, shards: 1 },  // OAI-PMH 1 req/20s
   indeed:        { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS job feeds — sped up so real jobs stay in the feed
-  producthunt:   { ttl: 15*60000, delay: 25000, shards: 2 },  // RSS daily launches
+  producthunt:   { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — no limit, normalized to the common cadence
   techcrunch:    { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   theverge:      { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
-  indiehackers:  { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — no limit
+  indiehackers:  { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — no limit, normalized to the common cadence
   hashnode:      { ttl:  8*60000, delay: 12000, shards: 3 },  // freeCodeCamp RSS
   bluesky:       { ttl:  8*60000, delay: 10000, shards: 4 },  // public ATP API
   arstechnica:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   wired:         { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   theregister:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — enterprise IT/security
   venturebeat:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — AI/startup
-  smashing:      { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — web dev/design
-  phoronix:      { ttl: 10*60000, delay: 15000, shards: 2 },  // RSS — Linux/hardware
-  infoq:         { ttl: 12*60000, delay: 15000, shards: 2 },  // RSS — enterprise/cloud
-  mittr:         { ttl: 15*60000, delay: 20000, shards: 2 },  // RSS — deep tech
+  smashing:      { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — web dev/design, normalized to the common cadence
+  phoronix:      { ttl: 10*60000, delay: 12000, shards: 3 },  // RSS — Linux/hardware, normalized to the common cadence
+  infoq:         { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — enterprise/cloud, normalized to the common cadence
+  mittr:         { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — deep tech, normalized to the common cadence
   gitlab:        { ttl: 45*60000, delay: 75000, shards: 1 },  // public project API — slowed, was crowding out other sources
-  remoteok:      { ttl: 15*60000, delay: 20000, shards: 2 },  // remote jobs RSS — sped up so real jobs stay in the feed
-  yc:            { ttl: 20*60000, delay: 45000, shards: 1 },  // startup/professional RSS
-  crunchbase:    { ttl: 20*60000, delay: 45000, shards: 1 },  // business/funding RSS
-  behance:       { ttl: 20*60000, delay: 45000, shards: 1 },  // creative portfolios RSS
-  designweb:     { ttl: 20*60000, delay: 45000, shards: 1 },  // design/web industry RSS bundle
+  remoteok:      { ttl: 12*60000, delay: 12000, shards: 3 },  // remote jobs API — normalized now the dead-RSS bug is fixed
+  yc:            { ttl: 12*60000, delay: 12000, shards: 3 },  // startup/professional RSS — no limit, was arbitrarily slow
+  crunchbase:    { ttl: 12*60000, delay: 12000, shards: 3 },  // business/funding RSS — no limit, was arbitrarily slow
+  behance:       { ttl: 12*60000, delay: 12000, shards: 3 },  // creative portfolios RSS — no limit, was arbitrarily slow
+  designweb:     { ttl: 12*60000, delay: 12000, shards: 3 },  // design/web industry RSS — no limit, was arbitrarily slow
   // No free public API — runs only on a genuine app-level public token
   // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
   // env vars), never a member's personal connected-account token. Idles at
@@ -2853,12 +2853,33 @@ async function fetchRemoteOKJobs(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const xml = await fetchText('https://remoteok.com/remote-dev-jobs.rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
-    });
-    const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 1000)
-      .map(it => rssPost(it, 'remoteok', 'Remote OK', 'ext_remoteok', 'Remote OK Jobs', 'Opportunities', keyword));
+    // remote-dev-jobs.rss was discontinued (410 Gone) — fetchText doesn't
+    // check HTTP status, so it silently parsed the error page as "no items"
+    // on every single fetch, forever, with no visible error. Their public
+    // JSON API is still live and includes real per-job apply URLs.
+    const jobs = await fetchJSON('https://remoteok.com/api', { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+    const kw = keyword.toLowerCase();
+    const posts = (Array.isArray(jobs) ? jobs : [])
+      .filter(j => j?.id && j.position)
+      .filter(j => !kw || (j.position || '').toLowerCase().includes(kw) || (j.tags || []).some(t => (t || '').toLowerCase().includes(kw)) || (j.description || '').toLowerCase().includes(kw))
+      .slice(0, 100)
+      .map(j => ({
+        id:          `remoteok_${j.id}`,
+        authorId:    'remoteok_jobs',
+        groupId:     'ext_remoteok',
+        content:     (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400),
+        title:       j.position,
+        source:      'remoteok', sourceLabel: 'Remote OK',
+        sourceUrl:   j.url || j.apply_url,
+        topic:       keyword,
+        author:      { id: 'remoteok_jobs', name: j.company || 'Company', title: 'Employer', organization: j.company },
+        likes: [], likesCount: 0, commentsCount: 0,
+        createdAt:   normalizeTimestamp(j.date || j.epoch * 1000),
+        isExternal:  true,
+        mediaUrl:    j.logo || j.company_logo || null,
+        mediaType:   (j.logo || j.company_logo) ? 'image' : null,
+        group:       { id: 'ext_remoteok', name: 'Remote OK Jobs', category: 'Opportunities', externalUrl: 'https://remoteok.com' },
+      }));
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -8947,6 +8968,19 @@ const AGENT_DEFS = {
   },
 };
 
+// The `interval` strings above were hand-written and drifted out of sync
+// with SOURCE_CONFIG more than once (e.g. GitHub's description said "30s /
+// 2 shards" in the office dashboard while it was actually configured at
+// 60s / 1 shard) — showing the office an inaccurate cadence for a source
+// makes it look broken/erratic when it's actually paced correctly. Derive
+// it from the real config instead so it can't drift again.
+for (const [id, cfg] of Object.entries(SOURCE_CONFIG)) {
+  if (!AGENT_DEFS[id]) continue;
+  const cycleMin = (cfg.delay * FEED_TOPICS.length / cfg.shards / 60000).toFixed(1).replace(/\.0$/, '');
+  AGENT_DEFS[id].interval = `${cfg.delay / 1000}s / ${cfg.shards} shard${cfg.shards > 1 ? 's' : ''}`;
+  AGENT_DEFS[id].cycleMinutes = Number(cycleMin);
+}
+
 function getRuntimeHealthForAgent(id) {
   if (id === 'stability') {
     return {
@@ -9077,6 +9111,10 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
       name: AGENT_DEFS[id]?.name || id,
       status,
+      // Real configured cadence — lets the office compare rates across
+      // platforms directly instead of guessing from post counts alone.
+      cadence: AGENT_DEFS[id]?.interval || null,
+      cycleMinutes: AGENT_DEFS[id]?.cycleMinutes ?? null,
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
@@ -9085,8 +9123,19 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastError: h?.lastError ?? null,
       lastSuccess: h?.lastSuccess ?? null,
       paused: h?.paused ?? false,
+      pauseUntil: h?.pauseUntil ?? null,
       postCount: liveCount,
       fallbackCount: 0,
+      // Source-specific protective backoff, distinct from the generic
+      // circuit breaker — e.g. Reddit's anon endpoints get blocked wholesale
+      // by IP for stretches, so it stands down for a cooldown window rather
+      // than retrying every cycle. Surfaced explicitly so a quiet Reddit
+      // reads as "protected" rather than "broken".
+      outageBackoff: id === 'reddit' ? {
+        active: Date.now() < redditAnonOutageUntil,
+        until: redditAnonOutageUntil || null,
+        consecutiveFullMisses: redditConsecutiveFullMisses,
+      } : null,
     };
   });
   // Append gated platform agents that are feed sources but not continuous workers.
@@ -9129,6 +9178,19 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       refreshedAt: globalFeedCache.refreshedAt || null,
       sseClients:  sseClients.size,
       seenIds:     seenPostIds.size,
+      // Actual source breakdown of the shared global cache, independent of
+      // any per-request cap — the feed response itself is separately capped
+      // per source (≤18%, ≤10% in balanced mode, see SRC_CAP in
+      // handleFeedRequest) so no single platform can flood a page even if
+      // its backing pool here is disproportionately large.
+      composition: (() => {
+        const posts = realFeedPosts(globalFeedCache.posts);
+        const counts = {};
+        for (const p of posts) counts[p.source || 'unknown'] = (counts[p.source || 'unknown'] || 0) + 1;
+        return Object.entries(counts)
+          .map(([source, count]) => ({ source, count, pct: posts.length ? Math.round((count / posts.length) * 1000) / 10 : 0 }))
+          .sort((a, b) => b.count - a.count);
+      })(),
     },
     stability: {
       mode: refreshControl.mode,
