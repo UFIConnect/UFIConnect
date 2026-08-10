@@ -6691,7 +6691,13 @@ function feedTimeRangeMs(range) {
 
 function dbFeedOrder(sortMode = 'ranked') {
   if (sortMode === 'newest') {
-    return 'COALESCE(post_created_at, fetched_at) DESC, fetched_at DESC';
+    // Plain column, not COALESCE-wrapped — same fix as the WHERE clause
+    // got earlier: post_created_at is never actually null in practice
+    // (savePostsToDB always sets it via normalizeFeedPost's Date.now()
+    // fallback), and wrapping it in COALESCE hides it from the planner,
+    // which can otherwise use fpc_time_idx to satisfy this ORDER BY
+    // directly instead of sorting the whole matched set from scratch.
+    return 'post_created_at DESC, fetched_at DESC';
   }
   if (sortMode === 'popular') {
     return '(GREATEST(likes_count,0) + GREATEST(comments_count,0) * 2) DESC, COALESCE(post_created_at, fetched_at) DESC';
@@ -6796,7 +6802,13 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       params.push(source);
       clauses.push(`source = $${params.length}`);
     }
-    const rangeMs = feedTimeRangeMs(timeRange === 'all' ? '2d' : timeRange);
+    // Tighter default than the flat query's 2d (24h, not 2d) — ranking
+    // within PARTITION BY still has to sort every matching row per source
+    // before it can hand back just a few, so this query is inherently
+    // costlier per row than a flat LIMIT/OFFSET. Only overrides the
+    // unbounded default; an explicit narrower/wider range the user actually
+    // picked (e.g. "This Week") still wins.
+    const rangeMs = feedTimeRangeMs(timeRange === 'all' ? '24h' : timeRange);
     if (rangeMs > 0) {
       params.push(new Date(Date.now() - rangeMs).toISOString());
       clauses.push(`post_created_at >= $${params.length}`);
@@ -7886,7 +7898,7 @@ async function handleFeedRequest(req, res) {
     if (wantsMix) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
       const { posts: balanced } = await Promise.race([
-        getBalancedFeedPosts({ sortMode, timeRange: dbTimeRange, page: reqPage, perSourcePageSize }),
+        getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize }),
         new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
       ]);
       if (balanced.length > 0) {
@@ -8221,7 +8233,7 @@ async function handleFeedRequest(req, res) {
   // one flat query — the candidate pool going into enforceFeedDiversity
   // below is no longer skewed to begin with, rather than skewed-then-capped.
   const { posts: balancedDbPosts } = await Promise.race([
-    getBalancedFeedPosts({ sortMode, timeRange: dbTimeRange, page: 1, perSourcePageSize: 15 }),
+    getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 15 }),
     new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
   ]);
   let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
