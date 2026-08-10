@@ -1052,6 +1052,13 @@ export default function Feed() {
       filters: requestedFilters,
       mode: requestedMode,
       replace = false,
+      // Server-side bust=1 with no ?source forces EVERY source worker (30+)
+      // to refetch from its external API right now — that's what a tab
+      // click should never trigger for "All"/view-mode tabs, since it's the
+      // same burst that took the API down under concurrent load. Defaults
+      // to `manual` so existing manual-refresh callers (scroll-to-refresh,
+      // the 10-min auto-refresh) keep their current behavior unchanged.
+      bust = manual,
     } = options || {};
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
@@ -1073,7 +1080,7 @@ export default function Feed() {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (manual) {
+      if (bust) {
         params.set('bust', '1');
       }
       const url = `/office/feed?${params.toString()}`;
@@ -1121,16 +1128,22 @@ export default function Feed() {
 
   const switchViewMode = useCallback((mode) => {
     const nextMode = mode === 'archive' ? 'archive' : 'feed';
-    if (viewModeRef.current === nextMode) return;
+    // No early-return on "already on this mode" — clicking the active tab
+    // now doubles as a refresh instead of doing nothing.
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    loadFeed(false, activeTabsRef.current, {
+    loadFeed(true, activeTabsRef.current, {
       mode: nextMode,
       filters: filtersRef.current,
       q: searchRef.current,
       replace: true,
+      // Personal Feed / All Collected span every source — busting here would
+      // force all 30+ source workers to refetch externally on every click.
+      // Pulls the latest from the server's already-continuously-updated
+      // cache instead, which is what "refresh" should mean for an aggregate view.
+      bust: false,
     });
   }, [loadFeed]);
 
@@ -1183,10 +1196,16 @@ export default function Feed() {
       setActiveTabs([]);
       // Clears source filtering only — sort stays whatever's set in the Sort
       // filter (Ranked by default, Balanced still available there).
-      loadFeed(false, [], {
-        silent: true,
+      // Every tab doubles as a refresh button now — manual:true shows the
+      // refresh state and re-pulls current data. bust:false because "All"
+      // spans every source: busting would force all 30+ workers to refetch
+      // externally on every click, the same burst that crashed the API
+      // under concurrent load. The background pipeline already keeps
+      // sources fresh continuously, so this still returns real current data.
+      loadFeed(true, [], {
         live: viewModeRef.current === 'feed',
         replace: true,
+        bust: false,
       });
       return;
     }
@@ -1194,11 +1213,12 @@ export default function Feed() {
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
-    // Filter client-side immediately; silently fetch more source posts in background
-    loadFeed(false, next, {
-      silent: true,
+    // Bust only when exactly one source is targeted — that's a single
+    // lightweight worker refetch, not the all-sources burst.
+    loadFeed(true, next, {
       live: viewModeRef.current === 'feed',
       replace: true,
+      bust: next.length === 1,
     });
   }, [loadFeed]); // eslint-disable-line
 
