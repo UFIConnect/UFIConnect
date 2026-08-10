@@ -1128,8 +1128,12 @@ export default function Feed() {
 
   const switchViewMode = useCallback((mode) => {
     const nextMode = mode === 'archive' ? 'archive' : 'feed';
-    // No early-return on "already on this mode" — clicking the active tab
-    // now doubles as a refresh instead of doing nothing.
+    // Clicking the tab you're already on is a refresh, not a context switch
+    // — merge the new posts in on top instead of wiping the scrolled-in
+    // list back down to one page. Switching to the *other* mode is a real
+    // context change (Personal Feed and All Collected are different data),
+    // so that still replaces.
+    const isRefresh = nextMode === viewModeRef.current;
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
@@ -1138,7 +1142,7 @@ export default function Feed() {
       mode: nextMode,
       filters: filtersRef.current,
       q: searchRef.current,
-      replace: true,
+      replace: !isRefresh,
       // Personal Feed / All Collected span every source — busting here would
       // force all 30+ source workers to refetch externally on every click.
       // Pulls the latest from the server's already-continuously-updated
@@ -1192,6 +1196,11 @@ export default function Feed() {
     setSearch('');
     setSearchInput('');
     if (key === 'all') {
+      // Already on "All" — this is a refresh, merge new posts in on top
+      // instead of resetting the scrolled-in list back to one page.
+      // Coming from a filtered source tab is a real context switch, so
+      // that still replaces.
+      const isRefresh = activeTabsRef.current.length === 0;
       activeTabsRef.current = [];
       setActiveTabs([]);
       // Clears source filtering only — sort stays whatever's set in the Sort
@@ -1204,7 +1213,7 @@ export default function Feed() {
       // sources fresh continuously, so this still returns real current data.
       loadFeed(true, [], {
         live: viewModeRef.current === 'feed',
-        replace: true,
+        replace: !isRefresh,
         bust: false,
       });
       return;
@@ -1298,7 +1307,13 @@ export default function Feed() {
       if (state.loading || state.refreshing || state.loadingMore) return;
       if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
       lastPullAt = Date.now();
-      loadFeed(true, activeTabsRef.current, { preserveScroll: true });
+      // bust:false unless exactly one source is active — same reasoning as
+      // the tab-click refreshes: this shouldn't be able to trigger the
+      // all-30+-sources burst on every scroll-to-top, even with a cooldown.
+      loadFeed(true, activeTabsRef.current, {
+        preserveScroll: true,
+        bust: activeTabsRef.current.length === 1,
+      });
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
@@ -1858,7 +1873,7 @@ export default function Feed() {
                 <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources!</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current)}>Refresh now</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
                 </div>
               </>
             ) : (

@@ -6771,6 +6771,87 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
   } catch { return []; }
 }
 
+// ─── Feed Manager: pull an equal share from every source, not a mixed pool ───
+// Replaces "fetch a big combined pool, then cap+diversify after the fact"
+// with the simpler approach it was standing in for: ask each source for the
+// same number of posts to begin with, so nothing can ever be overrepresented
+// — there's no skewed pool to correct because it was never built. Uses one
+// query with ROW_NUMBER() OVER (PARTITION BY source ...) rather than N
+// separate per-source queries, so it's still a single DB round-trip.
+async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null } = {}) {
+  if (!db.isConnected()) return { posts: [], perSourceCount: 0 };
+  try {
+    const clauses = [
+      `id NOT LIKE '%\\_fallback' ESCAPE '\\'`,
+      `id NOT LIKE '%\\_social' ESCAPE '\\'`,
+      `id NOT LIKE 'social\\_%' ESCAPE '\\'`,
+      `id !~* '^indeed_j[0-9]+$'`,
+      `id !~* '^govt_g[0-9]+$'`,
+    ];
+    const params = [];
+    if (Array.isArray(source) && source.length) {
+      params.push(source);
+      clauses.push(`source = ANY($${params.length}::text[])`);
+    } else if (source) {
+      params.push(source);
+      clauses.push(`source = $${params.length}`);
+    }
+    const rangeMs = feedTimeRangeMs(timeRange === 'all' ? '2d' : timeRange);
+    if (rangeMs > 0) {
+      params.push(new Date(Date.now() - rangeMs).toISOString());
+      clauses.push(`post_created_at >= $${params.length}`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const order = dbFeedOrder(sortMode);
+    const rnLo = (page - 1) * perSourcePageSize;
+    params.push(rnLo);
+    const loParam = params.length;
+    params.push(rnLo + perSourcePageSize);
+    const hiParam = params.length;
+    const { rows } = await db.query(
+      `SELECT * FROM (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS rn
+         FROM feed_posts_cache
+         ${where}
+       ) ranked
+       WHERE rn > $${loParam} AND rn <= $${hiParam}
+       ORDER BY ${order}`,
+      params
+    );
+    const mapped = rows.map(r => ({
+      id:          r.id,
+      source:      r.source,
+      title:       r.title,
+      content:     r.content,
+      sourceUrl:   r.source_url,
+      mediaUrl:    r.media_url,
+      mediaType:   r.media_type,
+      topic:       r.topic,
+      likesCount:  normalizeCount(r.likes_count),
+      commentsCount: normalizeCount(r.comments_count),
+      createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
+      author:      { name: r.author_name },
+      isExternal:  true,
+    })).filter(p => !isFallbackFeedPost(p));
+
+    // Trim every source down to whichever source came back with the fewest
+    // rows — the actual "pull the same amount as the least platform" step.
+    // A source that's temporarily thin (or mid-outage-backoff, e.g. Reddit)
+    // shouldn't get topped back up with someone else's surplus; that surplus
+    // is exactly what caused one source to dominate before.
+    const bySource = {};
+    for (const p of mapped) (bySource[p.source] = bySource[p.source] || []).push(p);
+    const counts = Object.values(bySource).map(arr => arr.length);
+    if (!counts.length) return { posts: [], perSourceCount: 0 };
+    const evenCount = Math.min(...counts);
+    const equalized = Object.values(bySource).flatMap(arr => arr.slice(0, evenCount));
+    return { posts: diversifyBySource(equalized, equalized.length, 1), perSourceCount: evenCount };
+  } catch (e) {
+    console.warn('getBalancedFeedPosts:', e.message);
+    return { posts: [], perSourceCount: 0 };
+  }
+}
+
 // ─── Seed groups into DB and load back into memory ────────────────────────────
 async function purgeFallbackFeedCache() {
   if (!db.isConnected()) return 0;
@@ -7685,13 +7766,30 @@ async function handleFeedRequest(req, res) {
   if (feedMode === 'archive') {
     const offset = (reqPage - 1) * feedLimit;
     const archiveSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
-    // Feed Manager: "All Collected" with no source filter needs a bigger
-    // candidate pool than just feedLimit+1 rows, or the diversity cap below
-    // has no overflow to draw from and silently passes raw DB order
-    // through untouched — which is exactly how archive mode could show a
-    // whole page from one source before this. Skipped when the user picked
-    // a specific source — they asked for that one, not a mix.
-    const wantsMix = !archiveSources;
+    // Feed Manager: no source filter and no search means "All Collected"
+    // wants a true mix — pull an equal share directly from every source
+    // instead of fetching a pool and correcting it after the fact.
+    const wantsMix = !archiveSources && !searchQuery;
+
+    if (wantsMix) {
+      const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
+      const { posts: balanced } = await getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize });
+      if (balanced.length > 0) {
+        const pageRows = balanced.slice(0, feedLimit);
+        const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
+        return res.json({
+          posts: pageRows.map(mapFeedRow),
+          page: reqPage,
+          mode: 'archive',
+          sort: sortMode,
+          hasMore,
+          totalAvailable: hasMore ? offset + feedLimit + 1 : offset + pageRows.length,
+        });
+      }
+      // Falls through to the pool-based path below as a safety net (e.g. a
+      // transient DB hiccup on the windowed query) rather than a blank page.
+    }
+
     const dbFetchLimit = wantsMix ? feedLimit * 3 + 1 : feedLimit + 1;
     const dbRows = await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
       q: searchQuery,
@@ -7780,12 +7878,35 @@ async function handleFeedRequest(req, res) {
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
-    // Feed Manager: same reasoning as archive mode above — infinite scroll
-    // on Personal Feed/All (no source filter) needs a wider candidate pool
-    // than feedLimit+1 or the diversity cap has nothing to draw overflow
-    // from. This was the other real gap: page 1 was protected, but
-    // scrolling past it wasn't.
+    // Feed Manager: no source filter means infinite scroll wants a true mix
+    // too — same equal-pull-per-source approach as page 1 and archive mode,
+    // just advanced by page instead of restarting from the top each time.
     const wantsMix = !pageSources;
+
+    if (wantsMix) {
+      const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
+      const { posts: balanced } = await Promise.race([
+        getBalancedFeedPosts({ sortMode, timeRange: dbTimeRange, page: reqPage, perSourcePageSize }),
+        new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
+      ]);
+      if (balanced.length > 0) {
+        const pageRows = balanced.slice(0, feedLimit);
+        const hasMore = balanced.length >= perSourcePageSize;
+        return res.json({
+          posts: pageRows.map(p => ({
+            ...p,
+            group:           groups.find(g => g.id === p.groupId) || p.group,
+            likedByMe:       false,
+            fromJoinedGroup: joined.has(p.groupId),
+            forYou:          true,
+            relevance:       1,
+          })),
+          page: reqPage, hasMore, sort: sortMode,
+        });
+      }
+      // Falls through to the pool-based path below rather than a blank page.
+    }
+
     const dbRows     = await Promise.race([
       getPostsFromDB([], wantsMix ? feedLimit * 3 + 1 : feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
@@ -8096,16 +8217,23 @@ async function handleFeedRequest(req, res) {
   // it doesn't come back quickly (this is what actually took /feed down:
   // several rounds of query tuning still weren't a guarantee against slow
   // I/O on a shared instance, so the endpoint needs its own hard ceiling).
-  // Fetch limit dropped from 5000: sortFeedBatch below never keeps more than
-  // ~1000 of these (feedLimit*4), so the other ~4000 rows — each carrying up
-  // to ~2.5KB of title/content text — were pure wasted memory on every
-  // single feed request, concurrent ones included. That's real contributing
-  // weight toward the OOM crash a burst of concurrent requests triggered.
-  const dbPostsRaw = await Promise.race([
-    getPostsFromDB([], 1200, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
-    new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
+  // Feed Manager: pulls an equal share per source (up to 15 each) instead of
+  // one flat query — the candidate pool going into enforceFeedDiversity
+  // below is no longer skewed to begin with, rather than skewed-then-capped.
+  const { posts: balancedDbPosts } = await Promise.race([
+    getBalancedFeedPosts({ sortMode, timeRange: dbTimeRange, page: 1, perSourcePageSize: 15 }),
+    new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
   ]);
-  const dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
+  let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
+  if (!dbPosts.length) {
+    // Safety net — falls back to the flat query if the windowed one comes
+    // back empty for any reason, same as before this change.
+    const dbPostsRaw = await Promise.race([
+      getPostsFromDB([], 1200, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+      new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
+    ]);
+    dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
+  }
 
   // Background-cached global posts — unfiltered, same shared all-in-one pool.
   const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
