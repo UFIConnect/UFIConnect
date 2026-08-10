@@ -3726,7 +3726,11 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         });
         if (health) { health.consecutiveErrors = 0; health.lastSuccess = Date.now(); }
       }
-      if (refreshControl.mode !== 'normal') await waitMs(150);
+      // Was only paced under pressure/critical — in normal mode a manual
+      // trigger fired up to 69 topic fetches for this one source back to
+      // back with zero delay. Always pace it now (still fast, just not an
+      // unthrottled burst); heavier under pressure as before.
+      await waitMs(refreshControl.mode === 'normal' ? 60 : 150);
     }
   };
 
@@ -4112,14 +4116,27 @@ function postRankScore(post, srcMaxEngagement = null) {
   return recency + engagement + communityBoost + firstPartyBoost;
 }
 
-// Returns a Map<source, maxEngagement> across a batch of posts — used to level
-// the playing field so no single high-engagement source dominates ranking.
+// Returns a Map<source, normalizingEngagement> across a batch of posts —
+// used to level the playing field so no single high-engagement source
+// dominates ranking. Uses the average of each source's top 2 posts rather
+// than the raw max: a single viral outlier (one Reddit post at 50k upvotes)
+// was making the *max* enormous, which crushed every other post from that
+// source down near zero relative score — a source's normal-but-solid posts
+// shouldn't all get flattened because one thing in the batch went viral.
+// O(n) per source, no sorting, so this doesn't add real cost to a function
+// that already runs on a tight interval.
 function buildSrcMaxEngagement(posts) {
-  const map = {};
+  const top2 = {}; // src -> [highest, secondHighest]
   for (const p of posts) {
     const src = p.source || 'unknown';
     const eng = postEngagement(p);
-    if (!(src in map) || eng > map[src]) map[src] = eng;
+    const pair = top2[src] || (top2[src] = [0, 0]);
+    if (eng >= pair[0]) { pair[1] = pair[0]; pair[0] = eng; }
+    else if (eng > pair[1]) { pair[1] = eng; }
+  }
+  const map = {};
+  for (const [src, [a, b]] of Object.entries(top2)) {
+    map[src] = b > 0 ? (a + b) / 2 : a;
   }
   return map;
 }
@@ -4342,6 +4359,11 @@ const sourceRefreshQueue = {
   lastFinished: null,
   lastReason: null,
   lastError: null,
+  // Progress visibility for the office "transfer" panel — a blind trigger
+  // button gives no feedback while 30+ sources drain one at a time.
+  currentId: null,
+  batchTotal: 0,
+  batchDone: 0,
 };
 
 function enqueueSourceRefresh(ids, reason = 'manual') {
@@ -4356,6 +4378,15 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
 
   requestedIds.forEach(id => sourceRefreshQueue.pendingIds.add(id));
   sourceRefreshQueue.lastReason = reason;
+  // batchTotal/batchDone track this specific batch (reset when the queue was
+  // idle) so the office can show "N of M done" instead of just a raw pending
+  // count that doesn't say how big the job was to begin with.
+  if (!sourceRefreshQueue.running) {
+    sourceRefreshQueue.batchTotal = requestedIds.length;
+    sourceRefreshQueue.batchDone = 0;
+  } else {
+    sourceRefreshQueue.batchTotal += requestedIds.length;
+  }
   logAgentAction('refresh_queue', '🔁',
     `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
 
@@ -4386,6 +4417,7 @@ async function drainSourceRefreshQueue() {
 
       const id = sourceRefreshQueue.pendingIds.values().next().value;
       sourceRefreshQueue.pendingIds.delete(id);
+      sourceRefreshQueue.currentId = id;
       const fetcher = SOURCE_FETCHERS[id];
       if (typeof fetcher !== 'function') continue;
 
@@ -4400,11 +4432,13 @@ async function drainSourceRefreshQueue() {
           h.lastError = err?.message || String(err);
         }
       }
+      sourceRefreshQueue.batchDone += 1;
 
       await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
     }
   } finally {
     sourceRefreshQueue.running = false;
+    sourceRefreshQueue.currentId = null;
     sourceRefreshQueue.lastFinished = Date.now();
     logAgentAction('refresh_queue', '✅',
       `Refresh queue complete - ${processed} source(s) processed`, '#4ADE80');
@@ -9217,6 +9251,11 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastFinished: sourceRefreshQueue.lastFinished,
       lastReason: sourceRefreshQueue.lastReason,
       lastError: sourceRefreshQueue.lastError,
+      // Progress for the office transfer panel — which source is in flight
+      // right now, and how far through the current batch the queue is.
+      currentId: sourceRefreshQueue.currentId,
+      batchTotal: sourceRefreshQueue.batchTotal,
+      batchDone: sourceRefreshQueue.batchDone,
     },
     sortAgent: {
       status: sortAgentState.status,

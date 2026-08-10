@@ -800,6 +800,152 @@ function SourcesView({ status, triggerAgent, triggering }) {
   );
 }
 
+// ─── Feed Manager: sort helper + transfer helper ───────────────────────────────
+// Sort helper: makes the existing per-source cap and sort/distribution
+// agents actually visible instead of trusted blindly — shows the live
+// composition of the shared feed cache and lets you trigger a re-sort.
+// Transfer helper: a safer, visible way to push fresh content from the
+// office's source workers into the site than the old blind trigger button —
+// shows real progress (which source, how many done) instead of firing and
+// hoping, and the underlying refresh queue is paced so it can't reproduce
+// the concurrent-load crash from triggering everything at once.
+
+const COMPOSITION_COLORS = [
+  '#60a5fa', '#4ade80', '#f59e0b', '#f87171', '#a78bfa', '#38bdf8',
+  '#fb923c', '#e879f9', '#34d399', '#facc15', '#818cf8', '#f472b6',
+];
+
+function SortHelperPanel({ status, triggerAgent, triggering }) {
+  const composition = status?.feed?.composition || [];
+  const sortAgent = status?.sortAgent;
+  const distrib = status?.sortDistributionAgent;
+  const cap18 = 18; // matches SRC_CAP in handleFeedRequest — ranked/newest/popular modes
+
+  return (
+    <Card style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Label color="#a78bfa">Sort Helper</Label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_agent')} disabled={triggering.sort_agent}>
+            {triggering.sort_agent ? '...' : '🧮 Re-sort now'}
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_distrib')} disabled={triggering.sort_distrib}>
+            {triggering.sort_distrib ? '...' : '🔀 Re-diversify now'}
+          </Btn>
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 16px' }}>
+        Live composition of the shared feed cache. Any one source is capped at ≤{cap18}% of what a
+        user actually sees (≤10% in Balanced sort) regardless of how large its share is here.
+      </p>
+
+      {composition.length === 0 ? (
+        <div style={{ fontSize: 12, color: '#475569' }}>No posts cached yet.</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', height: 22, borderRadius: 6, overflow: 'hidden', marginBottom: 10 }}>
+            {composition.map((c, i) => (
+              <div key={c.source} title={`${c.source}: ${c.pct}%`}
+                style={{ width: `${c.pct}%`, background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length], minWidth: c.pct > 0 ? 2 : 0 }} />
+            ))}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginBottom: 18 }}>
+            {composition.map((c, i) => (
+              <div key={c.source} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length], flexShrink: 0 }} />
+                <span style={{ color: '#94a3b8' }}>{c.source}</span>
+                <strong style={{ color: c.pct > cap18 ? '#fbbf24' : '#e2e8f0' }}>{c.pct}%</strong>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 200px', fontSize: 11, color: '#64748b' }}>
+          <Label>Sort Agent</Label>
+          <div style={{ marginTop: 4, color: '#e2e8f0' }}>{(sortAgent?.totalRuns ?? 0).toLocaleString()} runs · last {sortAgent?.lastDurationMs ?? 0}ms</div>
+          <div style={{ marginTop: 2 }}>{sortAgent?.lastRun ? `Last ran ${fmtAgo(sortAgent.lastRun)}` : 'Not run yet'}</div>
+        </div>
+        <div style={{ flex: '1 1 200px', fontSize: 11, color: '#64748b' }}>
+          <Label>Distribution Agent</Label>
+          <div style={{ marginTop: 4, color: '#e2e8f0' }}>{(distrib?.totalRuns ?? 0).toLocaleString()} runs</div>
+          <div style={{ marginTop: 2 }}>
+            {distrib?.lastDiversified ? `Last interleaved ${distrib.lastDiversified} posts from ${distrib.lastRun ? fmtAgo(distrib.lastRun) : '—'}` : '—'}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function TransferHelperPanel({ status, triggerAgent, triggering }) {
+  const q = status?.refreshQueue;
+  const running = !!q?.running;
+  const pct = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
+  const reddit = (status?.sources?.workers || []).find(w => w.id === 'reddit');
+  const outage = reddit?.outageBackoff;
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Label color="#38bdf8">Transfer Helper</Label>
+        <Btn size="sm" onClick={() => triggerAgent('feed')} disabled={triggering.feed || running}>
+          {running ? 'Transferring...' : '⇪ Transfer content to website'}
+        </Btn>
+      </div>
+      <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 16px' }}>
+        Queues every source worker to refetch, then drains the queue one at a time (paced — this is
+        the same mechanism a full refresh always used, just now with visible progress instead of firing blind).
+      </p>
+
+      <div style={{
+        background: running ? 'rgba(56,189,248,.06)' : 'rgba(255,255,255,.02)',
+        border: `1px solid ${running ? 'rgba(56,189,248,.2)' : 'rgba(255,255,255,.06)'}`,
+        borderRadius: 8, padding: '12px 14px', marginBottom: 14,
+      }}>
+        {running ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
+              <span style={{ color: '#e2e8f0' }}>
+                Transferring <strong>{q.currentId || '…'}</strong>
+              </span>
+              <span style={{ color: '#60a5fa' }}>{q.batchDone}/{q.batchTotal} done · {q.pending} queued</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 4, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${pct}%`, background: '#38bdf8', transition: 'width .3s' }} />
+            </div>
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            Idle — {q?.lastFinished ? `last transfer finished ${fmtAgo(q.lastFinished)}` : 'no transfer run yet'}
+            {q?.lastReason ? ` (${q.lastReason})` : ''}
+          </div>
+        )}
+      </div>
+
+      {outage?.active && (
+        <div style={{ fontSize: 11, color: '#fbbf24', padding: '8px 10px', background: 'rgba(251,191,36,.08)', borderRadius: 6, marginBottom: 4 }}>
+          🟠 Reddit is in a protective backoff right now — its anonymous endpoints are being rate-limited
+          by Reddit, so it's standing down rather than retrying (until {fmtTime(outage.until)}). This is
+          expected behavior, not a broken source.
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function FeedManagerView({ status, triggerAgent, triggering }) {
+  return (
+    <>
+      <h1 style={H1}>Feed Manager</h1>
+      <p style={SUBTITLE}>Manage how the shared feed is sorted and how content moves from the office's source workers to the live site.</p>
+      <SortHelperPanel status={status} triggerAgent={triggerAgent} triggering={triggering} />
+      <TransferHelperPanel status={status} triggerAgent={triggerAgent} triggering={triggering} />
+    </>
+  );
+}
+
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -905,6 +1051,7 @@ export default function App() {
     { id: 'overview', label: 'Overview',     icon: '◉' },
     { id: 'sources',  label: 'Live Sources', icon: '🌐' },
     { id: 'agents',   label: 'Agents',        icon: '⬡' },
+    { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
     { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
     { id: 'versions', label: 'Versions',      icon: '≡' },
   ];
@@ -997,6 +1144,7 @@ export default function App() {
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'versions' && <VersionsView versions={versions} />}
         </main>
