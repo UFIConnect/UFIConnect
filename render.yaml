@@ -11,7 +11,7 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=256 --abort-on-uncaught-exception index.js
+    startCommand: node --max-old-space-size=768 index.js
     plan: starter
     restartPolicyInterval: 5
     healthCheckPath: /health
@@ -19,7 +19,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_OPTIONS
-        value: --max-old-space-size=400
+        value: --max-old-space-size=768
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL

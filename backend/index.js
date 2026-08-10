@@ -3943,8 +3943,11 @@ const CRITICAL_REFRESH_MULTIPLIER = envNumber('FEED_CRITICAL_REFRESH_MULTIPLIER'
 const STABILITY_CHECK_MS = envNumber('STABILITY_CHECK_MS', 90 * 1000, 30 * 1000, 15 * 60 * 1000);
 const HEAP_PRESSURE_RATIO = envNumber('HEAP_PRESSURE_RATIO', 0.78, 0.5, 0.95);
 const HEAP_CRITICAL_RATIO = envNumber('HEAP_CRITICAL_RATIO', 0.9, HEAP_PRESSURE_RATIO + 0.01, 0.98);
-const RSS_PRESSURE_MB = envNumber('RSS_PRESSURE_MB', 512, 128, 32768);
-const RSS_CRITICAL_MB = envNumber('RSS_CRITICAL_MB', 768, RSS_PRESSURE_MB, 32768);
+// Raised for the 1GB instance (was 512/768, tuned for the old 512MB plan —
+// RSS_CRITICAL_MB above the container's actual physical RAM meant the
+// platform's OOM killer could act before this guard ever got a chance to).
+const RSS_PRESSURE_MB = envNumber('RSS_PRESSURE_MB', 700, 128, 32768);
+const RSS_CRITICAL_MB = envNumber('RSS_CRITICAL_MB', 900, RSS_PRESSURE_MB, 32768);
 const LAG_PRESSURE_MS = envNumber('LAG_PRESSURE_MS', 1200, 100, 30000);
 const LAG_CRITICAL_MS = envNumber('LAG_CRITICAL_MS', 2500, LAG_PRESSURE_MS, 60000);
 const PRESSURE_MANUAL_TOPIC_LIMIT = envNumber('PRESSURE_MANUAL_TOPIC_LIMIT', 12, 1, 60);
