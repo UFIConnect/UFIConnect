@@ -2443,7 +2443,15 @@ function parseRSSItems(xml) {
 }
 
 function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topic) {
-  const linkHash = Buffer.from(item.link || topic + Date.now()).toString('base64').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+  // Was Buffer.from(link).toString('base64')....slice(0,16) — base64 encodes
+  // left-to-right, so the first 16 output chars depend only on the first
+  // ~12 input bytes. Every article from the same site shares a long domain
+  // prefix ("https://techcrunch.com/..."), so nearly every post from a
+  // given RSS source collapsed to the SAME id and silently overwrote the
+  // same DB row via ON CONFLICT — confirmed live: techcrunch had 600+ posts
+  // fetched but exactly 1 row in the database. MD5 distributes across the
+  // whole input regardless of shared prefixes.
+  const linkHash = crypto.createHash('md5').update(item.link || topic + Date.now()).digest('hex').slice(0, 20);
   return {
     id:          `${sourceId}_${linkHash}`,
     authorId:    `${sourceId}_author`,
@@ -2479,7 +2487,7 @@ async function fetchIndeedJobs(keyword) {
     const jobs = data?.jobs || [];
     if (jobs.length) {
       const posts = jobs.map(j => ({
-        id:          `indeed_${Buffer.from(String(j.id || j.url || Date.now())).toString('base64').replace(/[^a-z0-9]/gi,'').slice(0,16)}`,
+        id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
         authorId:    'indeed_jobs',
         groupId:     'ext_indeed',
         content:     (j.description || j.company_name || '').replace(/<[^>]+>/g,' ').slice(0,400),
