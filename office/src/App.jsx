@@ -883,8 +883,22 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
   const q = status?.refreshQueue;
   const running = !!q?.running;
   const pct = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
-  const reddit = (status?.sources?.workers || []).find(w => w.id === 'reddit');
+  const workers = status?.sources?.workers || [];
+  const reddit = workers.find(w => w.id === 'reddit');
   const outage = reddit?.outageBackoff;
+
+  // Fetchable, ungated sources only — connected-account sources (Twitter,
+  // LinkedIn, Instagram, Facebook) run per-user on demand, not from here,
+  // and gated ones (TikTok, USAJobs) have no real fetcher behind them yet.
+  const transferable = workers
+    .filter(w => !w.isConnectedSource && w.status !== 'gated')
+    .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+  const [targetSource, setTargetSource] = useState('');
+  useEffect(() => {
+    if (!targetSource && transferable.length) setTargetSource(transferable[0].id);
+  }, [transferable.length]); // eslint-disable-line
+  const targetWorker = transferable.find(w => w.id === targetSource);
+  const targetBusy = targetSource && triggering[targetSource];
 
   return (
     <Card>
@@ -920,6 +934,43 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
           <div style={{ fontSize: 12, color: '#64748b' }}>
             Idle — {q?.lastFinished ? `last transfer finished ${fmtAgo(q.lastFinished)}` : 'no transfer run yet'}
             {q?.lastReason ? ` (${q.lastReason})` : ''}
+          </div>
+        )}
+      </div>
+
+      <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 14, marginBottom: outage?.active ? 14 : 0 }}>
+        <Label color="#60a5fa">Transfer to a specific filter</Label>
+        <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 10px' }}>
+          Pushes one platform straight to its own filter tab on the site (e.g. the GitHub tab) —
+          it's fetched and saved directly, not routed through the mixed/True Mix pool the way "All"
+          and "Personal Feed" are.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            value={targetSource}
+            onChange={e => setTargetSource(e.target.value)}
+            disabled={!transferable.length}
+            style={{
+              background: '#0d0d1a', color: '#e2e8f0', border: '1px solid rgba(255,255,255,.12)',
+              borderRadius: 6, padding: '7px 10px', fontSize: 12, flex: '1 1 200px',
+            }}
+          >
+            {transferable.map(w => (
+              <option key={w.id} value={w.id}>{w.emoji} {(w.name || w.id).replace(' Agent', '')}</option>
+            ))}
+          </select>
+          <Btn
+            size="sm"
+            onClick={() => targetSource && triggerAgent(targetSource)}
+            disabled={!targetSource || targetBusy}
+          >
+            {targetBusy ? 'Transferring...' : '⇪ Transfer to filter'}
+          </Btn>
+        </div>
+        {targetWorker && (
+          <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
+            {targetWorker.lastSuccess ? `Last transferred ${fmtAgo(targetWorker.lastSuccess)}` : 'Never transferred yet'}
+            {' · '}{(targetWorker.postCount || 0).toLocaleString()} posts seen
           </div>
         )}
       </div>
