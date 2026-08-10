@@ -7897,9 +7897,16 @@ async function handleFeedRequest(req, res) {
 
     if (wantsMix) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
+      // 6s, not 4s — confirmed live that 'ranked' mode's balanced query
+      // (PARTITION BY ranking has to compute the per-row score for every
+      // matching row before it can hand back a handful per source) was
+      // consistently landing past 4s and falling back every time, even
+      // after the 24h-window + newest-mode index fixes. Still nowhere near
+      // Postgres's own 120s statement_timeout, so this isn't reopening the
+      // original "let it hang" problem.
       const { posts: balanced } = await Promise.race([
         getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize }),
-        new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
+        new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
       ]);
       if (balanced.length > 0) {
         const pageRows = balanced.slice(0, feedLimit);
@@ -8234,7 +8241,7 @@ async function handleFeedRequest(req, res) {
   // below is no longer skewed to begin with, rather than skewed-then-capped.
   const { posts: balancedDbPosts } = await Promise.race([
     getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 15 }),
-    new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 4000)),
+    new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
   ]);
   let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
   if (!dbPosts.length) {
