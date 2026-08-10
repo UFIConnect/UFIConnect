@@ -4167,6 +4167,39 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
   return output;
 }
 
+// ─── Feed Manager: the single place that enforces "true mix" ─────────────────
+// Guarantees no one source can flood a page of results, for EVERY surface a
+// user can reach — not just page 1 of the main feed. This used to live
+// inline in the main-feed handler only; archive mode ("All Collected") and
+// page 2+ of infinite scroll both skipped it entirely and returned raw
+// database order, so a burst of posts from one source could fill an entire
+// page/scroll-load with zero diversity. Personal Feed, All Collected, and
+// the "All" tab (which is Personal Feed with no source filter) all route
+// through this now.
+function enforceFeedDiversity(posts, feedLimit, sortMode) {
+  const srcCap = sortMode === 'balanced'
+    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: ≤10% per source
+    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: ≤18% per source
+  const srcCounts = {};
+  const cappedPosts = [];
+  const overflowPosts = [];
+  for (const p of posts) {
+    const src = p?.source || 'unknown';
+    srcCounts[src] = (srcCounts[src] || 0) + 1;
+    if (srcCounts[src] <= srcCap) cappedPosts.push(p);
+    else overflowPosts.push(p);
+  }
+  // Always apply the cap; when there aren't enough capped posts to fill the
+  // page (common — most sources only have a handful of posts at any
+  // moment), top up from overflow through the diversifier too. Dumping
+  // overflow in its raw incoming order defeats the cap entirely: overflow
+  // is exactly the tail of whichever source(s) had the deepest pool, so it
+  // still lands as one long same-source run at the end of the page.
+  return cappedPosts.length >= feedLimit
+    ? cappedPosts.slice(0, feedLimit)
+    : [...cappedPosts, ...diversifyBySource(overflowPosts, feedLimit - cappedPosts.length, 1)].slice(0, feedLimit);
+}
+
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
   const started = Date.now();
   const input = Array.isArray(posts) ? posts.filter(Boolean) : [];
@@ -7650,12 +7683,20 @@ async function handleFeedRequest(req, res) {
   if (feedMode === 'archive') {
     const offset = (reqPage - 1) * feedLimit;
     const archiveSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
-    const dbRows = await getPostsFromDB([], feedLimit + 1, offset, archiveSources, {
+    // Feed Manager: "All Collected" with no source filter needs a bigger
+    // candidate pool than just feedLimit+1 rows, or the diversity cap below
+    // has no overflow to draw from and silently passes raw DB order
+    // through untouched — which is exactly how archive mode could show a
+    // whole page from one source before this. Skipped when the user picked
+    // a specific source — they asked for that one, not a mix.
+    const wantsMix = !archiveSources;
+    const dbFetchLimit = wantsMix ? feedLimit * 2 + 1 : feedLimit + 1;
+    const dbRows = await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
       q: searchQuery,
       sort: sortMode,
       timeRange,
     });
-    let pageRows = dbRows.slice(0, feedLimit);
+    let pageRows = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
     let hasMore = dbRows.length > feedLimit;
 
     if (!dbRows.length && offset === 0) {
@@ -7673,11 +7714,11 @@ async function handleFeedRequest(req, res) {
         }
         return true;
       }), 'archive-memory-fallback', {
-        limit: feedLimit + 1,
+        limit: feedLimit * (wantsMix ? 2 : 1) + 1,
         sort: sortMode,
         diversify: sortMode === 'balanced',
       });
-      pageRows = memoryRows.slice(0, feedLimit);
+      pageRows = wantsMix ? enforceFeedDiversity(memoryRows, feedLimit, sortMode) : memoryRows.slice(0, feedLimit);
       hasMore = memoryRows.length > feedLimit;
     }
 
@@ -7737,12 +7778,18 @@ async function handleFeedRequest(req, res) {
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    // Feed Manager: same reasoning as archive mode above — infinite scroll
+    // on Personal Feed/All (no source filter) needs a wider candidate pool
+    // than feedLimit+1 or the diversity cap has nothing to draw overflow
+    // from. This was the other real gap: page 1 was protected, but
+    // scrolling past it wasn't.
+    const wantsMix = !pageSources;
     const dbRows     = await Promise.race([
-      getPostsFromDB([], feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+      getPostsFromDB([], wantsMix ? feedLimit * 2 + 1 : feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
     ]);
     let hasMore      = dbRows.length > feedLimit;
-    let pageRows     = dbRows.slice(0, feedLimit);
+    let pageRows     = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
 
     if (sourceFilter) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
@@ -7787,7 +7834,7 @@ async function handleFeedRequest(req, res) {
         diversify: sortMode === 'balanced',
       }).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
-      pageRows = pageRows.slice(0, feedLimit);
+      pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     }
 
     function mapDbPost(p) {
@@ -8108,30 +8155,9 @@ async function handleFeedRequest(req, res) {
     maxConsecutivePerSource: sortMode === 'balanced' ? 1 : 2,
   });
 
-  // Per-source hard cap — tighter in balanced mode, looser otherwise.
-  // Applied in all modes (previously only balanced) so a prolific source can't
-  // flood the feed even when ranked by score.
-  const SRC_CAP = sortMode === 'balanced'
-    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: ≤10% per source
-    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: ≤18% per source
-  const srcCounts = {};
-  const cappedPosts = [];
-  const overflowPosts = [];
-  for (const p of liveSorted) {
-    const src = p.source || 'unknown';
-    srcCounts[src] = (srcCounts[src] || 0) + 1;
-    if (srcCounts[src] <= SRC_CAP) cappedPosts.push(p);
-    else overflowPosts.push(p);
-  }
-  // Always apply the cap; when there aren't enough capped posts to fill the page
-  // (common — most sources only have a handful of posts at any moment), top up
-  // from overflow through the diversifier too. Dumping overflow in raw
-  // liveSorted order defeated the cap entirely: overflow is exactly the tail of
-  // whichever source(s) had the deepest pool, so it still landed as one long
-  // same-source run at the end of the page.
-  const responsePosts = cappedPosts.length >= feedLimit
-    ? cappedPosts.slice(0, feedLimit)
-    : [...cappedPosts, ...diversifyBySource(overflowPosts, feedLimit - cappedPosts.length, 1)].slice(0, feedLimit);
+  // Per-source hard cap — applied in every mode so a prolific source can't
+  // flood the page even when ranked by score. See enforceFeedDiversity.
+  const responsePosts = enforceFeedDiversity(liveSorted, feedLimit, sortMode);
 
   res.json({
     posts: responsePosts,
