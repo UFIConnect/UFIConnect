@@ -4182,22 +4182,24 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
     : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: ≤18% per source
   const srcCounts = {};
   const cappedPosts = [];
-  const overflowPosts = [];
   for (const p of posts) {
     const src = p?.source || 'unknown';
-    srcCounts[src] = (srcCounts[src] || 0) + 1;
-    if (srcCounts[src] <= srcCap) cappedPosts.push(p);
-    else overflowPosts.push(p);
+    const n = srcCounts[src] || 0;
+    if (n >= srcCap) continue;
+    srcCounts[src] = n + 1;
+    cappedPosts.push(p);
   }
-  // Always apply the cap; when there aren't enough capped posts to fill the
-  // page (common — most sources only have a handful of posts at any
-  // moment), top up from overflow through the diversifier too. Dumping
-  // overflow in its raw incoming order defeats the cap entirely: overflow
-  // is exactly the tail of whichever source(s) had the deepest pool, so it
-  // still lands as one long same-source run at the end of the page.
-  return cappedPosts.length >= feedLimit
-    ? cappedPosts.slice(0, feedLimit)
-    : [...cappedPosts, ...diversifyBySource(overflowPosts, feedLimit - cappedPosts.length, 1)].slice(0, feedLimit);
+  // The cap is now strict — never topped back up past srcCap per source.
+  // An earlier version topped up short pages from "overflow" (everything
+  // over the cap), but when a source's share of the *input* pool is
+  // extreme — e.g. one small DB query landing 68% Bluesky because it's
+  // simply the highest-volume source right now — overflow is itself almost
+  // entirely that one source, so diversifyBySource had no real alternates
+  // to interleave and the page silently ended up dominated again anyway
+  // (confirmed live: a "capped" archive page still came back 68% one
+  // source). Returning a shorter page when the input genuinely lacks
+  // variety is the honest tradeoff — pagination covers the rest.
+  return diversifyBySource(cappedPosts, feedLimit, 1);
 }
 
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
@@ -7690,7 +7692,7 @@ async function handleFeedRequest(req, res) {
     // whole page from one source before this. Skipped when the user picked
     // a specific source — they asked for that one, not a mix.
     const wantsMix = !archiveSources;
-    const dbFetchLimit = wantsMix ? feedLimit * 2 + 1 : feedLimit + 1;
+    const dbFetchLimit = wantsMix ? feedLimit * 3 + 1 : feedLimit + 1;
     const dbRows = await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
       q: searchQuery,
       sort: sortMode,
@@ -7714,7 +7716,7 @@ async function handleFeedRequest(req, res) {
         }
         return true;
       }), 'archive-memory-fallback', {
-        limit: feedLimit * (wantsMix ? 2 : 1) + 1,
+        limit: feedLimit * (wantsMix ? 3 : 1) + 1,
         sort: sortMode,
         diversify: sortMode === 'balanced',
       });
@@ -7785,7 +7787,7 @@ async function handleFeedRequest(req, res) {
     // scrolling past it wasn't.
     const wantsMix = !pageSources;
     const dbRows     = await Promise.race([
-      getPostsFromDB([], wantsMix ? feedLimit * 2 + 1 : feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+      getPostsFromDB([], wantsMix ? feedLimit * 3 + 1 : feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
     ]);
     let hasMore      = dbRows.length > feedLimit;
