@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import client from '../api/client';
+import ImageLightbox from './ImageLightbox';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -34,10 +35,19 @@ export default function PostList({
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
   const [deleteBusy, setDeleteBusy] = useState({});
+  const [imageLightboxPostId, setImageLightboxPostId] = useState(null);
 
   useEffect(() => {
     setLocalPosts(posts);
   }, [posts]);
+
+  const imagePosts = useMemo(
+    () => localPosts.filter(p => p?.mediaUrl && p.mediaType === 'image'),
+    [localPosts]
+  );
+  const imageLightboxIndex = imageLightboxPostId
+    ? imagePosts.findIndex(p => p.id === imageLightboxPostId)
+    : -1;
 
   function updatePost(updatedPost) {
     if (!updatedPost?.id) return;
@@ -202,7 +212,12 @@ export default function PostList({
                 {post.mediaType === 'video' ? (
                   <video src={post.mediaUrl} controls style={{ width: '100%', maxHeight: 420, display: 'block' }} />
                 ) : (
-                  <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block' }} />
+                  <button
+                    onClick={() => setImageLightboxPostId(post.id)}
+                    style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer' }}
+                  >
+                    <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block' }} />
+                  </button>
                 )}
               </div>
             )}
@@ -293,6 +308,14 @@ export default function PostList({
           </div>
         );
       })}
+
+      {imageLightboxIndex !== -1 && (
+        <ImageLightbox
+          items={imagePosts.map(p => ({ url: p.mediaUrl, post: p }))}
+          startIndex={imageLightboxIndex}
+          onClose={() => setImageLightboxPostId(null)}
+        />
+      )}
     </div>
   );
 }

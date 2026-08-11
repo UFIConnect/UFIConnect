@@ -4318,6 +4318,62 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
   return diversifyBySource(cappedPosts, feedLimit, 1);
 }
 
+// Job listings only ever got the same equal-per-source share as every other
+// source in the mix (~1/N for N sources in the pool) — with 30+ sources
+// that reads as "job postings basically never show up." This tops the pool
+// up with real, deduplicated job posts pulled specifically for the boost
+// (never fabricated), inserted at a fixed cadence rather than left to fight
+// for a place within the strict per-source equalization.
+const JOB_LISTING_SOURCES = ['indeed', 'remoteok'];
+function boostJobListings(pool, extraJobPosts, everyN = 8) {
+  if (!extraJobPosts.length) return pool;
+  const existingIds = new Set(pool.map(p => p.id));
+  const fresh = extraJobPosts.filter(p => p?.id && !existingIds.has(p.id));
+  if (!fresh.length) return pool;
+  const result = [];
+  let bi = 0;
+  for (let i = 0; i < pool.length; i++) {
+    result.push(pool[i]);
+    if ((i + 1) % everyN === 0 && bi < fresh.length) result.push(fresh[bi++]);
+  }
+  while (bi < fresh.length) result.push(fresh[bi++]);
+  return result;
+}
+
+// Soft per-user personalization: boost posts matching the viewer's
+// interests/skills to appear more often near the top, without hard-
+// filtering everything else out — a strict filter was tried earlier and
+// made the feed read like a narrow job board instead of something to
+// browse. Pure function of (posts, userTopics), so it can be re-run
+// identically for every page of a shared, cached pool (see the main-feed
+// snapshot) without breaking pagination — same inputs always produce the
+// same order, so slicing at different offsets across separate requests
+// never duplicates or skips anything.
+function personalizeOrder(posts, userTopics) {
+  if (!userTopics?.length || !posts.length) return posts;
+  const topics = userTopics.map(t => String(t).toLowerCase()).filter(Boolean);
+  if (!topics.length) return posts;
+  const matched = [];
+  const rest = [];
+  for (const p of posts) {
+    const postTopic = (p.topic || '').toLowerCase();
+    const isMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
+    (isMatch ? matched : rest).push(p);
+  }
+  if (!matched.length) return posts;
+  // Roughly 2 matched posts for every 1 non-matched near the front — a
+  // real, noticeable boost, but the mix never fully disappears the way a
+  // hard filter would once matched posts run out.
+  const result = [];
+  let mi = 0, ri = 0;
+  while (mi < matched.length || ri < rest.length) {
+    if (mi < matched.length) result.push(matched[mi++]);
+    if (mi < matched.length) result.push(matched[mi++]);
+    if (ri < rest.length) result.push(rest[ri++]);
+  }
+  return result;
+}
+
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
   const started = Date.now();
   const input = Array.isArray(posts) ? posts.filter(Boolean) : [];
@@ -8023,6 +8079,14 @@ async function handleFeedRequest(req, res) {
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
+  // Drives the personalized re-ordering below (personalizeOrder) as well as
+  // connected-social keyword search further down — moved up here (used to
+  // live right before the balanced-query call) so it's available to every
+  // branch that reads the shared snapshot, not just the one that builds it.
+  const userTopics = [
+    ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
+    ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+  ];
   const sourceFilter = req.query.source || null;
   const sourcesParam = req.query.sources
     ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
@@ -8202,8 +8266,13 @@ async function handleFeedRequest(req, res) {
       // look like it stopped after page 1.
       const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
+        // personalizeOrder is deterministic given the same (posts, userTopics)
+        // pair, so recomputing it per-request here still slices cleanly across
+        // pages — this user always sees the same personalized arrangement of
+        // the shared pool for the rest of this snapshot's 10-minute window.
+        const personalized = personalizeOrder(snap.posts, userTopics);
         const lo = (reqPage - 1) * feedLimit;
-        const pageSlice = snap.posts.slice(lo, lo + feedLimit);
+        const pageSlice = personalized.slice(lo, lo + feedLimit);
         // A fresh snapshot exists, so it — not the legacy query below — is
         // the source of truth for this 10-minute window. If the requested
         // page runs past the cached pool's depth, the honest answer is "no
@@ -8353,7 +8422,8 @@ async function handleFeedRequest(req, res) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
       // the wantsMix branch above) so both stay in sync with each other.
-      const externalPosts = snap.posts.slice(0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
+      const personalized = personalizeOrder(snap.posts, userTopics);
+      const externalPosts = personalized.slice(0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       return res.json({
         posts: finalPosts,
@@ -8584,15 +8654,6 @@ async function handleFeedRequest(req, res) {
   const behancePosts   = behanceRaw.map(p => mapExternalPost(p, 'behance'));
   const designwebPosts = designwebRaw.map(p => mapExternalPost(p, 'designweb'));
 
-  // userTopics still power connected-social personalization below, but the main
-  // feed itself is NOT filtered down to them — the feed is a shared, all-in-one
-  // mix (professional + casual) rather than a narrow "work topics only" stream.
-  // Hard-filtering every post to a user's professional interests/skills made the
-  // feed read as a job board instead of something to casually browse.
-  const userTopics = [
-    ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-    ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
-  ];
   // However well-tuned the query, a live feed request must never hang on the
   // DB — degrade to the in-memory cache instead of blocking the response if
   // it doesn't come back quickly (this is what actually took /feed down:
@@ -8682,8 +8743,18 @@ async function handleFeedRequest(req, res) {
   // snapshot — otherwise the stored pool is only ever exactly one page
   // long, which is what forced page 2+ onto its own separately-windowed
   // (and misaligned) query in the first place.
-  const externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
-  const responsePosts = [...internal, ...socialPlatformPosts, ...externalDiversified].slice(0, feedLimit);
+  let externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
+  if (isDefaultAggregateView) {
+    const jobRows = await getPostsFromDB([], 30, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+    const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source));
+    externalDiversified = boostJobListings(externalDiversified, extraJobPosts);
+  }
+  // externalDiversified itself stays unpersonalized — it's what gets cached
+  // as the shared snapshot below and read by every other user, so it can't
+  // bake in *this* request's interests. personalizeOrder only reorders (same
+  // length, same members), applied fresh per response instead.
+  const personalizedExternal = personalizeOrder(externalDiversified, userTopics);
+  const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
     reddit:        redditPosts.length,

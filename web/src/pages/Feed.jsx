@@ -6,6 +6,7 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from '../components/videoMedia';
 import { SOURCE_META } from '../components/sourceMeta';
+import ImageLightbox from '../components/ImageLightbox';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -619,7 +620,7 @@ function commentUrl(post) {
   }
 }
 
-const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
+const PostCard = memo(function PostCard({ post, onVideoOpen, onImageOpen, onPostUpdated }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -743,21 +744,26 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
       )}
 
       {post.mediaUrl && post.mediaType === 'image' && (
-        <div style={{ marginTop: 12, borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
-          <img src={post.mediaUrl} alt={post.title || 'Post image'}
-            style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
-            onError={e => {
-              e.currentTarget.style.display = 'none';
-              const placeholder = e.currentTarget.parentElement.querySelector('[data-img-placeholder]');
-              if (placeholder) placeholder.style.display = 'flex';
-            }} />
-          <div data-img-placeholder style={{
-            display: 'none', alignItems: 'center', justifyContent: 'center',
-            height: 200, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 500,
-          }}>
-            📷 Image unavailable
+        <button
+          onClick={() => onImageOpen?.(post)}
+          style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', marginTop: 12 }}
+        >
+          <div style={{ borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
+            <img src={post.mediaUrl} alt={post.title || 'Post image'}
+              style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
+              onError={e => {
+                e.currentTarget.style.display = 'none';
+                const placeholder = e.currentTarget.parentElement.querySelector('[data-img-placeholder]');
+                if (placeholder) placeholder.style.display = 'flex';
+              }} />
+            <div data-img-placeholder style={{
+              display: 'none', alignItems: 'center', justifyContent: 'center',
+              height: 200, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 500,
+            }}>
+              📷 Image unavailable
+            </div>
           </div>
-        </div>
+        </button>
       )}
 
       {hasVideo && (
@@ -1006,6 +1012,7 @@ export default function Feed() {
   const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [videoPost,     setVideoPost]    = useState(null);
+  const [imageLightboxPostId, setImageLightboxPostId] = useState(null);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
@@ -1484,6 +1491,18 @@ export default function Feed() {
   const displayed = processed; // render all locally-held posts — no artificial cap
   const hasMore   = remoteHasMore;
 
+  // Every image-bearing post currently on screen, in the same order shown —
+  // what ImageLightbox's next/prev navigation browses across. Keyed by post
+  // id (not index) so a click stays pointed at the right photo even if
+  // `displayed` changes shape between the click and the next render.
+  const imagePosts = useMemo(
+    () => displayed.filter(p => p?.mediaUrl && p.mediaType === 'image'),
+    [displayed]
+  );
+  const imageLightboxIndex = imageLightboxPostId
+    ? imagePosts.findIndex(p => p.id === imageLightboxPostId)
+    : -1;
+
   const firstName = profile?.name?.split(' ')[0] || '';
   const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
@@ -1886,6 +1905,7 @@ export default function Feed() {
                 key={post.id || `temp-${idx}-${post.createdAt}`}
                 post={post}
                 onVideoOpen={setVideoPost}
+                onImageOpen={p => setImageLightboxPostId(p.id)}
                 onPostUpdated={updateFeedPost}
               />
             ))}
@@ -1949,6 +1969,14 @@ export default function Feed() {
           at all. Confirmed by build output: with no live call site,
           Rollup's tree-shaking correctly discarded the entire component. */}
       {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
+
+      {imageLightboxIndex !== -1 && (
+        <ImageLightbox
+          items={imagePosts.map(p => ({ url: p.mediaUrl, post: p }))}
+          startIndex={imageLightboxIndex}
+          onClose={() => setImageLightboxPostId(null)}
+        />
+      )}
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
