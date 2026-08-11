@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -39,8 +40,8 @@ export default function GroupDetail() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
-  function loadGroupPosts() {
-    setPostsLoading(true);
+  function loadGroupPosts(opts = {}) {
+    if (!opts.silent) setPostsLoading(true);
     client.get(`/groups/${id}/posts`)
       .then(({ data }) => setGroupPosts(data.posts || []))
       .catch(() => setGroupPosts([]))
@@ -48,6 +49,10 @@ export default function GroupDetail() {
   }
 
   useEffect(() => { loadGroupPosts(); }, [id]); // eslint-disable-line
+
+  // Scrolling back up to the top acts as pull-to-refresh, same as every
+  // other list page on the site.
+  useScrollToRefresh(() => loadGroupPosts({ silent: true }), { enabled: !postsLoading });
 
   async function handleJoin() {
     try {

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const DISABLED_KEY = 'ufi_disabled_sources';
 
@@ -228,12 +229,19 @@ export default function Sources() {
   const [expanded,  setExpanded]  = useState(null);
   const [disabled,  setDisabled]  = useState(loadDisabled);
 
-  useEffect(() => {
-    client.get('/feed/sources?sample=3')
-      .then(r => setData(r.data))
+  const loadSources = useCallback((opts = {}) => {
+    if (!opts.silent) setLoading(true);
+    return client.get('/feed/sources?sample=3')
+      .then(r => { setData(r.data); setError(null); })
       .catch(e => setError(e?.response?.data?.error || e.message || 'Failed to load'))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { loadSources(); }, [loadSources]);
+
+  // Scrolling back up to the top acts as pull-to-refresh, same as every
+  // other list page — refetches quietly (no full-page loading spinner).
+  useScrollToRefresh(() => loadSources({ silent: true }), { enabled: !loading });
 
   const toggle = useCallback((sourceId) => {
     setDisabled(prev => {

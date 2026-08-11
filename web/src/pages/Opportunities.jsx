@@ -3,6 +3,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const PAGE_SIZE = 20;
 
@@ -93,6 +94,8 @@ export default function Opportunities() {
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState(false);
   const [page,      setPage]      = useState(1);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const silentRefreshRef = useRef(false);
 
   const searchRef = useRef('');
 
@@ -113,7 +116,11 @@ export default function Opportunities() {
     if (search) params.search = search;
     if (remote) params.remote = true;
 
-    setLoading(true);
+    // Only show the full loading state on a real filter/search change —
+    // refreshTick-driven refetches (scroll-to-refresh) should refill quietly
+    // instead of flashing the loading UI over content the user is mid-read of.
+    if (!silentRefreshRef.current) setLoading(true);
+    silentRefreshRef.current = false;
     setError(false);
     client.get('/opportunities', { params })
       .then(({ data }) => {
@@ -128,7 +135,14 @@ export default function Opportunities() {
         setAllOpps([]);
       })
       .finally(() => setLoading(false));
-  }, [filter, sort, remote, liveOnly, search]);
+  }, [filter, sort, remote, liveOnly, search, refreshTick]);
+
+  // Scrolling back up to the top acts as pull-to-refresh, same as every
+  // other list page on the site.
+  useScrollToRefresh(() => {
+    silentRefreshRef.current = true;
+    setRefreshTick(t => t + 1);
+  }, { enabled: !loading });
 
   // Paginated display
   const displayed = allOpps.slice(0, page * PAGE_SIZE);

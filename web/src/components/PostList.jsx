@@ -35,18 +35,22 @@ export default function PostList({
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
   const [deleteBusy, setDeleteBusy] = useState({});
-  const [imageLightboxPostId, setImageLightboxPostId] = useState(null);
+  const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
 
   useEffect(() => {
     setLocalPosts(posts);
   }, [posts]);
 
-  const imagePosts = useMemo(
-    () => localPosts.filter(p => p?.mediaUrl && p.mediaType === 'image'),
+  // Photos and videos share one scrollable viewer (see ImageLightbox) —
+  // videos here used to just be plain inline <video controls> with no way
+  // to browse from one post's video/photo to the next without scrolling
+  // the page itself.
+  const mediaPosts = useMemo(
+    () => localPosts.filter(p => p?.mediaUrl && (p.mediaType === 'image' || p.mediaType === 'video')),
     [localPosts]
   );
-  const imageLightboxIndex = imageLightboxPostId
-    ? imagePosts.findIndex(p => p.id === imageLightboxPostId)
+  const mediaLightboxIndex = mediaLightboxPostId
+    ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
 
   function updatePost(updatedPost) {
@@ -210,10 +214,21 @@ export default function PostList({
             {post.mediaUrl && (
               <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 10, background: '#000' }}>
                 {post.mediaType === 'video' ? (
-                  <video src={post.mediaUrl} controls style={{ width: '100%', maxHeight: 420, display: 'block' }} />
+                  <button
+                    onClick={() => setMediaLightboxPostId(post.id)}
+                    style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', position: 'relative' }}
+                  >
+                    <video src={post.mediaUrl} muted preload="metadata" playsInline
+                      style={{ width: '100%', maxHeight: 420, display: 'block', opacity: 0.85 }} />
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
+                        <span style={{ color: '#fff', fontSize: '1.4rem', marginLeft: 3 }}>▶</span>
+                      </div>
+                    </div>
+                  </button>
                 ) : (
                   <button
-                    onClick={() => setImageLightboxPostId(post.id)}
+                    onClick={() => setMediaLightboxPostId(post.id)}
                     style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer' }}
                   >
                     <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block' }} />
@@ -309,11 +324,11 @@ export default function PostList({
         );
       })}
 
-      {imageLightboxIndex !== -1 && (
+      {mediaLightboxIndex !== -1 && (
         <ImageLightbox
-          items={imagePosts.map(p => ({ url: p.mediaUrl, post: p }))}
-          startIndex={imageLightboxIndex}
-          onClose={() => setImageLightboxPostId(null)}
+          items={mediaPosts.map(p => ({ url: p.mediaUrl, type: p.mediaType, post: p }))}
+          startIndex={mediaLightboxIndex}
+          onClose={() => setMediaLightboxPostId(null)}
         />
       )}
     </div>

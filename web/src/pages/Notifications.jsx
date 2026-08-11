@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -24,9 +25,9 @@ export default function Notifications() {
   const [accepting,  setAccepting]  = useState(null);
   const [accepted,   setAccepted]   = useState(new Set());
 
-  function load() {
+  function load(opts = {}) {
     setError(false);
-    setLoading(true);
+    if (!opts.silent) setLoading(true);
     client.get('/notifications')
       .then(({ data }) => setItems(data.notifications || []))
       .catch(() => setError(true))
@@ -34,6 +35,10 @@ export default function Notifications() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Scrolling back up to the top acts as pull-to-refresh, same as every
+  // other list page on the site.
+  useScrollToRefresh(() => load({ silent: true }), { enabled: !loading });
 
   async function handleAccept(notification) {
     setAccepting(notification.id);

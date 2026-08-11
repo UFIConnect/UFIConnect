@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const CATEGORY_META = {
   'AI & ML':     { icon: '🤖', bg: '#F3EEFF', text: '#7C3AED' },
@@ -260,6 +261,11 @@ function GroupsContent() {
   useEffect(() => {
     loadGroups();
   }, []);
+
+  // Scrolling back up to the top acts as pull-to-refresh, same as every
+  // other list page — reuses the same bust path the manual Refresh button
+  // already used, so it shows the same spinner rather than a full reload.
+  useScrollToRefresh(() => loadGroups(true), { enabled: !loading && !refreshing });
 
   async function handleJoin(e, groupId) {
     e.stopPropagation();

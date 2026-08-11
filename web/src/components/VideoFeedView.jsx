@@ -2,10 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi } from './videoMedia';
 import { SOURCE_META } from './sourceMeta';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 // Figures out how a given post's video can actually be played in-app, per
-// platform — mirrors the logic in Feed.jsx's VideoModal, but centralized
-// here since this view needs it for every slide, not just an on-demand modal.
+// platform — the same Bluesky-playlist/direct-file detection ImageLightbox
+// uses for a single item, but centralized here since this view needs it for
+// every slide, not just one at a time.
 function resolveVideoSource(post) {
   if (post.source === 'youtube') {
     const id = post.embedId || extractYouTubeId(post.sourceUrl);
@@ -385,6 +387,12 @@ export default function VideoFeedView({ onExit }) {
     await loadPage(1, { bust: true, prepend: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
+
+  // Scrolling back up to video 1 after having scrolled further in acts as
+  // pull-to-refresh, same mechanism as every other list on the site — no
+  // separate touch-drag handling needed since the snap-scroll container
+  // already reports scrollTop the same way a normal list would.
+  useScrollToRefresh(handleRefresh, { containerRef, enabled: !loading });
 
   // Which slide is centered in the scroll-snap container is "active" — that's
   // the only one that actually mounts a player, so scrolling past a video

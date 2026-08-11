@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from '../components/videoMedia';
+import { extractYouTubeId, isDirectVideoUrl } from '../components/videoMedia';
 import { SOURCE_META } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 
@@ -197,98 +197,6 @@ function PostCardSkeleton() {
       <div style={{ height: 16, borderRadius: 4, background: 'var(--border)', marginBottom: 10, animation: 'pulse 2s ease-in-out infinite' }} />
       <div style={{ height: 12, borderRadius: 4, background: 'var(--border)', marginBottom: 20, width: '85%', animation: 'pulse 2s ease-in-out infinite' }} />
       <div style={{ height: 200, borderRadius: 12, background: 'var(--border)', animation: 'pulse 2s ease-in-out infinite' }} />
-    </div>
-  );
-}
-
-/** Video modal for non-YouTube platforms */
-function VideoModal({ post, onClose }) {
-  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
-  const modalRef = useRef(null);
-  const playlistUrl = post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directVideoUrl = !playlistUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
-
-  useEffect(() => {
-    const h = e => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', h);
-    // Focus trap
-    const prev = document.activeElement;
-    if (modalRef.current) modalRef.current.focus();
-    return () => {
-      document.removeEventListener('keydown', h);
-      if (prev && prev.focus) prev.focus();
-    };
-  }, [onClose]);
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${post.title || 'Post'} from ${src.label}`}
-      ref={modalRef}
-      tabIndex={-1}
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 2000,
-        background: 'rgba(0,0,0,0.88)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--surface)', borderRadius: 20,
-          maxWidth: 520, width: '100%', maxHeight: '90vh', overflow: 'auto',
-          boxShadow: '0 24px 80px rgba(0,0,0,.6)',
-        }}
-      >
-        {playlistUrl ? (
-          <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
-            <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} style={{ maxHeight: 480 }} />
-            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>×</button>
-          </div>
-        ) : directVideoUrl ? (
-          <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
-            <video src={directVideoUrl} controls autoPlay playsInline style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
-            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>×</button>
-          </div>
-        ) : post.mediaUrl && (
-          <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
-            <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 320, opacity: 0.9 }} />
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 72, height: 72, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 24px rgba(0,0,0,.5)' }}>
-                <span style={{ color: '#fff', fontSize: '2rem', marginLeft: 4 }}>▶</span>
-              </div>
-            </div>
-            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
-          </div>
-        )}
-        <div style={{ padding: '16px 20px 20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-            <span>{src.icon}</span>
-            <span style={{ fontWeight: 700, fontSize: '.78rem', color: src.color }}>{post.sourceLabel || src.label}</span>
-            <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(post.createdAt)}</span>
-          </div>
-          {post.author?.name && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-              <div style={{ width: 28, height: 28, borderRadius: '50%', background: `${src.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.8rem' }}>{src.icon}</div>
-              <span style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author.name}</span>
-            </div>
-          )}
-          {post.title && <p style={{ fontWeight: 700, fontSize: '.98rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>}
-          {post.content && <p style={{ fontSize: '.88rem', lineHeight: 1.65, margin: '0 0 18px', whiteSpace: 'pre-wrap' }}>{post.content}</p>}
-          <div style={{ display: 'flex', gap: 16, marginBottom: 18, fontSize: '.78rem', color: 'var(--muted)' }}>
-            {post.likesCount > 0 && <span>❤️ {post.likesCount.toLocaleString()}</span>}
-            {post.commentsCount > 0 && <span>💬 {post.commentsCount.toLocaleString()}</span>}
-          </div>
-          {post.sourceUrl && (
-            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: src.color === '#010101' ? '#333' : src.color, color: '#fff', textDecoration: 'none', padding: '13px 20px', borderRadius: 12, fontWeight: 700, fontSize: '.9rem' }}>
-              {src.icon} Watch on {src.label} ↗
-            </a>
-          )}
-        </div>
-      </div>
     </div>
   );
 }
@@ -620,7 +528,7 @@ function commentUrl(post) {
   }
 }
 
-const PostCard = memo(function PostCard({ post, onVideoOpen, onImageOpen, onPostUpdated }) {
+const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -745,7 +653,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onImageOpen, onPost
 
       {post.mediaUrl && post.mediaType === 'image' && (
         <button
-          onClick={() => onImageOpen?.(post)}
+          onClick={() => onMediaOpen?.(post)}
           style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', marginTop: 12 }}
         >
           <div style={{ borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
@@ -767,7 +675,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onImageOpen, onPost
       )}
 
       {hasVideo && (
-        <button onClick={() => onVideoOpen(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
+        <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
             {videoIsDirectFile ? (
               <video src={post.mediaUrl} muted preload="metadata" playsInline
@@ -1011,8 +919,7 @@ export default function Feed() {
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
-  const [videoPost,     setVideoPost]    = useState(null);
-  const [imageLightboxPostId, setImageLightboxPostId] = useState(null);
+  const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
@@ -1499,16 +1406,18 @@ export default function Feed() {
   const displayed = processed; // render all locally-held posts — no artificial cap
   const hasMore   = remoteHasMore;
 
-  // Every image-bearing post currently on screen, in the same order shown —
-  // what ImageLightbox's next/prev navigation browses across. Keyed by post
-  // id (not index) so a click stays pointed at the right photo even if
+  // Every photo- or video-bearing post currently on screen, in the same
+  // order shown — what ImageLightbox's next/prev navigation browses across.
+  // Photos and videos share one rail (see ImageLightbox) instead of videos
+  // opening into a separate single-post modal with no scrolling. Keyed by
+  // post id (not index) so a click stays pointed at the right item even if
   // `displayed` changes shape between the click and the next render.
-  const imagePosts = useMemo(
-    () => displayed.filter(p => p?.mediaUrl && p.mediaType === 'image'),
+  const mediaPosts = useMemo(
+    () => displayed.filter(p => p?.mediaUrl && (p.mediaType === 'image' || p.mediaType === 'video')),
     [displayed]
   );
-  const imageLightboxIndex = imageLightboxPostId
-    ? imagePosts.findIndex(p => p.id === imageLightboxPostId)
+  const mediaLightboxIndex = mediaLightboxPostId
+    ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
 
   const firstName = profile?.name?.split(' ')[0] || '';
@@ -1912,8 +1821,7 @@ export default function Feed() {
               <PostCard
                 key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
                 post={post}
-                onVideoOpen={setVideoPost}
-                onImageOpen={p => setImageLightboxPostId(p.id)}
+                onMediaOpen={p => setMediaLightboxPostId(p.id)}
                 onPostUpdated={updateFeedPost}
               />
             ))}
@@ -1971,18 +1879,11 @@ export default function Feed() {
         </div>
       )}
 
-      {/* videoPost is set by PostCard's onVideoOpen (the inline video thumbnail
-          button) but nothing ever actually rendered VideoModal — clicking a
-          video post set state that nothing read, so the modal never opened
-          at all. Confirmed by build output: with no live call site,
-          Rollup's tree-shaking correctly discarded the entire component. */}
-      {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
-
-      {imageLightboxIndex !== -1 && (
+      {mediaLightboxIndex !== -1 && (
         <ImageLightbox
-          items={imagePosts.map(p => ({ url: p.mediaUrl, post: p }))}
-          startIndex={imageLightboxIndex}
-          onClose={() => setImageLightboxPostId(null)}
+          items={mediaPosts.map(p => ({ url: p.mediaUrl, type: p.mediaType, post: p }))}
+          startIndex={mediaLightboxIndex}
+          onClose={() => setMediaLightboxPostId(null)}
           onNearEnd={loadMoreRemote}
         />
       )}

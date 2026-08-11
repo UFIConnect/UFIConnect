@@ -28,7 +28,13 @@ export function uploadMedia(file, onProgress) {
           reject(new Error('Unexpected upload response'));
         }
       } else {
-        reject(new Error('Upload failed'));
+        // Cloudinary's own error responses are JSON with a real message
+        // (e.g. "File size too large", "Invalid signature") — surfacing
+        // that instead of a flat "Upload failed" is the difference between
+        // the user knowing what actually went wrong and just retrying blind.
+        let message = 'Upload failed';
+        try { message = JSON.parse(xhr.responseText)?.error?.message || message; } catch { /* not JSON */ }
+        reject(new Error(message));
       }
     };
     xhr.onerror = () => reject(new Error('Upload failed'));

@@ -117,8 +117,15 @@ export default function Post() {
     try {
       const result = await uploadMedia(file, setUploadProgress);
       setUploadedMedia(result);
-    } catch {
-      setMediaError('Upload failed. Please try again.');
+    } catch (err) {
+      // err is either the /media/upload-signature request rejecting (axios
+      // error, real backend message in err.response.data.message — e.g.
+      // "Media upload is not configured yet." when Cloudinary env vars
+      // aren't set) or the Cloudinary upload itself rejecting (plain Error
+      // with Cloudinary's own message, see upload.js). Showing the real
+      // message instead of a flat "try again" actually tells the user
+      // whether retrying can possibly help.
+      setMediaError(err?.response?.data?.message || err?.message || 'Upload failed. Please try again.');
     } finally {
       setUploading(false);
     }
