@@ -8750,7 +8750,13 @@ async function handleFeedRequest(req, res) {
   // (and misaligned) query in the first place.
   let externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
   if (isDefaultAggregateView) {
-    const jobRows = await getPostsFromDB([], 60, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+    // Not dbTimeRange (2 days) — confirmed live that bounding job listings
+    // to the same tight recency window as the rest of the feed left almost
+    // nothing to boost with (indeed/remoteok don't post frequently enough
+    // for much of their already-thin ~50-post total supply to fall inside
+    // 2 days). A job posting is still perfectly relevant a couple weeks in,
+    // unlike a 2-day-old social post, so this pulls from a much wider window.
+    const jobRows = await getPostsFromDB([], 60, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: '30d' }).catch(() => []);
     const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source));
     externalDiversified = boostJobListings(externalDiversified, extraJobPosts);
   }
