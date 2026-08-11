@@ -6976,7 +6976,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
 // — there's no skewed pool to correct because it was never built. Uses one
 // query with ROW_NUMBER() OVER (PARTITION BY source ...) rather than N
 // separate per-source queries, so it's still a single DB round-trip.
-async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null } = {}) {
+async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null } = {}) {
   if (!db.isConnected()) return { posts: [], perSourceCount: 0 };
   try {
     const clauses = [
@@ -6993,6 +6993,10 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     } else if (source) {
       params.push(source);
       clauses.push(`source = $${params.length}`);
+    }
+    if (mediaType) {
+      params.push(mediaType);
+      clauses.push(`media_type = $${params.length}`);
     }
     // Tighter default than the flat query's 2d (24h, not 2d) — ranking
     // within PARTITION BY still has to sort every matching row per source
@@ -8675,6 +8679,37 @@ async function handleFeedRequest(req, res) {
 }
 app.get('/feed', authenticate, handleFeedRequest);
 app.get('/office/feed', authenticate, handleFeedRequest);
+
+// ─── Video feed (TikTok-style) — true mix of video posts across every platform ──
+// Reuses getBalancedFeedPosts (the same "pull the same amount as the least
+// platform" query that powers the main feed's mix) with a media_type filter,
+// so no source can dominate the video rail just because it happens to post
+// more video than everyone else.
+async function handleVideoFeedRequest(req, res) {
+  try {
+    const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
+    const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+    // Video posts are a small slice of all content, so a handful of sources
+    // splitting a 24h window (getBalancedFeedPosts' default) runs thin fast
+    // — widen to 7 days specifically for video so there's enough per source
+    // to keep an infinite-scroll rail fed.
+    const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 6));
+    const { posts } = await Promise.race([
+      getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: reqPage, perSourcePageSize, mediaType: 'video' }),
+      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
+    ]);
+    res.json({
+      posts: posts.slice(0, feedLimit),
+      page: reqPage,
+      hasMore: posts.length >= perSourcePageSize,
+    });
+  } catch (e) {
+    console.error('[/feed/videos] error:', e.message);
+    res.status(500).json({ posts: [], hasMore: false });
+  }
+}
+app.get('/feed/videos', authenticate, handleVideoFeedRequest);
+app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
 app.get('/feed/stream', authenticateSSE, (req, res) => {

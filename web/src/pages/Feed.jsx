@@ -4,6 +4,9 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from '../components/videoMedia';
+import { SOURCE_META } from '../components/sourceMeta';
+import VideoFeedView from '../components/VideoFeedView';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -32,84 +35,6 @@ function initials(name = '') {
 function feedPostTime(post) {
   const time = new Date(post?.createdAt || post?.time || 0).getTime();
   return Number.isFinite(time) ? time : 0;
-}
-
-// embedId (the YouTube video ID used for in-app iframe playback) only ever
-// existed on the live/in-memory post shape — feed_posts_cache has no column
-// for it, so any YouTube post served from the database (the primary path
-// for most of the feed now) arrived with no way to actually play the video,
-// only a thumbnail + an external link. It's recoverable from sourceUrl
-// (watch?v=... or youtu.be/...), which is always persisted.
-function extractYouTubeId(url) {
-  if (!url) return null;
-  const m = String(url).match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([\w-]{11})/);
-  return m ? m[1] : null;
-}
-
-// Bluesky video posts store the HLS playlist URL and its thumbnail at the
-// same path, differing only in filename (.../thumbnail.jpg vs
-// .../playlist.m3u8) — mediaUrl only ever holds the thumbnail (the DB
-// column it persists through already existed; a separate stream-url column
-// didn't), so the playlist URL is recovered by swapping the filename.
-function deriveBlueskyPlaylistUrl(thumbnailUrl) {
-  if (!thumbnailUrl || !thumbnailUrl.includes('/thumbnail.')) return null;
-  return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
-}
-
-// Reddit (and any other source) stores a direct, already-playable video file
-// URL in mediaUrl rather than a poster image — no separate thumbnail exists,
-// so this URL needs a plain <video> element, not an <img>.
-function isDirectVideoUrl(url) {
-  return !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
-}
-
-// Plays an HLS (.m3u8) stream via hls.js where needed, or natively where the
-// browser already supports it (Safari/iOS). Used for Bluesky video — a
-// simple <video src="...m3u8"> only works in Safari; everywhere else needs
-// hls.js to actually decode the stream.
-function HlsVideoPlayer({ src, poster, autoPlay = true, style }) {
-  const videoRef = useRef(null);
-  const [errored, setErrored] = useState(false);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !src) return;
-    setErrored(false);
-    let hls;
-    let cancelled = false;
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari/iOS play HLS natively — no need to pull in hls.js at all.
-      video.src = src;
-      if (autoPlay) video.play().catch(() => {});
-    } else {
-      // Lazy-loaded: hls.js is a genuinely large library, and bundling it
-      // statically pulled it into every visitor's Feed download (~140KB
-      // gzipped extra) whether or not they ever see a video post. Only
-      // fetched now when a stream actually needs decoding.
-      import('hls.js').then(({ default: Hls }) => {
-        if (cancelled || !videoRef.current) return;
-        if (!Hls.isSupported()) { setErrored(true); return; }
-        hls = new Hls();
-        hls.loadSource(src);
-        hls.attachMedia(videoRef.current);
-        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
-        if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => videoRef.current?.play().catch(() => {}));
-      }).catch(() => setErrored(true));
-    }
-    return () => { cancelled = true; hls?.destroy(); };
-  }, [src, autoPlay]);
-
-  if (errored) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, background: '#000', color: '#fff', fontSize: '.85rem', ...style }}>
-        🎬 Video unavailable
-      </div>
-    );
-  }
-  return (
-    <video ref={videoRef} controls autoPlay={autoPlay} poster={poster}
-      style={{ width: '100%', display: 'block', background: '#000', ...style }} />
-  );
 }
 
 function postEngagement(post) {
@@ -191,47 +116,6 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
   return sortPostsForView([...byId.values()], sort);
 }
 
-const SOURCE_META = {
-  reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
-  hackernews:    { label: 'News',          color: '#FF6600', icon: '🗞' },
-  devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
-  linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: '💼' },
-  twitter:       { label: 'X (Twitter)',   color: '#000000', icon: '𝕏' },
-  bluesky:       { label: 'Bluesky',       color: '#0085FF', icon: '🦋' },
-  facebook:      { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
-  instagram:     { label: 'Instagram',     color: '#E1306C', icon: '📸' },
-  tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
-  github:        { label: 'GitHub',        color: '#24292F', icon: '🐙' },
-  gitlab:        { label: 'GitLab',        color: '#FC6D26', icon: 'GL' },
-  youtube:       { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
-  medium:        { label: 'Medium',        color: '#1A8917', icon: '📝' },
-  stackoverflow: { label: 'Stack Overflow',color: '#F48024', icon: '📚' },
-  mastodon:      { label: 'Mastodon',      color: '#6364FF', icon: '🦣' },
-  lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: '🦞' },
-  arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: '🔬' },
-  indeed:        { label: 'Indeed',        color: '#2557A7', icon: '💼' },
-  usajobs:       { label: 'USAJobs',       color: '#005EA8', icon: '🏛️' },
-  producthunt:   { label: 'Product Hunt',  color: '#DA552F', icon: '🚀' },
-  techcrunch:    { label: 'TechCrunch',      color: '#0D9F3F', icon: '📰' },
-  theverge:      { label: 'The Verge',       color: '#FF3333', icon: '⬛' },
-  indiehackers:  { label: 'Indie Hackers',   color: '#0E2150', icon: '💡' },
-  hashnode:      { label: 'freeCodeCamp',    color: '#006400', icon: '🔥' },
-  arstechnica:   { label: 'Ars Technica',    color: '#FF6600', icon: '📡' },
-  wired:         { label: 'WIRED',           color: '#111111', icon: '🔌' },
-  theregister:   { label: 'The Register',    color: '#CC0000', icon: '📋' },
-  venturebeat:   { label: 'VentureBeat',     color: '#1E6FBF', icon: '💹' },
-  smashing:      { label: 'Smashing Mag',    color: '#E9620A', icon: '🎨' },
-  phoronix:      { label: 'Phoronix',        color: '#2B7BB9', icon: '🐧' },
-  infoq:         { label: 'InfoQ',           color: '#67B346', icon: '🏗️' },
-  mittr:         { label: 'MIT Tech Review', color: '#A31F34', icon: '🔬' },
-  remoteok:      { label: 'Remote OK',       color: '#10B981', icon: 'RO' },
-  yc:            { label: 'Y Combinator',    color: '#FF6600', icon: 'YC' },
-  crunchbase:    { label: 'Crunchbase',      color: '#146AFF', icon: 'CB' },
-  behance:       { label: 'Behance',         color: '#053EFF', icon: 'Be' },
-  designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
-  uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
-};
-
 const SOURCE_TABS = [
   { key: 'all',        label: 'All',         icon: '⚡' },
   { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
@@ -259,7 +143,7 @@ function loadFeedState() {
       filters:    { ...DEFAULT_FILTERS, ...(s.filters || {}) },
       activeTabs: Array.isArray(s.activeTabs) ? s.activeTabs : [],
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   s.viewMode === 'following' ? 'following' : 'feed',
+      viewMode:   (s.viewMode === 'following' || s.viewMode === 'videos') ? s.viewMode : 'feed',
     };
   } catch { return null; }
 }
@@ -1231,22 +1115,26 @@ export default function Feed() {
   }, [loading, refreshing, loadingMore]);
 
   const switchViewMode = useCallback((mode) => {
-    const nextMode = mode === 'following' ? 'following' : 'feed';
+    const nextMode = mode === 'following' ? 'following' : mode === 'videos' ? 'videos' : 'feed';
     // Clicking the tab you're already on is a refresh, not a context switch
     // — merge the new posts in on top instead of wiping the scrolled-in
-    // list back down to one page. Switching to the *other* mode is a real
-    // context change (Feed and Following are different data), so that
+    // list back down to one page. Switching to a different mode is a real
+    // context change (Feed/Following/Videos are different data), so that
     // still replaces.
     const isRefresh = nextMode === viewModeRef.current;
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Following isn't source-filterable the way the aggregate Feed is —
-    // clear any source tabs so switching in/out doesn't leave a stale
-    // filter that silently does nothing in the other view.
+    // Neither Following nor Videos is source-filterable the way the
+    // aggregate Feed is — clear any source tabs so switching in/out doesn't
+    // leave a stale filter that silently does nothing in the other view.
     activeTabsRef.current = [];
     setActiveTabs([]);
+    // Videos has its own dedicated fetch pipeline (VideoFeedView talks to
+    // /office/feed/videos directly) — it doesn't use the posts list/loadFeed
+    // machinery at all, so there's nothing to fetch here for that mode.
+    if (nextMode === 'videos') return;
     loadFeed(true, [], {
       mode: nextMode,
       filters: filtersRef.current,
@@ -1711,12 +1599,14 @@ export default function Feed() {
       </div>
 
       {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
-          stable, server-sorted view) and Following (posts from people you
-          follow on UFconnect). */}
+          stable, server-sorted view), Following (posts from people you
+          follow on UFconnect), and Videos (a true-mix, TikTok-style rail of
+          every platform's video posts). */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {[
           { key: 'feed',      label: 'Feed' },
           { key: 'following', label: 'Following' },
+          { key: 'videos',    label: '▶ Videos' },
         ].map(({ key, label }) => {
           const active = viewMode === key;
           return (
@@ -1737,8 +1627,13 @@ export default function Feed() {
         })}
       </div>
 
-      {/* Source tabs — only meaningful for the aggregate Feed; Following is
-          a follows-based stream, not filterable by external platform. */}
+      {/* Videos is a full-screen takeover (TikTok-style), not a card list —
+          rendered as a fixed overlay on top of everything else here rather
+          than fighting the page's normal padding/max-width. */}
+      {viewMode === 'videos' && <VideoFeedView onExit={() => switchViewMode('feed')} />}
+
+      {/* Source tabs — only meaningful for the aggregate Feed; Following and
+          Videos aren't filterable by external platform the same way. */}
       {viewMode === 'feed' && (
       <div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
