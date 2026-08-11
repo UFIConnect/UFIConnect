@@ -4320,23 +4320,28 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
 
 // Job listings only ever got the same equal-per-source share as every other
 // source in the mix (~1/N for N sources in the pool) — with 30+ sources
-// that reads as "job postings basically never show up." This tops the pool
-// up with real, deduplicated job posts pulled specifically for the boost
-// (never fabricated), inserted at a fixed cadence rather than left to fight
-// for a place within the strict per-source equalization.
+// that reads as "job postings basically never show up." Real supply is thin
+// (confirmed live: ~20 Indeed + ~31 Remote OK posts total exist right now),
+// so a "top up with extra posts" approach does almost nothing once most of
+// that thin supply already made it into the pool via the regular equal-
+// share mix — there's nothing left to add. Instead: pull every job post
+// already scattered through the pool PLUS whatever the top-up fetch found,
+// combine and dedupe, then reinsert the whole set at a fixed cadence — this
+// guarantees the cadence regardless of how much overlap there was.
 const JOB_LISTING_SOURCES = ['indeed', 'remoteok'];
 function boostJobListings(pool, extraJobPosts, everyN = 8) {
-  if (!extraJobPosts.length) return pool;
-  const existingIds = new Set(pool.map(p => p.id));
-  const fresh = extraJobPosts.filter(p => p?.id && !existingIds.has(p.id));
-  if (!fresh.length) return pool;
+  const existingJobs = pool.filter(p => JOB_LISTING_SOURCES.includes(p.source));
+  const nonJobPool = pool.filter(p => !JOB_LISTING_SOURCES.includes(p.source));
+  const seenIds = new Set(existingJobs.map(p => p.id));
+  const combinedJobs = [...existingJobs, ...extraJobPosts.filter(p => p?.id && !seenIds.has(p.id))];
+  if (!combinedJobs.length) return pool;
   const result = [];
-  let bi = 0;
-  for (let i = 0; i < pool.length; i++) {
-    result.push(pool[i]);
-    if ((i + 1) % everyN === 0 && bi < fresh.length) result.push(fresh[bi++]);
+  let ji = 0;
+  for (let i = 0; i < nonJobPool.length; i++) {
+    result.push(nonJobPool[i]);
+    if ((i + 1) % everyN === 0 && ji < combinedJobs.length) result.push(combinedJobs[ji++]);
   }
-  while (bi < fresh.length) result.push(fresh[bi++]);
+  while (ji < combinedJobs.length) result.push(combinedJobs[ji++]);
   return result;
 }
 
@@ -8745,7 +8750,7 @@ async function handleFeedRequest(req, res) {
   // (and misaligned) query in the first place.
   let externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
   if (isDefaultAggregateView) {
-    const jobRows = await getPostsFromDB([], 30, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+    const jobRows = await getPostsFromDB([], 60, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
     const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source));
     externalDiversified = boostJobListings(externalDiversified, extraJobPosts);
   }
