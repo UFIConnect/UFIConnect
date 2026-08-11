@@ -10396,19 +10396,22 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       return res.status(403).json({ message: 'Join the group before posting.' });
     }
     const { content, mediaUrl, mediaType } = req.body;
-    // A caption is genuinely optional once there's a photo/video attached —
-    // matches how every social platform this feed already aggregates from
-    // treats media posts.
-    if (!content?.trim() && !mediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
     // mediaUrl is only ever trusted if it's a URL we just handed a signed
     // upload signature for (Cloudinary's cloud name is baked into the
     // expected host), not an arbitrary client-supplied string — otherwise
-    // this would be an open redirect / arbitrary-image-embed vector.
+    // this would be an open redirect / arbitrary-image-embed vector. Checked
+    // *before* the content-or-media requirement below — a bogus mediaUrl
+    // must not be able to satisfy that check and then silently disappear,
+    // leaving an empty post behind.
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
     const safeMediaUrl = mediaUrl && cloudName && String(mediaUrl).startsWith(`https://res.cloudinary.com/${cloudName}/`)
       ? String(mediaUrl).slice(0, 1000)
       : null;
     const safeMediaType = safeMediaUrl && (mediaType === 'image' || mediaType === 'video') ? mediaType : null;
+    // A caption is genuinely optional once there's a real, verified
+    // photo/video attached — matches how every social platform this feed
+    // already aggregates from treats media posts.
+    if (!content?.trim() && !safeMediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
 
     const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const post = {
