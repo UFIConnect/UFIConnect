@@ -63,7 +63,18 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
       v.muted = muted;
       v.defaultMuted = muted;
       v.playsInline = true;
-      v.play().catch(() => {});
+      v.play().catch(() => {
+        // Browser blocked autoplay-with-sound (no qualifying interaction
+        // yet, or a stricter mobile policy) — muted autoplay is allowed
+        // almost universally, so fall back to that instead of the video
+        // just silently never starting. Syncs the shared mute state too, so
+        // the mute button and every subsequent slide reflect reality.
+        if (!v.muted) {
+          v.muted = true;
+          setMuted(true);
+          v.play().catch(() => {});
+        }
+      });
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
     }
@@ -192,6 +203,7 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+            onMutedFallback={onToggleMute}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
@@ -304,7 +316,13 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
 export default function VideoFeedView({ onExit }) {
   const [videoPosts, setVideoPosts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [muted, setMuted] = useState(true);
+  // Starts unmuted (with sound) rather than TikTok's muted-by-default —
+  // browsers only block autoplay *with sound* when there's been no user
+  // interaction with the page yet, and reaching this view always requires
+  // clicking the Videos nav item first, which counts. play() falls back to
+  // muted automatically (see VideoSlide) if a browser blocks it anyway, so
+  // this never silently fails to play at all.
+  const [muted, setMuted] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);

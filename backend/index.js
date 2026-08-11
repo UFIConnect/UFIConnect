@@ -2569,6 +2569,7 @@ async function fetchIndeedJobs(keyword) {
         isExternal:  true,
         mediaUrl:    j.company_logo_url || null,
         mediaType:   j.company_logo_url ? 'image' : null,
+        location:    j.candidate_required_location || null,
         group:       { id: 'ext_indeed', name: 'Remote Jobs', category: 'Opportunities', externalUrl: 'https://remotive.com' },
       }));
       setCached(key, posts);
@@ -2954,6 +2955,7 @@ async function fetchRemoteOKJobs(keyword) {
         isExternal:  true,
         mediaUrl:    j.logo || j.company_logo || null,
         mediaType:   (j.logo || j.company_logo) ? 'image' : null,
+        location:    j.location || null,
         group:       { id: 'ext_remoteok', name: 'Remote OK Jobs', category: 'Opportunities', externalUrl: 'https://remoteok.com' },
       }));
     setCached(key, posts);
@@ -4365,6 +4367,59 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
 // combine and dedupe, then reinsert the whole set at a fixed cadence — this
 // guarantees the cadence regardless of how much overlap there was.
 const JOB_LISTING_SOURCES = ['indeed', 'remoteok'];
+
+// ─── Location-based matching ────────────────────────────────────────────────
+// Cloudflare (already in front of this app — see the `Server: cloudflare`
+// header on every response) adds this automatically to every request that
+// reaches the origin. A real, zero-cost, zero-permission-prompt signal —
+// not a browser geolocation prompt or a third-party IP-lookup API call.
+// ISO 3166-1 alpha-2 country code, or absent/'XX' when Cloudflare can't
+// determine one (some bots, some VPNs).
+function getUserCountry(req) {
+  const cc = req.headers['cf-ipcountry'];
+  return cc && cc !== 'XX' && cc !== 'T1' ? cc.toUpperCase() : null;
+}
+
+// Job location strings are free text from each platform's own API
+// (candidate_required_location, locations[].name, etc.) — inherently messy
+// ("USA Only", "Remote (US)", "Worldwide", "Berlin, Germany"), so this is a
+// best-effort keyword match, not exact. Only covers the countries common in
+// the job sources this app actually pulls from; unmapped countries simply
+// don't get a location boost rather than a wrong one.
+const COUNTRY_LOCATION_KEYWORDS = {
+  US: ['usa', 'united states', 'u.s.', 'us only', 'america'],
+  GB: ['uk', 'united kingdom', 'britain', 'england', 'scotland', 'wales'],
+  CA: ['canada'],
+  DE: ['germany', 'deutschland', 'berlin', 'munich'],
+  FR: ['france', 'paris'],
+  ES: ['spain', 'madrid', 'barcelona'],
+  IT: ['italy', 'italia', 'milan', 'rome'],
+  NL: ['netherlands', 'amsterdam', 'holland'],
+  IE: ['ireland', 'dublin'],
+  IN: ['india', 'bangalore', 'bengaluru', 'mumbai', 'hyderabad'],
+  AU: ['australia', 'sydney', 'melbourne'],
+  NZ: ['new zealand', 'auckland'],
+  BR: ['brazil', 'brasil', 'sao paulo'],
+  MX: ['mexico'],
+  JP: ['japan', 'tokyo'],
+  SG: ['singapore'],
+  PL: ['poland', 'warsaw'],
+  PT: ['portugal', 'lisbon'],
+  SE: ['sweden', 'stockholm'],
+};
+// Present in the vast majority of real listings that aren't restricted to a
+// specific country — always counts as a match regardless of the user's
+// detected country, since "remote, anywhere" genuinely is a match for them.
+const GLOBAL_LOCATION_KEYWORDS = ['worldwide', 'anywhere', 'global', 'international', 'remote'];
+
+function jobMatchesUserLocation(locationStr, countryCode) {
+  if (!locationStr) return false; // no real location data — never claim a match we can't back up
+  const loc = String(locationStr).toLowerCase();
+  if (GLOBAL_LOCATION_KEYWORDS.some(k => loc.includes(k))) return true;
+  if (!countryCode) return false;
+  const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
+  return !!keywords && keywords.some(k => loc.includes(k));
+}
 function boostJobListings(pool, extraJobPosts, everyN = 8) {
   const existingJobs = pool.filter(p => JOB_LISTING_SOURCES.includes(p.source));
   const nonJobPool = pool.filter(p => !JOB_LISTING_SOURCES.includes(p.source));
@@ -4390,16 +4445,21 @@ function boostJobListings(pool, extraJobPosts, everyN = 8) {
 // snapshot) without breaking pagination — same inputs always produce the
 // same order, so slicing at different offsets across separate requests
 // never duplicates or skips anything.
-function personalizeOrder(posts, userTopics) {
-  if (!userTopics?.length || !posts.length) return posts;
-  const topics = userTopics.map(t => String(t).toLowerCase()).filter(Boolean);
-  if (!topics.length) return posts;
+function personalizeOrder(posts, userTopics, userCountry = null) {
+  if ((!userTopics?.length && !userCountry) || !posts.length) return posts;
+  const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
+  if (!topics.length && !userCountry) return posts;
+  // Applied fresh per request (never baked into the shared snapshot pool,
+  // same reasoning as rotateForUser) — location match is only meaningful
+  // for job listings, which are the only posts that ever carry real
+  // per-post location data (see the location column on feed_posts_cache).
   const matched = [];
   const rest = [];
   for (const p of posts) {
     const postTopic = (p.topic || '').toLowerCase();
-    const isMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
-    (isMatch ? matched : rest).push(p);
+    const topicMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
+    const locationMatch = userCountry && JOB_LISTING_SOURCES.includes(p.source) && jobMatchesUserLocation(p.location, userCountry);
+    (topicMatch || locationMatch ? matched : rest).push(p);
   }
   if (!matched.length) return posts;
   // Roughly 2 matched posts for every 1 non-matched near the front — a
@@ -6782,6 +6842,10 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
+    // Added for location-based job matching — only Indeed/Remote OK's real
+    // API responses ever populate this (candidate_required_location /
+    // location); never inferred or guessed for sources that don't have it.
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
 
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
     await db.query(`
@@ -6856,8 +6920,8 @@ async function savePostsToDB(posts) {
     try {
       await db.query(
         `INSERT INTO feed_posts_cache
-           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (id) DO UPDATE SET
            title          = EXCLUDED.title,
            content        = EXCLUDED.content,
@@ -6869,6 +6933,7 @@ async function savePostsToDB(posts) {
            likes_count    = EXCLUDED.likes_count,
            comments_count = EXCLUDED.comments_count,
            post_created_at= EXCLUDED.post_created_at,
+           location       = EXCLUDED.location,
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -6882,6 +6947,7 @@ async function savePostsToDB(posts) {
           p.likesCount || 0,
           p.commentsCount || 0,
           p.createdAt,
+          p.location ? String(p.location).slice(0, 200) : null,
         ]
       );
       saved++;
@@ -6919,6 +6985,7 @@ async function savePostsToDBFast(posts) {
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
       post_created_at: clean(p.createdAt),
+      location: p.location ? clean(p.location, 200) : null,
     });
   }
   if (!rows.length) return 0;
@@ -6937,12 +7004,13 @@ async function savePostsToDBFast(posts) {
          topic TEXT,
          likes_count INTEGER,
          comments_count INTEGER,
-         post_created_at TIMESTAMPTZ
+         post_created_at TIMESTAMPTZ,
+         location TEXT
        )
      )
      INSERT INTO feed_posts_cache
-       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at)
-     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at
+       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
+     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        title          = EXCLUDED.title,
@@ -6955,6 +7023,7 @@ async function savePostsToDBFast(posts) {
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
        post_created_at= EXCLUDED.post_created_at,
+       location       = EXCLUDED.location,
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
@@ -7082,6 +7151,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       sourceUrl:   r.source_url,
       mediaUrl:    r.media_url,
       mediaType:   r.media_type,
+      location:    r.location,
       topic:       r.topic,
       likesCount:  normalizeCount(r.likes_count),
       commentsCount: normalizeCount(r.comments_count),
@@ -7157,6 +7227,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       sourceUrl:   r.source_url,
       mediaUrl:    r.media_url,
       mediaType:   r.media_type,
+      location:    r.location,
       topic:       r.topic,
       likesCount:  normalizeCount(r.likes_count),
       commentsCount: normalizeCount(r.comments_count),
@@ -8131,6 +8202,10 @@ async function handleFeedRequest(req, res) {
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
+  // Cloudflare-detected country (see getUserCountry) — drives the location
+  // boost inside personalizeOrder, same "applied fresh per request, never
+  // baked into the shared snapshot" treatment as userTopics.
+  const userCountry = getUserCountry(req);
   const sourceFilter = req.query.source || null;
   const sourcesParam = req.query.sources
     ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
@@ -8316,7 +8391,7 @@ async function handleFeedRequest(req, res) {
         // request here still slices cleanly across pages, and this user
         // always sees the same personalized rotation of the shared pool for
         // the rest of this snapshot's window.
-        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics);
+        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics, userCountry);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -8463,7 +8538,7 @@ async function handleFeedRequest(req, res) {
       // the wantsMix branch above) so both stay in sync with each other.
       // Rotated per-user first — see rotateForUser — so different users
       // don't all land on the exact same slice/order of the shared pool.
-      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics);
+      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics, userCountry);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       return res.json({
@@ -8803,7 +8878,7 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id), userTopics);
+  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id), userTopics, userCountry);
   const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -11360,6 +11435,7 @@ const GOAL_TYPE_BOOST = {
 app.get('/opportunities', authenticate, async (req, res) => {
   if (req.query.bust === '1') { remotiveCache.clear(); museCache.clear(); }
   const { type, remote, search } = req.query;
+  const userCountry = getUserCountry(req);
   const user       = await getUser(req.user.id);
   const role       = user?.preferences?.role || '';
   const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
@@ -11454,6 +11530,12 @@ app.get('/opportunities', authenticate, async (req, res) => {
 
     // 6. Live recency bonus
     if (o.isLive) score += 1;
+
+    // 7. Location — real per-listing location data (candidate_required_location
+    // / locations[].name from Remotive/Muse/Remote OK) matched against the
+    // user's Cloudflare-detected country. Never claims a match when a
+    // listing has no location info at all.
+    if (jobMatchesUserLocation(o.location, userCountry)) { score += 2; reasons.push('Near you'); }
 
     return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
   });

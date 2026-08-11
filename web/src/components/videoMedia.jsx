@@ -57,7 +57,7 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onMutedFallback, style }) {
   const videoRef = useRef(null);
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
@@ -84,10 +84,22 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
       video.defaultMuted = muted;
       video.playsInline = true;
     }
+    // If the browser blocks autoplay-with-sound, muted autoplay is allowed
+    // almost universally — falls back to that instead of never starting,
+    // and tells the caller so shared mute-button state stays in sync.
+    function playWithMutedFallback() {
+      video.play().catch(() => {
+        if (!video.muted) {
+          video.muted = true;
+          onMutedFallback?.();
+          video.play().catch(() => {});
+        }
+      });
+    }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
       video.src = src;
-      if (autoPlay) { primeForAutoplay(); video.play().catch(() => {}); }
+      if (autoPlay) { primeForAutoplay(); playWithMutedFallback(); }
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it
       // statically pulled it into every visitor's Feed download (~140KB
@@ -103,7 +115,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!videoRef.current) return;
           primeForAutoplay();
-          videoRef.current.play().catch(() => {});
+          playWithMutedFallback();
         });
       }).catch(() => setErrored(true));
     }
