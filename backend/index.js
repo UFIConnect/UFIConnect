@@ -1303,12 +1303,24 @@ function extractRedditMedia(d) {
   if (d.is_video && d.media?.reddit_video?.fallback_url) {
     return { mediaType: 'video', mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url) };
   }
+  // Gallery posts (common for food/photo/art subs) carry no `preview` field
+  // at all — the images live in media_metadata instead, keyed by media id.
+  if (d.is_gallery && d.media_metadata) {
+    const first = Object.values(d.media_metadata).find(m => m?.s?.u || m?.s?.gif);
+    const galleryUrl = first?.s?.u || first?.s?.gif;
+    if (galleryUrl) return { mediaType: 'image', mediaUrl: decodeHTMLEntities(galleryUrl) };
+  }
   const previewUrl = d.preview?.images?.[0]?.source?.url;
   if (previewUrl && (d.post_hint === 'image' || /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(d.url || ''))) {
     return { mediaType: 'image', mediaUrl: decodeHTMLEntities(previewUrl) };
   }
   if (d.url && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(d.url)) {
     return { mediaType: 'image', mediaUrl: d.url };
+  }
+  // Crossposts wrap the original post — the actual media (video/gallery/
+  // image) lives on the crossposted-from post, not on this wrapper.
+  if (d.crosspost_parent_list?.[0]) {
+    return extractRedditMedia(d.crosspost_parent_list[0]);
   }
   return { mediaType: null, mediaUrl: null };
 }
