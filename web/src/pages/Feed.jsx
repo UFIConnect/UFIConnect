@@ -46,6 +46,65 @@ function extractYouTubeId(url) {
   return m ? m[1] : null;
 }
 
+// Bluesky video posts store the HLS playlist URL and its thumbnail at the
+// same path, differing only in filename (.../thumbnail.jpg vs
+// .../playlist.m3u8) — mediaUrl only ever holds the thumbnail (the DB
+// column it persists through already existed; a separate stream-url column
+// didn't), so the playlist URL is recovered by swapping the filename.
+function deriveBlueskyPlaylistUrl(thumbnailUrl) {
+  if (!thumbnailUrl || !thumbnailUrl.includes('/thumbnail.')) return null;
+  return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
+}
+
+// Plays an HLS (.m3u8) stream via hls.js where needed, or natively where the
+// browser already supports it (Safari/iOS). Used for Bluesky video — a
+// simple <video src="...m3u8"> only works in Safari; everywhere else needs
+// hls.js to actually decode the stream.
+function HlsVideoPlayer({ src, poster, autoPlay = true, style }) {
+  const videoRef = useRef(null);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !src) return;
+    setErrored(false);
+    let hls;
+    let cancelled = false;
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari/iOS play HLS natively — no need to pull in hls.js at all.
+      video.src = src;
+      if (autoPlay) video.play().catch(() => {});
+    } else {
+      // Lazy-loaded: hls.js is a genuinely large library, and bundling it
+      // statically pulled it into every visitor's Feed download (~140KB
+      // gzipped extra) whether or not they ever see a video post. Only
+      // fetched now when a stream actually needs decoding.
+      import('hls.js').then(({ default: Hls }) => {
+        if (cancelled || !videoRef.current) return;
+        if (!Hls.isSupported()) { setErrored(true); return; }
+        hls = new Hls();
+        hls.loadSource(src);
+        hls.attachMedia(videoRef.current);
+        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
+        if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => videoRef.current?.play().catch(() => {}));
+      }).catch(() => setErrored(true));
+    }
+    return () => { cancelled = true; hls?.destroy(); };
+  }, [src, autoPlay]);
+
+  if (errored) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, background: '#000', color: '#fff', fontSize: '.85rem', ...style }}>
+        🎬 Video unavailable
+      </div>
+    );
+  }
+  return (
+    <video ref={videoRef} controls autoPlay={autoPlay} poster={poster}
+      style={{ width: '100%', display: 'block', background: '#000', ...style }} />
+  );
+}
+
 function postEngagement(post) {
   const likes = Number(post?.likesCount || post?.likes || 0);
   const comments = Number(post?.commentsCount || post?.comments || 0);
@@ -255,6 +314,7 @@ function PostCardSkeleton() {
 function VideoModal({ post, onClose }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const modalRef = useRef(null);
+  const playlistUrl = post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -290,7 +350,12 @@ function VideoModal({ post, onClose }) {
           boxShadow: '0 24px 80px rgba(0,0,0,.6)',
         }}
       >
-        {post.mediaUrl && (
+        {playlistUrl ? (
+          <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
+            <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} style={{ maxHeight: 480 }} />
+            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>×</button>
+          </div>
+        ) : post.mediaUrl && (
           <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
             <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 320, opacity: 0.9 }} />
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1965,6 +2030,13 @@ export default function Feed() {
           </Link>
         </div>
       )}
+
+      {/* videoPost is set by PostCard's onVideoOpen (the inline video thumbnail
+          button) but nothing ever actually rendered VideoModal — clicking a
+          video post set state that nothing read, so the modal never opened
+          at all. Confirmed by build output: with no live call site,
+          Rollup's tree-shaking correctly discarded the entire component. */}
+      {videoPost && <VideoModal post={videoPost} onClose={() => setVideoPost(null)} />}
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

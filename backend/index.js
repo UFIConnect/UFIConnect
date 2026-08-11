@@ -2999,6 +2999,16 @@ async function fetchBlueskyByKeyword(keyword) {
   const mapPost = (p) => {
     const text   = (p.record?.text || '').slice(0, 500);
     const handle = p.author?.handle || p.author?.did || 'unknown';
+    // Bluesky (AT Protocol) video posts stream via HLS — embed.video#view
+    // gives a .m3u8 playlist plus a thumbnail, and they always share the
+    // same path (.../thumbnail.jpg vs .../playlist.m3u8). Persisting the
+    // playlist URL directly would need a new DB column (media_url already
+    // holds the thumbnail), so mediaUrl stores the thumbnail and the
+    // frontend derives the stream URL by swapping the filename — same
+    // "recover it from what's already persisted" approach as the YouTube
+    // embedId fix.
+    const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
+    const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
     return {
       id:          `bluesky_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi,'').slice(-16)}`,
       authorId:    `bluesky_${p.author?.did || 'anon'}`,
@@ -3013,14 +3023,17 @@ async function fetchBlueskyByKeyword(keyword) {
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
       createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
-      mediaUrl:    p.embed?.images?.[0]?.thumb || null,
-      mediaType:   p.embed?.images ? 'image' : null,
+      mediaUrl:    isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].thumb : null),
+      mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
       group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
     };
   };
 
   const bskyFetch = (q) => new Promise((resolve, reject) => {
-    const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=100&sort=latest`;
+    // limit was 100 — on a 10s/4-shard cadence (the fastest tier) this made
+    // Bluesky the biggest contributor to the shared cache by far, same bug
+    // as GitHub/DevTo just worse given the speed. 25 is still generous.
+    const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=25&sort=latest`;
     https.get(
       { hostname: 'api.bsky.app', path,
         headers: {
