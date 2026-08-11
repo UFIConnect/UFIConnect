@@ -90,7 +90,7 @@ export default function Layout({ children }) {
               <NavLink to="/settings" title="Settings">
                 <button className="sidebar-logout" title="Settings" style={{ fontSize: '1rem' }}>⚙️</button>
               </NavLink>
-              <button className="sidebar-logout" onClick={handleLogout} title="Log out">⎋</button>
+              <button className="sidebar-logout sidebar-logout--danger" onClick={handleLogout} aria-label="Log out" title="Log out">⎋</button>
             </div>
           </div>
         )}

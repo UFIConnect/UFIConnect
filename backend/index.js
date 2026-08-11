@@ -3954,7 +3954,7 @@ const globalFeedCache = { posts: [], refreshedAt: 0 };
 // held still. This snapshot makes the sort run at most once per TTL window;
 // every request inside that window gets byte-identical external-post order,
 // keyed by sortMode since 'ranked'/'newest'/'balanced' order differently.
-const MAIN_FEED_SNAPSHOT_TTL = 10 * 60 * 1000;
+const MAIN_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
 // The snapshot has to hold enough posts to cover several pages of
 // infinite-scroll, not just page 1 — page 2+ used to run its own,
 // independently-windowed balanced query that didn't line up with what page
@@ -3971,6 +3971,42 @@ const mainFeedSnapshots = new Map();
 // first wins that dimension for everyone else until the next recompute.
 function mainFeedSnapshotKey(sortMode, timeRange) {
   return `${sortMode}::${timeRange || 'all'}`;
+}
+
+// Every user reading the same cached pool in the same order was the actual
+// complaint behind "users shouldn't all see the same feed" — the shared
+// snapshot is what makes the sort stable and cheap, but it was being served
+// starting from the exact same position 0 for everyone. This gives each
+// user a deterministic (stable across requests, different per person)
+// rotation offset into the *same* pool, so two users scrolling at the same
+// moment see genuinely different slices/order of it, without needing a
+// separate fetch or sort per user.
+function hashStringToInt(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash * 31 + str.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+function rotateForUser(pool, userId) {
+  if (!pool.length || !userId) return pool;
+  const offset = hashStringToInt(String(userId)) % pool.length;
+  if (!offset) return pool;
+  return [...pool.slice(offset), ...pool.slice(0, offset)];
+}
+
+// Real content is finite, but infinite scroll shouldn't just dead-end once
+// a page runs past the cached pool's depth — wraps back around to the start
+// instead of returning hasMore:false. Bounded to at most one full lap per
+// call so a client bug requesting a huge page can't spin this forever.
+function sliceCircular(pool, lo, count) {
+  if (!pool.length) return [];
+  const start = lo % pool.length;
+  const result = [];
+  for (let i = 0; i < count && i < pool.length; i++) {
+    result.push(pool[(start + i) % pool.length]);
+  }
+  return result;
 }
 
 function feedWorkerKey(source) {
@@ -4601,6 +4637,9 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
   }
   logAgentAction('refresh_queue', '🔁',
     `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
+  // (see AUTO_TRANSFER_INTERVAL_MS below for the automatic 10-minute trigger
+  // that used to require someone to click "Transfer content to website" in
+  // the office by hand)
 
   if (!sourceRefreshQueue.running) {
     setImmediate(() => drainSourceRefreshQueue().catch((err) => {
@@ -8271,23 +8310,18 @@ async function handleFeedRequest(req, res) {
       // look like it stopped after page 1.
       const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
-        // personalizeOrder is deterministic given the same (posts, userTopics)
-        // pair, so recomputing it per-request here still slices cleanly across
-        // pages — this user always sees the same personalized arrangement of
-        // the shared pool for the rest of this snapshot's 10-minute window.
-        const personalized = personalizeOrder(snap.posts, userTopics);
+        // Rotate first (per-user starting point into the shared pool — see
+        // rotateForUser), then personalize — both are deterministic given
+        // the same (pool, userId/userTopics) pair, so recomputing them per
+        // request here still slices cleanly across pages, and this user
+        // always sees the same personalized rotation of the shared pool for
+        // the rest of this snapshot's window.
+        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics);
         const lo = (reqPage - 1) * feedLimit;
-        const pageSlice = personalized.slice(lo, lo + feedLimit);
-        // A fresh snapshot exists, so it — not the legacy query below — is
-        // the source of truth for this 10-minute window. If the requested
-        // page runs past the cached pool's depth, the honest answer is "no
-        // more right now" (posts:[], hasMore:false), not falling through to
-        // the legacy balanced query: that query windows by its own
-        // independent perSourcePageSize/page math with no knowledge of how
-        // much the snapshot already handed out, so it re-served rn ranges
-        // the snapshot had already covered — near-duplicate content that
-        // the client's dedup then collapsed to almost nothing, which is
-        // what made scrolling look like it stopped dead after page 1.
+        // Wraps around instead of dead-ending once a page runs past the
+        // cached pool's depth — real content is finite, but infinite scroll
+        // shouldn't just stop.
+        const pageSlice = sliceCircular(personalized, lo, feedLimit);
         return res.json({
           posts: pageSlice.map(p => ({
             ...p,
@@ -8298,7 +8332,7 @@ async function handleFeedRequest(req, res) {
             relevance:       1,
           })),
           page: reqPage,
-          hasMore: snap.posts.length > lo + feedLimit,
+          hasMore: personalized.length > 0,
           sort: sortMode,
         });
       }
@@ -8427,13 +8461,15 @@ async function handleFeedRequest(req, res) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
       // the wantsMix branch above) so both stay in sync with each other.
-      const personalized = personalizeOrder(snap.posts, userTopics);
-      const externalPosts = personalized.slice(0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
+      // Rotated per-user first — see rotateForUser — so different users
+      // don't all land on the exact same slice/order of the shared pool.
+      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics);
+      const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       return res.json({
         posts: finalPosts,
         sort: sortMode,
-        hasMore: snap.posts.length > feedLimit,
+        hasMore: personalized.length > 0,
         totalAvailable: snap.posts.length,
         refresh: { ...snap.refresh, cacheRefreshedAt: snap.computedAt },
         sources: snap.sources,
@@ -8760,11 +8796,14 @@ async function handleFeedRequest(req, res) {
     const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source));
     externalDiversified = boostJobListings(externalDiversified, extraJobPosts);
   }
-  // externalDiversified itself stays unpersonalized — it's what gets cached
-  // as the shared snapshot below and read by every other user, so it can't
-  // bake in *this* request's interests. personalizeOrder only reorders (same
-  // length, same members), applied fresh per response instead.
-  const personalizedExternal = personalizeOrder(externalDiversified, userTopics);
+  // externalDiversified itself stays unrotated/unpersonalized — it's what
+  // gets cached as the shared snapshot below and read by every other user,
+  // so it can't bake in *this* request's rotation or interests. Rotation +
+  // personalizeOrder only reorder (same length, same members), applied
+  // fresh per response instead — same treatment as the cached-snapshot read
+  // paths above, so this request's user sees a consistent rotation whether
+  // it hit the cache or triggered the recompute.
+  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id), userTopics);
   const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -8814,7 +8853,7 @@ async function handleFeedRequest(req, res) {
     mainFeedSnapshots.set(mainFeedSnapshotKey(sortMode, timeRange), {
       computedAt: Date.now(),
       posts: externalDiversified,
-      hasMore: externalDiversified.length > feedLimit,
+      hasMore: externalDiversified.length > 0,
       totalAvailable: externalDiversified.length,
       sources: sourcesBreakdown,
       refresh: refreshMeta,
@@ -8824,7 +8863,7 @@ async function handleFeedRequest(req, res) {
   res.json({
     posts: responsePosts,
     sort: sortMode,
-    hasMore: externalDiversified.length > feedLimit,
+    hasMore: externalDiversified.length > 0,
     totalAvailable: externalDiversified.length,
     refresh: refreshMeta,
     sources: sourcesBreakdown,
@@ -8842,23 +8881,47 @@ app.get('/office/feed', authenticate, handleFeedRequest);
 // platform" query that powers the main feed's mix) with a media_type filter,
 // so no source can dominate the video rail just because it happens to post
 // more video than everyone else.
+//
+// Same root cause and fix as the main feed's mainFeedSnapshots: this used to
+// call getBalancedFeedPosts independently for every page, each with its own
+// fresh ROW_NUMBER partitioning — if any new video landed between page 1's
+// query and page 2's, everything after it shifted rank by one, so page 2
+// could re-serve content page 1 already showed. Confirmed live as "repeated
+// posts" while scrolling. One shared, periodically-refreshed pool that every
+// page slices from instead — no independent queries, no shifting ranks.
+let videoFeedSnapshot = null; // { computedAt, posts }
+const VIDEO_FEED_SNAPSHOT_TTL = 5 * 60 * 1000; // shorter than the main feed's 10min — video supply is thinner, and there's a manual refresh button for anyone who wants newer sooner
+
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
-    // Video posts are a small slice of all content, so a handful of sources
-    // splitting a 24h window (getBalancedFeedPosts' default) runs thin fast
-    // — widen to 7 days specifically for video so there's enough per source
-    // to keep an infinite-scroll rail fed.
-    const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 6));
-    const { posts } = await Promise.race([
-      getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: reqPage, perSourcePageSize, mediaType: 'video' }),
-      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
-    ]);
+    if (req.query.bust === '1') videoFeedSnapshot = null;
+
+    if (!videoFeedSnapshot || (Date.now() - videoFeedSnapshot.computedAt) >= VIDEO_FEED_SNAPSHOT_TTL) {
+      // Video posts are a small slice of all content, so a handful of
+      // sources splitting a 24h window (getBalancedFeedPosts' default) runs
+      // thin fast — widened to 7 days, and a generous perSourcePageSize (25,
+      // not just enough for one page) since this pool now has to cover
+      // several pages of infinite-scroll, not just the first one.
+      const { posts } = await Promise.race([
+        getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: 1, perSourcePageSize: 25, mediaType: 'video' }),
+        new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
+      ]);
+      videoFeedSnapshot = { computedAt: Date.now(), posts };
+    }
+
+    // Same per-user rotation + circular wraparound as the main feed — so
+    // different users don't all scroll through videos in the exact same
+    // order, and the rail never just dead-ends once real supply runs out.
+    const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id);
+    const lo = (reqPage - 1) * feedLimit;
+    const pageSlice = sliceCircular(rotated, lo, feedLimit);
     res.json({
-      posts: posts.slice(0, feedLimit),
+      posts: pageSlice,
       page: reqPage,
-      hasMore: posts.length >= perSourcePageSize,
+      hasMore: videoFeedSnapshot.posts.length > 0,
+      snapshotAt: videoFeedSnapshot.computedAt,
     });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
@@ -8867,6 +8930,36 @@ async function handleVideoFeedRequest(req, res) {
 }
 app.get('/feed/videos', authenticate, handleVideoFeedRequest);
 app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
+
+// ─── Proactive snapshot warming ─────────────────────────────────────────────
+// Without this, the first request after a snapshot's TTL expires pays the
+// full recompute cost synchronously — whoever's unlucky enough to trigger it
+// waits, and if that happens to be a manual refresh click, "ready posts when
+// they click refresh" isn't actually true. Runs the real handler through a
+// synthetic internal request (not a duplicate implementation) shortly before
+// each snapshot would otherwise go stale, so a real request always finds a
+// warm cache. The fake user id resolves to no user server-side (getUser
+// returns null → every ?. default kicks in), which is fine — only the
+// shared, non-personalized pool this populates is kept; the synthetic
+// response itself is discarded.
+function warmMainFeedSnapshot(sortMode, timeRange) {
+  const req = { query: { sort: sortMode, timeRange: timeRange === 'all' ? undefined : timeRange, limit: `${DEFAULT_FEED_LIMIT}`, mode: 'feed' }, user: { id: '__system_warmup__' } };
+  const res = { status() { return this; }, json() {}, headersSent: false };
+  handleFeedRequest(req, res).catch(e => console.warn('warmMainFeedSnapshot:', e.message));
+}
+function warmVideoFeedSnapshot() {
+  const req = { query: { limit: '10', page: '1' }, user: { id: '__system_warmup__' } };
+  const res = { status() { return this; }, json() {}, headersSent: false };
+  handleVideoFeedRequest(req, res).catch(e => console.warn('warmVideoFeedSnapshot:', e.message));
+}
+// 30s before the TTL actually expires — 'newest' is the frontend's actual
+// default sort; 'ranked' is warmed too since it's the fallback for any
+// caller that omits ?sort entirely (legacy /feed consumers).
+setInterval(() => {
+  warmMainFeedSnapshot('newest', 'all');
+  warmMainFeedSnapshot('ranked', 'all');
+  warmVideoFeedSnapshot();
+}, Math.min(MAIN_FEED_SNAPSHOT_TTL, VIDEO_FEED_SNAPSHOT_TTL) - 30 * 1000);
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
 app.get('/feed/stream', authenticateSSE, (req, res) => {
@@ -10074,6 +10167,17 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
   fn();
   res.json({ ok: true, triggered: req.params.id });
 });
+
+// "Transfer content to website" (queue every source worker to refetch, see
+// the office Transfer Helper panel above) used to require someone to click
+// the button by hand. Runs the exact same enqueueSourceRefresh call
+// automatically every 10 minutes instead — enqueueSourceRefresh already
+// no-ops during a stability-critical window, so this can't pile on top of
+// an already-struggling instance.
+const AUTO_TRANSFER_INTERVAL_MS = 10 * 60 * 1000;
+setInterval(() => {
+  enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'automatic 10-minute transfer');
+}, AUTO_TRANSFER_INTERVAL_MS);
 
 // Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
 function requestRenderDeploy(options, body = null) {

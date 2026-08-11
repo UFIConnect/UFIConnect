@@ -85,7 +85,7 @@ export default function Opportunities() {
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('all');
-  const [sort,      setSort]      = useState('newest');
+  const [sort,      setSort]      = useState('match');
   const [remote,    setRemote]    = useState(false);
   const [liveOnly,  setLiveOnly]  = useState(false);
   const [searchInput, setSearchInput] = useState('');

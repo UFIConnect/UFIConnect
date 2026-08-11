@@ -52,9 +52,22 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
     if (src?.kind === 'youtube') return;
     const v = getNativeEl();
     if (!v) return;
-    if (active) { v.play().catch(() => {}); }
-    else { v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false); }
-  }, [active, src?.kind, getNativeEl]);
+    if (active) {
+      // Mobile Safari/Chrome's autoplay policy checks muted state at the
+      // moment play() is called, not just the JSX attribute — confirmed
+      // this was the gap on mobile specifically (desktop tolerates it).
+      // Setting both muted and defaultMuted imperatively right before
+      // play() is the reliable fix; playsInline is already set via JSX but
+      // reasserted here too since iOS is picky about it being present
+      // before playback starts, not just at mount.
+      v.muted = muted;
+      v.defaultMuted = muted;
+      v.playsInline = true;
+      v.play().catch(() => {});
+    } else {
+      v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
+    }
+  }, [active, src?.kind, getNativeEl, muted]);
 
   // youtube: the real IFrame Player API — a raw <iframe src="..."> embed has
   // no programmatic control at all, so pause + a scrub tracker need this
@@ -296,20 +309,32 @@ export default function VideoFeedView({ onExit }) {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
   const loadingMoreRef = useRef(false);
 
-  const loadPage = useCallback(async (pageNum) => {
+  const loadPage = useCallback(async (pageNum, { bust = false, prepend = false } = {}) => {
     try {
-      const { data } = await client.get(`/office/feed/videos?limit=10&page=${pageNum}`);
+      const params = `limit=10&page=${pageNum}${bust ? '&bust=1' : ''}`;
+      const { data } = await client.get(`/office/feed/videos?${params}`);
       const incoming = (data.posts || []).filter(p => p?.mediaUrl);
       setVideoPosts(prev => {
+        if (prepend) {
+          // Refresh: put whatever's new at the front, ahead of whatever the
+          // user hasn't scrolled to yet, instead of wiping the queue and
+          // starting over — same "new stuff on top, don't lose your place"
+          // behavior as the main Feed's refresh.
+          const seen = new Set(prev.map(p => p.id));
+          const fresh = incoming.filter(p => !seen.has(p.id));
+          return [...fresh, ...prev];
+        }
         if (pageNum === 1) return incoming;
         const seen = new Set(prev.map(p => p.id));
         return [...prev, ...incoming.filter(p => !seen.has(p.id))];
       });
       setHasMore(data.hasMore !== false && incoming.length > 0);
+      setError(false);
     } catch {
       setError(true);
     } finally {
@@ -318,6 +343,19 @@ export default function VideoFeedView({ onExit }) {
   }, []);
 
   useEffect(() => { loadPage(1); }, [loadPage]);
+
+  // Manual refresh — busts the server's cached pool (see VIDEO_FEED_SNAPSHOT_TTL
+  // backend-side) so this always pulls in whatever's newly landed instead of
+  // waiting out the rest of its 5-minute window, and prepends it rather than
+  // replacing the queue outright.
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    await loadPage(1, { bust: true, prepend: true });
+    setRefreshing(false);
+  }, [refreshing, loadPage]);
 
   // Which slide is centered in the scroll-snap container is "active" — that's
   // the only one that actually mounts a player, so scrolling past a video
@@ -365,6 +403,14 @@ export default function VideoFeedView({ onExit }) {
         position: 'absolute', top: 16, left: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
         background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.2rem', cursor: 'pointer',
       }}>←</button>
+      <button onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" style={{
+        position: 'absolute', top: 16, right: 64, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
+        background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.05rem',
+        cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
+      </button>
       <button onClick={() => setMuted(m => !m)} aria-label={muted ? 'Unmute' : 'Mute'} style={{
         position: 'absolute', top: 16, right: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
         background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.1rem', cursor: 'pointer',

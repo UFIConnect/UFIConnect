@@ -127,7 +127,7 @@ export default function PublicProfile() {
       <div className="card" style={{ textAlign: 'center', padding: '40px 24px' }}>
         <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>👤</div>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>User not found</div>
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/search')}>← Back to Search</button>
+        <button className="btn-back" onClick={() => navigate('/search')}><span className="btn-back-icon">‹</span> Back to Search</button>
       </div>
     </Layout>
   );
@@ -139,8 +139,8 @@ export default function PublicProfile() {
 
   return (
     <Layout>
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }} onClick={() => navigate(-1)}>
-        ← Back
+      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate(-1)}>
+        <span className="btn-back-icon">‹</span> Back
       </button>
 
       {/* Cover — role-colored gradient */}

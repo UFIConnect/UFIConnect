@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 // image-bearing post currently on screen — images previously just sat
 // inline in the feed with no way to see them larger, and no way to browse
 // from one photo post to the next without closing back out to the list.
-export default function ImageLightbox({ items, startIndex = 0, onClose }) {
+export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEnd }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
   const touchStartX = useRef(null);
 
@@ -25,6 +25,15 @@ export default function ImageLightbox({ items, startIndex = 0, onClose }) {
       document.body.style.overflow = prevOverflow;
     };
   }, [onClose, goNext, goPrev]);
+
+  // Browsing through photos used to dead-end at whatever was already loaded
+  // into the underlying feed — this pulls in more (same "load more before
+  // actually running out" pattern as the video feed) as the viewer nears
+  // the last few already-loaded images, so scrolling through photos keeps
+  // updating with fresh ones instead of stopping.
+  useEffect(() => {
+    if (onNearEnd && index >= items.length - 3) onNearEnd();
+  }, [index, items.length, onNearEnd]);
 
   const item = items[index];
   if (!item) return null;

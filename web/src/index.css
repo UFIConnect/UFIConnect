@@ -137,12 +137,16 @@ input, textarea, select { font-family: inherit; }
 .sidebar-user-name  { font-size: .8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-user-title { font-size: .72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sidebar-logout {
-  padding: 4px 6px; border-radius: var(--radius-xs);
-  background: none; border: none;
-  font-size: .75rem; color: var(--muted);
-  transition: color .15s;
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; padding: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface); border: 1.5px solid var(--border);
+  font-size: .85rem; color: var(--muted);
+  transition: background .15s, color .15s, border-color .15s;
 }
-.sidebar-logout:hover { color: var(--danger); }
+.sidebar-logout:hover { background: var(--surface); color: var(--text); border-color: var(--muted); }
+.sidebar-logout--danger { color: var(--danger); border-color: #FCA5A5; background: #FEF2F2; }
+.sidebar-logout--danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
 
 /* ── Main content area ────────────────────────────────────── */
 .main {
@@ -238,6 +242,34 @@ input, textarea, select { font-family: inherit; }
 .btn-sm { padding: 5px 12px; font-size: .8rem; }
 .btn-lg { padding: 12px 24px; font-size: 1rem; }
 .btn-full { width: 100%; }
+
+/* ── Back navigation ("← Back to X" links back to a parent page) ──────── */
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: .82rem;
+  font-weight: 600;
+  transition: background .15s, border-color .15s;
+}
+.btn-back:hover { background: var(--surface); border-color: var(--muted); }
+.btn-back-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  color: var(--primary);
+  font-size: .72rem;
+  flex-shrink: 0;
+}
 
 /* ── Form ─────────────────────────────────────────────────── */
 .form-group { margin-bottom: 16px; }

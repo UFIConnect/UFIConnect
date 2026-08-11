@@ -211,7 +211,7 @@ export default function Settings() {
 
   return (
     <Layout>
-      <Link to="/profile" className="btn btn-ghost btn-sm" style={{ marginBottom: 14, display: 'inline-flex' }}>← Back to Profile</Link>
+      <Link to="/profile" className="btn-back" style={{ marginBottom: 14 }}><span className="btn-back-icon">‹</span> Back to Profile</Link>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
         <p className="page-subtitle">Manage your profile, preferences, and account details.</p>

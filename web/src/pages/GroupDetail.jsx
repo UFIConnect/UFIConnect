@@ -91,8 +91,8 @@ export default function GroupDetail() {
   return (
     <Layout>
       {/* Back */}
-      <button className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }} onClick={() => navigate('/groups')}>
-        ← Back to Groups
+      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate('/groups')}>
+        <span className="btn-back-icon">‹</span> Back to Groups
       </button>
 
       {/* Group header */}

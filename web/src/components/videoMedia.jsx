@@ -74,10 +74,20 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     setErrored(false);
     let hls;
     let cancelled = false;
+    // Mobile autoplay policies (iOS Safari and Android Chrome both) check
+    // muted state at the moment play() is actually called — the muted JSX
+    // attribute alone wasn't reliably enough on mobile specifically.
+    // Setting muted/defaultMuted/playsInline imperatively right before every
+    // play() call is the robust fix.
+    function primeForAutoplay() {
+      video.muted = muted;
+      video.defaultMuted = muted;
+      video.playsInline = true;
+    }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
       video.src = src;
-      if (autoPlay) video.play().catch(() => {});
+      if (autoPlay) { primeForAutoplay(); video.play().catch(() => {}); }
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it
       // statically pulled it into every visitor's Feed download (~140KB
@@ -90,7 +100,11 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         hls.loadSource(src);
         hls.attachMedia(videoRef.current);
         hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
-        if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => videoRef.current?.play().catch(() => {}));
+        if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (!videoRef.current) return;
+          primeForAutoplay();
+          videoRef.current.play().catch(() => {});
+        });
       }).catch(() => setErrored(true));
     }
     return () => { cancelled = true; hls?.destroy(); };

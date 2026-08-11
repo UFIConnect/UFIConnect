@@ -130,7 +130,7 @@ const SOURCE_TABS = [
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
-const FEED_AUTO_REFRESH_MS = 10 * 60 * 1000;
+const FEED_AUTO_REFRESH_MS = 5 * 60 * 1000;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
@@ -1975,6 +1975,7 @@ export default function Feed() {
           items={imagePosts.map(p => ({ url: p.mediaUrl, post: p }))}
           startIndex={imageLightboxIndex}
           onClose={() => setImageLightboxPostId(null)}
+          onNearEnd={loadMoreRemote}
         />
       )}
 
