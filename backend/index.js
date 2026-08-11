@@ -6144,9 +6144,37 @@ async function getFollowingFeedPosts(userId) {
     }
   }
 
-  return [...internalPosts, ...externalPosts].sort(
-    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
-  );
+  return interleaveByAuthor([...internalPosts, ...externalPosts]);
+}
+
+// True mix for Following, same idea as getBalancedFeedPosts/enforceFeedDiversity
+// use for external sources: a flat newest-first sort lets whoever posts most
+// often dominate the top of the feed, burying everyone else you follow. This
+// round-robins one post per followed person per pass instead, so the feed
+// reflects who you follow, not just who posts the most. Authors are ordered
+// by their own most-recent post first, so someone who just posted still
+// surfaces before someone whose last post was a week ago — the round-robin
+// only kicks in to prevent any one person from hogging every subsequent slot.
+function interleaveByAuthor(items) {
+  const byAuthor = new Map();
+  for (const p of items) {
+    const key = p.authorId || p.author?.id || 'unknown';
+    if (!byAuthor.has(key)) byAuthor.set(key, []);
+    byAuthor.get(key).push(p);
+  }
+  const queues = [...byAuthor.values()]
+    .map(arr => arr.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)))
+    .sort((a, b) => new Date(b[0]?.createdAt || 0) - new Date(a[0]?.createdAt || 0));
+
+  const result = [];
+  for (let round = 0; result.length < items.length; round++) {
+    let addedAny = false;
+    for (const q of queues) {
+      if (q[round]) { result.push(q[round]); addedAny = true; }
+    }
+    if (!addedAny) break;
+  }
+  return result;
 }
 
 function dbCommunityPostToMemPost(row) {

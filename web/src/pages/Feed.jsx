@@ -1195,7 +1195,14 @@ export default function Feed() {
         if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
-      if (manual && nextPosts.length === 0 && previous.length > 0) {
+      // Only for same-view refreshes (merge, not replace) — a refresh that
+      // came back empty shouldn't blank an already-populated list. A real
+      // context switch (replace:true — different view mode, different
+      // source tab, a filter change) must still be allowed to land on a
+      // genuinely empty result; otherwise switching to a view with nothing
+      // in it (e.g. Following with zero followed-people posts) silently
+      // left the *previous* view's posts on screen instead of showing empty.
+      if (manual && !replace && nextPosts.length === 0 && previous.length > 0) {
         setLastRefresh(new Date());
         return;
       }
