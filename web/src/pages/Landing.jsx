@@ -346,7 +346,7 @@ export default function Landing() {
 
         {/* Footer */}
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-          <p style={{ marginBottom: 8 }}>© 2025 UFconnect</p>
+          <p style={{ marginBottom: 8 }}>© {new Date().getFullYear()} UFconnect</p>
           <p>
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}

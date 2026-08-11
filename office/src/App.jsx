@@ -579,6 +579,91 @@ function DeployView({ triggerDeploy, deploying, log }) {
   );
 }
 
+// ─── Analytics view ───────────────────────────────────────────────────────────
+
+function AnalyticsView() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    officeFetch(`${API}/office/analytics/pageviews`)
+      .then(r => r.json())
+      .then(j => { if (!cancelled) setData(j); })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <>
+      <h1 style={H1}>Analytics</h1>
+      <p style={SUBTITLE}>First-party pageview counts, logged straight from the site — no external account required. See also GA4 if VITE_GA_MEASUREMENT_ID is configured.</p>
+
+      {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
+
+      {!data && !error && <div style={{ color: '#64748b', fontSize: 13 }}>Loading…</div>}
+
+      {data && !data.available && (
+        <Card style={{ maxWidth: 520 }}>
+          <div style={{ color: '#94a3b8', fontSize: 13 }}>Database not connected — pageview logging is disabled until DATABASE_URL is set.</div>
+        </Card>
+      )}
+
+      {data && data.available && (
+        <>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Today</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Last 7 days</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{data.last7}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Last 30 days</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
+            </Card>
+          </div>
+
+          <Label color="#475569">Top Pages (30d)</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
+            {data.topPaths.length === 0 && (
+              <Card style={{ color: '#64748b', fontSize: 13 }}>No pageviews logged yet.</Card>
+            )}
+            {data.topPaths.map(p => (
+              <Card key={p.path} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 18px' }}>
+                <div style={{ flex: 1, fontSize: 13, fontFamily: 'monospace', color: '#cbd5e1' }}>{p.path}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa' }}>{p.views}</div>
+              </Card>
+            ))}
+          </div>
+
+          <Label color="#475569">Daily (30d)</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, margin: '12px 0 28px', maxWidth: 680 }}>
+            {data.daily.length === 0 && (
+              <Card style={{ color: '#64748b', fontSize: 13 }}>No history yet.</Card>
+            )}
+            {data.daily.slice().reverse().map(d => (
+              <div key={d.day} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: '#94a3b8', padding: '4px 0' }}>
+                <div style={{ width: 90 }}>{new Date(d.day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+                <div style={{ flex: 1, background: 'rgba(255,255,255,.05)', borderRadius: 4, height: 14, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${Math.min(100, (d.views / Math.max(...data.daily.map(x => x.views), 1)) * 100)}%`,
+                    background: '#3b82f6', height: '100%',
+                  }} />
+                </div>
+                <div style={{ width: 40, textAlign: 'right', color: '#e2e8f0', fontWeight: 600 }}>{d.views}</div>
+                <div style={{ width: 60, textAlign: 'right' }}>{d.visitors} uniq</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 // ─── Versions view ────────────────────────────────────────────────────────────
 
 function VersionsView({ versions }) {
@@ -1103,6 +1188,7 @@ export default function App() {
     { id: 'sources',  label: 'Live Sources', icon: '🌐' },
     { id: 'agents',   label: 'Agents',        icon: '⬡' },
     { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
+    { id: 'analytics',label: 'Analytics',    icon: '📈' },
     { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
     { id: 'versions', label: 'Versions',      icon: '≡' },
   ];
@@ -1196,6 +1282,7 @@ export default function App() {
           {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'analytics'&& <AnalyticsView />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'versions' && <VersionsView versions={versions} />}
         </main>

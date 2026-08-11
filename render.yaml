@@ -148,6 +148,11 @@ services:
         sync: false
       - key: VITE_AUTH0_AUDIENCE
         sync: false
+      # Google Analytics 4 Measurement ID (looks like G-XXXXXXX). Paste it in
+      # here once a GA4 property exists for uficonnect.org — page tracking
+      # code is already wired up and no-ops safely until this is set.
+      - key: VITE_GA_MEASUREMENT_ID
+        sync: false
       - key: NODE_OPTIONS
         value: --max-old-space-size=6144
 

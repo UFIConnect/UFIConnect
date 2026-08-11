@@ -6649,6 +6649,22 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS wor_created_idx ON website_optimization_runs(created_at DESC)`);
 
+    // First-party pageview log — there was no way to tell whether the site
+    // was actually getting traffic at all (no GA/Plausible/etc. installed),
+    // separate from and in addition to GA4.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS page_views (
+        id          BIGSERIAL PRIMARY KEY,
+        path        TEXT NOT NULL,
+        referrer    TEXT,
+        visitor_id  TEXT,
+        user_id     TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS pv_created_idx ON page_views(created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS pv_path_idx    ON page_views(path)`);
+
     const { rows } = await db.query('SELECT COUNT(*) FROM users');
     console.log(`✅ DB migration applied — ${rows[0].count} registered user(s) in DB`);
   } catch (err) { console.warn('DB migration error:', err.message); }
@@ -7183,6 +7199,66 @@ function requireOfficeToken(req, res, next) {
   if (provided === expected) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
+
+// ─── First-party pageview logging ──────────────────────────────────────────
+// No analytics of any kind was installed — there was no way to tell whether
+// the site was getting traffic separate from search-engine indexing. Public
+// and unauthenticated on purpose (most visitors won't have a session), with
+// no PII collected — just path, referrer, and a client-generated anonymous
+// id so repeat-visit counts are still meaningful.
+app.post('/analytics/pageview', async (req, res) => {
+  try {
+    const path      = String(req.body?.path || '').slice(0, 300);
+    const referrer  = req.body?.referrer ? String(req.body.referrer).slice(0, 500) : null;
+    const visitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
+    if (!path) return res.status(400).json({ error: 'path required' });
+    if (db.isConnected()) {
+      await db.query(
+        `INSERT INTO page_views (path, referrer, visitor_id) VALUES ($1,$2,$3)`,
+        [path, referrer, visitorId]
+      );
+    }
+    res.status(204).end();
+  } catch (e) {
+    // Never let analytics logging fail a real user's page load.
+    res.status(204).end();
+  }
+});
+
+app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.json({ available: false });
+    const [today, last7, last30, topPaths, daily] = await Promise.all([
+      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
+      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      db.query(`
+        SELECT path, COUNT(*) AS views
+        FROM page_views
+        WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY path ORDER BY views DESC LIMIT 15
+      `),
+      db.query(`
+        SELECT date_trunc('day', created_at) AS day, COUNT(*) AS views,
+               COUNT(DISTINCT visitor_id) AS visitors
+        FROM page_views
+        WHERE created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY day ORDER BY day ASC
+      `),
+    ]);
+    res.json({
+      available: true,
+      today:  Number(today.rows[0].count),
+      last7:  Number(last7.rows[0].count),
+      last30: Number(last30.rows[0].count),
+      topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views) })),
+      daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
+    });
+  } catch (e) {
+    console.error('GET /office/analytics/pageviews:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 app.get('/auth/config', (_req, res) => {

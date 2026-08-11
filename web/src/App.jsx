@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
+import { trackPageview } from './analytics';
 
 const MAINTENANCE = import.meta.env.VITE_MAINTENANCE_MODE === 'true';
 
@@ -69,6 +70,14 @@ function RequireOnboarding({ children }) {
   return children;
 }
 
+function PageviewTracker() {
+  const location = useLocation();
+  useEffect(() => {
+    trackPageview(location.pathname);
+  }, [location.pathname]);
+  return null;
+}
+
 function HomeRoute() {
   const { token, profile, loading } = useAuth();
   if (loading) return <div className="splash">Loading…</div>;
@@ -91,6 +100,8 @@ export default function App() {
   if (MAINTENANCE && !preview) return <MaintenancePage />;
 
   return (
+    <>
+    <PageviewTracker />
     <Suspense fallback={<div className="splash">Loading…</div>}>
     <Routes>
       {/* Public */}
@@ -158,5 +169,6 @@ export default function App() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
+    </>
   );
 }
