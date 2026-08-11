@@ -3955,7 +3955,23 @@ const globalFeedCache = { posts: [], refreshedAt: 0 };
 // every request inside that window gets byte-identical external-post order,
 // keyed by sortMode since 'ranked'/'newest'/'balanced' order differently.
 const MAIN_FEED_SNAPSHOT_TTL = 10 * 60 * 1000;
+// The snapshot has to hold enough posts to cover several pages of
+// infinite-scroll, not just page 1 — page 2+ used to run its own,
+// independently-windowed balanced query that didn't line up with what page
+// 1's snapshot already showed (different perSourcePageSize on each side of
+// the same ROW_NUMBER partitioning), so the two rn ranges overlapped and
+// page 2 came back almost entirely duplicate, which the client's dedup then
+// filtered down to nearly nothing — scrolling past page 1 looked like it
+// had hit the end. Now every page slices the same frozen pool instead of
+// re-querying, so there's no window mismatch to begin with.
+const MAIN_FEED_SNAPSHOT_POOL_SIZE = 300;
 const mainFeedSnapshots = new Map();
+// Keyed by sortMode alone would silently ignore a user's timeRange filter
+// (e.g. "This Week") — whichever request happened to build the snapshot
+// first wins that dimension for everyone else until the next recompute.
+function mainFeedSnapshotKey(sortMode, timeRange) {
+  return `${sortMode}::${timeRange || 'all'}`;
+}
 
 function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
@@ -8171,6 +8187,36 @@ async function handleFeedRequest(req, res) {
     const wantsMix = !pageSources;
 
     if (wantsMix) {
+      // Slice the same frozen snapshot page 1 reads from, instead of running
+      // an independently-windowed balanced query — that mismatch (different
+      // perSourcePageSize on each side of the same ROW_NUMBER partitioning)
+      // was returning near-duplicate content on page 2+, which the client's
+      // dedup then collapsed down to almost nothing, making infinite scroll
+      // look like it stopped after page 1.
+      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
+      if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
+        const lo = (reqPage - 1) * feedLimit;
+        const pageSlice = snap.posts.slice(lo, lo + feedLimit);
+        if (pageSlice.length > 0) {
+          return res.json({
+            posts: pageSlice.map(p => ({
+              ...p,
+              group:           groups.find(g => g.id === p.groupId) || p.group,
+              likedByMe:       false,
+              fromJoinedGroup: joined.has(p.groupId),
+              forYou:          true,
+              relevance:       1,
+            })),
+            page: reqPage,
+            hasMore: snap.posts.length > lo + feedLimit,
+            sort: sortMode,
+          });
+        }
+        // Snapshot exists but doesn't reach this deep (rare — would need
+        // >MAIN_FEED_SNAPSHOT_POOL_SIZE/feedLimit pages scrolled inside one
+        // 10-minute window) — falls through to the live query below.
+      }
+
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
       // 6s, not 4s — confirmed live that 'ranked' mode's balanced query
       // (PARTITION BY ranking has to compute the per-row score for every
@@ -8287,15 +8333,18 @@ async function handleFeedRequest(req, res) {
   // snapshot instead of resorting hundreds of posts on every request.
   const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   if (isDefaultAggregateView) {
-    const snap = mainFeedSnapshots.get(sortMode);
+    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
     if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
-      const externalPosts = snap.posts.map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
+      // Page 1 only here — reqPage > 1 already returned earlier in this
+      // function, and slices from the same snapshot pool there too (see
+      // the wantsMix branch above) so both stay in sync with each other.
+      const externalPosts = snap.posts.slice(0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       return res.json({
         posts: finalPosts,
         sort: sortMode,
-        hasMore: snap.hasMore,
-        totalAvailable: snap.totalAvailable,
+        hasMore: snap.posts.length > feedLimit,
+        totalAvailable: snap.posts.length,
         refresh: { ...snap.refresh, cacheRefreshedAt: snap.computedAt },
         sources: snap.sources,
         snapshotAt: snap.computedAt,
@@ -8534,11 +8583,13 @@ async function handleFeedRequest(req, res) {
   // it doesn't come back quickly (this is what actually took /feed down:
   // several rounds of query tuning still weren't a guarantee against slow
   // I/O on a shared instance, so the endpoint needs its own hard ceiling).
-  // Feed Manager: pulls an equal share per source (up to 15 each) instead of
+  // Feed Manager: pulls an equal share per source (up to 40 each) instead of
   // one flat query — the candidate pool going into enforceFeedDiversity
   // below is no longer skewed to begin with, rather than skewed-then-capped.
+  // 40, not just enough for one page, because this result gets cached as the
+  // shared snapshot (below) that every page of infinite-scroll slices from.
   const { posts: balancedDbPosts } = await Promise.race([
-    getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 15 }),
+    getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
     new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
   ]);
   let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
@@ -8586,8 +8637,12 @@ async function handleFeedRequest(req, res) {
 
   // Sort external posts only: ranked (time-decay + engagement), interleaved
   // for source diversity. `internal` (community posts, genuinely per-user
-  // for likedByMe) is deliberately excluded here and merged back in after —
-  // this array is what gets cached in the snapshot below.
+  // for likedByMe) and `socialPlatformPosts` (a specific user's connected
+  // Twitter/LinkedIn/etc. results) are deliberately excluded here and merged
+  // back in after — this array is what gets cached in the snapshot below,
+  // and it must never contain anything personalized to whichever user's
+  // request happened to trigger the recompute, since every other user reads
+  // the same cached pool for the next 10 minutes.
   const liveSorted = sortFeedBatch([
     ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
@@ -8596,7 +8651,7 @@ async function handleFeedRequest(req, res) {
     ...indeedPosts2, ...phPosts, ...tcPosts, ...vergePosts, ...ihPosts, ...hashnodePosts, ...blueskyPosts,
     ...arsPosts, ...wiredPosts, ...regPosts, ...vbPosts, ...smashingPosts, ...phoronixPosts, ...infoqPosts, ...mittrPosts,
     ...gitlabPosts, ...remoteokPosts, ...ycPosts, ...crunchbasePosts, ...behancePosts, ...designwebPosts,
-    ...socialPlatformPosts, ...cachedMapped, ...dbPosts,
+    ...cachedMapped, ...dbPosts,
   ], 'main-feed-response', {
     limit: Math.max(feedLimit * 4, sortAgentLimit()),
     sort: sortMode,
@@ -8607,8 +8662,13 @@ async function handleFeedRequest(req, res) {
 
   // Per-source hard cap — applied in every mode so a prolific source can't
   // flood the page even when ranked by score. See enforceFeedDiversity.
-  const externalDiversified = enforceFeedDiversity(liveSorted, feedLimit, sortMode);
-  const responsePosts = [...internal, ...externalDiversified].slice(0, feedLimit);
+  // Diversify against the full snapshot pool size (not just this request's
+  // feedLimit) when this result is going to be cached as the shared
+  // snapshot — otherwise the stored pool is only ever exactly one page
+  // long, which is what forced page 2+ onto its own separately-windowed
+  // (and misaligned) query in the first place.
+  const externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
+  const responsePosts = [...internal, ...socialPlatformPosts, ...externalDiversified].slice(0, feedLimit);
 
   const sourcesBreakdown = {
     reddit:        redditPosts.length,
@@ -8654,11 +8714,11 @@ async function handleFeedRequest(req, res) {
   };
 
   if (isDefaultAggregateView) {
-    mainFeedSnapshots.set(sortMode, {
+    mainFeedSnapshots.set(mainFeedSnapshotKey(sortMode, timeRange), {
       computedAt: Date.now(),
       posts: externalDiversified,
-      hasMore: liveSorted.length > feedLimit,
-      totalAvailable: liveSorted.length,
+      hasMore: externalDiversified.length > feedLimit,
+      totalAvailable: externalDiversified.length,
       sources: sourcesBreakdown,
       refresh: refreshMeta,
     });
@@ -8667,8 +8727,8 @@ async function handleFeedRequest(req, res) {
   res.json({
     posts: responsePosts,
     sort: sortMode,
-    hasMore: liveSorted.length > feedLimit,
-    totalAvailable: liveSorted.length,
+    hasMore: externalDiversified.length > feedLimit,
+    totalAvailable: externalDiversified.length,
     refresh: refreshMeta,
     sources: sourcesBreakdown,
   });

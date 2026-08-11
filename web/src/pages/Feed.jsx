@@ -1068,6 +1068,14 @@ export default function Feed() {
       const { data } = await client.get(url);
       const incoming = data.posts || [];
       const previous = postsRef.current;
+      // "Updated Xm ago" used to always show however long ago the browser
+      // last fetched, even when the feed is served from the server's
+      // 10-minute stable-sort snapshot — the label could claim "just now"
+      // while the actual content was sorted up to 10 minutes earlier.
+      // snapshotAt is only present when the response came from that cache;
+      // a freshly-computed response has no staleness to report, so "now" is
+      // accurate for that case.
+      const refreshTimestamp = data.snapshotAt || Date.now();
       const shouldMerge = (manual || live) && !replace;
       const nextPosts = shouldMerge
         ? mergeFeedPosts([...incoming, ...previous], activeFilters.sort)
@@ -1087,7 +1095,7 @@ export default function Feed() {
       // in it (e.g. Following with zero followed-people posts) silently
       // left the *previous* view's posts on screen instead of showing empty.
       if (manual && !replace && nextPosts.length === 0 && previous.length > 0) {
-        setLastRefresh(new Date());
+        setLastRefresh(new Date(refreshTimestamp));
         return;
       }
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
@@ -1095,7 +1103,7 @@ export default function Feed() {
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(nextPosts);
       if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
       setRemoteHasMore(data.hasMore !== false);
-      setLastRefresh(new Date());
+      setLastRefresh(new Date(refreshTimestamp));
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
