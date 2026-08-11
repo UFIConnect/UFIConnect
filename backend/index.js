@@ -1293,6 +1293,26 @@ function parseRedditRSSFeed(xml, topicKeyword) {
   return posts;
 }
 
+// Reddit posts are commonly image/video-heavy, but the media was never
+// being extracted at all — every reddit post showed as text-only regardless
+// of content. Reddit-hosted video (v.redd.it) has no audio track in its
+// fallback MP4, which is a real Reddit platform limitation, not something
+// fixable here — it's still the actual video, just silent, same as Reddit's
+// own web player without JS.
+function extractRedditMedia(d) {
+  if (d.is_video && d.media?.reddit_video?.fallback_url) {
+    return { mediaType: 'video', mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url) };
+  }
+  const previewUrl = d.preview?.images?.[0]?.source?.url;
+  if (previewUrl && (d.post_hint === 'image' || /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(d.url || ''))) {
+    return { mediaType: 'image', mediaUrl: decodeHTMLEntities(previewUrl) };
+  }
+  if (d.url && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(d.url)) {
+    return { mediaType: 'image', mediaUrl: d.url };
+  }
+  return { mediaType: null, mediaUrl: null };
+}
+
 // Parse Reddit's JSON API response (old.reddit.com/r/${sub}/new.json)
 function parseRedditJSON(data, topicKeyword) {
   const children = data?.data?.children || [];
@@ -1303,6 +1323,7 @@ function parseRedditJSON(data, topicKeyword) {
     .map(c => {
       const d = c.data;
       const selfUrl = `https://www.reddit.com${d.permalink}`;
+      const media = extractRedditMedia(d);
       return {
         id:          `reddit_${d.id}`,
         authorId:    `reddit_${d.author}`,
@@ -1317,6 +1338,8 @@ function parseRedditJSON(data, topicKeyword) {
         likes: [], likesCount: d.score || 0, commentsCount: d.num_comments || 0,
         createdAt:   normalizeTimestamp(d.created_utc),
         isExternal:  true,
+        mediaType:   media.mediaType,
+        mediaUrl:    media.mediaUrl,
         group:       matchedGroup
           ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
           : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
@@ -2258,11 +2281,20 @@ function mapMastodonPosts(data, tag) {
         likes: [], likesCount: t.favourites_count || 0, commentsCount: t.replies_count || 0,
         createdAt:   t.created_at,
         isExternal:  true,
-        mediaUrl:    t.media_attachments?.[0]?.preview_url || null,
-        mediaType:   t.media_attachments?.[0]?.type === 'image' ? 'image' : null,
+        ...mastodonMedia(t.media_attachments?.[0]),
         group:       { id: 'ext_mastodon', name: 'Mastodon', category: 'Social', externalUrl: 'https://mastodon.social' },
       };
     });
+}
+
+function mastodonMedia(media) {
+  if (!media) return { mediaType: null, mediaUrl: null };
+  if (media.type === 'image') return { mediaType: 'image', mediaUrl: media.preview_url || media.url || null };
+  // 'video' and 'gifv' (a looping mp4, not an actual GIF) both resolve to a
+  // directly-playable file URL — no separate poster frame is derivable, same
+  // tradeoff as Reddit's v.redd.it video.
+  if (media.type === 'video' || media.type === 'gifv') return { mediaType: 'video', mediaUrl: media.url || media.preview_url || null };
+  return { mediaType: null, mediaUrl: null };
 }
 
 async function fetchMastodonByTag(tag) {
@@ -2271,7 +2303,7 @@ async function fetchMastodonByTag(tag) {
   if (cached) return cached;
   for (const instance of MASTODON_INSTANCES) {
     try {
-      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=200&local=false&only_media=false`;
+      const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=25&local=false&only_media=false`;
       const data = await fetchJSON(url);
       const posts = mapMastodonPosts(data, tag);
       if (posts.length) {
@@ -2438,12 +2470,27 @@ function parseRSSItems(xml) {
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
     if (!title || !link) continue;
+    // Many RSS/Atom feeds carry an image via <media:thumbnail>, <media:content
+    // medium="image">, or <enclosure type="image/...">. Attribute order isn't
+    // guaranteed, so grab the whole tag first, then pull attrs out of it.
+    const thumbTag = blk.match(/<media:thumbnail\s+[^>]*>/i)?.[0];
+    const mediaContentTag = blk.match(/<media:content\s+[^>]*>/i)?.[0];
+    const enclosureTag = blk.match(/<enclosure\s+[^>]*>/i)?.[0];
+    let image = null;
+    if (thumbTag) image = thumbTag.match(/url="([^"]+)"/i)?.[1] || null;
+    if (!image && mediaContentTag && /medium="image"|type="image\//i.test(mediaContentTag)) {
+      image = mediaContentTag.match(/url="([^"]+)"/i)?.[1] || null;
+    }
+    if (!image && enclosureTag && /type="image\//i.test(enclosureTag)) {
+      image = enclosureTag.match(/url="([^"]+)"/i)?.[1] || null;
+    }
     items.push({
       title,
       link:    link.replace(/^<!\[CDATA\[|\]\]>$/g, '').trim(),
       desc:    (field('description') || field('summary') || field('content')).slice(0, 800),
       pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
+      image,
     });
   }
   return items;
@@ -2473,6 +2520,8 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   normalizeTimestamp(item.pubDate),
     isExternal:  true,
+    mediaType:   item.image ? 'image' : null,
+    mediaUrl:    item.image || null,
     group:       { id: groupId, name: groupName, category, externalUrl: item.link },
   };
 }
@@ -3884,6 +3933,17 @@ const GLOBAL_FEED_CACHE_LIMIT = 300;   // cap tighter to fit 512MB container
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
+
+// Personal Feed and All Collected share one merged view now, and its sort
+// used to be recomputed fresh on every single request — 'ranked' mode's
+// time-decay score plus a constantly-growing candidate pool meant two
+// requests seconds apart could legitimately come back in a different order,
+// which combined with the SSE live-splice made the feed feel like it never
+// held still. This snapshot makes the sort run at most once per TTL window;
+// every request inside that window gets byte-identical external-post order,
+// keyed by sortMode since 'ranked'/'newest'/'balanced' order differently.
+const MAIN_FEED_SNAPSHOT_TTL = 10 * 60 * 1000;
+const mainFeedSnapshots = new Map();
 
 function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
@@ -6029,6 +6089,54 @@ function serializeCommunityPost(post, viewerId = null) {
   };
 }
 
+// ─── Following feed ───────────────────────────────────────────────────────
+// UFI's own follow graph (the `follows` array/table) is real and populated
+// today, so posts from people you follow on UFconnect itself work now.
+// "Include followers from all the platforms" is real per-platform work each
+// requires: (1) that platform's OAuth actually configured (most of the
+// client id/secret pairs in render.yaml are still unset placeholders), and
+// (2) a genuine "posts from accounts I follow" API — which several of these
+// platforms don't expose to third-party apps at all even with a valid user
+// token (LinkedIn and Instagram have no such endpoint; Twitter's requires
+// elevated API access). Bluesky (AT Protocol) and Mastodon both have a real,
+// freely-available home-timeline endpoint, so those are the realistic first
+// candidates once their OAuth connect flows exist. Add an entry here per
+// platform as each becomes available — deliberately never backed by keyword
+// search, which would mislabel unrelated public posts as "from people you
+// follow."
+const FOLLOWING_SOURCE_FETCHERS = {
+  // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
+  // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
+};
+
+async function getFollowingFeedPosts(userId) {
+  const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
+  const internalPosts = followingIds.size
+    ? posts
+        .filter(p => (p.source || 'uficonnect') === 'uficonnect' && followingIds.has(p.authorId))
+        .map(p => serializeCommunityPost(p, userId))
+    : [];
+
+  const externalPosts = [];
+  if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
+    const user = await getUser(userId);
+    for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
+      const token = user?.socialTokens?.[source];
+      if (!token) continue;
+      try {
+        const raw = await fetcher(token);
+        externalPosts.push(...realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })));
+      } catch (e) {
+        console.warn(`following feed ${source}:`, e.message);
+      }
+    }
+  }
+
+  return [...internalPosts, ...externalPosts].sort(
+    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+  );
+}
+
 function dbCommunityPostToMemPost(row) {
   return {
     id: row.id,
@@ -7762,6 +7870,10 @@ async function handleFeedRequest(req, res) {
         postCache.clear();
         enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed bust all');
       });
+      // An explicit "refresh everything" request shouldn't have to wait out
+      // the rest of the 10-minute snapshot window — let the next request
+      // recompute the sort from whatever's already in the DB/memory caches.
+      mainFeedSnapshots.clear();
     }
   }
 
@@ -7776,7 +7888,7 @@ async function handleFeedRequest(req, res) {
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
   ), 250);
-  const feedMode = req.query.mode === 'archive' ? 'archive' : 'feed';
+  const feedMode = req.query.mode === 'archive' ? 'archive' : req.query.mode === 'following' ? 'following' : 'feed';
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
   const timeRange = req.query.timeRange || req.query.range || 'all';
   // 'ranked' sort computes its score per row with no supporting index, so an
@@ -7801,6 +7913,21 @@ async function handleFeedRequest(req, res) {
       forYou:          true,
       relevance:       1,
     };
+  }
+
+  if (feedMode === 'following') {
+    const offset = (reqPage - 1) * feedLimit;
+    const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
+    const allFollowing = await getFollowingFeedPosts(req.user.id);
+    const pageRows = allFollowing.slice(offset, offset + feedLimit);
+    return res.json({
+      posts: pageRows,
+      page: reqPage,
+      mode: 'following',
+      hasMore: allFollowing.length > offset + feedLimit,
+      totalAvailable: allFollowing.length,
+      followingCount: followingIds.size,
+    });
   }
 
   if (feedMode === 'archive') {
@@ -8024,7 +8151,9 @@ async function handleFeedRequest(req, res) {
     return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
-  // Internal posts (user-created)
+  // Internal posts (user-created) — always computed live and per-user
+  // (likedByMe genuinely differs per user), so these are never part of the
+  // shared snapshot below; they're merged on top of it every request.
   const internal = posts.map((p) => {
     const post = serializeCommunityPost(p, req.user.id);
     return {
@@ -8032,6 +8161,27 @@ async function handleFeedRequest(req, res) {
       fromJoinedGroup: joined.has(p.groupId),
     };
   });
+
+  // Default aggregate view (no source filter, no multi-source, page 1 — the
+  // merged Personal Feed / All Collected view): serve the shared pre-sorted
+  // snapshot instead of resorting hundreds of posts on every request.
+  const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
+  if (isDefaultAggregateView) {
+    const snap = mainFeedSnapshots.get(sortMode);
+    if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
+      const externalPosts = snap.posts.map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
+      const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
+      return res.json({
+        posts: finalPosts,
+        sort: sortMode,
+        hasMore: snap.hasMore,
+        totalAvailable: snap.totalAvailable,
+        refresh: { ...snap.refresh, cacheRefreshedAt: snap.computedAt },
+        sources: snap.sources,
+        snapshotAt: snap.computedAt,
+      });
+    }
+  }
 
   function mapExternalPost(p, source) {
     const post = normalizeFeedPost(p);
@@ -8314,9 +8464,12 @@ async function handleFeedRequest(req, res) {
     };
   });
 
-  // Sort all live posts: ranked (time-decay + engagement), interleaved for source diversity.
+  // Sort external posts only: ranked (time-decay + engagement), interleaved
+  // for source diversity. `internal` (community posts, genuinely per-user
+  // for likedByMe) is deliberately excluded here and merged back in after —
+  // this array is what gets cached in the snapshot below.
   const liveSorted = sortFeedBatch([
-    ...internal, ...joinedGroupPosts,
+    ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
     ...mediumPosts, ...youtubePosts, ...soPosts, ...mastoPosts,
     ...lobPosts, ...arxivPosts,
@@ -8334,55 +8487,70 @@ async function handleFeedRequest(req, res) {
 
   // Per-source hard cap — applied in every mode so a prolific source can't
   // flood the page even when ranked by score. See enforceFeedDiversity.
-  const responsePosts = enforceFeedDiversity(liveSorted, feedLimit, sortMode);
+  const externalDiversified = enforceFeedDiversity(liveSorted, feedLimit, sortMode);
+  const responsePosts = [...internal, ...externalDiversified].slice(0, feedLimit);
+
+  const sourcesBreakdown = {
+    reddit:        redditPosts.length,
+    github:        githubPosts.length,
+    devto:         devtoPosts.length,
+    medium:        mediumPosts.length,
+    youtube:       youtubePosts.length,
+    stackoverflow: soPosts.length,
+    mastodon:      mastoPosts.length,
+    lobsters:      lobPosts.length,
+    arxiv:         arxivPosts.length,
+    indeed:        indeedPosts2.length,
+    producthunt:   phPosts.length,
+    techcrunch:    tcPosts.length,
+    theverge:      vergePosts.length,
+    indiehackers:  ihPosts.length,
+    hashnode:      hashnodePosts.length,
+    bluesky:       blueskyPosts.length,
+    arstechnica:   arsPosts.length,
+    wired:         wiredPosts.length,
+    theregister:   regPosts.length,
+    venturebeat:   vbPosts.length,
+    smashing:      smashingPosts.length,
+    phoronix:      phoronixPosts.length,
+    infoq:         infoqPosts.length,
+    mittr:         mittrPosts.length,
+    gitlab:        gitlabPosts.length,
+    remoteok:      remoteokPosts.length,
+    yc:            ycPosts.length,
+    crunchbase:    crunchbasePosts.length,
+    behance:       behancePosts.length,
+    designweb:     designwebPosts.length,
+    db:            dbPosts.length,
+    cached:       cachedMapped.length,
+    joinedGroups: joinedGroupPosts.length,
+    internal:     internal.length,
+  };
+  const refreshMeta = {
+    live: shouldFetchLive,
+    liveCount: allLive.length,
+    freshCount: liveFreshCount,
+    cacheRefreshedAt: globalFeedCache.refreshedAt || null,
+  };
+
+  if (isDefaultAggregateView) {
+    mainFeedSnapshots.set(sortMode, {
+      computedAt: Date.now(),
+      posts: externalDiversified,
+      hasMore: liveSorted.length > feedLimit,
+      totalAvailable: liveSorted.length,
+      sources: sourcesBreakdown,
+      refresh: refreshMeta,
+    });
+  }
 
   res.json({
     posts: responsePosts,
     sort: sortMode,
     hasMore: liveSorted.length > feedLimit,
     totalAvailable: liveSorted.length,
-    refresh: {
-      live: shouldFetchLive,
-      liveCount: allLive.length,
-      freshCount: liveFreshCount,
-      cacheRefreshedAt: globalFeedCache.refreshedAt || null,
-    },
-    sources: {
-      reddit:        redditPosts.length,
-      github:        githubPosts.length,
-      devto:         devtoPosts.length,
-      medium:        mediumPosts.length,
-      youtube:       youtubePosts.length,
-      stackoverflow: soPosts.length,
-      mastodon:      mastoPosts.length,
-      lobsters:      lobPosts.length,
-      arxiv:         arxivPosts.length,
-      indeed:        indeedPosts2.length,
-      producthunt:   phPosts.length,
-      techcrunch:    tcPosts.length,
-      theverge:      vergePosts.length,
-      indiehackers:  ihPosts.length,
-      hashnode:      hashnodePosts.length,
-      bluesky:       blueskyPosts.length,
-      arstechnica:   arsPosts.length,
-      wired:         wiredPosts.length,
-      theregister:   regPosts.length,
-      venturebeat:   vbPosts.length,
-      smashing:      smashingPosts.length,
-      phoronix:      phoronixPosts.length,
-      infoq:         infoqPosts.length,
-      mittr:         mittrPosts.length,
-      gitlab:        gitlabPosts.length,
-      remoteok:      remoteokPosts.length,
-      yc:            ycPosts.length,
-      crunchbase:    crunchbasePosts.length,
-      behance:       behancePosts.length,
-      designweb:     designwebPosts.length,
-      db:            dbPosts.length,
-      cached:       cachedMapped.length,
-      joinedGroups: joinedGroupPosts.length,
-      internal:     internal.length,
-    },
+    refresh: refreshMeta,
+    sources: sourcesBreakdown,
   });
   } catch (e) {
     console.error('[/feed] unhandled error:', e.message || e);

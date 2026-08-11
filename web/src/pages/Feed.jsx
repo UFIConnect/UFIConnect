@@ -56,6 +56,13 @@ function deriveBlueskyPlaylistUrl(thumbnailUrl) {
   return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
 }
 
+// Reddit (and any other source) stores a direct, already-playable video file
+// URL in mediaUrl rather than a poster image — no separate thumbnail exists,
+// so this URL needs a plain <video> element, not an <img>.
+function isDirectVideoUrl(url) {
+  return !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+}
+
 // Plays an HLS (.m3u8) stream via hls.js where needed, or natively where the
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
@@ -252,7 +259,7 @@ function loadFeedState() {
       filters:    { ...DEFAULT_FILTERS, ...(s.filters || {}) },
       activeTabs: Array.isArray(s.activeTabs) ? s.activeTabs : [],
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   s.viewMode === 'archive' ? 'archive' : 'feed',
+      viewMode:   s.viewMode === 'following' ? 'following' : 'feed',
     };
   } catch { return null; }
 }
@@ -315,6 +322,7 @@ function VideoModal({ post, onClose }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const modalRef = useRef(null);
   const playlistUrl = post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
+  const directVideoUrl = !playlistUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
 
   useEffect(() => {
     const h = e => { if (e.key === 'Escape') onClose(); };
@@ -353,6 +361,11 @@ function VideoModal({ post, onClose }) {
         {playlistUrl ? (
           <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
             <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} style={{ maxHeight: 480 }} />
+            <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>×</button>
+          </div>
+        ) : directVideoUrl ? (
+          <div style={{ position: 'relative', background: '#000', borderRadius: '20px 20px 0 0', overflow: 'hidden' }}>
+            <video src={directVideoUrl} controls autoPlay playsInline style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
             <button onClick={onClose} aria-label="Close modal" style={{ position: 'absolute', top: 12, right: 12, background: 'rgba(0,0,0,0.55)', border: 'none', borderRadius: '50%', width: 36, height: 36, color: '#fff', fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>×</button>
           </div>
         ) : post.mediaUrl && (
@@ -743,6 +756,7 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
+  const videoIsDirectFile = hasVideo && isDirectVideoUrl(post.mediaUrl);
   const commentCount   = post.commentsCount || 0;
   const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
   const commUrl        = commentUrl(post);
@@ -866,13 +880,18 @@ const PostCard = memo(function PostCard({ post, onVideoOpen, onPostUpdated }) {
       {hasVideo && (
         <button onClick={() => onVideoOpen(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
-            <img src={post.mediaUrl} alt="Video"
-              style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
-              onError={e => {
-                e.currentTarget.style.display = 'none';
-                const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
-                if (fallback) fallback.style.display = 'flex';
-              }} />
+            {videoIsDirectFile ? (
+              <video src={post.mediaUrl} muted preload="metadata" playsInline
+                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }} />
+            ) : (
+              <img src={post.mediaUrl} alt="Video"
+                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
+                onError={e => {
+                  e.currentTarget.style.display = 'none';
+                  const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
+                  if (fallback) fallback.style.display = 'flex';
+                }} />
+            )}
             <div data-video-fallback style={{
               display: 'none', position: 'absolute', inset: 0,
               alignItems: 'center', justifyContent: 'center',
@@ -1205,26 +1224,31 @@ export default function Feed() {
   }, [loading, refreshing, loadingMore]);
 
   const switchViewMode = useCallback((mode) => {
-    const nextMode = mode === 'archive' ? 'archive' : 'feed';
+    const nextMode = mode === 'following' ? 'following' : 'feed';
     // Clicking the tab you're already on is a refresh, not a context switch
     // — merge the new posts in on top instead of wiping the scrolled-in
     // list back down to one page. Switching to the *other* mode is a real
-    // context change (Personal Feed and All Collected are different data),
-    // so that still replaces.
+    // context change (Feed and Following are different data), so that
+    // still replaces.
     const isRefresh = nextMode === viewModeRef.current;
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    loadFeed(true, activeTabsRef.current, {
+    // Following isn't source-filterable the way the aggregate Feed is —
+    // clear any source tabs so switching in/out doesn't leave a stale
+    // filter that silently does nothing in the other view.
+    activeTabsRef.current = [];
+    setActiveTabs([]);
+    loadFeed(true, [], {
       mode: nextMode,
       filters: filtersRef.current,
       q: searchRef.current,
       replace: !isRefresh,
-      // Personal Feed / All Collected span every source — busting here would
-      // force all 30+ source workers to refetch externally on every click.
-      // Pulls the latest from the server's already-continuously-updated
-      // cache instead, which is what "refresh" should mean for an aggregate view.
+      // Feed spans every source — busting here would force all 30+ source
+      // workers to refetch externally on every click. Pulls the latest from
+      // the server's already-continuously-updated cache instead, which is
+      // what "refresh" should mean for an aggregate view.
       bust: false,
     });
   }, [loadFeed]);
@@ -1424,42 +1448,18 @@ export default function Feed() {
           reconnectAttempt = 0; // Reset backoff on successful connection
         };
 
+        // SSE used to splice each incoming batch straight into the visible
+        // list (~every 2s whenever any of the 30+ sources found something
+        // new), which is what made the feed feel like it never held still.
+        // The feed's sort now lives server-side in a 10-minute snapshot
+        // (see FEED_AUTO_REFRESH_MS below), so this stream is kept only to
+        // track known ids for de-dup and to drive the "LIVE" connection
+        // badge — it no longer touches the rendered post list directly.
         es.onmessage = (e) => {
           try {
-            const { init, posts: incoming } = JSON.parse(e.data);
+            const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
-            if (init) {
-              incoming.forEach(p => knownIds.current.add(p.id));
-              return;
-            }
-            const fresh = incoming.filter(p => !knownIds.current.has(p.id));
-            if (!fresh.length) return;
-            fresh.forEach(p => knownIds.current.add(p.id));
-            if (viewModeRef.current !== 'feed') return;
-            // Only surface posts that match the active source tabs.
-            const tabs = activeTabsRef.current;
-            const activeFilters = filtersRef.current;
-            const q = searchRef.current.trim().toLowerCase();
-            const tabFresh = tabs.length === 0 ? fresh : fresh.filter(p => tabs.includes(p.source));
-            const filterFresh = tabFresh.filter(p => {
-              if (activeFilters.sources?.length && !activeFilters.sources.includes(p.source)) return false;
-              if (activeFilters.timeRange && activeFilters.timeRange !== 'all') {
-                const cutoff = timeRangeCutoff(activeFilters.timeRange);
-                if (feedPostTime(p) < cutoff) return false;
-              }
-              if (q) {
-                const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || ''}`.toLowerCase();
-                if (!text.includes(q)) return false;
-              }
-              return true;
-            });
-            if (!filterFresh.length) return;
-            setPosts(prev => {
-              const next = mergeFeedPosts([...filterFresh, ...prev], activeFilters.sort);
-              knownIds.current = new Set(next.map(p => p.id).filter(Boolean));
-              return next;
-            });
-            setLastRefresh(new Date());
+            incoming.forEach(p => knownIds.current.add(p.id));
           } catch (err) {
             console.error('[SSE] Error parsing message:', err);
           }
@@ -1703,11 +1703,13 @@ export default function Feed() {
 
       </div>
 
-      {/* View-mode tabs */}
+      {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
+          stable, server-sorted view) and Following (posts from people you
+          follow on UFconnect). */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {[
-          { key: 'feed',    label: 'Personal Feed' },
-          { key: 'archive', label: 'All Collected' },
+          { key: 'feed',      label: 'Feed' },
+          { key: 'following', label: 'Following' },
         ].map(({ key, label }) => {
           const active = viewMode === key;
           return (
@@ -1728,7 +1730,9 @@ export default function Feed() {
         })}
       </div>
 
-      {/* Source tabs — single scrollable row */}
+      {/* Source tabs — only meaningful for the aggregate Feed; Following is
+          a follows-based stream, not filterable by external platform. */}
+      {viewMode === 'feed' && (
       <div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
         paddingBottom: 4, scrollbarWidth: 'none',
@@ -1758,8 +1762,9 @@ export default function Feed() {
           );
         })}
       </div>
+      )}
 
-      {(activeTabs.length > 0 || activeFilterCount > 0) && (
+      {viewMode === 'feed' && (activeTabs.length > 0 || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
           <span style={{ color: 'var(--muted)', fontWeight: 500, marginRight: 2 }}>Showing:</span>
 
@@ -1922,9 +1927,9 @@ export default function Feed() {
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? '🔍' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || '📭'}</div>
+          <div className="empty-icon">{search ? '🔍' : viewMode === 'following' ? '👥' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || '📭'}</div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Your feed is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Your feed is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -1952,6 +1957,14 @@ export default function Feed() {
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
+                </div>
+              </>
+            ) : viewMode === 'following' ? (
+              <>
+                <p style={{ marginBottom: 12 }}>Follow people on UFconnect to see their posts here.</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Link to="/search" className="btn btn-primary btn-sm">Find people</Link>
+                  <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Feed</button>
                 </div>
               </>
             ) : (
