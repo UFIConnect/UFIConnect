@@ -8197,25 +8197,33 @@ async function handleFeedRequest(req, res) {
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
         const lo = (reqPage - 1) * feedLimit;
         const pageSlice = snap.posts.slice(lo, lo + feedLimit);
-        if (pageSlice.length > 0) {
-          return res.json({
-            posts: pageSlice.map(p => ({
-              ...p,
-              group:           groups.find(g => g.id === p.groupId) || p.group,
-              likedByMe:       false,
-              fromJoinedGroup: joined.has(p.groupId),
-              forYou:          true,
-              relevance:       1,
-            })),
-            page: reqPage,
-            hasMore: snap.posts.length > lo + feedLimit,
-            sort: sortMode,
-          });
-        }
-        // Snapshot exists but doesn't reach this deep (rare — would need
-        // >MAIN_FEED_SNAPSHOT_POOL_SIZE/feedLimit pages scrolled inside one
-        // 10-minute window) — falls through to the live query below.
+        // A fresh snapshot exists, so it — not the legacy query below — is
+        // the source of truth for this 10-minute window. If the requested
+        // page runs past the cached pool's depth, the honest answer is "no
+        // more right now" (posts:[], hasMore:false), not falling through to
+        // the legacy balanced query: that query windows by its own
+        // independent perSourcePageSize/page math with no knowledge of how
+        // much the snapshot already handed out, so it re-served rn ranges
+        // the snapshot had already covered — near-duplicate content that
+        // the client's dedup then collapsed to almost nothing, which is
+        // what made scrolling look like it stopped dead after page 1.
+        return res.json({
+          posts: pageSlice.map(p => ({
+            ...p,
+            group:           groups.find(g => g.id === p.groupId) || p.group,
+            likedByMe:       false,
+            fromJoinedGroup: joined.has(p.groupId),
+            forYou:          true,
+            relevance:       1,
+          })),
+          page: reqPage,
+          hasMore: snap.posts.length > lo + feedLimit,
+          sort: sortMode,
+        });
       }
+      // No usable snapshot yet (cold start, or this exact sortMode+timeRange
+      // combo hasn't been requested since the last recompute) — legacy live
+      // query as a one-off fallback until the next page-1 request builds one.
 
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
       // 6s, not 4s — confirmed live that 'ranked' mode's balanced query
