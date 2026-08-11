@@ -1497,8 +1497,11 @@ async function fetchDevToByTag(tag) {
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    // dev.to API — sort by latest so we always get the freshest posts
-    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=1000&state=fresh`;
+    // dev.to API — sort by latest so we always get the freshest posts.
+    // per_page was 1000 — every fetch could dump up to a thousand posts into
+    // the shared 300-cap global cache in one shot, instantly displacing
+    // almost everything else in it. 25 is still generous for one tag.
+    const url = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=25&state=fresh`;
     const data = await fetchJSON(url);
     const posts = (data || [])
       .filter(a => a.title && a.url)
@@ -1536,7 +1539,11 @@ async function fetchGitHubByKeyword(keyword) {
   try {
     // GitHub public repos only — recent pushes (last 7 days), sorted by freshness
     const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} is:public pushed:>${since}`)}&sort=updated&order=desc&per_page=100`;
+    // per_page was 100 — confirmed live this let GitHub reach 73% of the
+    // shared global cache: even paced at 1 fetch/min, a single call could
+    // dump up to 100 posts in at once against a 300-item cap. 20 keeps the
+    // per-fetch weight proportionate to what other sources contribute.
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} is:public pushed:>${since}`)}&sort=updated&order=desc&per_page=20`;
     const data = await fetchJSON(url, GITHUB_HEADERS);
     const posts = (data?.items || [])
       .filter(r => r.description)
