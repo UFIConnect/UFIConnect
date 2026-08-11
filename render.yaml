@@ -61,6 +61,17 @@ services:
       # the same value in the office dashboard when prompted.
       - key: OFFICE_TOKEN
         sync: false
+      # Media upload (Cloudinary signed direct upload) — free tier at
+      # cloudinary.com. Cloud Name / API Key / API Secret are on the
+      # Cloudinary dashboard home page. Until all three are set,
+      # /media/upload-signature returns 503 and the compose form's photo/
+      # video picker is disabled — no other functionality depends on this.
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false

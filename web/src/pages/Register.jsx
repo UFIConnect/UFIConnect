@@ -723,7 +723,7 @@ export default function Register() {
                           type="button"
                           onClick={() => pickTitle(t)}
                           style={{
-                            padding: '4px 11px', borderRadius: 16, fontSize: '.75rem', fontWeight: title === t ? 700 : 500,
+                            padding: '4px 11px', borderRadius: 'var(--radius-sm)', fontSize: '.75rem', fontWeight: title === t ? 700 : 500,
                             border: `1.5px solid ${title === t ? selectedMacro.color : selectedMacro.color + '50'}`,
                             background: title === t ? selectedMacro.color : '#fff',
                             color: title === t ? '#fff' : selectedMacro.color,
@@ -791,7 +791,7 @@ export default function Register() {
                             type="button"
                             onClick={() => setExperience(value)}
                             style={{
-                              padding: '6px 12px', borderRadius: 20, fontSize: '.75rem', fontWeight: sel ? 700 : 500,
+                              padding: '6px 12px', borderRadius: 'var(--radius-sm)', fontSize: '.75rem', fontWeight: sel ? 700 : 500,
                               border: `1.5px solid ${sel ? selectedMacro.color : selectedMacro.color + '40'}`,
                               background: sel ? selectedMacro.color : '#fff',
                               color: sel ? '#fff' : selectedMacro.color,

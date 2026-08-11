@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -210,6 +211,7 @@ export default function Settings() {
 
   return (
     <Layout>
+      <Link to="/profile" className="btn btn-ghost btn-sm" style={{ marginBottom: 14, display: 'inline-flex' }}>← Back to Profile</Link>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
         <p className="page-subtitle">Manage your profile, preferences, and account details.</p>
@@ -333,7 +335,7 @@ export default function Settings() {
                 if (sel) return null;
                 return (
                   <button key={i} type="button" onClick={() => toggleInterest(i)}
-                    style={{ padding: '5px 12px', borderRadius: 20, border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '.78rem', fontWeight: 500, cursor: 'pointer' }}>
+                    style={{ padding: '5px 12px', borderRadius: 'var(--radius-sm)', border: '1.5px solid var(--border)', background: 'var(--surface)', color: 'var(--text)', fontSize: '.78rem', fontWeight: 500, cursor: 'pointer' }}>
                     {i}
                   </button>
                 );

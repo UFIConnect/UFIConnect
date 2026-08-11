@@ -29,12 +29,43 @@ export function isDirectVideoUrl(url) {
   return !!url && /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
 }
 
+// A raw <iframe src="youtube.com/embed/..."> has no programmatic control at
+// all — no pause, no seek, nothing but what's baked into the URL at mount
+// time. Pause + a scrub tracker for YouTube specifically requires the real
+// IFrame Player API (window.YT.Player), which needs its script loaded once
+// and its "API ready" callback awaited before any player can be constructed.
+let youtubeApiPromise = null;
+export function loadYouTubeIframeApi() {
+  if (youtubeApiPromise) return youtubeApiPromise;
+  youtubeApiPromise = new Promise((resolve) => {
+    if (window.YT && window.YT.Player) { resolve(window.YT); return; }
+    const prevCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      prevCallback?.();
+      resolve(window.YT);
+    };
+    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(script);
+    }
+  });
+  return youtubeApiPromise;
+}
+
 // Plays an HLS (.m3u8) stream via hls.js where needed, or natively where the
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, style }) {
   const videoRef = useRef(null);
+  // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
+  // can drive the underlying <video> element directly — hls.js attaches to
+  // this same element internally, so there's only ever one element to share.
+  const setRef = (el) => {
+    videoRef.current = el;
+    if (externalRef) externalRef.current = el;
+  };
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
@@ -73,8 +104,9 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     );
   }
   return (
-    <video ref={videoRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
+    <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
       playsInline poster={poster} onClick={onClick}
+      onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause}
       style={{ width: '100%', display: 'block', background: '#000', ...style }} />
   );
 }

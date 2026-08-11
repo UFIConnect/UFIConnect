@@ -285,6 +285,8 @@ export default function Sources() {
         <meta name="description" content="Control which sources appear in your UFconnect feed." />
       </Helmet>
 
+      <Link to="/profile" className="btn btn-ghost btn-sm" style={{ marginBottom: 14, display: 'inline-flex' }}>← Back to Profile</Link>
+
       <div className="page-header">
         <h1 className="page-title">Feed Sources</h1>
         <p className="page-subtitle">

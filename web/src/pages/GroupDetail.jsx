@@ -126,7 +126,7 @@ export default function GroupDetail() {
               }}>
                 Share something with {group.name}…
               </div>
-              <button className="btn btn-primary btn-sm" style={{ borderRadius: 20, minWidth: 80 }}>
+              <button className="btn btn-primary btn-sm" style={{ minWidth: 80 }}>
                 ✏️ Post
               </button>
             </div>

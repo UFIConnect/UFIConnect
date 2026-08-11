@@ -191,9 +191,21 @@ export default function PostList({
               </div>
             )}
 
-            <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
-              {post.content}
-            </p>
+            {post.content && (
+              <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
+                {post.content}
+              </p>
+            )}
+
+            {post.mediaUrl && (
+              <div style={{ borderRadius: 'var(--radius)', overflow: 'hidden', marginBottom: 10, background: '#000' }}>
+                {post.mediaType === 'video' ? (
+                  <video src={post.mediaUrl} controls style={{ width: '100%', maxHeight: 420, display: 'block' }} />
+                ) : (
+                  <img src={post.mediaUrl} alt="" style={{ width: '100%', maxHeight: 420, objectFit: 'contain', display: 'block' }} />
+                )}
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
               <button
@@ -201,7 +213,7 @@ export default function PostList({
                 onClick={() => toggleLike(post)}
                 disabled={!interactive || likeBusy[post.id]}
                 className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
-                style={{ borderRadius: 20, minWidth: 86 }}
+                style={{ minWidth: 86 }}
               >
                 {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
               </button>
@@ -211,7 +223,7 @@ export default function PostList({
                 onClick={() => toggleComments(post)}
                 disabled={!interactive}
                 className="btn btn-ghost btn-sm"
-                style={{ borderRadius: 20, minWidth: 110 }}
+                style={{ minWidth: 110 }}
               >
                 {commentsOpen ? 'Hide' : 'Comment'} {post.commentsCount || 0}
               </button>

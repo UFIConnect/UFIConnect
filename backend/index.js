@@ -6205,6 +6205,8 @@ function dbCommunityPostToMemPost(row) {
     source: row.source || 'uficonnect',
     sourceLabel: row.source_label || 'UFconnect',
     url: row.url,
+    mediaUrl: row.media_url || null,
+    mediaType: row.media_type || null,
   };
 }
 
@@ -6627,6 +6629,11 @@ async function migrateDB() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // Added for photo/video posting — ADD COLUMN IF NOT EXISTS rather than
+    // baking these into the CREATE TABLE above, since that only runs for a
+    // table that doesn't exist yet and this DB already has one.
+    await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_url TEXT`);
+    await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_type TEXT`);
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS post_comments (
@@ -10352,6 +10359,30 @@ app.delete('/posts/:postId', authenticate, async (req, res) => {
   }
 });
 
+// ─── Media upload (Cloudinary signed direct upload) ────────────────────────
+// The file itself goes straight from the browser to Cloudinary — this
+// backend never touches the bytes, just hands out a short-lived signed
+// signature so Cloudinary knows the upload is authorized. No-ops with a
+// clear error until CLOUDINARY_* env vars are actually set; there was no
+// object storage configured at all before this.
+app.get('/media/upload-signature', authenticate, (req, res) => {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey    = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  if (!cloudName || !apiKey || !apiSecret) {
+    return res.status(503).json({ message: 'Media upload is not configured yet.' });
+  }
+  const timestamp = Math.round(Date.now() / 1000);
+  const folder = 'uficonnect-posts';
+  // Cloudinary's signature recipe: sha1 of every param-to-sign (everything
+  // except file/api_key/signature/cloud_name), sorted alphabetically as
+  // key=value pairs joined by &, with the API secret appended — this is
+  // exactly what Cloudinary's own upload endpoint recomputes and compares.
+  const paramsToSign = `folder=${folder}&timestamp=${timestamp}`;
+  const signature = crypto.createHash('sha1').update(paramsToSign + apiSecret).digest('hex');
+  res.json({ cloudName, apiKey, timestamp, folder, signature });
+});
+
 app.post('/groups/:id/posts', authenticate, async (req, res) => {
   try {
     const user  = await getUser(req.user.id);
@@ -10364,24 +10395,37 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     if (group.createdBy && !(user.joinedGroups || []).includes(group.id)) {
       return res.status(403).json({ message: 'Join the group before posting.' });
     }
-    const { content } = req.body;
-    if (!content?.trim()) return res.status(400).json({ message: 'Content is required.' });
+    const { content, mediaUrl, mediaType } = req.body;
+    // A caption is genuinely optional once there's a photo/video attached —
+    // matches how every social platform this feed already aggregates from
+    // treats media posts.
+    if (!content?.trim() && !mediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
+    // mediaUrl is only ever trusted if it's a URL we just handed a signed
+    // upload signature for (Cloudinary's cloud name is baked into the
+    // expected host), not an arbitrary client-supplied string — otherwise
+    // this would be an open redirect / arbitrary-image-embed vector.
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const safeMediaUrl = mediaUrl && cloudName && String(mediaUrl).startsWith(`https://res.cloudinary.com/${cloudName}/`)
+      ? String(mediaUrl).slice(0, 1000)
+      : null;
+    const safeMediaType = safeMediaUrl && (mediaType === 'image' || mediaType === 'video') ? mediaType : null;
 
     const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const post = {
       id, authorId: user.id, groupId: group.id,
-      content: content.trim(), likes: [], commentsCount: 0,
+      content: (content || '').trim(), likes: [], commentsCount: 0,
       createdAt: new Date().toISOString(),
       source: 'uficonnect', sourceLabel: 'UFconnect',
+      mediaUrl: safeMediaUrl, mediaType: safeMediaType,
     };
     // Confirm the DB write before mutating in-memory state / broadcasting to
     // other users — otherwise a failed write still looks like a live post to
     // everyone until the next restart quietly drops it.
     if (db.isConnected()) {
       await db.query(
-        `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at)
-         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6) ON CONFLICT DO NOTHING`,
-        [id, group.id, user.id, user.name, content.trim(), post.createdAt]
+        `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at,media_url,media_type)
+         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6,$7,$8) ON CONFLICT DO NOTHING`,
+        [id, group.id, user.id, user.name, post.content, post.createdAt, safeMediaUrl, safeMediaType]
       );
     }
     posts.unshift(post);
@@ -11491,14 +11535,7 @@ async function loadPostsFromDB() {
       `SELECT * FROM community_posts ORDER BY created_at DESC LIMIT 500`
     );
     posts.length = 0;
-    rows.forEach((r) => posts.push({
-      id: r.id, authorId: r.author_id, groupId: r.group_id,
-      content: r.content, likes: r.likes || [],
-      commentsCount: r.comments_count || 0,
-      createdAt: r.created_at, url: r.url,
-      source: r.source || 'uficonnect',
-      sourceLabel: r.source_label || 'UFconnect',
-    }));
+    rows.forEach((r) => posts.push(dbCommunityPostToMemPost(r)));
     if (rows.length) console.log(`✅ Loaded ${rows.length} posts from DB`);
   } catch (err) { console.warn('loadPostsFromDB:', err.message); }
 }

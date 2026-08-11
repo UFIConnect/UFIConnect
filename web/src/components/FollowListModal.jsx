@@ -95,7 +95,7 @@ export default function FollowListModal({ userId, type, title, onClose }) {
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                   <button
                     className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
-                    style={{ borderRadius: 20, minWidth: 76, fontSize: '.75rem' }}
+                    style={{ minWidth: 76, fontSize: '.75rem' }}
                     onClick={e => toggleFollow(user, e)}
                   >
                     {user.isFollowing ? '✓ Following' : '+ Follow'}

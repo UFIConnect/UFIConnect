@@ -513,7 +513,7 @@ export default function Onboarding() {
                           key={topic}
                           onClick={() => toggleInterest(topic)}
                           style={{
-                            padding: '8px 14px', borderRadius: 22,
+                            padding: '8px 14px', borderRadius: 'var(--radius-sm)',
                             border: `2px solid ${isSelected ? 'var(--primary)' : isSuggested ? '#93C5FD' : 'var(--border)'}`,
                             background: isSelected ? 'var(--primary)' : isSuggested ? '#EFF6FF' : 'var(--surface)',
                             color: isSelected ? '#fff' : 'var(--text)',
@@ -546,7 +546,7 @@ export default function Onboarding() {
                           key={topic}
                           onClick={() => toggleInterest(topic)}
                           style={{
-                            padding: '7px 13px', borderRadius: 22,
+                            padding: '7px 13px', borderRadius: 'var(--radius-sm)',
                             border: `2px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
                             background: isSelected ? 'var(--primary)' : 'var(--surface)',
                             color: isSelected ? '#fff' : 'var(--text)',

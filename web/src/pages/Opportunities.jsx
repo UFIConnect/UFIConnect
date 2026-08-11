@@ -201,7 +201,7 @@ export default function Opportunities() {
               onClick={() => { setFilter(value); setPage(1); }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-                padding: '7px 14px', borderRadius: 20, whiteSpace: 'nowrap',
+                padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
                 border: `1.5px solid ${filter === value ? 'var(--primary)' : 'var(--border)'}`,
                 background: filter === value ? 'var(--primary)' : 'var(--surface)',
                 color: filter === value ? '#fff' : 'var(--text)',
@@ -215,7 +215,7 @@ export default function Opportunities() {
             onClick={() => { setRemote(!remote); setPage(1); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              padding: '7px 14px', borderRadius: 20, whiteSpace: 'nowrap',
+              padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
               border: `1.5px solid ${remote ? 'var(--primary)' : 'var(--border)'}`,
               background: remote ? 'var(--primary)' : 'var(--surface)',
               color: remote ? '#fff' : 'var(--text)',
@@ -228,7 +228,7 @@ export default function Opportunities() {
             onClick={() => { setLiveOnly(!liveOnly); setPage(1); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              padding: '7px 14px', borderRadius: 20, whiteSpace: 'nowrap',
+              padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
               border: `1.5px solid ${liveOnly ? 'var(--primary)' : 'var(--border)'}`,
               background: liveOnly ? 'var(--primary)' : 'var(--surface)',
               color: liveOnly ? '#fff' : 'var(--text)',
@@ -249,7 +249,7 @@ export default function Opportunities() {
             value={sort}
             onChange={e => { setSort(e.target.value); setPage(1); }}
             className="form-input"
-            style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem', borderRadius: 20 }}
+            style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
           >
             <option value="newest">🕐 Newest</option>
             <option value="match">⭐ Best match</option>

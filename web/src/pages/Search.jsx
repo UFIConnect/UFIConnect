@@ -247,7 +247,7 @@ export default function Search() {
                     type="button"
                     onClick={() => setRoleFilter(r)}
                     style={{
-                      padding: '4px 12px', borderRadius: 16, fontSize: '.77rem',
+                      padding: '4px 12px', borderRadius: 'var(--radius-sm)', fontSize: '.77rem',
                       fontWeight: roleFilter === r ? 700 : 500,
                       border: `1.5px solid ${roleFilter === r ? (rm?.color || 'var(--primary)') : 'var(--border)'}`,
                       background: roleFilter === r ? (rm?.bg || 'var(--primary-light)') : 'var(--surface)',
@@ -356,14 +356,14 @@ export default function Search() {
                         {user.isSelf ? (
                           <button
                             className="btn btn-ghost btn-sm"
-                            style={{ borderRadius: 20, flexShrink: 0 }}
+                            style={{ flexShrink: 0 }}
                             onClick={e => { e.stopPropagation(); navigate('/profile'); }}
                           >Edit profile</button>
                         ) : (
                           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                             <button
                               className={user.isFollowing ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm'}
-                              style={{ borderRadius: 20, minWidth: 84 }}
+                              style={{ minWidth: 84 }}
                               onClick={e => toggleFollow(user, e)}
                             >
                               {user.isFollowing ? '✓ Following' : '+ Follow'}
@@ -371,7 +371,7 @@ export default function Search() {
                             <Link
                               to={`/messages/${user.id}`}
                               className="btn btn-ghost btn-sm"
-                              style={{ borderRadius: 20, padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
+                              style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
                             >💬</Link>
                           </div>
                         )}
@@ -497,7 +497,6 @@ export default function Search() {
                           ) : (
                             <button
                               className="btn btn-primary btn-sm"
-                              style={{ borderRadius: 20 }}
                               disabled={isJoining}
                               onClick={e => toggleJoin(group.id, e)}
                             >
