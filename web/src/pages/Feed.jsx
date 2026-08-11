@@ -131,6 +131,15 @@ const SOURCE_TABS = [
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 5 * 60 * 1000;
+// Rolling dedup window for pagination — comfortably larger than the
+// backend's main-feed snapshot pool (300 posts) so a normal scroll session
+// never sees a near-term repeat, but bounded (not all-time) so pagination
+// doesn't dead-end once a user has genuinely scrolled past everything the
+// server has. See loadMoreRemote's markKnownId for why an unbounded set
+// caused real, frequent duplicates: the snapshot pool gets rebuilt every
+// few minutes, so two page requests straddling a rebuild can slice
+// overlapping content even before the pool has been fully scrolled once.
+const FEED_DEDUP_WINDOW = 600;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
@@ -529,6 +538,7 @@ function commentUrl(post) {
 }
 
 const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
+  const { profile } = useAuth();
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -611,14 +621,18 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
         <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
       </div>
 
-      {!isExternal && (
-        <div className="post-header" style={{ marginBottom: 8 }}>
+      {!isExternal && post.author?.id && (
+        <Link
+          to={post.author.id === profile?.id ? '/profile' : `/u/${post.author.id}`}
+          className="post-header"
+          style={{ marginBottom: 8, textDecoration: 'none', color: 'inherit' }}
+        >
           <div className="avatar avatar-md">{initials(post.author?.name)}</div>
           <div className="post-meta">
             <div className="post-author">{post.author?.name || 'Member'}</div>
             <div className="post-source">{post.author?.title}{post.author?.organization ? ` · ${post.author.organization}` : ''}</div>
           </div>
-        </div>
+        </Link>
       )}
       {isExternal && post.author?.name && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -929,6 +943,21 @@ export default function Feed() {
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
+  // Insertion-order companion to knownIds so it can be trimmed like a FIFO
+  // — a plain Set has no cheap "oldest entry" eviction of its own, but
+  // JS Sets do iterate in insertion order, so pairing it with an array of
+  // the same insertions (mirrors the backend's seenPostIds/seenPostIdQueue
+  // pattern) is enough to bound it without a full data structure.
+  const knownIdsQueue = useRef([...knownIds.current]);
+  const markKnownId = useCallback((id) => {
+    if (!id || knownIds.current.has(id)) return;
+    knownIds.current.add(id);
+    knownIdsQueue.current.push(id);
+    if (knownIdsQueue.current.length > FEED_DEDUP_WINDOW) {
+      const oldest = knownIdsQueue.current.shift();
+      knownIds.current.delete(oldest);
+    }
+  }, []);
   const sentinelRef   = useRef(null);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
@@ -1011,7 +1040,8 @@ export default function Feed() {
         setLastRefresh(new Date(refreshTimestamp));
         return;
       }
-      knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
+      knownIdsQueue.current = nextPosts.map(p => p.id).filter(Boolean);
+      knownIds.current = new Set(knownIdsQueue.current);
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(nextPosts);
       if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
@@ -1037,12 +1067,6 @@ export default function Feed() {
 
   const switchViewMode = useCallback((mode) => {
     const nextMode = mode === 'following' ? 'following' : 'feed';
-    // Clicking the tab you're already on is a refresh, not a context switch
-    // — merge the new posts in on top instead of wiping the scrolled-in
-    // list back down to one page. Switching to a different mode is a real
-    // context change (Feed and Following are different data), so that
-    // still replaces.
-    const isRefresh = nextMode === viewModeRef.current;
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
@@ -1056,7 +1080,14 @@ export default function Feed() {
       mode: nextMode,
       filters: filtersRef.current,
       q: searchRef.current,
-      replace: !isRefresh,
+      // Always a full replace now, whether this is a real context switch
+      // (Feed vs Following — obviously different data) or clicking the tab
+      // you're already on as a refresh. Refresh used to merge the fresh
+      // pull in on top of everything already scrolled-in, which could leave
+      // old + new content interleaved indefinitely and didn't read as an
+      // actual refresh — a user-initiated refresh should hand back to a
+      // clean page-1 view, not a merge.
+      replace: true,
       // Feed spans every source — busting here would force all 30+ source
       // workers to refetch externally on every click. Pulls the latest from
       // the server's already-continuously-updated cache instead, which is
@@ -1110,11 +1141,6 @@ export default function Feed() {
     setSearch('');
     setSearchInput('');
     if (key === 'all') {
-      // Already on "All" — this is a refresh, merge new posts in on top
-      // instead of resetting the scrolled-in list back to one page.
-      // Coming from a filtered source tab is a real context switch, so
-      // that still replaces.
-      const isRefresh = activeTabsRef.current.length === 0;
       activeTabsRef.current = [];
       setActiveTabs([]);
       // Clears source filtering only — sort stays whatever's set in the Sort
@@ -1125,9 +1151,14 @@ export default function Feed() {
       // externally on every click, the same burst that crashed the API
       // under concurrent load. The background pipeline already keeps
       // sources fresh continuously, so this still returns real current data.
+      // replace:true unconditionally — whether this is a real context
+      // switch (coming from a filtered source tab) or clicking "All" again
+      // as a refresh, a user-initiated refresh should hand back a clean
+      // page-1 view instead of merging fresh posts on top of everything
+      // already scrolled-in.
       loadFeed(true, [], {
         live: viewModeRef.current === 'feed',
-        replace: !isRefresh,
+        replace: true,
         bust: false,
       });
       return;
@@ -1165,17 +1196,20 @@ export default function Feed() {
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       const { data } = await client.get(`/office/feed?${params.toString()}`);
-      const incoming = (data.posts || []).filter(Boolean);
-      incoming.forEach(p => p?.id && knownIds.current.add(p.id));
+      // A flat all-time dedup here used to make infinite scroll dead-end
+      // (once a user had paged through the whole shared pool once, every
+      // later page was "all already seen" and got filtered to nothing) —
+      // but no dedup at all made the opposite mistake: the server's
+      // snapshot pool gets rebuilt every few minutes, so two page requests
+      // straddling a rebuild can hand back overlapping content well before
+      // a user has scrolled anywhere near the full pool, which read as
+      // "duplicate posts" appearing in quick succession. A bounded rolling
+      // window (see FEED_DEDUP_WINDOW) filters near-term repeats from
+      // either cause while still admitting a genuine repeat once a user has
+      // scrolled far enough that it's fallen out of the window.
+      const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
+      incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
-        // No knownIds filter and no mergeFeedPosts here (its id-keyed Map
-        // would collapse repeats right back out) — the server wraps around
-        // once real supply runs out (sliceCircular), so later pages
-        // legitimately repeat earlier posts. Filtering/deduping those away
-        // is what made this stall: once a user had paged through the whole
-        // pool once, every next page was "all already seen" and got
-        // filtered to nothing, so posts stopped growing despite the server
-        // still serving valid looped pages.
         setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));
       }
       setRemotePage(p => p + 1);
@@ -1279,7 +1313,7 @@ export default function Feed() {
           try {
             const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
-            incoming.forEach(p => knownIds.current.add(p.id));
+            incoming.forEach(p => p?.id && markKnownId(p.id));
           } catch (err) {
             console.error('[SSE] Error parsing message:', err);
           }
@@ -1791,7 +1825,7 @@ export default function Feed() {
                 <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources!</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
                 </div>
               </>
             ) : viewMode === 'following' ? (

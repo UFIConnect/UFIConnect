@@ -4513,7 +4513,19 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
       seen.add(post.id);
       unique.push(post);
     }
-    const srcMaxEng = options.levelSources ? buildSrcMaxEngagement(unique) : null;
+    // Per-source engagement leveling is the whole point of the "true mix"
+    // design (a Reddit post with 50k upvotes shouldn't permanently bury a
+    // UFconnect-native post with 20 likes) — but this used to be opt-in via
+    // levelSources, and only the one call site that builds the main feed
+    // snapshot ever opted in. Every other path through this function (single
+    // -source tabs, search results, sort_agent's periodic maintenance pass,
+    // page 2+ merges, connected-social feeds) silently fell back to raw,
+    // unnormalized engagement — so the exact same post got ranked by two
+    // different formulas depending on which route happened to touch it.
+    // Leveling by default (opt OUT with levelSources:false, not opt in)
+    // makes every path consistent by construction instead of relying on
+    // every future call site remembering to ask for it.
+    const srcMaxEng = options.levelSources === false ? null : buildSrcMaxEngagement(unique);
     unique.sort((a, b) => {
       if (sortMode === 'newest') return postTimestamp(b) - postTimestamp(a);
       if (sortMode === 'popular') {

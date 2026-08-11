@@ -64,16 +64,21 @@ export default function Conversation() {
       {/* Top bar */}
       <div className="conv-topbar">
         <button className="conv-topbar-back" onClick={() => navigate('/messages')}>←</button>
-        {participant && (
-          <div className="avatar avatar-md" style={{ marginRight: 4 }}>
-            {initials(participant.name)}
-          </div>
-        )}
-        <div>
-          <div className="conv-topbar-name">{participant?.name || 'Loading…'}</div>
-          {participant?.title && (
-            <div className="conv-topbar-title">{participant.title}{participant.organization ? ` · ${participant.organization}` : ''}</div>
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: participant ? 'pointer' : 'default', minWidth: 0 }}
+          onClick={() => participant && navigate(userId === profile?.id ? '/profile' : `/u/${userId}`)}
+        >
+          {participant && (
+            <div className="avatar avatar-md" style={{ marginRight: 4 }}>
+              {initials(participant.name)}
+            </div>
           )}
+          <div>
+            <div className="conv-topbar-name">{participant?.name || 'Loading…'}</div>
+            {participant?.title && (
+              <div className="conv-topbar-title">{participant.title}{participant.organization ? ` · ${participant.organization}` : ''}</div>
+            )}
+          </div>
         </div>
       </div>
 

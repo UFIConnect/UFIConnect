@@ -190,7 +190,11 @@ export default function GroupDetail() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {members.map((m) => (
-              <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div
+                key={m.id}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}
+                onClick={() => navigate(m.id === profile?.id ? '/profile' : `/u/${m.id}`)}
+              >
                 <div className="avatar avatar-md">{initials(m.name)}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{m.name}</div>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
 
@@ -161,13 +162,18 @@ export default function PostList({
           <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
             {showAuthor ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
-                  <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {post.author?.title || 'UFconnect Member'}{post.group ? ` - ${post.group.name}` : ''}
+                <Link
+                  to={post.authorId && post.authorId === currentUserId ? '/profile' : `/u/${post.authorId || post.author?.id}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, textDecoration: 'none', color: 'inherit' }}
+                >
+                  <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
+                    <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {post.author?.title || 'UFconnect Member'}{post.group ? ` - ${post.group.name}` : ''}
+                    </div>
                   </div>
-                </div>
+                </Link>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                   {timeAgo(post.createdAt)}
                   {currentUserId && post.authorId === currentUserId && (
@@ -279,12 +285,21 @@ export default function PostList({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
                     {comments.map(comment => (
                       <div key={comment.id} style={{ display: 'flex', gap: 10 }}>
-                        <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>
+                        <Link
+                          to={comment.author?.id && comment.author.id === currentUserId ? '/profile' : `/u/${comment.author?.id}`}
+                          className="avatar avatar-sm"
+                          style={{ flexShrink: 0 }}
+                        >
                           {initials(comment.author?.name)}
-                        </div>
+                        </Link>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-                            <span style={{ fontWeight: 700, fontSize: '.78rem' }}>{comment.author?.name || 'Member'}</span>
+                            <Link
+                              to={comment.author?.id && comment.author.id === currentUserId ? '/profile' : `/u/${comment.author?.id}`}
+                              style={{ fontWeight: 700, fontSize: '.78rem', color: 'inherit', textDecoration: 'none' }}
+                            >
+                              {comment.author?.name || 'Member'}
+                            </Link>
                             <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(comment.createdAt)}</span>
                           </div>
                           <p style={{ margin: 0, fontSize: '.84rem', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>

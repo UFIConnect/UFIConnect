@@ -23,6 +23,13 @@ function resolveVideoSource(post) {
   return null;
 }
 
+// Rolling dedup window for pagination — see the identical constant/reasoning
+// in Feed.jsx. Bounded (not all-time) so pagination doesn't dead-end once a
+// user has genuinely scrolled past everything the server has, but large
+// enough that a normal scroll session never sees a near-term repeat caused
+// by the server's video pool being rebuilt mid-session.
+const VIDEO_DEDUP_WINDOW = 400;
+
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -333,36 +340,54 @@ export default function VideoFeedView({ onExit }) {
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
   const loadingMoreRef = useRef(false);
+  // Bounded rolling dedup — see VIDEO_DEDUP_WINDOW. Set for O(1) lookups,
+  // paired with an array for FIFO eviction (Sets iterate in insertion
+  // order, so the array is only needed to know what to evict, mirroring
+  // the backend's seenPostIds/seenPostIdQueue pattern).
+  const knownIds = useRef(new Set());
+  const knownIdsQueue = useRef([]);
+  const markKnownId = useCallback((id) => {
+    if (!id || knownIds.current.has(id)) return;
+    knownIds.current.add(id);
+    knownIdsQueue.current.push(id);
+    if (knownIdsQueue.current.length > VIDEO_DEDUP_WINDOW) {
+      knownIds.current.delete(knownIdsQueue.current.shift());
+    }
+  }, []);
 
-  const loadPage = useCallback(async (pageNum, { bust = false, prepend = false } = {}) => {
+  const loadPage = useCallback(async (pageNum, { bust = false } = {}) => {
     try {
       const params = `limit=10&page=${pageNum}${bust ? '&bust=1' : ''}`;
       const { data } = await client.get(`/office/feed/videos?${params}`);
       const incoming = (data.posts || []).filter(p => p?.mediaUrl);
+      if (pageNum === 1) {
+        // A fresh page-1 load is a full reset (initial mount, or a
+        // user-initiated refresh) — the dedup window needs to reset with
+        // it, otherwise videos from before a refresh would still count as
+        // "recently seen" and suppress legitimately-fresh page-2+ content
+        // right after.
+        knownIds.current = new Set();
+        knownIdsQueue.current = [];
+      }
       setVideoPosts(prev => {
-        if (prepend) {
-          // Refresh: put whatever's new at the front, ahead of whatever the
-          // user hasn't scrolled to yet, instead of wiping the queue and
-          // starting over — same "new stuff on top, don't lose your place"
-          // behavior as the main Feed's refresh. Still deduped here — a
-          // refresh finding nothing new should show nothing, not re-front
-          // stuff that's already there.
-          const seen = new Set(prev.map(p => p.id));
-          const fresh = incoming.filter(p => !seen.has(p.id));
-          return [...fresh, ...prev];
-        }
-        if (pageNum === 1) return incoming;
-        // No id dedup here — the backend now wraps around once real video
-        // supply runs out (see sliceCircular server-side) so this rail
-        // never dead-ends, which means later pages *legitimately* repeat
-        // earlier content. Deduping by id here undid that: once a user had
-        // scrolled through the whole real pool once, every subsequent page
-        // came back entirely "already seen" and got filtered to nothing,
-        // so videoPosts.length stopped growing and scrolling looked like it
-        // hit a wall again despite the server happily still serving pages.
-        // React keys below are (id + index) specifically to allow the
-        // now-expected repeats without colliding.
-        return [...prev, ...incoming];
+        // A flat all-time dedup here used to make infinite scroll dead-end
+        // (once a user had scrolled through the whole real pool once, every
+        // later page was "all already seen" and got filtered to nothing) —
+        // but no dedup at all made the opposite mistake: the server's video
+        // pool gets rebuilt periodically, so two page requests straddling a
+        // rebuild can hand back overlapping content well before a user has
+        // scrolled anywhere near the full pool, which read as duplicate
+        // videos appearing in quick succession. A bounded rolling window
+        // filters near-term repeats from either cause while still admitting
+        // a genuine repeat once it's fallen out of the window. React keys
+        // below are still (id + index) since a repeat past the window is
+        // still expected eventually.
+        const fresh = pageNum === 1 ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+        fresh.forEach(p => markKnownId(p.id));
+        // pageNum===1 always replaces wholesale rather than merging — a
+        // user-initiated refresh should hand back a clean view instead of
+        // old and new videos interleaved indefinitely.
+        return pageNum === 1 ? fresh : [...prev, ...fresh];
       });
       setHasMore(data.hasMore !== false && incoming.length > 0);
       setError(false);
@@ -371,20 +396,23 @@ export default function VideoFeedView({ onExit }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [markKnownId]);
 
   useEffect(() => { loadPage(1); }, [loadPage]);
 
   // Manual refresh — busts the server's cached pool (see VIDEO_FEED_SNAPSHOT_TTL
-  // backend-side) so this always pulls in whatever's newly landed instead of
-  // waiting out the rest of its 5-minute window, and prepends it rather than
-  // replacing the queue outright.
+  // backend-side) and fully replaces the queue with a fresh page 1, same as
+  // the main Feed's refresh — the view is already jumping back to the first
+  // slide, so there's no "losing your place" cost to a full reset here, and
+  // it means refresh actually reads as a refresh instead of old and new
+  // videos staying interleaved together indefinitely.
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
     setActiveIndex(0);
+    setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
-    await loadPage(1, { bust: true, prepend: true });
+    await loadPage(1, { bust: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
 
