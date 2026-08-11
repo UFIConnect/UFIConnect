@@ -41,6 +41,7 @@ const ResetPassword  = lazy(() => import('./pages/ResetPassword'));
 const Landing        = lazy(() => import('./pages/Landing'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const Feed           = lazy(() => import('./pages/Feed'));
+const Videos         = lazy(() => import('./pages/Videos'));
 const Groups         = lazy(() => import('./pages/Groups'));
 const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
 const Opportunities  = lazy(() => import('./pages/Opportunities'));
@@ -117,6 +118,9 @@ export default function App() {
 
       {/* Home: Landing for public, Feed for authenticated */}
       <Route path="/" element={<HomeRoute />} />
+      <Route path="/videos" element={
+        <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
+      }/>
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
       }/>

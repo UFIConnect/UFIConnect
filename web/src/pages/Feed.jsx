@@ -6,7 +6,6 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from '../components/videoMedia';
 import { SOURCE_META } from '../components/sourceMeta';
-import VideoFeedView from '../components/VideoFeedView';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -143,7 +142,7 @@ function loadFeedState() {
       filters:    { ...DEFAULT_FILTERS, ...(s.filters || {}) },
       activeTabs: Array.isArray(s.activeTabs) ? s.activeTabs : [],
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   (s.viewMode === 'following' || s.viewMode === 'videos') ? s.viewMode : 'feed',
+      viewMode:   s.viewMode === 'following' ? 'following' : 'feed',
     };
   } catch { return null; }
 }
@@ -1123,26 +1122,22 @@ export default function Feed() {
   }, [loading, refreshing, loadingMore]);
 
   const switchViewMode = useCallback((mode) => {
-    const nextMode = mode === 'following' ? 'following' : mode === 'videos' ? 'videos' : 'feed';
+    const nextMode = mode === 'following' ? 'following' : 'feed';
     // Clicking the tab you're already on is a refresh, not a context switch
     // — merge the new posts in on top instead of wiping the scrolled-in
     // list back down to one page. Switching to a different mode is a real
-    // context change (Feed/Following/Videos are different data), so that
+    // context change (Feed and Following are different data), so that
     // still replaces.
     const isRefresh = nextMode === viewModeRef.current;
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Neither Following nor Videos is source-filterable the way the
-    // aggregate Feed is — clear any source tabs so switching in/out doesn't
-    // leave a stale filter that silently does nothing in the other view.
+    // Following isn't source-filterable the way the aggregate Feed is —
+    // clear any source tabs so switching in/out doesn't leave a stale
+    // filter that silently does nothing in the other view.
     activeTabsRef.current = [];
     setActiveTabs([]);
-    // Videos has its own dedicated fetch pipeline (VideoFeedView talks to
-    // /office/feed/videos directly) — it doesn't use the posts list/loadFeed
-    // machinery at all, so there's nothing to fetch here for that mode.
-    if (nextMode === 'videos') return;
     loadFeed(true, [], {
       mode: nextMode,
       filters: filtersRef.current,
@@ -1607,13 +1602,12 @@ export default function Feed() {
       </div>
 
       {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
-          stable, server-sorted view), Videos (a true-mix, TikTok-style rail
-          of every platform's video posts), and Following (posts from people
-          you follow on UFconnect). */}
+          stable, server-sorted view) and Following (posts from people you
+          follow on UFconnect). Videos lives as its own top-level nav item
+          (see Layout.jsx / pages/Videos.jsx) rather than nested in here. */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {[
           { key: 'feed',      label: 'Feed' },
-          { key: 'videos',    label: '▶ Videos' },
           { key: 'following', label: 'Following' },
         ].map(({ key, label }) => {
           const active = viewMode === key;
@@ -1635,13 +1629,8 @@ export default function Feed() {
         })}
       </div>
 
-      {/* Videos is a full-screen takeover (TikTok-style), not a card list —
-          rendered as a fixed overlay on top of everything else here rather
-          than fighting the page's normal padding/max-width. */}
-      {viewMode === 'videos' && <VideoFeedView onExit={() => switchViewMode('feed')} />}
-
-      {/* Source tabs — only meaningful for the aggregate Feed; Following and
-          Videos aren't filterable by external platform the same way. */}
+      {/* Source tabs — only meaningful for the aggregate Feed; Following
+          isn't filterable by external platform the same way. */}
       {viewMode === 'feed' && (
       <div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,

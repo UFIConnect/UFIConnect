@@ -4,6 +4,7 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
+  { to: '/videos',        icon: '▶️', label: 'Videos'       },
   { to: '/post',          icon: '✏️', label: 'Posts'        },
   { to: '/search',        icon: '🔍', label: 'Search'       },
   { to: '/notifications', icon: '🔔', label: 'Notifications' },
