@@ -1599,14 +1599,14 @@ export default function Feed() {
       </div>
 
       {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
-          stable, server-sorted view), Following (posts from people you
-          follow on UFconnect), and Videos (a true-mix, TikTok-style rail of
-          every platform's video posts). */}
+          stable, server-sorted view), Videos (a true-mix, TikTok-style rail
+          of every platform's video posts), and Following (posts from people
+          you follow on UFconnect). */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {[
           { key: 'feed',      label: 'Feed' },
-          { key: 'following', label: 'Following' },
           { key: 'videos',    label: '▶ Videos' },
+          { key: 'following', label: 'Following' },
         ].map(({ key, label }) => {
           const active = viewMode === key;
           return (
