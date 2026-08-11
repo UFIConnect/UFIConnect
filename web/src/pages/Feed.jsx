@@ -34,6 +34,18 @@ function feedPostTime(post) {
   return Number.isFinite(time) ? time : 0;
 }
 
+// embedId (the YouTube video ID used for in-app iframe playback) only ever
+// existed on the live/in-memory post shape — feed_posts_cache has no column
+// for it, so any YouTube post served from the database (the primary path
+// for most of the feed now) arrived with no way to actually play the video,
+// only a thumbnail + an external link. It's recoverable from sourceUrl
+// (watch?v=... or youtu.be/...), which is always persisted.
+function extractYouTubeId(url) {
+  if (!url) return null;
+  const m = String(url).match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+
 function postEngagement(post) {
   const likes = Number(post?.likesCount || post?.likes || 0);
   const comments = Number(post?.commentsCount || post?.comments || 0);
@@ -501,6 +513,7 @@ function YouTubeCard({ post }) {
   const [playing, setPlaying] = useState(false);
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
+  const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
   return (
     <div className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -511,11 +524,11 @@ function YouTubeCard({ post }) {
         <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
       </div>
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
-      {post.embedId ? (
+      {embedId ? (
         playing ? (
           <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
             <iframe width="100%" height="100%"
-              src={`https://www.youtube.com/embed/${post.embedId}?autoplay=1`}
+              src={`https://www.youtube.com/embed/${embedId}?autoplay=1`}
               title={post.title} frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen style={{ display: 'block' }} />
