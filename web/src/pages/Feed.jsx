@@ -1258,10 +1258,18 @@ export default function Feed() {
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       const { data } = await client.get(`/office/feed?${params.toString()}`);
-      const incoming = (data.posts || []).filter(p => !knownIds.current.has(p.id));
-      incoming.forEach(p => knownIds.current.add(p.id));
+      const incoming = (data.posts || []).filter(Boolean);
+      incoming.forEach(p => p?.id && knownIds.current.add(p.id));
       if (incoming.length > 0) {
-        setPosts(prev => mergeFeedPosts([...prev, ...incoming], activeFilters.sort));
+        // No knownIds filter and no mergeFeedPosts here (its id-keyed Map
+        // would collapse repeats right back out) — the server wraps around
+        // once real supply runs out (sliceCircular), so later pages
+        // legitimately repeat earlier posts. Filtering/deduping those away
+        // is what made this stall: once a user had paged through the whole
+        // pool once, every next page was "all already seen" and got
+        // filtered to nothing, so posts stopped growing despite the server
+        // still serving valid looped pages.
+        setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));
       }
       setRemotePage(p => p + 1);
       setRemoteHasMore(data.hasMore !== false);
@@ -1902,7 +1910,7 @@ export default function Feed() {
           <div>
             {displayed.map((post, idx) => (
               <PostCard
-                key={post.id || `temp-${idx}-${post.createdAt}`}
+                key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
                 post={post}
                 onVideoOpen={setVideoPost}
                 onImageOpen={p => setImageLightboxPostId(p.id)}

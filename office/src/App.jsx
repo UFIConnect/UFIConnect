@@ -904,18 +904,26 @@ function SortHelperPanel({ status, triggerAgent, triggering }) {
   const composition = status?.feed?.composition || [];
   const sortAgent = status?.sortAgent;
   const distrib = status?.sortDistributionAgent;
+  const mixOptimizer = status?.mixOptimizer;
+  const sortOptimizer = status?.sortOptimizer;
   const cap18 = 18; // matches SRC_CAP in handleFeedRequest — ranked/newest/popular modes
 
   return (
     <Card style={{ marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, flexWrap: 'wrap', gap: 8 }}>
         <Label color="#a78bfa">Sort Helper</Label>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_agent')} disabled={triggering.sort_agent}>
             {triggering.sort_agent ? '...' : '🧮 Re-sort now'}
           </Btn>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_distrib')} disabled={triggering.sort_distrib}>
             {triggering.sort_distrib ? '...' : '🔀 Re-diversify now'}
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('mix_optimizer')} disabled={triggering.mix_optimizer}>
+            {triggering.mix_optimizer ? '...' : '🎛️ Audit mix now'}
+          </Btn>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_optimizer')} disabled={triggering.sort_optimizer}>
+            {triggering.sort_optimizer ? '...' : '🧭 Audit ranking now'}
           </Btn>
         </div>
       </div>
@@ -957,6 +965,28 @@ function SortHelperPanel({ status, triggerAgent, triggering }) {
           <div style={{ marginTop: 4, color: '#e2e8f0' }}>{(distrib?.totalRuns ?? 0).toLocaleString()} runs</div>
           <div style={{ marginTop: 2 }}>
             {distrib?.lastDiversified ? `Last interleaved ${distrib.lastDiversified} posts from ${distrib.lastRun ? fmtAgo(distrib.lastRun) : '—'}` : '—'}
+          </div>
+        </div>
+        <div style={{ flex: '1 1 200px', fontSize: 11, color: '#64748b' }}>
+          <Label>Mix Optimizer</Label>
+          <div style={{ marginTop: 4, color: mixOptimizer?.lastIssues?.length ? '#fbbf24' : '#e2e8f0' }}>
+            {(mixOptimizer?.totalRuns ?? 0).toLocaleString()} runs · {mixOptimizer?.lastCheckedPools ?? 0} pool(s) checked
+          </div>
+          <div style={{ marginTop: 2 }}>
+            {mixOptimizer?.lastIssues?.length
+              ? `Rebalanced: ${mixOptimizer.lastIssues.join(' · ')}`
+              : mixOptimizer?.lastRun ? `Balanced as of ${fmtAgo(mixOptimizer.lastRun)}` : '—'}
+          </div>
+        </div>
+        <div style={{ flex: '1 1 200px', fontSize: 11, color: '#64748b' }}>
+          <Label>Sort Optimizer</Label>
+          <div style={{ marginTop: 4, color: '#e2e8f0' }}>
+            {(sortOptimizer?.totalRuns ?? 0).toLocaleString()} runs · score spread {sortOptimizer?.lastScoreSpread ?? 0}
+          </div>
+          <div style={{ marginTop: 2 }}>
+            {sortOptimizer?.lastRun
+              ? `ranked/newest overlap ${sortOptimizer.lastRankedNewestOverlap ?? 0}/20 · ${fmtAgo(sortOptimizer.lastRun)}`
+              : '—'}
           </div>
         </div>
       </div>

@@ -342,14 +342,25 @@ export default function VideoFeedView({ onExit }) {
           // Refresh: put whatever's new at the front, ahead of whatever the
           // user hasn't scrolled to yet, instead of wiping the queue and
           // starting over — same "new stuff on top, don't lose your place"
-          // behavior as the main Feed's refresh.
+          // behavior as the main Feed's refresh. Still deduped here — a
+          // refresh finding nothing new should show nothing, not re-front
+          // stuff that's already there.
           const seen = new Set(prev.map(p => p.id));
           const fresh = incoming.filter(p => !seen.has(p.id));
           return [...fresh, ...prev];
         }
         if (pageNum === 1) return incoming;
-        const seen = new Set(prev.map(p => p.id));
-        return [...prev, ...incoming.filter(p => !seen.has(p.id))];
+        // No id dedup here — the backend now wraps around once real video
+        // supply runs out (see sliceCircular server-side) so this rail
+        // never dead-ends, which means later pages *legitimately* repeat
+        // earlier content. Deduping by id here undid that: once a user had
+        // scrolled through the whole real pool once, every subsequent page
+        // came back entirely "already seen" and got filtered to nothing,
+        // so videoPosts.length stopped growing and scrolling looked like it
+        // hit a wall again despite the server happily still serving pages.
+        // React keys below are (id + index) specifically to allow the
+        // now-expected repeats without colliding.
+        return [...prev, ...incoming];
       });
       setHasMore(data.hasMore !== false && incoming.length > 0);
       setError(false);
@@ -418,8 +429,10 @@ export default function VideoFeedView({ onExit }) {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
       <button onClick={onExit} aria-label="Back to Feed" style={{
-        position: 'absolute', top: 16, left: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
-        background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.2rem', cursor: 'pointer',
+        position: 'absolute', top: 16, left: 16, zIndex: 10, width: 42, height: 42, borderRadius: '50%',
+        background: 'rgba(0,0,0,.6)', border: '2px solid rgba(255,255,255,.85)', color: '#fff',
+        fontSize: '1.4rem', fontWeight: 800, lineHeight: 1, cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>←</button>
       <button onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" style={{
         position: 'absolute', top: 16, right: 64, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
@@ -453,7 +466,10 @@ export default function VideoFeedView({ onExit }) {
         >
           {videoPosts.map((post, idx) => (
             <div
-              key={post.id || idx}
+              // idx included — the pool now legitimately wraps/repeats once
+              // real supply runs out (see sliceCircular server-side), so
+              // the same post.id can appear more than once in this list.
+              key={`${post.id || 'v'}-${idx}`}
               ref={el => { slideRefs.current[idx] = el; }}
               data-idx={idx}
               style={{ height: '100dvh', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}

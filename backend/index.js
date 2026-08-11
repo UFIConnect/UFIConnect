@@ -4196,6 +4196,25 @@ const sortDistribState = {
   lastError: null,
 };
 
+const mixOptimizerState = {
+  totalRuns: 0,
+  lastCheckedPools: 0,
+  lastTotalPosts: 0,
+  lastIssues: [],
+  lastRun: null,
+  lastError: null,
+};
+
+const sortOptimizerState = {
+  totalRuns: 0,
+  lastSampleSize: 0,
+  lastScoreSpread: 0,
+  lastVariance: 0,
+  lastRankedNewestOverlap: 0,
+  lastRun: null,
+  lastError: null,
+};
+
 const websiteOptimizerState = {
   status: 'idle',
   publicUrl: WEB_OPTIMIZER_URL,
@@ -5107,6 +5126,145 @@ async function runFeedOptimizer() {
   }
 }
 
+// ─── Mix Optimizer Agent: keeps the "true mix" feed pool balanced ────────────
+// The main feed intentionally blends every source + job listings into one
+// shared pool (mainFeedSnapshots) instead of separate tabs/feeds. Nothing
+// upstream re-checks that blend once a pool is built — this audits every
+// cached pool for source concentration, job-listing cadence drift (target is
+// boostJobListings' 1-in-8 ≈ 12.5%), staleness, and thinness, and proactively
+// rebuilds anything out of range via the same warmMainFeedSnapshot path the
+// proactive-warming interval already uses, instead of waiting for a user to
+// hit a stale/lopsided cache.
+async function runMixOptimizerCheck() {
+  if (isStabilityCritical()) {
+    logAgentAction('mix_optimizer', '⏸️', 'Mix audit skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
+  try {
+    const now = Date.now();
+    const issues = [];
+    let totalPosts = 0;
+    let checkedPools = 0;
+
+    for (const [key, snap] of mainFeedSnapshots.entries()) {
+      if (!snap?.posts?.length) continue;
+      checkedPools++;
+      const pool = snap.posts;
+      totalPosts += pool.length;
+
+      const ageMin = (now - snap.computedAt) / 60000;
+      const stale = ageMin > (MAIN_FEED_SNAPSHOT_TTL / 60000) + 1;
+
+      const bySource = new Map();
+      for (const p of pool) bySource.set(p.source, (bySource.get(p.source) || 0) + 1);
+      const topSource = [...bySource.entries()].sort((a, b) => b[1] - a[1])[0];
+      const topShare = topSource ? topSource[1] / pool.length : 0;
+      const dominated = topShare > 0.4 && bySource.size > 1;
+
+      const jobCount = pool.filter(p => JOB_LISTING_SOURCES.includes(p.source)).length;
+      const jobShare = jobCount / pool.length;
+      const jobDrifted = jobShare < 0.05 || jobShare > 0.25;
+
+      const thin = pool.length < MAIN_FEED_SNAPSHOT_POOL_SIZE * 0.5;
+
+      if (stale || dominated || jobDrifted || thin) {
+        const [sortMode, timeRange] = key.split('::');
+        const reasons = [];
+        if (stale) reasons.push(`${ageMin.toFixed(1)}min stale`);
+        if (dominated) reasons.push(`${topSource[0]} dominates ${(topShare * 100).toFixed(0)}%`);
+        if (jobDrifted) reasons.push(`job share ${(jobShare * 100).toFixed(1)}%`);
+        if (thin) reasons.push(`only ${pool.length} posts`);
+        issues.push(`${key}(${reasons.join(', ')})`);
+        warmMainFeedSnapshot(sortMode, timeRange);
+      }
+    }
+
+    mixOptimizerState.totalRuns += 1;
+    mixOptimizerState.lastCheckedPools = checkedPools;
+    mixOptimizerState.lastTotalPosts = totalPosts;
+    mixOptimizerState.lastIssues = issues;
+    mixOptimizerState.lastRun = now;
+    mixOptimizerState.lastError = null;
+
+    if (issues.length > 0) {
+      logAgentAction('mix_optimizer', '🎛️', `Rebalanced ${issues.length} pool(s): ${issues.join(' · ')}`, '#22D3EE');
+    } else {
+      logAgentAction('mix_optimizer', '✅',
+        `${checkedPools} mix pool(s) balanced — ${totalPosts.toLocaleString()} posts, source spread + job cadence healthy`, '#22D3EE');
+    }
+  } catch (e) {
+    mixOptimizerState.lastError = e.message;
+    mixOptimizerState.lastRun = Date.now();
+    logAgentAction('mix_optimizer', '⚠️', `Mix audit failed: ${e.message}`, '#F87171');
+  }
+}
+
+// ─── Sort Optimizer Agent: audits ranking quality, distinct from Sort Agent ───
+// Sort Agent (above) does the mechanical work of dedup/cap/sort every cycle.
+// This asks a different question: is the *ranking itself* doing anything
+// useful? A bug that made postRankScore degenerate (e.g. every post landing
+// within a couple points of each other) would still let Sort Agent run clean
+// — the output would just be sorted noise wearing a "ranked" label. Samples
+// the real global feed cache and checks score spread plus how much 'ranked'
+// order actually diverges from plain 'newest' order.
+function runSortOptimizerCheck() {
+  if (isStabilityCritical()) {
+    logAgentAction('sort_optimizer', '⏸️', 'Sort quality audit skipped while stability guard is critical', '#FBBF24');
+    return;
+  }
+  try {
+    const pool = realFeedPosts(globalFeedCache.posts);
+    if (pool.length < 10) {
+      logAgentAction('sort_optimizer', '🧭', `Pool too small to audit (${pool.length} posts)`, '#A78BFA');
+      return;
+    }
+    const sample = pool.slice(0, 200);
+    const srcMaxEng = buildSrcMaxEngagement(sample);
+    const scores = sample.map(p => postRankScore(p, srcMaxEng[p.source || 'unknown']));
+    const min = Math.min(...scores);
+    const max = Math.max(...scores);
+    const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+    const variance = scores.reduce((a, b) => a + (b - mean) ** 2, 0) / scores.length;
+    const spread = max - min;
+    // Real scores span tens of points in normal operation (recency alone
+    // ranges 0-100) — a spread this tight means ranking has effectively
+    // collapsed to noise and every sort mode is producing near-arbitrary order.
+    const collapsed = spread < 5;
+
+    const rankedTop20 = [...sample]
+      .sort((a, b) => postRankScore(b, srcMaxEng[b.source || 'unknown']) - postRankScore(a, srcMaxEng[a.source || 'unknown']))
+      .slice(0, 20).map(p => p.id);
+    const newestTop20 = [...sample].sort((a, b) => postTimestamp(b) - postTimestamp(a)).slice(0, 20).map(p => p.id);
+    const overlap = rankedTop20.filter(id => newestTop20.includes(id)).length;
+    // If 'ranked' order is almost identical to plain chronological order,
+    // engagement/community/first-party signals aren't meaningfully
+    // influencing anything — the ranked sort mode isn't earning its name.
+    const indistinct = overlap >= 18;
+
+    sortOptimizerState.totalRuns += 1;
+    sortOptimizerState.lastSampleSize = sample.length;
+    sortOptimizerState.lastScoreSpread = Number(spread.toFixed(1));
+    sortOptimizerState.lastVariance = Number(variance.toFixed(1));
+    sortOptimizerState.lastRankedNewestOverlap = overlap;
+    sortOptimizerState.lastRun = Date.now();
+    sortOptimizerState.lastError = null;
+
+    if (collapsed || indistinct) {
+      const reasons = [];
+      if (collapsed) reasons.push(`score spread only ${spread.toFixed(1)}`);
+      if (indistinct) reasons.push(`ranked/newest overlap ${overlap}/20`);
+      logAgentAction('sort_optimizer', '⚠️', `Ranking quality degraded: ${reasons.join(', ')} — sampled ${sample.length} posts`, '#FBBF24');
+    } else {
+      logAgentAction('sort_optimizer', '🧭',
+        `Ranking healthy — score spread ${spread.toFixed(1)}, ranked/newest overlap ${overlap}/20 across ${sample.length} sampled posts`, '#A78BFA');
+    }
+  } catch (e) {
+    sortOptimizerState.lastError = e.message;
+    sortOptimizerState.lastRun = Date.now();
+    logAgentAction('sort_optimizer', '⚠️', `Sort quality audit failed: ${e.message}`, '#F87171');
+  }
+}
+
 // ─── Deploy Agent: ping all three live services and log each response ────────
 function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
   return new Promise((resolve, reject) => {
@@ -5755,6 +5913,10 @@ setInterval(runAgentActivityCheck, 2 * 60 * 1000);
 setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 4 * 60 * 1000); }, 4 * 60 * 1000);
 // Feed Optimizer: heal degraded/paused workers every 4 minutes (was 5)
 setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 4 * 60 * 1000); }, 90 * 1000);
+// Mix Optimizer: audit + rebalance the true-mix feed pools every 5 minutes
+setTimeout(() => { runMixOptimizerCheck(); setInterval(runMixOptimizerCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
+// Sort Optimizer: audit ranking quality (score spread, ranked/newest divergence) every 7 minutes
+setTimeout(() => { runSortOptimizerCheck(); setInterval(runSortOptimizerCheck, 7 * 60 * 1000); }, 150 * 1000);
 setTimeout(runDataCheck,  12000);
 
 // ─── Platform config (OAuth metadata) ────────────────────────────────────────
@@ -8989,9 +9151,20 @@ async function handleVideoFeedRequest(req, res) {
     // Same per-user rotation + circular wraparound as the main feed — so
     // different users don't all scroll through videos in the exact same
     // order, and the rail never just dead-ends once real supply runs out.
+    // Rotation alone isn't personalization though — it just varies the
+    // starting point, everyone still eventually sees the same set in the
+    // same relative order. personalizeOrder on top actually biases toward
+    // this specific user's interests, same as the main feed.
+    const user = await getUser(req.user.id);
+    const prefs = user?.preferences || {};
+    const userTopics = [
+      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
+      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+    ];
     const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id);
+    const personalized = personalizeOrder(rotated, userTopics);
     const lo = (reqPage - 1) * feedLimit;
-    const pageSlice = sliceCircular(rotated, lo, feedLimit);
+    const pageSlice = sliceCircular(personalized, lo, feedLimit);
     res.json({
       posts: pageSlice,
       page: reqPage,
@@ -9847,6 +10020,14 @@ const AGENT_DEFS = {
     name: 'Distribution Agent', emoji: '🔀', color: '#818CF8', interval: '3min',
     description: 'Scans all source caches every 3 minutes. Refills any source returning 0 posts by re-triggering its fetcher. Interleaves posts from all active sources into a diversity-first global feed head so no single platform dominates.',
   },
+  mix_optimizer: {
+    name: 'Mix Optimizer Agent', emoji: '🎛️', color: '#22D3EE', interval: '5min',
+    description: 'Audits every cached true-mix feed pool for source concentration, job-listing cadence drift, staleness, and thin supply every 5 minutes, and proactively rebuilds anything out of range.',
+  },
+  sort_optimizer: {
+    name: 'Sort Optimizer Agent', emoji: '🧭', color: '#A78BFA', interval: '7min',
+    description: 'Samples the live feed cache every 7 minutes to verify ranked order is actually distinct from chronological order and that rank scores have real spread, catching a degenerated ranking algorithm Sort Agent alone would miss.',
+  },
 };
 
 // The `interval` strings above were hand-written and drifted out of sync
@@ -9917,6 +10098,29 @@ function getRuntimeHealthForAgent(id) {
       lastDiversified: sortDistribState.lastDiversified,
       lastRun: sortDistribState.lastRun,
       lastError: sortDistribState.lastError,
+    };
+  }
+  if (id === 'mix_optimizer') {
+    return {
+      status: mixOptimizerState.lastError ? 'degraded' : 'healthy',
+      totalRuns: mixOptimizerState.totalRuns,
+      lastCheckedPools: mixOptimizerState.lastCheckedPools,
+      lastTotalPosts: mixOptimizerState.lastTotalPosts,
+      lastIssues: mixOptimizerState.lastIssues,
+      lastRun: mixOptimizerState.lastRun,
+      lastError: mixOptimizerState.lastError,
+    };
+  }
+  if (id === 'sort_optimizer') {
+    return {
+      status: sortOptimizerState.lastError ? 'degraded' : 'healthy',
+      totalRuns: sortOptimizerState.totalRuns,
+      lastSampleSize: sortOptimizerState.lastSampleSize,
+      lastScoreSpread: sortOptimizerState.lastScoreSpread,
+      lastVariance: sortOptimizerState.lastVariance,
+      lastRankedNewestOverlap: sortOptimizerState.lastRankedNewestOverlap,
+      lastRun: sortOptimizerState.lastRun,
+      lastError: sortOptimizerState.lastError,
     };
   }
   if (id === 'web_optimizer') {
@@ -10125,6 +10329,25 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastRun: sortDistribState.lastRun,
       lastError: sortDistribState.lastError,
     },
+    mixOptimizer: {
+      status: mixOptimizerState.lastError ? 'degraded' : 'healthy',
+      totalRuns: mixOptimizerState.totalRuns,
+      lastCheckedPools: mixOptimizerState.lastCheckedPools,
+      lastTotalPosts: mixOptimizerState.lastTotalPosts,
+      lastIssues: mixOptimizerState.lastIssues,
+      lastRun: mixOptimizerState.lastRun,
+      lastError: mixOptimizerState.lastError,
+    },
+    sortOptimizer: {
+      status: sortOptimizerState.lastError ? 'degraded' : 'healthy',
+      totalRuns: sortOptimizerState.totalRuns,
+      lastSampleSize: sortOptimizerState.lastSampleSize,
+      lastScoreSpread: sortOptimizerState.lastScoreSpread,
+      lastVariance: sortOptimizerState.lastVariance,
+      lastRankedNewestOverlap: sortOptimizerState.lastRankedNewestOverlap,
+      lastRun: sortOptimizerState.lastRun,
+      lastError: sortOptimizerState.lastError,
+    },
     websiteOptimizer: {
       status: websiteOptimizerState.status,
       publicUrl: websiteOptimizerState.publicUrl,
@@ -10234,6 +10457,8 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
     },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
+    mix_optimizer: () => runMixOptimizerCheck(),
+    sort_optimizer: () => runSortOptimizerCheck(),
     // Source agents — resolved from SOURCE_FETCHERS map registered at startup
     ...(sourceFn ? { [req.params.id]: sourceFn } : {}),
   };
@@ -10499,6 +10724,8 @@ app.post('/hq/trigger/:agentId', (req, res) => {
     },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
+    mix_optimizer: () => runMixOptimizerCheck(),
+    sort_optimizer: () => runSortOptimizerCheck(),
     ...(sourceFn ? { [agentId]: sourceFn } : {}),
   };
   if (!triggers[agentId]) return res.status(404).json({ error: 'Unknown agent' });
