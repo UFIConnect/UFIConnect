@@ -6,6 +6,14 @@ Disallow: /onboarding
 Disallow: /settings
 Disallow: /messages
 Disallow: /profile
+Disallow: /groups
+Disallow: /opportunities
+Disallow: /search
+Disallow: /notifications
+Disallow: /post
+Disallow: /sources
+Disallow: /connected-accounts
+Disallow: /u/
 
 User-agent: Googlebot
 Allow: /
