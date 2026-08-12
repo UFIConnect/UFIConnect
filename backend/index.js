@@ -1578,7 +1578,21 @@ async function fetchHNByKeyword(keyword) {
     return posts;
   } catch (e) {
     console.warn(`HN search "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -1618,7 +1632,21 @@ async function fetchDevToByTag(tag) {
     return posts;
   } catch (e) {
     console.warn(`DEV Community tag "${tag}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -1658,7 +1686,21 @@ async function fetchGitHubByKeyword(keyword) {
     return posts;
   } catch (e) {
     console.warn(`GitHub search "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -1826,7 +1868,21 @@ async function fetchMediumByTag(tag) {
     return posts;
   } catch (e) {
     console.warn(`Medium tag "${tag}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2166,6 +2222,7 @@ async function fetchYouTubeByKeyword(keyword) {
   const cached = getCached(cacheKey);
   if (cached) return cached;
 
+  let lastError = null;
   try {
     // Official YouTube Data API v3 — used when key is available
     const apiKey = process.env.YOUTUBE_API_KEY;
@@ -2185,12 +2242,16 @@ async function fetchYouTubeByKeyword(keyword) {
     // Primary: YouTube channel RSS feeds — no API key, served by YouTube, always works
     const channels = TOPIC_YT_CHANNELS[keyword] || DEFAULT_YT_CHANNELS;
     const allPosts = [];
-    await Promise.allSettled(channels.map(async ch => {
-      try {
-        const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.id}`);
-        allPosts.push(...parseYouTubeChannelRSS(xml, keyword, ch.name));
-      } catch { /* channel unavailable */ }
+    const channelResults = await Promise.allSettled(channels.map(async ch => {
+      const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?channel_id=${ch.id}`);
+      return parseYouTubeChannelRSS(xml, keyword, ch.name);
     }));
+    let anyChannelAnswered = false;
+    for (const r of channelResults) {
+      if (r.status === 'fulfilled') { anyChannelAnswered = true; allPosts.push(...r.value); }
+      else lastError = r.reason;
+    }
+    if (anyChannelAnswered) lastError = null; // at least one channel is genuinely reachable
 
     if (allPosts.length) {
       const seen = new Set();
@@ -2206,6 +2267,7 @@ async function fetchYouTubeByKeyword(keyword) {
       try {
         const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
         const data = await fetchJSON(url);
+        lastError = null; // this instance answered, even if with nothing usable
         if (!Array.isArray(data) || !data.length) continue;
         const posts = data.filter(v => v.videoId && v.title).map(v => {
           const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
@@ -2216,13 +2278,17 @@ async function fetchYouTubeByKeyword(keyword) {
           );
         });
         if (posts.length) { setCached(cacheKey, posts); return posts; }
-      } catch { continue; }
+      } catch (e) { lastError = e; continue; }
     }
 
+    // Only surface to the shared circuit breaker if every tier that ran actually failed.
+    if (lastError) throw lastError;
     return getCached(cacheKey) || [];
   } catch (e) {
     console.warn(`YouTube "${keyword}":`, e.message);
-    return getCached(cacheKey) || [];
+    const stale = postCache.get(cacheKey)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2280,7 +2346,22 @@ async function fetchStackOverflowByTag(tag) {
     return posts;
   } catch (e) {
     console.warn(`StackOverflow tag "${tag}":`, e.message);
-    return getCached(key) || [];
+    // Swallowing this unconditionally used to let a sustained failure stay
+    // completely invisible — confirmed live: StackExchange's API throttling
+    // this app's IP ("too many requests from this IP, more requests
+    // available in ~2.4h"), yet 250+ fetch attempts recorded zero errors
+    // and zero posts, because the shared per-source circuit breaker/health
+    // tracking (see the shard loop's own catch block, which pauses a
+    // source and updates its dashboard status) never got to see this as a
+    // failure — it just looked like "no new posts this cycle," forever.
+    // A stale-but-present cache entry is still worth serving (no reason to
+    // throw away real content over a transient blip), but with nothing to
+    // fall back on, letting the error propagate is what lets the circuit
+    // breaker actually detect and react to this source the same way it
+    // already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2369,18 +2450,28 @@ async function fetchMastodonByTag(tag) {
   const key = `mastodon_tag_${tag}`;
   const cached = getCached(key);
   if (cached) return cached;
+  let lastError = null;
   for (const instance of MASTODON_INSTANCES) {
     try {
       const url = `${instance}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=25&local=false&only_media=false`;
       const data = await fetchJSON(url);
       const posts = mapMastodonPosts(data, tag);
+      lastError = null; // this instance answered, even if with zero matching posts
       if (posts.length) {
         setCached(key, posts);
         return posts;
       }
-    } catch { /* try next instance */ }
+    } catch (e) { lastError = e; /* try next instance */ }
   }
   console.warn(`Mastodon tag "${tag}": all instances failed`);
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the last instance tried actually threw — see the main fetcher catch
+  // blocks. Every instance simply having nothing new for this tag isn't.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
+  }
   return getCached(key) || [];
 }
 
@@ -2439,7 +2530,21 @@ async function fetchLobstersByTag(tag) {
     return posts;
   } catch (e) {
     console.warn(`Lobsters tag "${tag}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2518,7 +2623,21 @@ async function fetchArxivByKeyword(keyword) {
     return posts;
   } catch (e) {
     console.warn(`arXiv keyword "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2606,6 +2725,7 @@ async function fetchIndeedJobs(keyword) {
   const cached = getCached(key);
   if (cached) return cached;
   // Primary: Remotive.com public API (free JSON, no auth)
+  let lastError = null;
   try {
     const data = await fetchJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keyword)}&limit=100`);
     const jobs = data?.jobs || [];
@@ -2631,14 +2751,22 @@ async function fetchIndeedJobs(keyword) {
       setCached(key, posts);
       return posts;
     }
-  } catch (e) { console.warn(`Remotive "${keyword}":`, e.message); }
+  } catch (e) { lastError = e; console.warn(`Remotive "${keyword}":`, e.message); }
   // Fallback: We Work Remotely RSS
   try {
     const xml = await fetchText('https://weworkremotely.com/remote-jobs.rss');
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
     if (posts.length) { setCached(key, posts); return posts; }
-  } catch (e) { console.warn(`WWR "${keyword}":`, e.message); }
+    lastError = null; // completed cleanly, just nothing matched — not a failure
+  } catch (e) { lastError = e; console.warn(`WWR "${keyword}":`, e.message); }
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the *last* attempt actually threw — see the main fetcher catch blocks.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
+  }
   return getCached(key) || [];
 }
 
@@ -2655,7 +2783,21 @@ async function fetchProductHunt(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Product Hunt "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2672,7 +2814,21 @@ async function fetchTechCrunch(keyword) {
     return posts;
   } catch (e) {
     console.warn(`TechCrunch "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2689,7 +2845,21 @@ async function fetchTheVerge(keyword) {
     return posts;
   } catch (e) {
     console.warn(`The Verge "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2732,7 +2902,15 @@ async function fetchIndieHackers(keyword) {
       group:       { id: 'ext_indiehackers', name: 'Indie Hackers', category: 'Startups', externalUrl: 'https://www.indiehackers.com' },
     }));
     if (posts.length) { setCached(key, posts); return posts; }
-  } catch (e) { console.warn(`IH HN fallback "${keyword}":`, e.message); }
+  } catch (e) {
+    console.warn(`IH HN fallback "${keyword}":`, e.message);
+    // See the main fetcher catch blocks for why this doesn't just swallow
+    // silently: a sustained failure needs to reach the shared circuit
+    // breaker, not look identical to "legitimately no results this time."
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
   return getCached(key) || [];
 }
 
@@ -2744,6 +2922,7 @@ async function fetchHashnode(keyword) {
   if (cached) return cached;
 
   // Primary: freeCodeCamp News RSS (keyword-matched)
+  let lastError = null;
   try {
     const xml = await fetchText('https://www.freecodecamp.org/news/rss/', {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -2754,7 +2933,7 @@ async function fetchHashnode(keyword) {
         .map(it => rssPost(it, 'hashnode', 'freeCodeCamp', 'ext_hashnode', 'freeCodeCamp News', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
     }
-  } catch (e) { console.warn(`freeCodeCamp RSS "${keyword}":`, e.message); }
+  } catch (e) { lastError = e; console.warn(`freeCodeCamp RSS "${keyword}":`, e.message); }
 
   // Fallback: The New Stack RSS
   try {
@@ -2767,8 +2946,19 @@ async function fetchHashnode(keyword) {
         .map(it => rssPost(it, 'hashnode', 'The New Stack', 'ext_hashnode', 'The New Stack', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
     }
-  } catch (e) { console.warn(`TheNewStack RSS "${keyword}":`, e.message); }
+    lastError = null; // this attempt completed without throwing — genuinely just no matching items, not a failure
+  } catch (e) { lastError = e; console.warn(`TheNewStack RSS "${keyword}":`, e.message); }
 
+  // Both sources are only a real "failure" (worth surfacing to the shared
+  // circuit breaker — see the main fetcher catch blocks) if the *last*
+  // attempt actually threw; if it completed cleanly with zero matching
+  // items, that's not an error, so it shouldn't look like sustained
+  // breakage the way silently swallowing every exception used to.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
+  }
   return getCached(key) || [];
 }
 
@@ -2788,7 +2978,21 @@ async function fetchTheRegister(keyword) {
     return posts;
   } catch (e) {
     console.warn(`The Register "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2808,7 +3012,21 @@ async function fetchVentureBeat(keyword) {
     return posts;
   } catch (e) {
     console.warn(`VentureBeat "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2821,15 +3039,24 @@ async function fetchSmashingMagazine(keyword) {
     'https://www.smashingmagazine.com/feed/',
     'https://feeds.feedburner.com/smashingmagazine',
   ];
+  let lastError = null;
   for (const url of FEEDS) {
     try {
       const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
+      lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
         rssPost(it, 'smashing', 'Smashing Magazine', 'ext_smashing', 'Smashing Magazine', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
-    } catch { /* try next */ }
+    } catch (e) { lastError = e; /* try next */ }
+  }
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the last feed tried actually threw — see the main fetcher catch blocks.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
   }
   return getCached(key) || [];
 }
@@ -2850,7 +3077,21 @@ async function fetchPhoronix(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Phoronix "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2863,15 +3104,24 @@ async function fetchInfoQ(keyword) {
     'https://feed.infoq.com/',
     'https://www.infoq.com/feed/',
   ];
+  let lastError = null;
   for (const url of FEEDS) {
     try {
       const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
+      lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
         rssPost(it, 'infoq', 'InfoQ', 'ext_infoq', 'InfoQ', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
-    } catch { /* try next */ }
+    } catch (e) { lastError = e; /* try next */ }
+  }
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the last feed tried actually threw — see the main fetcher catch blocks.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
   }
   return getCached(key) || [];
 }
@@ -2892,7 +3142,21 @@ async function fetchMITTechReview(keyword) {
     return posts;
   } catch (e) {
     console.warn(`MIT Tech Review "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2906,15 +3170,24 @@ async function fetchArsTechnica(keyword) {
     'https://feeds.arstechnica.com/arstechnica/technology-lab',
     'https://feeds.arstechnica.com/arstechnica/gadgets',
   ];
+  let lastError = null;
   for (const url of ARS_FEEDS) {
     try {
       const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
+      lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it =>
         rssPost(it, 'arstechnica', 'Ars Technica', 'ext_arstechnica', 'Ars Technica', 'Engineering', keyword));
       if (posts.length) { setCached(key, posts); return posts; }
-    } catch { /* try next feed */ }
+    } catch (e) { lastError = e; /* try next feed */ }
+  }
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the last feed tried actually threw — see the main fetcher catch blocks.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
   }
   return getCached(key) || [];
 }
@@ -2935,7 +3208,21 @@ async function fetchWired(keyword) {
     return posts;
   } catch (e) {
     console.warn(`WIRED "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -2976,7 +3263,21 @@ async function fetchGitLabByKeyword(keyword) {
     return posts;
   } catch (e) {
     console.warn(`GitLab "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3018,7 +3319,21 @@ async function fetchRemoteOKJobs(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Remote OK "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3038,7 +3353,21 @@ async function fetchYCombinator(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Y Combinator "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3058,7 +3387,21 @@ async function fetchCrunchbaseNews(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Crunchbase "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3078,7 +3421,21 @@ async function fetchBehanceProjects(keyword) {
     return posts;
   } catch (e) {
     console.warn(`Behance "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3094,19 +3451,30 @@ async function fetchDesignWeb(keyword) {
     { url: 'https://www.fastcompany.com/rss', label: 'Fast Company' },
   ];
   const posts = [];
+  let lastError = null;
   for (const feed of feeds) {
     try {
       const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
       const items = parseRSSItems(xml);
+      lastError = null; // this feed answered, even if with nothing new
       posts.push(...filterAndSlice(items, keyword, 250).map(it =>
         rssPost(it, 'designweb', feed.label, 'ext_designweb', 'Design Web', 'Design', keyword)));
     } catch (e) {
+      lastError = e;
       console.warn(`${feed.label} "${keyword}":`, e.message);
     }
   }
   const sorted = sortFeedBatch(posts, `designweb-${keyword}`, { limit: 1000 });
+  if (sorted.length) { setCached(key, sorted); return sorted; }
+  // Only a real "failure" worth surfacing to the shared circuit breaker if
+  // the last feed tried actually threw — see the main fetcher catch blocks.
+  if (lastError) {
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw lastError;
+  }
   setCached(key, sorted);
-  return sorted.length ? sorted : (getCached(key) || []);
+  return getCached(key) || [];
 }
 
 // ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
@@ -3172,7 +3540,12 @@ async function fetchBlueskyByKeyword(keyword) {
     const NSFW_LABELS = new Set(['porn','sexual','nudity','adult-only','csam','graphic-media']);
     const posts = (data?.posts || []).filter(p => p.record?.text && p.author && !(p.labels || []).some(l => NSFW_LABELS.has(l?.val))).map(mapPost);
     if (posts.length) { setCached(key, posts); return posts; }
-  } catch (e) { console.warn(`Bluesky "${keyword}":`, e.message); }
+  } catch (e) {
+    console.warn(`Bluesky "${keyword}":`, e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
   return getCached(key) || [];
 }
 
@@ -3211,7 +3584,21 @@ async function fetchLinkedIn(keyword, userToken = null) {
     return posts;
   } catch (e) {
     console.warn(`LinkedIn "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3250,7 +3637,21 @@ async function fetchTwitter(keyword, userToken = null) {
     return posts;
   } catch (e) {
     console.warn(`Twitter "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3288,7 +3689,21 @@ async function fetchInstagram(keyword, userToken = null) {
     return posts;
   } catch (e) {
     console.warn(`Instagram "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3326,7 +3741,21 @@ async function fetchFacebook(keyword, userToken = null) {
     return posts;
   } catch (e) {
     console.warn(`Facebook "${keyword}":`, e.message);
-    return getCached(key) || [];
+    // Unconditionally swallowing this (old behavior) meant a *sustained*
+    // failure was completely invisible to the shared per-source circuit
+    // breaker/health tracking (the shard loop's own catch block, which
+    // pauses a source and updates its dashboard status) — a fetcher that's
+    // been failing for hours still looked like "no new posts this cycle,"
+    // forever, with zero errors ever recorded. Confirmed live for
+    // StackOverflow: 250+ failed attempts, zero recorded errors, stuck on
+    // "unknown" status. A stale cache entry is still worth serving (no
+    // reason to throw away real content over a transient blip), but with
+    // nothing to fall back on, letting the error propagate is what lets
+    // the circuit breaker actually see and react to this source the same
+    // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
   }
 }
 
@@ -3747,6 +4176,16 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         health.consecutiveErrors = 0;
         fullCyclesEmpty = 0;
         logAgentAction(agentId, emoji, `Circuit breaker reset — ${agentId} resumed`, color);
+        // Without this, agentStatusMap (what the office dashboard actually
+        // reads — see updateAgentStatus) stays stuck on the stale "paused"
+        // entry until the *next* fetch happens to find genuinely new
+        // content, since a "no new posts this cycle" result doesn't call
+        // updateAgentStatus either. Confirmed live: a source sitting at
+        // health.paused=false (accurate) while the dashboard still showed
+        // status:"paused" — resumed and functioning, but reported as if it
+        // wasn't. Every other status transition already calls this
+        // immediately; resuming from a pause was the one gap.
+        updateAgentStatus(agentId);
       }
 
       const topic = shardTopics[topicIdx];
@@ -3841,7 +4280,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       logAgentAction('stability', '⏸️', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
       return;
     }
-    if (health) { health.paused = false; health.consecutiveErrors = 0; }
+    if (health) { health.paused = false; health.consecutiveErrors = 0; updateAgentStatus(agentId); }
     shardResetFns.forEach(fn => fn()); // reset all shard circuit state
     let scannedTopics = 0;
     const topicLimit = refreshControl.mode === 'pressure'
@@ -5247,6 +5686,7 @@ async function runFeedOptimizer() {
       health.paused            = false;
       health.pauseUntil        = 0;
       health.consecutiveErrors = 0;
+      updateAgentStatus(id);
 
       const reason = isPaused       ? 'circuit paused'
                    : isDegraded     ? `${errorCount} errors`
