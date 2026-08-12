@@ -4400,25 +4400,41 @@ function normalizeFeedTimeRange(value) {
   return FEED_TIME_RANGES.includes(value) ? value : 'all';
 }
 
+// Round-robins across every distinct source's own queue (preserving each
+// source's internal order — callers already rank/sort before calling this,
+// so a source's own highest-priority post still comes out of its queue
+// first). A previous version picked from pool[0] and only searched for "the
+// nearest different-source post" when the streak limit was hit — for input
+// that's grouped by source going in (e.g. getBalancedFeedPosts concatenates
+// each source's slice), that nearest-alternate search only ever finds
+// whichever TWO sources happen to be adjacent near the front of the
+// remaining pool. Every other source sat completely untouched until those
+// first two ran dry, then got dumped in one uninterrupted block at the end
+// — confirmed live as a 25-post run of a single source in the video feed.
+// Round-robining across every source's queue (not just chasing "any
+// different source") guarantees all of them get interleaved, not just the
+// first couple encountered.
 function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
-  const pool = [...posts];
-  const output = [];
-  let lastSource = null;
-  let streak = 0;
-
-  while (pool.length && output.length < limit) {
-    let pickIndex = 0;
-    if (lastSource && streak >= maxConsecutive) {
-      const alternate = pool.findIndex(p => (p?.source || 'unknown') !== lastSource);
-      if (alternate >= 0) pickIndex = alternate;
-    }
-    const [post] = pool.splice(pickIndex, 1);
-    const source = post?.source || 'unknown';
-    if (source === lastSource) streak += 1;
-    else { lastSource = source; streak = 1; }
-    output.push(post);
+  const bySource = new Map();
+  for (const p of posts) {
+    const src = p?.source || 'unknown';
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(p);
   }
-
+  const queues = [...bySource.values()];
+  const output = [];
+  let qi = 0;
+  let emptyStreak = 0;
+  while (output.length < limit && emptyStreak < queues.length) {
+    const q = queues[qi % queues.length];
+    if (q.length) {
+      for (let k = 0; k < maxConsecutive && q.length && output.length < limit; k++) output.push(q.shift());
+      emptyStreak = 0;
+    } else {
+      emptyStreak++;
+    }
+    qi++;
+  }
   return output;
 }
 
