@@ -2,14 +2,18 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
+// shortLabel is used only in the mobile bottom-nav — 8 items sharing one
+// row at .62rem leaves each column ~40-47px wide, and "Notifications" /
+// "Opportunities" (13 characters each) wrap badly at that width. The
+// desktop sidebar has room to spare, so it always uses the full label.
 const NAV = [
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/videos',        icon: '▶️', label: 'Videos'       },
   { to: '/post',          icon: '✏️', label: 'Posts'        },
   { to: '/search',        icon: '🔍', label: 'Search'       },
-  { to: '/notifications', icon: '🔔', label: 'Notifications' },
+  { to: '/notifications', icon: '🔔', label: 'Notifications', shortLabel: 'Alerts' },
   { to: '/groups',        icon: '🌐', label: 'Groups'       },
-  { to: '/opportunities', icon: '💼', label: 'Opportunities' },
+  { to: '/opportunities', icon: '💼', label: 'Opportunities', shortLabel: 'Jobs' },
   { to: '/profile',       icon: '👤', label: 'Profile'      },
 ];
 
@@ -103,7 +107,7 @@ export default function Layout({ children }) {
 
       {/* ── Mobile bottom tab bar ── */}
       <nav className="bottom-nav">
-        {NAV.map(({ to, icon, label }) => (
+        {NAV.map(({ to, icon, label, shortLabel }) => (
           <NavLink
             key={to}
             to={to}
@@ -111,7 +115,7 @@ export default function Layout({ children }) {
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon">{icon}</span>
-            {label}
+            {shortLabel || label}
           </NavLink>
         ))}
       </nav>
