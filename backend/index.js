@@ -1329,17 +1329,31 @@ function extractRedditRSSMedia(rawEntryXml, rawContentHtml) {
   const validPoster = poster && /^https?:\/\//i.test(poster) ? poster : null;
   // The RSS content wraps the actual submission destination in a "[link]"
   // anchor distinct from the "[comments]" anchor next to it — only present
-  // for link/image/video posts, not plain self-text posts.
+  // for link/image/video posts, not plain self-text posts. Decoded a second
+  // time deliberately: Reddit double-encodes this URL's own query-string
+  // "&" (once for the URL itself, once more for the outer <content
+  // type="html"> wrapping), and the decodeHTMLEntities(rawContentHtml)
+  // call above only undoes the outer layer — confirmed live as a literal
+  // "&amp;" still sitting in the extracted URL otherwise.
   const content = decodeHTMLEntities(rawContentHtml);
   const linkMatch = /<a href="([^"]+)">\[link\]<\/a>/.exec(content);
-  const destUrl = linkMatch ? linkMatch[1] : null;
-  if (destUrl) {
-    if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(destUrl) || /(v\.redd\.it|gfycat\.com|redgifs\.com|streamable\.com|youtube\.com|youtu\.be)/i.test(destUrl)) {
-      return { mediaType: 'video', mediaUrl: validPoster || destUrl };
-    }
-    if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(destUrl)) {
-      return { mediaType: 'image', mediaUrl: destUrl };
-    }
+  const destUrl = linkMatch ? decodeHTMLEntities(linkMatch[1]) : null;
+  const isKnownVideoHost = destUrl && (
+    /\.(mp4|webm|mov|m4v)(\?|$)/i.test(destUrl) ||
+    /(v\.redd\.it|gfycat\.com|redgifs\.com|streamable\.com|youtube\.com|youtu\.be)/i.test(destUrl)
+  );
+  if (isKnownVideoHost) {
+    // Only worth tagging as video if there's an actual image to show —
+    // otherwise mediaUrl would be a YouTube/v.redd.it page link, which
+    // can't render as an <img>. Confirmed live as roughly half of Reddit's
+    // "video" posts showing as unavailable: whenever a post had no preview
+    // thumbnail, mediaUrl fell back to that unrenderable page link instead
+    // of just not claiming to have media at all.
+    if (validPoster) return { mediaType: 'video', mediaUrl: validPoster };
+    return { mediaType: null, mediaUrl: null };
+  }
+  if (destUrl && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(destUrl)) {
+    return { mediaType: 'image', mediaUrl: destUrl };
   }
   if (validPoster) return { mediaType: 'image', mediaUrl: validPoster };
   return { mediaType: null, mediaUrl: null };
