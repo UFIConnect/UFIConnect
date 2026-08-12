@@ -4593,15 +4593,26 @@ function personalizeOrder(posts, userTopics, userCountry = null) {
     (topicMatch || locationMatch ? matched : rest).push(p);
   }
   if (!matched.length) return posts;
+  // Topic tags correlate with source more than you'd want here — e.g. a
+  // "Web Development"/"Open Source" interest genuinely matches GitHub repo
+  // topics far more often than most other platforms', so the matched bucket
+  // alone can end up disproportionately one source. Diversifying each
+  // bucket independently (order-preserving within a source's own queue —
+  // see diversifyBySource) before interleaving keeps the "matched content
+  // surfaces more often" boost this function exists for, without
+  // reintroducing the same-source clustering the rest of this pass already
+  // eliminates further upstream.
+  const matchedDiverse = diversifyBySource(matched, matched.length, 1);
+  const restDiverse = diversifyBySource(rest, rest.length, 1);
   // Roughly 2 matched posts for every 1 non-matched near the front — a
   // real, noticeable boost, but the mix never fully disappears the way a
   // hard filter would once matched posts run out.
   const result = [];
   let mi = 0, ri = 0;
-  while (mi < matched.length || ri < rest.length) {
-    if (mi < matched.length) result.push(matched[mi++]);
-    if (mi < matched.length) result.push(matched[mi++]);
-    if (ri < rest.length) result.push(rest[ri++]);
+  while (mi < matchedDiverse.length || ri < restDiverse.length) {
+    if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
+    if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
+    if (ri < restDiverse.length) result.push(restDiverse[ri++]);
   }
   return result;
 }
