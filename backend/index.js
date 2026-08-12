@@ -8006,6 +8006,25 @@ function dbFeedOrder(sortMode = 'ranked') {
   ) DESC, COALESCE(post_created_at, fetched_at) DESC`;
 }
 
+function dbRowToFeedPost(r) {
+  return {
+    id:          r.id,
+    source:      r.source,
+    title:       r.title,
+    content:     r.content,
+    sourceUrl:   r.source_url,
+    mediaUrl:    r.media_url,
+    mediaType:   r.media_type,
+    location:    r.location,
+    topic:       r.topic,
+    likesCount:  normalizeCount(r.likes_count),
+    commentsCount: normalizeCount(r.comments_count),
+    createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
+    author:      { name: r.author_name },
+    isExternal:  true,
+  };
+}
+
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null, options = {}) {
   if (!db.isConnected()) return [];
   try {
@@ -8057,22 +8076,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       params
     );
-    return rows.map(r => ({
-      id:          r.id,
-      source:      r.source,
-      title:       r.title,
-      content:     r.content,
-      sourceUrl:   r.source_url,
-      mediaUrl:    r.media_url,
-      mediaType:   r.media_type,
-      location:    r.location,
-      topic:       r.topic,
-      likesCount:  normalizeCount(r.likes_count),
-      commentsCount: normalizeCount(r.comments_count),
-      createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
-      author:      { name: r.author_name },
-      isExternal:  true,
-    })).filter(p => !isFallbackFeedPost(p));
+    return rows.map(dbRowToFeedPost).filter(p => !isFallbackFeedPost(p));
   } catch { return []; }
 }
 
@@ -10157,6 +10161,47 @@ app.get('/feed/sources', authenticate, (req, res) => {
     globalCacheCount: realFeedPosts(globalFeedCache.posts).length,
     refreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
   });
+});
+
+// ─── Single post detail — internal page for a post's max view (the "View on
+// UFconnect" button in the lightbox), so a post stays viewable inside the
+// app even after it's rotated out of the live in-memory caches every other
+// feed endpoint reads from. Falls back to the DB for exactly that case.
+// Registered after every other literal /feed/* route (videos, stream,
+// refresh, stats, sources) — Express matches path params in registration
+// order, so a /feed/:postId declared earlier would have shadowed all of
+// those, matching e.g. "videos" as a postId instead of hitting their own
+// handlers.
+app.get('/feed/:postId', authenticate, async (req, res) => {
+  const { postId } = req.params;
+
+  const communityPost = await getCommunityPostById(postId);
+  if (communityPost) {
+    return res.json({ post: serializeCommunityPost(communityPost, req.user.id) });
+  }
+
+  const memPost = findPostById(postId);
+  // findPostById can return a URL-only stub (id + sourceUrl) once a post has
+  // aged out of every in-memory cache but is still in the persistent URL
+  // index — not enough to actually render, so that case falls through to
+  // the DB lookup below instead of returning a near-empty post.
+  if (memPost && memPost.title) {
+    const group = groups.find(g => g.id === memPost.groupId);
+    return res.json({
+      post: { ...memPost, group: group ? { id: group.id, name: group.name, category: group.category } : memPost.group },
+    });
+  }
+
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query('SELECT * FROM feed_posts_cache WHERE id = $1 LIMIT 1', [postId]);
+      if (rows.length) return res.json({ post: dbRowToFeedPost(rows[0]) });
+    } catch (e) {
+      console.warn('GET /feed/:postId DB lookup:', e.message);
+    }
+  }
+
+  return res.status(404).json({ message: 'Post not found.' });
 });
 
 // ─── Comment pools for curated fallback (tech/dev/social/community) ──────────

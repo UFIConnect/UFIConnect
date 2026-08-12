@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from './videoMedia';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
@@ -27,6 +28,7 @@ const OVERLAY_BTN_STYLE = {
 export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEnd }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
   const touchStartX = useRef(null);
+  const navigate = useNavigate();
   // Unmuted by default — opening the lightbox is itself a deliberate click,
   // same reasoning VideoFeedView already uses for the swipe feed, so video
   // should just play with sound right away instead of requiring an extra
@@ -251,15 +253,33 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           <div style={{ fontSize: '.72rem', opacity: 0.55, marginTop: 8 }}>
             {post.author?.name ? `${post.author.name} · ` : ''}{index + 1} / {items.length}
           </div>
-          {/* Video items previously had a "watch on source" link in the
-              single-post VideoModal this replaced — preserved here so
-              merging video into the shared viewer didn't quietly drop it. */}
-          {isVideo && post.sourceUrl && (
-            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-              style={{ display: 'inline-block', marginTop: 10, fontSize: '.78rem', color: '#93c5fd', textDecoration: 'none', fontWeight: 600 }}>
-              Watch on {post.sourceLabel || post.source} ↗
-            </a>
-          )}
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+            {/* Stays inside the app — the full post, with comments, instead
+                of sending the viewer off-site. The external link below is
+                still there for anyone who specifically wants the original. */}
+            {post.id && (
+              <button
+                onClick={e => { e.stopPropagation(); onClose(); navigate(`/p/${encodeURIComponent(post.id)}`); }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '.78rem',
+                  color: '#fff', background: 'rgba(255,255,255,.14)', border: 'none',
+                  borderRadius: 16, padding: '6px 14px', fontWeight: 600, cursor: 'pointer',
+                }}
+              >
+                View on UFconnect
+              </button>
+            )}
+            {/* Video items previously had a "watch on source" link in the
+                single-post VideoModal this replaced — preserved here so
+                merging video into the shared viewer didn't quietly drop it. */}
+            {isVideo && post.sourceUrl && (
+              <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                style={{ display: 'inline-flex', alignItems: 'center', fontSize: '.78rem', color: '#93c5fd', textDecoration: 'none', fontWeight: 600 }}>
+                Watch on {post.sourceLabel || post.source} ↗
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
