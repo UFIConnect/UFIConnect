@@ -2702,10 +2702,21 @@ function parseRSSItems(xml) {
   let m;
   while ((m = re.exec(xml)) !== null) {
     const blk = m[1];
-    const field = (tag) => {
-      const r = new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`, 'i');
-      return (blk.match(r)?.[1] || '').replace(/<[^>]+>/g, '').trim();
+    // \s* around the optional CDATA markers — some feeds (freeCodeCamp
+    // confirmed live) pretty-print with a newline/indentation between <tag>
+    // and <![CDATA[, which meant the markers weren't recognized as CDATA
+    // delimiters at all (they only matched right up against the tag, no
+    // gap allowed) and were captured as literal content instead. The
+    // tag-strip below then treated the whole <![CDATA[...]]> as one
+    // pseudo-tag — since ]]> itself ends in a real ">" — and deleted it
+    // *and* the real text inside it, silently dropping every single title
+    // (and therefore the whole item, via the `!title` check below) rather
+    // than just missing a field.
+    const rawField = (tag) => {
+      const r = new RegExp(`<${tag}[^>]*>\\s*(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?\\s*</${tag}>`, 'i');
+      return blk.match(r)?.[1] || '';
     };
+    const field = (tag) => rawField(tag).replace(/<[^>]+>/g, '').trim();
     // Atom <link href="..."/> vs RSS <link>url</link>
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
@@ -2713,16 +2724,32 @@ function parseRSSItems(xml) {
     // Many RSS/Atom feeds carry an image via <media:thumbnail>, <media:content
     // medium="image">, or <enclosure type="image/...">. Attribute order isn't
     // guaranteed, so grab the whole tag first, then pull attrs out of it.
+    // Quotes aren't guaranteed to be double either — Crunchbase's feed uses
+    // <enclosure url='...' type='image/jpeg' />, which a double-quote-only
+    // version of this silently never matched at all.
+    const attr = (tag, name) => tag?.match(new RegExp(`${name}=["']([^"']+)["']`, 'i'))?.[1] || null;
     const thumbTag = blk.match(/<media:thumbnail\s+[^>]*>/i)?.[0];
     const mediaContentTag = blk.match(/<media:content\s+[^>]*>/i)?.[0];
     const enclosureTag = blk.match(/<enclosure\s+[^>]*>/i)?.[0];
-    let image = null;
-    if (thumbTag) image = thumbTag.match(/url="([^"]+)"/i)?.[1] || null;
-    if (!image && mediaContentTag && /medium="image"|type="image\//i.test(mediaContentTag)) {
-      image = mediaContentTag.match(/url="([^"]+)"/i)?.[1] || null;
+    let image = thumbTag ? attr(thumbTag, 'url') : null;
+    if (!image && mediaContentTag && /medium=["']image["']|type=["']image\//i.test(mediaContentTag)) {
+      image = attr(mediaContentTag, 'url');
     }
-    if (!image && enclosureTag && /type="image\//i.test(enclosureTag)) {
-      image = enclosureTag.match(/url="([^"]+)"/i)?.[1] || null;
+    if (!image && enclosureTag && /type=["']image\//i.test(enclosureTag)) {
+      image = attr(enclosureTag, 'url');
+    }
+    // Falls back to the first <img> actually embedded in the article body —
+    // plenty of feeds (The Verge, Medium, MIT Tech Review confirmed live)
+    // never use a dedicated media tag at all, they just put a real <img> in
+    // the content/description HTML, which every path above ignores since
+    // field() already strips all tags before this point.
+    if (!image) {
+      // Some feeds (InfoQ confirmed live) don't use CDATA at all — they put
+      // HTML-entity-escaped markup directly as XML text content, so the
+      // <img> tag itself only exists as literal "&lt;img src=...&gt;" text
+      // until decoded.
+      const rawBody = decodeHTMLEntities(rawField('content:encoded') || rawField('content') || rawField('description') || rawField('summary'));
+      image = rawBody.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] || null;
     }
     items.push({
       title,
