@@ -389,7 +389,24 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
 
 /** YouTube embed card */
 function YouTubeCard({ post }) {
+  // Autoplays (muted, same convention as every other inline video preview)
+  // once scrolled into view, instead of sitting as a thumbnail requiring a
+  // click — same visibility-gated approach as InlineAutoplayVideo, just
+  // driving an iframe embed instead of a <video> element since that's all
+  // YouTube's embed API exposes. A manual click still works as a fallback
+  // (e.g. if the observer hasn't fired yet).
   const [playing, setPlaying] = useState(false);
+  const containerRef = useRef(null);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || playing) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setPlaying(true); },
+      { threshold: 0.4 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [playing]);
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
@@ -405,15 +422,15 @@ function YouTubeCard({ post }) {
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
         playing ? (
-          <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
+          <div ref={containerRef} style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
             <iframe width="100%" height="100%"
-              src={`https://www.youtube.com/embed/${embedId}?autoplay=1`}
+              src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=1`}
               title={post.title} frameBorder="0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen style={{ display: 'block' }} />
           </div>
         ) : (
-          <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10, background: 'var(--border)' }} onClick={() => setPlaying(true)}>
+          <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10, background: 'var(--border)' }} onClick={() => setPlaying(true)}>
             {post.mediaUrl && <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
               onError={e => {
                 e.currentTarget.style.display = 'none';

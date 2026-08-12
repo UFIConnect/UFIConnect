@@ -5140,41 +5140,74 @@ function personalizeOrder(posts, userTopics, userCountry = null) {
   if ((!userTopics?.length && !userCountry) || !posts.length) return posts;
   const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
   if (!topics.length && !userCountry) return posts;
-  // Applied fresh per request (never baked into the shared snapshot pool,
-  // same reasoning as rotateForUser) — location match is only meaningful
-  // for job listings, which are the only posts that ever carry real
-  // per-post location data (see the location column on feed_posts_cache).
+  // Job-listing posts are excluded from the matched/rest reshuffle below and
+  // kept at their exact original indices — boostJobListings already spaced
+  // them evenly through the pool (~1-in-8), and that spacing is the whole
+  // point of a mixed feed rather than a wall of job posts. This function
+  // used to also treat a job whose location matched the user's country as
+  // "matched" — but most listings say "Remote", which jobMatchesUserLocation
+  // correctly treats as a match for every country, so nearly every job
+  // listing was landing in the front-loaded matched bucket together.
+  // Confirmed live: jobs clustering near the top of the feed instead of
+  // staying spread through it, undoing boostJobListings' spacing on every
+  // single request (this runs fresh per request, unlike boostJobListings
+  // which only runs once when the shared snapshot pool is built). Only the
+  // non-job posts around them get reordered by topic now.
+  const jobSlots = [];
+  const nonJobPosts = [];
+  posts.forEach((p, i) => {
+    if (JOB_LISTING_SOURCES.includes(p.source)) jobSlots.push({ index: i, post: p });
+    else nonJobPosts.push(p);
+  });
+
   const matched = [];
   const rest = [];
-  for (const p of posts) {
+  for (const p of nonJobPosts) {
     const postTopic = (p.topic || '').toLowerCase();
     const topicMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
-    const locationMatch = userCountry && JOB_LISTING_SOURCES.includes(p.source) && jobMatchesUserLocation(p.location, userCountry);
-    (topicMatch || locationMatch ? matched : rest).push(p);
+    (topicMatch ? matched : rest).push(p);
   }
-  if (!matched.length) return posts;
-  // Topic tags correlate with source more than you'd want here — e.g. a
-  // "Web Development"/"Open Source" interest genuinely matches GitHub repo
-  // topics far more often than most other platforms', so the matched bucket
-  // alone can end up disproportionately one source. Diversifying each
-  // bucket independently (order-preserving within a source's own queue —
-  // see diversifyBySource) before interleaving keeps the "matched content
-  // surfaces more often" boost this function exists for, without
-  // reintroducing the same-source clustering the rest of this pass already
-  // eliminates further upstream.
-  const matchedDiverse = diversifyBySource(matched, matched.length, 1);
-  const restDiverse = diversifyBySource(rest, rest.length, 1);
-  // Roughly 2 matched posts for every 1 non-matched near the front — a
-  // real, noticeable boost, but the mix never fully disappears the way a
-  // hard filter would once matched posts run out.
-  const result = [];
-  let mi = 0, ri = 0;
-  while (mi < matchedDiverse.length || ri < restDiverse.length) {
-    if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
-    if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
-    if (ri < restDiverse.length) result.push(restDiverse[ri++]);
+
+  let personalizedNonJob;
+  if (!matched.length) {
+    personalizedNonJob = nonJobPosts;
+  } else {
+    // Topic tags correlate with source more than you'd want here — e.g. a
+    // "Web Development"/"Open Source" interest genuinely matches GitHub repo
+    // topics far more often than most other platforms', so the matched
+    // bucket alone can end up disproportionately one source. Diversifying
+    // each bucket independently (order-preserving within a source's own
+    // queue — see diversifyBySource) before interleaving keeps the
+    // "matched content surfaces more often" boost this function exists
+    // for, without reintroducing the same-source clustering the rest of
+    // this pass already eliminates further upstream.
+    const matchedDiverse = diversifyBySource(matched, matched.length, 1);
+    const restDiverse = diversifyBySource(rest, rest.length, 1);
+    // Roughly 2 matched posts for every 1 non-matched near the front — a
+    // real, noticeable boost, but the mix never fully disappears the way a
+    // hard filter would once matched posts run out.
+    const result = [];
+    let mi = 0, ri = 0;
+    while (mi < matchedDiverse.length || ri < restDiverse.length) {
+      if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
+      if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
+      if (ri < restDiverse.length) result.push(restDiverse[ri++]);
+    }
+    personalizedNonJob = result;
   }
-  return result;
+
+  if (!jobSlots.length) return personalizedNonJob;
+
+  // Reinsert jobs at their original absolute positions — same spacing
+  // boostJobListings set up — filling every other slot in order from the
+  // freshly personalized non-job list.
+  const final = new Array(posts.length);
+  jobSlots.forEach(({ index, post }) => { final[index] = post; });
+  let ni = 0;
+  for (let i = 0; i < final.length; i++) {
+    if (final[i] === undefined) final[i] = personalizedNonJob[ni++];
+  }
+  return final;
 }
 
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
