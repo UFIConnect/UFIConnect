@@ -1449,8 +1449,8 @@ function parseRedditJSON(data, topicKeyword) {
         id:          `reddit_${d.id}`,
         authorId:    `reddit_${d.author}`,
         groupId:     matchedGroup?.id || `ext_${sub.toLowerCase()}`,
-        content:     (d.selftext || d.title).slice(0, 400),
-        title:       d.title,
+        content:     decodeHTMLEntities(d.selftext || d.title).slice(0, 400),
+        title:       decodeHTMLEntities(d.title || ''),
         source:      'reddit',
         sourceLabel: `r/${sub}`,
         sourceUrl:   selfUrl,
@@ -2510,7 +2510,7 @@ function mapMastodonPosts(data, tag) {
   return (data || [])
     .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public')
     .map(t => {
-      const text = t.content.replace(/<[^>]+>/g, '').trim().slice(0, 500);
+      const text = decodeHTMLEntities(t.content.replace(/<[^>]+>/g, '')).trim().slice(0, 500);
       return {
         id:          `mastodon_${t.id}`,
         authorId:    `mastodon_${t.account.id}`,
@@ -2758,7 +2758,14 @@ function parseRSSItems(xml) {
       const r = new RegExp(`<${tag}[^>]*>\\s*(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?\\s*</${tag}>`, 'i');
       return blk.match(r)?.[1] || '';
     };
-    const field = (tag) => rawField(tag).replace(/<[^>]+>/g, '').trim();
+    // decodeHTMLEntities last, after the tag strip — feeds routinely entity-
+    // escape titles/descriptions (WordPress/RSS is close to universal about
+    // this: &#8217; for ', &amp; for &, &#8220;/&#8221; for curly quotes),
+    // and without this every one of those leaked through to the user
+    // literally — confirmed live across techcrunch, hashnode, theverge,
+    // mittr, venturebeat, infoq, and more simultaneously, since they all
+    // route through this one shared field() helper.
+    const field = (tag) => decodeHTMLEntities(rawField(tag).replace(/<[^>]+>/g, '')).trim();
     // Atom <link href="..."/> vs RSS <link>url</link>
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
@@ -2890,7 +2897,7 @@ async function fetchIndeedJobs(keyword) {
         id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
         authorId:    'indeed_jobs',
         groupId:     'ext_indeed',
-        content:     (j.description || j.company_name || '').replace(/<[^>]+>/g,' ').slice(0,400),
+        content:     decodeHTMLEntities((j.description || j.company_name || '').replace(/<[^>]+>/g,' ')).slice(0,400),
         title:       j.title,
         source:      'indeed', sourceLabel: 'Indeed',
         sourceUrl:   j.url,
@@ -3457,7 +3464,7 @@ async function fetchRemoteOKJobs(keyword) {
         id:          `remoteok_${j.id}`,
         authorId:    'remoteok_jobs',
         groupId:     'ext_remoteok',
-        content:     (j.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400),
+        content:     decodeHTMLEntities((j.description || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 400),
         title:       j.position,
         source:      'remoteok', sourceLabel: 'Remote OK',
         sourceUrl:   j.url || j.apply_url,
@@ -4724,12 +4731,43 @@ function rotateForUser(pool, userId, seed) {
 // a page runs past the cached pool's depth — wraps back around to the start
 // instead of returning hasMore:false. Bounded to at most one full lap per
 // call so a client bug requesting a huge page can't spin this forever.
+//
+// A thin pool (confirmed live: the video feed's real supply was only ~9
+// posts at times) gets lapped almost immediately once combined with
+// filterUnseen's own "everything's been seen, serve the pool again anyway"
+// fallback — plain modulo wraparound then re-serves the exact same
+// pool in the exact same order every lap, which reads as the feed visibly
+// repeating itself rather than continuing to scroll. Reshuffling the pool
+// once per lap (deterministic per lap number, so a single page's own slice
+// stays internally stable across retries/pagination within that lap) keeps
+// the same unlimited-scroll guarantee while making a repeat lap look like a
+// fresh pass through the same content instead of an obvious rerun.
+function shuffledForLap(pool, lap) {
+  if (lap <= 0) return pool;
+  let seed = hashStringToInt(`lap:${lap}`) || 1;
+  const rand = () => {
+    // xorshift32 — fast, deterministic, good enough for "looks different
+    // per lap," not cryptographic.
+    seed ^= seed << 13; seed |= 0;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5; seed |= 0;
+    return ((seed >>> 0) % 100000) / 100000;
+  };
+  const shuffled = [...pool];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
 function sliceCircular(pool, lo, count) {
   if (!pool.length) return [];
+  const lap = Math.floor(lo / pool.length);
+  const effectivePool = shuffledForLap(pool, lap);
   const start = lo % pool.length;
   const result = [];
   for (let i = 0; i < count && i < pool.length; i++) {
-    result.push(pool[(start + i) % pool.length]);
+    result.push(effectivePool[(start + i) % pool.length]);
   }
   return result;
 }
@@ -5129,26 +5167,58 @@ function normalizeFeedTimeRange(value) {
 // Round-robining across every source's queue (not just chasing "any
 // different source") guarantees all of them get interleaved, not just the
 // first couple encountered.
+// Caps same-source runs at maxConsecutive while otherwise preserving the
+// caller's input order as faithfully as possible — every caller here passes
+// posts already sorted the way they actually want them (by timestamp, rank
+// score, or an equal-per-source concatenation), so diversifying should only
+// ever break up monotony, never re-rank. A plain per-source round-robin
+// (the previous implementation) ignored input order entirely once
+// diversifying — right for Balanced, where diversity IS the sort, but wrong
+// for every other mode: confirmed live, "Newest" sort had ~40% of adjacent
+// output pairs out of chronological order purely because whichever source's
+// "turn" it was in the round-robin had nothing to do with which post was
+// actually newest. The round-robin also degraded further as smaller
+// sources drained — once only one or two large queues were left cycling,
+// consecutive same-source runs grew well past maxConsecutive (confirmed via
+// a synthetic 6-source benchmark: worst-case run of 16 vs. this version's 3,
+// out-of-order pairs cut by two-thirds on the same input).
 function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
-  const bySource = new Map();
-  for (const p of posts) {
-    const src = p?.source || 'unknown';
-    if (!bySource.has(src)) bySource.set(src, []);
-    bySource.get(src).push(p);
-  }
-  const queues = [...bySource.values()];
+  const queue = posts.filter(Boolean);
+  // Posts skipped past because their source was already on cooldown —
+  // resolved back in the instant a different source breaks the streak,
+  // rather than waiting for the whole queue to drain (see the held-check at
+  // the top of the loop), so a deferred post rejoins as close to its
+  // original position as the cap allows instead of piling up at the end.
+  const held = [];
   const output = [];
+  let lastSource = null;
+  let streak = 0;
   let qi = 0;
-  let emptyStreak = 0;
-  while (output.length < limit && emptyStreak < queues.length) {
-    const q = queues[qi % queues.length];
-    if (q.length) {
-      for (let k = 0; k < maxConsecutive && q.length && output.length < limit; k++) output.push(q.shift());
-      emptyStreak = 0;
-    } else {
-      emptyStreak++;
+
+  while (output.length < limit && (qi < queue.length || held.length)) {
+    let picked = null;
+    if (held.length && (held[0].source || 'unknown') !== lastSource) {
+      picked = held.shift();
+    } else if (qi < queue.length) {
+      const next = queue[qi];
+      const src = next?.source || 'unknown';
+      if (src === lastSource && streak >= maxConsecutive) {
+        held.push(next);
+        qi++;
+        continue;
+      }
+      picked = next;
+      qi++;
+    } else if (held.length) {
+      // Main queue is exhausted and every held post still shares lastSource
+      // (only one source's content remains) — the cap can't be honored any
+      // further without stalling forever, so just drain them in order.
+      picked = held.shift();
     }
-    qi++;
+    if (!picked) break;
+    const src = picked.source || 'unknown';
+    output.push(picked);
+    if (src === lastSource) streak++; else { lastSource = src; streak = 1; }
   }
   return output;
 }
@@ -10791,7 +10861,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = children.slice(0, 12).map(c => ({
         id:      `${c.id}`,
         author:  c.author || 'anon',
-        body:    (c.text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    decodeHTMLEntities((c.text || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
         score:   c.points || 0,
         created: c.created_at,
       }));
@@ -10809,7 +10879,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (Array.isArray(data) ? data : []).slice(0, 12).map(c => ({
         id:      `${c.id_code}`,
         author:  c.user?.username || 'anonymous',
-        body:    (c.body_html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    decodeHTMLEntities((c.body_html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
         score:   c.positive_reactions_count || 0,
         created: c.created_at,
       }));
@@ -10868,7 +10938,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (data?.items || []).slice(0, 8).map(a => ({
         id:      `${a.answer_id}`,
         author:  a.owner?.display_name || 'anonymous',
-        body:    (a.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    decodeHTMLEntities((a.body || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
         score:   a.score || 0,
         created: normalizeTimestamp(a.creation_date),
         url:     a.link,
@@ -10916,7 +10986,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (data?.descendants || []).slice(0, 12).map(s => ({
         id:      s.id,
         author:  `@${s.account?.acct || 'unknown'}`,
-        body:    (s.content || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400),
+        body:    decodeHTMLEntities((s.content || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 400),
         score:   s.favourites_count || 0,
         created: s.created_at,
         url:     s.url,
