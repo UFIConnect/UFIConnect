@@ -9524,11 +9524,14 @@ async function handleFeedRequest(req, res) {
       new Promise(resolve => setTimeout(() => resolve([]), 4500)),
     ]);
     const livePosts = realFeedPosts((settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []));
-    const dbRows = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter, {
+    // *3 — same headroom-for-filterUnseen reasoning as the source-tab branch
+    // below: a window sized to exactly one page leaves almost nothing once
+    // already-seen posts are excluded.
+    const dbRows = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, {
       sort: sortMode,
       timeRange,
     });
-    const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
+    const dbPosts = dbRows.map(p => mapExternalPost(p, sourceFilter));
     if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
     const result = filterUnseen(sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
@@ -9562,13 +9565,16 @@ async function handleFeedRequest(req, res) {
       allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts);
     }
     if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
+    // *3 — same headroom-for-filterUnseen reasoning as the source-tab branch
+    // below; passed live testing at the exact +1 size once, but that's not
+    // a guarantee against thinning out the same way under sustained use.
     const dbRows = sourcesParam.length > 0
-      ? await getPostsFromDB([], feedLimit + 1, 0, sourcesParam, {
+      ? await getPostsFromDB([], feedLimit * 3 + 1, 0, sourcesParam, {
           sort: sortMode,
           timeRange,
         })
       : [];
-    const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, p.source));
+    const dbPosts = dbRows.map(p => mapExternalPost(p, p.source));
     allSourcePosts.push(...dbPosts);
     const result = filterUnseen(sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
@@ -9601,11 +9607,18 @@ async function handleFeedRequest(req, res) {
       .map(p => mapExternalPost(p, sourceFilter));
     const liveRaw     = realFeedPosts(liveResult[agentKey] || []);
     const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
-    const dbRows      = await getPostsFromDB([], feedLimit + 1, 0, sourceFilter, {
+    // *3 (not the bare +1 this used to fetch) — a single source's
+    // workerPosts/globalSourcePosts caches are thin on their own (capped at
+    // 40/300 posts respectively, further whittled down once filtered to one
+    // source), so a DB window sized to exactly one page left filterUnseen
+    // with almost no headroom: confirmed live that a fresh account
+    // re-fetching a single-source tab got the identical 30/30 posts back,
+    // since the *entire* thin pool got marked seen on the first request.
+    const dbRows      = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, {
       sort: sortMode,
       timeRange,
     });
-    const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
+    const dbPosts     = dbRows.map(p => mapExternalPost(p, sourceFilter));
     if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
     const result = filterUnseen(sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
