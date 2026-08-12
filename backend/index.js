@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
@@ -38,6 +39,61 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : true; // allow all in dev
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
+
+// The office dashboard's "Security Agent" logs a reassuring-looking
+// "Rate-limit monitor" line, but that's display-only — it reads real memory/
+// event-loop numbers, it doesn't actually throttle anything. There was no
+// real rate limiting anywhere in the app. Login/register/password-reset are
+// the classic abuse targets (credential stuffing, registration spam,
+// email-bombing a password reset target) and the ones most likely to get
+// hit hard by either bad actors or a buggy client retry loop once real
+// traffic picks up. Scoped tightly to just these — a blanket limiter across
+// every route risks throttling legitimate heavy scrolling/pagination, which
+// is a worse failure mode than the one being guarded against here.
+//
+// express-rate-limit keys on req.ip by default, which without an explicit
+// `trust proxy` setting resolves to the immediate upstream connection —
+// Render's own proxy, not the real visitor. That would put every visitor's
+// traffic in one shared bucket and lock out the whole site's login/register
+// after a handful of real users, right when traffic is about to grow. This
+// app already trusts Cloudflare's CF-IPCountry header elsewhere (see
+// getUserCountry) since Cloudflare is confirmed in front of it in
+// production (Server: cloudflare on every response) — CF-Connecting-IP is
+// Cloudflare's own authoritative client IP, so keying on that sidesteps
+// needing to get Express's proxy-hop-count trust setting exactly right.
+function rateLimitKey(req) {
+  // ipKeyGenerator normalizes IPv6 down to a /56 subnet before using it as a
+  // key — express-rate-limit refuses to start (throws at setup, not just a
+  // request-time error) if a custom keyGenerator returns a raw IP without
+  // it, since a raw IPv6 address lets one visitor cycle through effectively
+  // unlimited distinct addresses within their own subnet to dodge the limit.
+  return ipKeyGenerator(req.headers['cf-connecting-ip'] || req.ip);
+}
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { message: 'Too many attempts. Please try again in a few minutes.' },
+});
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { message: 'Too many accounts created from this network. Please try again later.' },
+});
+const passwordResetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { message: 'Too many password reset attempts. Please try again later.' },
+});
+
 // Holomine brain service (simulated or external via HOLOMINE_URL)
 try {
   const holomine = require('./holomine');
@@ -7693,7 +7749,7 @@ app.get('/auth/me', authenticate, async (req, res) => {
   res.json({ profile: fullProfile(user) });
 });
 
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', registerLimiter, async (req, res) => {
   const { name, email, password, title } = req.body;
   if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields.' });
   const emailLc = email.toLowerCase();
@@ -7722,7 +7778,7 @@ app.post('/auth/register', async (req, res) => {
   res.status(201).json({ token, profile: fullProfile(newUser) });
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
   const emailLc = (email || '').toLowerCase();
 
@@ -7742,7 +7798,7 @@ app.post('/auth/login', async (req, res) => {
   res.json({ token, profile: fullProfile(user) });
 });
 
-app.post('/auth/forgot-password', async (req, res) => {
+app.post('/auth/forgot-password', passwordResetLimiter, async (req, res) => {
   const email = (req.body?.email || '').toLowerCase().trim();
   // Always respond the same way whether or not the email is registered —
   // don't let this endpoint reveal which emails have accounts.
@@ -7761,7 +7817,7 @@ app.post('/auth/forgot-password', async (req, res) => {
   res.json(generic);
 });
 
-app.post('/auth/reset-password', async (req, res) => {
+app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
   const { token, password } = req.body || {};
   if (!token || !password) return res.status(400).json({ message: 'Token and new password are required.' });
   if (password.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' });
