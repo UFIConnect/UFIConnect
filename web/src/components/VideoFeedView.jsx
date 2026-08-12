@@ -346,6 +346,14 @@ export default function VideoFeedView({ onExit }) {
   // the backend's seenPostIds/seenPostIdQueue pattern).
   const knownIds = useRef(new Set());
   const knownIdsQueue = useRef([]);
+  // Sent as ?seed= on every request — the backend folds it into this user's
+  // rotation offset into the shared video pool (see rotateForUser server-
+  // side). Without this, a refresh handed back the exact same rotation of
+  // the exact same pool every time, since neither the user nor the still-
+  // warm pool changed — regenerated below whenever a fresh page-1 load
+  // happens (mount or explicit refresh), left alone for page 2+ so
+  // pagination keeps slicing the same rotated view within one sitting.
+  const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
@@ -357,7 +365,8 @@ export default function VideoFeedView({ onExit }) {
 
   const loadPage = useCallback(async (pageNum, { bust = false } = {}) => {
     try {
-      const params = `limit=10&page=${pageNum}${bust ? '&bust=1' : ''}`;
+      if (pageNum === 1) refreshSeedRef.current = Math.random().toString(36).slice(2);
+      const params = `limit=10&page=${pageNum}&seed=${refreshSeedRef.current}${bust ? '&bust=1' : ''}`;
       const { data } = await client.get(`/office/feed/videos?${params}`);
       const incoming = (data.posts || []).filter(p => p?.mediaUrl);
       if (pageNum === 1) {

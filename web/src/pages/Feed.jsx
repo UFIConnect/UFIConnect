@@ -965,6 +965,14 @@ export default function Feed() {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
+  // Sent as ?seed= on every feed request — the backend folds it into this
+  // user's rotation offset into the shared pool (see rotateForUser
+  // server-side). Regenerated only on an explicit refresh (inside loadFeed,
+  // gated on manual===true) and otherwise left alone, so pagination within
+  // a sitting keeps slicing the same rotated view consistently — without
+  // this, refreshing handed back the exact same rotation of the exact same
+  // pool every time, since neither the user nor the still-warm pool changed.
+  const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
     const {
@@ -983,6 +991,13 @@ export default function Feed() {
       // the 10-min auto-refresh) keep their current behavior unchanged.
       bust = manual,
     } = options || {};
+    // manual is specifically what every explicit user refresh action passes
+    // (tab click, Refresh now, scroll-to-refresh) — background silent syncs
+    // and filter/search changes call this with manual:false, so gating on
+    // it here (rather than threading a separate flag through every one of
+    // those call sites) regenerates the seed exactly when the user actually
+    // asked for a refresh, and nowhere else.
+    if (manual) refreshSeedRef.current = Math.random().toString(36).slice(2);
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     activeFilters.sort = normalizeFeedSort(activeFilters.sort);
     const activeMode = requestedMode || viewModeRef.current;
@@ -998,6 +1013,7 @@ export default function Feed() {
         limit: `${FEED_PAGE_SIZE}`,
         mode: activeMode,
         sort: activeFilters.sort,
+        seed: refreshSeedRef.current,
       });
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (activeSearch) params.set('q', activeSearch);
@@ -1199,6 +1215,10 @@ export default function Feed() {
         limit: `${FEED_PAGE_SIZE}`,
         mode: viewModeRef.current,
         sort: activeFilters.sort,
+        // Same seed as the last refresh (see refreshSeedRef) — pagination
+        // must keep slicing the same rotated view a refresh landed on,
+        // otherwise page 2 wouldn't logically follow from page 1.
+        seed: refreshSeedRef.current,
       });
       const q = searchRef.current.trim();
       if (q) params.set('q', q);

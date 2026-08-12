@@ -4046,9 +4046,20 @@ function hashStringToInt(str) {
   }
   return Math.abs(hash);
 }
-function rotateForUser(pool, userId) {
+// A fixed per-user offset alone means clicking refresh mid-session hands
+// back the *same* rotation of the *same* shared pool — same posts, same
+// order, every time, since neither the userId nor the pool (still inside
+// its TTL window) changed. seed is a value the client generates fresh each
+// time the user explicitly hits refresh (and reuses for every page after
+// that, so pagination within one sitting keeps slicing the same rotated
+// view consistently) — folding it into the hash moves the starting point to
+// a different part of the pool, so a refresh actually surfaces a
+// substantially different set of posts instead of just re-displaying what
+// was already on screen.
+function rotateForUser(pool, userId, seed) {
   if (!pool.length || !userId) return pool;
-  const offset = hashStringToInt(String(userId)) % pool.length;
+  const key = seed ? `${userId}:${seed}` : String(userId);
+  const offset = hashStringToInt(key) % pool.length;
   if (!offset) return pool;
   return [...pool.slice(offset), ...pool.slice(0, offset)];
 }
@@ -8451,6 +8462,11 @@ async function handleFeedRequest(req, res) {
   // boost inside personalizeOrder, same "applied fresh per request, never
   // baked into the shared snapshot" treatment as userTopics.
   const userCountry = getUserCountry(req);
+  // Client-generated, changes only when the user explicitly hits refresh
+  // (kept stable across pagination within that sitting) — see rotateForUser
+  // for why this is what makes a refresh return substantially different
+  // posts instead of re-displaying the same rotation of the same pool.
+  const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
   const sourceFilter = req.query.source || null;
   const sourcesParam = req.query.sources
     ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
@@ -8632,11 +8648,13 @@ async function handleFeedRequest(req, res) {
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
         // Rotate first (per-user starting point into the shared pool — see
         // rotateForUser), then personalize — both are deterministic given
-        // the same (pool, userId/userTopics) pair, so recomputing them per
-        // request here still slices cleanly across pages, and this user
-        // always sees the same personalized rotation of the shared pool for
-        // the rest of this snapshot's window.
-        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics, userCountry);
+        // the same (pool, userId/userTopics/refreshSeed) inputs, so
+        // recomputing them per request here still slices cleanly across
+        // pages: the client resends the same seed for every page after a
+        // refresh, so this user keeps seeing the same rotation for the rest
+        // of that sitting, and only jumps to a different one on their next
+        // explicit refresh (see rotateForUser).
+        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -8781,9 +8799,11 @@ async function handleFeedRequest(req, res) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
       // the wantsMix branch above) so both stay in sync with each other.
-      // Rotated per-user first — see rotateForUser — so different users
-      // don't all land on the exact same slice/order of the shared pool.
-      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id), userTopics, userCountry);
+      // Rotated per-user (and per-refresh, via refreshSeed) first — see
+      // rotateForUser — so different users don't all land on the exact same
+      // slice/order of the shared pool, and a refresh actually surfaces
+      // different posts instead of the same rotation every time.
+      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       return res.json({
@@ -9123,7 +9143,7 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id), userTopics, userCountry);
+  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry);
   const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -9244,7 +9264,12 @@ async function handleVideoFeedRequest(req, res) {
       ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
       ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
     ];
-    const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id);
+    // Client-generated, changes only on an explicit refresh — see the
+    // identical refreshSeed in handleFeedRequest for why this is what makes
+    // a refresh return substantially different videos instead of the same
+    // rotation of the same pool every time.
+    const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
+    const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id, refreshSeed);
     const personalized = personalizeOrder(rotated, userTopics);
     const lo = (reqPage - 1) * feedLimit;
     const pageSlice = sliceCircular(personalized, lo, feedLimit);
