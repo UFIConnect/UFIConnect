@@ -1156,6 +1156,7 @@ const SOURCE_CONFIG = {
   crunchbase:    { ttl: 12*60000, delay: 12000, shards: 3 },  // business/funding RSS — no limit, was arbitrarily slow
   behance:       { ttl: 12*60000, delay: 12000, shards: 3 },  // creative portfolios RSS — no limit, was arbitrarily slow
   designweb:     { ttl: 12*60000, delay: 12000, shards: 3 },  // design/web industry RSS — no limit, was arbitrarily slow
+  usajobs:       { ttl: 30*60000, delay: 60000, shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
   // No free public API — runs only on a genuine app-level public token
   // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
   // env vars), never a member's personal connected-account token. Idles at
@@ -1199,6 +1200,7 @@ const CACHE_KEY_PREFIX = {
   crunchbase:    'crunchbase_kw_',
   behance:       'behance_kw_',
   designweb:     'designweb_kw_',
+  usajobs:       'usajobs_kw_',
   twitter:       'twitter_kw_',
   linkedin:      'linkedin_kw_',
   instagram:     'instagram_kw_',
@@ -3337,6 +3339,65 @@ async function fetchRemoteOKJobs(keyword) {
   }
 }
 
+// ─── USAJobs: official U.S. federal government job openings ─────────────────
+// Unlike Twitter/LinkedIn/Instagram/Facebook/TikTok (paid tier or a reviewed
+// developer app — see the fetchTwitter/fetchLinkedIn/fetchInstagram/
+// fetchFacebook comments, and startContinuousWorkers for TikTok), USAJobs's
+// Search API is genuinely free and self-serve: register at
+// https://developer.usajobs.gov/apirequest to get an API key by email in
+// minutes, no review or business verification. Requires two env vars —
+// USAJOBS_API_KEY (the key) and USAJOBS_USER_AGENT (must exactly match the
+// email address the key was registered with; USAJobs checks this).
+async function fetchUSAJobsByKeyword(keyword) {
+  const apiKey = process.env.USAJOBS_API_KEY;
+  const email  = process.env.USAJOBS_USER_AGENT;
+  if (!apiKey || !email) return [];
+  const key = `usajobs_kw_${keyword}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const url = `https://data.usajobs.gov/api/search?Keyword=${encodeURIComponent(keyword)}&ResultsPerPage=25`;
+    const data = await fetchJSON(url, {
+      'Host':              'data.usajobs.gov',
+      'User-Agent':        email,
+      'Authorization-Key': apiKey,
+    });
+    const items = data?.SearchResult?.SearchResultItems || [];
+    const posts = items
+      .filter(it => it?.MatchedObjectId && it.MatchedObjectDescriptor?.PositionTitle)
+      .map(it => {
+        const d = it.MatchedObjectDescriptor;
+        const location = d.PositionLocationDisplay
+          || (d.PositionLocation || []).map(l => l.LocationName).filter(Boolean).join(', ')
+          || null;
+        return {
+          id:          `usajobs_${it.MatchedObjectId}`,
+          authorId:    'usajobs_jobs',
+          groupId:     'ext_usajobs',
+          content:     (d.UserArea?.Details?.JobSummary || d.QualificationSummary || d.PositionTitle || '')
+                         .replace(/\s+/g, ' ').trim().slice(0, 400),
+          title:       d.PositionTitle,
+          source:      'usajobs', sourceLabel: 'USAJobs',
+          sourceUrl:   d.PositionURI || 'https://www.usajobs.gov',
+          topic:       keyword,
+          author:      { id: 'usajobs_jobs', name: d.OrganizationName || 'U.S. Government', title: 'Federal Employer', organization: d.OrganizationName },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(d.PublicationStartDate),
+          isExternal:  true,
+          location,
+          group:       { id: 'ext_usajobs', name: 'USAJobs', category: 'Opportunities', externalUrl: 'https://www.usajobs.gov' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn(`USAJobs "${keyword}":`, e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 // Y Combinator: startup and founder essays
 async function fetchYCombinator(keyword) {
   const key = `yc_kw_${keyword}`;
@@ -4421,11 +4482,12 @@ function startContinuousWorkers() {
     ['crunchbase',    'CB', '#146AFF', fetchCrunchbaseNews,      kw,  28000],
     ['behance',       'Be', '#053EFF', fetchBehanceProjects,     kw,  29000],
     ['designweb',     'UX', '#DB2777', fetchDesignWeb,           kw,  30000],
+    ['usajobs',       '🏛️', '#005EA8', fetchUSAJobsByKeyword,    kw,  31000],
     // No free public API — app-level token only, see fetch*Shared above.
-    ['twitter',       '𝕏',  '#000000', fetchTwitterShared,       kw,  31000],
-    ['linkedin',      '💼', '#0A66C2', fetchLinkedInShared,      kw,  32000],
-    ['instagram',     '📸', '#E1306C', fetchInstagramShared,     kw,  33000],
-    ['facebook',      '🔵', '#1877F2', fetchFacebookShared,      kw,  34000],
+    ['twitter',       '𝕏',  '#000000', fetchTwitterShared,       kw,  32000],
+    ['linkedin',      '💼', '#0A66C2', fetchLinkedInShared,      kw,  33000],
+    ['instagram',     '📸', '#E1306C', fetchInstagramShared,     kw,  34000],
+    ['facebook',      '🔵', '#1877F2', fetchFacebookShared,      kw,  35000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -4922,7 +4984,7 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
 // already scattered through the pool PLUS whatever the top-up fetch found,
 // combine and dedupe, then reinsert the whole set at a fixed cadence — this
 // guarantees the cadence regardless of how much overlap there was.
-const JOB_LISTING_SOURCES = ['indeed', 'remoteok'];
+const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs'];
 
 // ─── Location-based matching ────────────────────────────────────────────────
 // Cloudflare (already in front of this app — see the `Server: cloudflare`
@@ -6334,7 +6396,7 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
-  if (['tiktok', 'usajobs'].includes(id)) {
+  if (['tiktok'].includes(id)) {
     logAgentAction(id, def.emoji,
       'Active - live source gated; no generated fallback posts served', def.color);
     return true;
@@ -10504,8 +10566,8 @@ const AGENT_DEFS = {
     description: 'Serves curated short-form creator and professional posts while public TikTok APIs require approved platform access.',
   },
   usajobs: {
-    name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8', interval: 'curated',
-    description: 'Surfaces federal and public-sector opportunities from the curated jobs feed when USAJobs API keys are unavailable.',
+    name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8',
+    description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, Facebook, and TikTok require.',
   },
   optimizer: {
     name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '5min',
@@ -10759,7 +10821,7 @@ function getRuntimeHealthForAgent(id) {
       lastSuccess: lastLogForAgent(id)?.ts || null,
     };
   }
-  if (['tiktok', 'usajobs'].includes(id)) {
+  if (['tiktok'].includes(id)) {
     return {
       status: 'gated',
       mode: 'live-required',
@@ -10824,7 +10886,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     };
   });
   // Append gated platform agents that are feed sources but not continuous workers.
-  for (const id of ['tiktok', 'usajobs']) {
+  for (const id of ['tiktok']) {
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
