@@ -4525,8 +4525,22 @@ function boostJobListings(pool, extraJobPosts, everyN = 8) {
   const existingJobs = pool.filter(p => JOB_LISTING_SOURCES.includes(p.source));
   const nonJobPool = pool.filter(p => !JOB_LISTING_SOURCES.includes(p.source));
   const seenIds = new Set(existingJobs.map(p => p.id));
-  const combinedJobs = [...existingJobs, ...extraJobPosts.filter(p => p?.id && !seenIds.has(p.id))];
-  if (!combinedJobs.length) return pool;
+  const combinedJobsAll = [...existingJobs, ...extraJobPosts.filter(p => p?.id && !seenIds.has(p.id))];
+  if (!combinedJobsAll.length) return pool;
+  // Cap at exactly as many job posts as there are 1-in-everyN interleave
+  // slots in nonJobPool — the wide 30-day supplemental fetch (needed since
+  // day-to-day job supply is thin) plus whatever's already organically in
+  // the pool could together add up to far more job posts than an evenly-
+  // spaced mix has room for. The interleave loop below only has
+  // floor(nonJobPool.length / everyN) trigger points; anything past that
+  // used to fall through to a trailing while-loop that dumped every
+  // leftover job post in one contiguous block at the end — confirmed live
+  // as 16+ consecutive job listings in a row, not a mix. Capping here
+  // means that overflow path can no longer trigger at all: every included
+  // job post is guaranteed an interleave slot, so job share stays near the
+  // intended ~1-in-8 (~12.5%) instead of drifting up toward 25-30%.
+  const targetJobCount = Math.max(1, Math.floor(nonJobPool.length / everyN));
+  const combinedJobs = combinedJobsAll.slice(0, targetJobCount);
   const result = [];
   let ji = 0;
   for (let i = 0; i < nonJobPool.length; i++) {
