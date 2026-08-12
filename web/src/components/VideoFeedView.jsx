@@ -30,6 +30,22 @@ function resolveVideoSource(post) {
 // by the server's video pool being rebuilt mid-session.
 const VIDEO_DEDUP_WINDOW = 400;
 
+// Shared look for the three floating controls over the video (back, refresh,
+// mute) — previously each had its own one-off style (the back button in
+// particular stood out with a harsh 2px solid white ring at a different size
+// from its neighbors). A soft blurred-glass circle reads as one consistent
+// control language instead of three mismatched buttons, and adapts to
+// whatever's playing behind it rather than fighting it with a hard outline.
+const OVERLAY_BTN_STYLE = {
+  zIndex: 10, width: 40, height: 40, borderRadius: '50%',
+  background: 'rgba(0,0,0,.4)',
+  backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+  border: '1px solid rgba(255,255,255,.18)',
+  boxShadow: '0 2px 10px rgba(0,0,0,.35)',
+  color: '#fff', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+};
+
 function formatTime(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '0:00';
   const m = Math.floor(sec / 60);
@@ -473,24 +489,27 @@ export default function VideoFeedView({ onExit }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
-      <button onClick={onExit} aria-label="Back to Feed" style={{
-        position: 'absolute', top: 16, left: 16, zIndex: 10, width: 42, height: 42, borderRadius: '50%',
-        background: 'rgba(0,0,0,.6)', border: '2px solid rgba(255,255,255,.85)', color: '#fff',
-        fontSize: '1.4rem', fontWeight: 800, lineHeight: 1, cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>←</button>
-      <button onClick={handleRefresh} disabled={refreshing} aria-label="Refresh videos" style={{
-        position: 'absolute', top: 16, right: 64, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
-        background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.05rem',
-        cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
+      <button onClick={onExit} aria-label="Back to Feed" style={{ position: 'absolute', top: 16, left: 16, ...OVERLAY_BTN_STYLE }}>
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+      </button>
+      <button
+        onClick={handleRefresh}
+        disabled={refreshing}
+        aria-label="Refresh videos"
+        style={{
+          position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE,
+          fontSize: '1.05rem', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+        }}
+      >
         <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
       </button>
-      <button onClick={() => setMuted(m => !m)} aria-label={muted ? 'Unmute' : 'Mute'} style={{
-        position: 'absolute', top: 16, right: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
-        background: 'rgba(0,0,0,.45)', border: 'none', color: '#fff', fontSize: '1.1rem', cursor: 'pointer',
-      }}>{muted ? '🔇' : '🔊'}</button>
+      <button
+        onClick={() => setMuted(m => !m)}
+        aria-label={muted ? 'Unmute' : 'Mute'}
+        style={{ position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem' }}
+      >{muted ? '🔇' : '🔊'}</button>
 
       {loading ? (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
