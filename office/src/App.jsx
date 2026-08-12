@@ -586,6 +586,14 @@ function AnalyticsView() {
   const [error, setError] = useState(false);
   const [users, setUsers] = useState(null);
   const [usersError, setUsersError] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+
+  const loadUsers = useCallback(() => {
+    officeFetch(`${API}/office/users`)
+      .then(r => r.json())
+      .then(j => setUsers(j))
+      .catch(() => setUsersError(true));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -599,6 +607,21 @@ function AnalyticsView() {
       .catch(() => { if (!cancelled) setUsersError(true); });
     return () => { cancelled = true; };
   }, []);
+
+  async function handleDeleteUser(u) {
+    if (!window.confirm(`Permanently delete "${u.name}" (${u.email})? This removes their account, posts, and follows — cannot be undone.`)) return;
+    setDeletingId(u.id);
+    try {
+      const r = await officeFetch(`${API}/office/users/${u.id}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.deleted) loadUsers();
+      else alert('Delete failed — see server logs.');
+    } catch {
+      alert('Delete failed — see server logs.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <>
@@ -661,6 +684,17 @@ function AnalyticsView() {
                   {u.onboarded ? 'onboarded' : 'incomplete'}
                 </div>
                 <div style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>{new Date(u.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+                <button
+                  onClick={() => handleDeleteUser(u)}
+                  disabled={deletingId === u.id}
+                  title="Delete this account"
+                  style={{
+                    background: 'none', border: 'none', cursor: deletingId === u.id ? 'default' : 'pointer',
+                    color: '#f87171', fontSize: 13, opacity: deletingId === u.id ? 0.5 : 1, padding: '2px 4px',
+                  }}
+                >
+                  {deletingId === u.id ? '…' : '🗑'}
+                </button>
               </Card>
             ))}
           </div>

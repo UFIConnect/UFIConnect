@@ -9174,6 +9174,19 @@ app.delete('/profile', authenticate, async (req, res) => {
   }
 });
 
+// Admin equivalent of the self-delete above, for cleaning up test/spam
+// accounts from the office dashboard (see GET /office/users) without
+// needing that account's own password.
+app.delete('/office/users/:id', requireOfficeToken, async (req, res) => {
+  try {
+    await purgeUser(req.params.id);
+    res.json({ deleted: true });
+  } catch (e) {
+    console.error('DELETE /office/users/:id:', e.message);
+    res.status(500).json({ deleted: false, message: 'Failed to delete account.' });
+  }
+});
+
 // ─── Groups ───────────────────────────────────────────────────────────────────
 // /groups is called both logged-out (public directory) and logged-in, so this
 // reads the token if one is present rather than requiring it — anonymous
