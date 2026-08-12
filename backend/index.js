@@ -1312,6 +1312,39 @@ const TOPIC_SUBREDDITS = {
   'Books':                  ['books', 'suggestmeabook', 'literature'],
 };
 
+// Reddit's Atom RSS feed never exposes the JSON API's real
+// media.reddit_video.fallback_url (that field simply isn't part of the
+// feed), so a v.redd.it/gfycat/redgifs/youtube destination can't be played
+// inline the way extractRedditMedia's JSON-path videos can — but tagging it
+// as video with the real preview thumbnail still gets it into the video
+// feed and (via the existing non-playable-video fallback UI, same as a
+// YouTube post with no embeddable ID) links out to the real clip on click,
+// instead of it silently having no media at all, which is what every
+// single Reddit post fetched over the RSS fallback showed as before this —
+// confirmed live as 0 of 60 real Reddit posts having any mediaType set,
+// regardless of how video-heavy their subreddit actually was.
+function extractRedditRSSMedia(rawEntryXml, rawContentHtml) {
+  const thumbMatch = /media:thumbnail url="([^"]+)"/.exec(rawEntryXml);
+  const poster = thumbMatch ? decodeHTMLEntities(thumbMatch[1]) : null;
+  const validPoster = poster && /^https?:\/\//i.test(poster) ? poster : null;
+  // The RSS content wraps the actual submission destination in a "[link]"
+  // anchor distinct from the "[comments]" anchor next to it — only present
+  // for link/image/video posts, not plain self-text posts.
+  const content = decodeHTMLEntities(rawContentHtml);
+  const linkMatch = /<a href="([^"]+)">\[link\]<\/a>/.exec(content);
+  const destUrl = linkMatch ? linkMatch[1] : null;
+  if (destUrl) {
+    if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(destUrl) || /(v\.redd\.it|gfycat\.com|redgifs\.com|streamable\.com|youtube\.com|youtu\.be)/i.test(destUrl)) {
+      return { mediaType: 'video', mediaUrl: validPoster || destUrl };
+    }
+    if (/\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(destUrl)) {
+      return { mediaType: 'image', mediaUrl: destUrl };
+    }
+  }
+  if (validPoster) return { mediaType: 'image', mediaUrl: validPoster };
+  return { mediaType: null, mediaUrl: null };
+}
+
 function parseRedditRSSFeed(xml, topicKeyword) {
   const posts = [];
   // Extract subreddit name from feed <title>
@@ -1325,10 +1358,12 @@ function parseRedditRSSFeed(xml, topicKeyword) {
     const published = getTag(/<published>(.*?)<\/published>/);
     const updated   = getTag(/<updated>(.*?)<\/updated>/);
     const author    = getTag(/<name>(.*?)<\/name>/).replace(/^\/?u\//, '');
-    const content = decodeHTMLEntities(getTag(/<content[^>]*>([\s\S]*?)<\/content>/).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400));
+    const rawContent = getTag(/<content[^>]*>([\s\S]*?)<\/content>/);
+    const content = decodeHTMLEntities(rawContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400));
     const idMatch = link.match(/comments\/([a-z0-9]+)/i);
     if (!idMatch || !title) continue;
     const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
+    const media = extractRedditRSSMedia(s, rawContent);
     posts.push({
       id:          `reddit_${idMatch[1]}`,
       authorId:    `reddit_${author}`,
@@ -1343,6 +1378,8 @@ function parseRedditRSSFeed(xml, topicKeyword) {
       likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(published || updated),
       isExternal:  true,
+      mediaType:   media.mediaType,
+      mediaUrl:    media.mediaUrl,
       group:       matchedGroup
         ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
         : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
