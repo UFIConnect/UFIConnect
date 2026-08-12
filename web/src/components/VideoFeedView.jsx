@@ -353,6 +353,18 @@ export default function VideoFeedView({ onExit }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // Same Feed/Following split as the main feed (see pages/Feed.jsx) — the
+  // aggregate true mix here and the Following pool never share sources
+  // (gated platforms only ever appear in Following, see FEED_SOCIAL_TABS
+  // backend-side), so switching mode also resets the source filter.
+  const [viewMode, setViewMode] = useState('feed');
+  const [sourceFilter, setSourceFilter] = useState(null);
+  // Mirrors state into refs so loadPage (called from effects/callbacks that
+  // don't want to be redeclared on every mode/filter change) always reads
+  // the current value instead of whatever was captured at its own creation —
+  // same pattern as refreshSeedRef below and viewModeRef in pages/Feed.jsx.
+  const viewModeRef = useRef('feed');
+  const sourceFilterRef = useRef(null);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
   const loadingMoreRef = useRef(false);
@@ -382,8 +394,15 @@ export default function VideoFeedView({ onExit }) {
   const loadPage = useCallback(async (pageNum, { bust = false } = {}) => {
     try {
       if (pageNum === 1) refreshSeedRef.current = Math.random().toString(36).slice(2);
-      const params = `limit=10&page=${pageNum}&seed=${refreshSeedRef.current}${bust ? '&bust=1' : ''}`;
-      const { data } = await client.get(`/office/feed/videos?${params}`);
+      const mode = viewModeRef.current;
+      const src = sourceFilterRef.current;
+      let params = `limit=10&page=${pageNum}&seed=${refreshSeedRef.current}${bust ? '&bust=1' : ''}`;
+      if (src) params += `&source=${encodeURIComponent(src)}`;
+      // Following's pool is a live per-user query (see getFollowingFeedPosts
+      // backend-side), not the cross-user snapshot the aggregate endpoint
+      // caches — bust=1 doesn't apply to it, there's nothing to bust.
+      const endpoint = mode === 'following' ? '/office/feed/videos/following' : '/office/feed/videos';
+      const { data } = await client.get(`${endpoint}?${params}`);
       const incoming = (data.posts || []).filter(p => p?.mediaUrl);
       if (pageNum === 1) {
         // A fresh page-1 load is a full reset (initial mount, or a
@@ -440,6 +459,35 @@ export default function VideoFeedView({ onExit }) {
     await loadPage(1, { bust: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
+
+  // Feed and Following pull from entirely different endpoints/pools (see
+  // loadPage) with no shared source vocabulary between them, same reasoning
+  // as switchViewMode in pages/Feed.jsx — switching mode always clears
+  // whatever platform filter was selected and starts a clean page-1 load.
+  const switchViewMode = useCallback((mode) => {
+    const next = mode === 'following' ? 'following' : 'feed';
+    if (next === viewModeRef.current) return;
+    viewModeRef.current = next;
+    setViewMode(next);
+    sourceFilterRef.current = null;
+    setSourceFilter(null);
+    setActiveIndex(0);
+    setPage(1);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage(1);
+  }, [loadPage]);
+
+  const toggleSourceFilter = useCallback((key) => {
+    const next = sourceFilterRef.current === key ? null : key;
+    sourceFilterRef.current = next;
+    setSourceFilter(next);
+    setActiveIndex(0);
+    setPage(1);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage(1);
+  }, [loadPage]);
 
   // Scrolling back up to video 1 after having scrolled further in acts as
   // pull-to-refresh, same mechanism as every other list on the site — no
@@ -511,6 +559,65 @@ export default function VideoFeedView({ onExit }) {
         style={{ position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem' }}
       >{muted ? '🔇' : '🔊'}</button>
 
+      {/* Feed/Following toggle — same split and reasoning as pages/Feed.jsx's
+          view-mode tabs, styled for the dark full-bleed video overlay
+          instead of the light page chrome. */}
+      <div style={{
+        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 10, display: 'flex', gap: 6,
+        background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+        border: '1px solid rgba(255,255,255,.18)', borderRadius: 20, padding: 3,
+      }}>
+        {[{ key: 'feed', label: 'Feed' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
+          const active = viewMode === key;
+          return (
+            <button
+              key={key}
+              onClick={() => switchViewMode(key)}
+              style={{
+                padding: '6px 14px', borderRadius: 17, border: 'none', cursor: 'pointer',
+                fontWeight: 700, fontSize: '.78rem',
+                background: active ? '#fff' : 'transparent',
+                color: active ? '#000' : '#fff',
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Following's own platform filter — mirrors FOLLOWING_SOURCE_TABS in
+          pages/Feed.jsx, compact/icon-first to fit the overlay. */}
+      {viewMode === 'following' && (
+        <div style={{
+          position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
+        }}>
+          {['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook'].map(key => {
+            const meta = SOURCE_META[key] || {};
+            const active = sourceFilter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => toggleSourceFilter(key)}
+                aria-label={meta.label || key}
+                style={{
+                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4,
+                  padding: '5px 10px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
+                  fontWeight: 700, fontSize: '.72rem',
+                  border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
+                  background: active ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.35)',
+                  color: '#fff',
+                }}
+              >
+                <span>{meta.icon}</span>{meta.label || key}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
           Loading videos…
@@ -519,7 +626,11 @@ export default function VideoFeedView({ onExit }) {
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', gap: 14, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: '2.2rem' }}>🎬</div>
           <div style={{ fontSize: '.9rem', opacity: 0.85, maxWidth: 280 }}>
-            {error ? "Couldn't load videos right now." : 'No videos yet — check back soon as more platforms post video content.'}
+            {error
+              ? "Couldn't load videos right now."
+              : viewMode === 'following'
+                ? 'No videos yet from people you follow — try a different platform filter, or check back once they post.'
+                : 'No videos yet — check back soon as more platforms post video content.'}
           </div>
           <button onClick={onExit} className="btn btn-primary btn-sm">Back to Feed</button>
         </div>

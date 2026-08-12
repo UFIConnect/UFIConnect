@@ -7299,9 +7299,19 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   facebook:  fetchFacebook,
 };
 
-async function getFollowingFeedPosts(userId) {
+// sourceFilter (a single source id or array — 'uficonnect' for native
+// follow-graph posts, plus whatever's in CONNECTED_SOCIAL_SEARCH_FETCHERS/
+// FOLLOWING_SOURCE_FETCHERS) scopes both which pools get computed at all
+// (skipping an external fetch entirely when it's filtered out, not just
+// discarding its results after) and which internal posts pass through —
+// this is what the Following tab's own filter chips call into, mirroring
+// the aggregate Feed's source tabs but over this narrower, per-user pool.
+async function getFollowingFeedPosts(userId, sourceFilter = null) {
+  const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
+  const wantsSource = (src) => !wanted || wanted.has(src);
+
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
-  const internalPosts = followingIds.size
+  const internalPosts = (followingIds.size && wantsSource('uficonnect'))
     ? posts
         .filter(p => (p.source || 'uficonnect') === 'uficonnect' && followingIds.has(p.authorId))
         .map(p => serializeCommunityPost(p, userId))
@@ -7312,6 +7322,7 @@ async function getFollowingFeedPosts(userId) {
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
     for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
+      if (!wantsSource(source)) continue;
       const token = user?.socialTokens?.[source];
       if (!token) continue;
       try {
@@ -7329,6 +7340,7 @@ async function getFollowingFeedPosts(userId) {
     if (socialKws.length > 0) {
       const fetches = [];
       for (const [source, fetcher] of Object.entries(CONNECTED_SOCIAL_SEARCH_FETCHERS)) {
+        if (!wantsSource(source)) continue;
         const token = user.socialTokens[source];
         if (!token) continue;
         socialKws.forEach(kw => fetches.push(
@@ -8222,6 +8234,18 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       `id !~* '^govt_g[0-9]+$'`,
     ];
     const params = [];
+    // This is the one shared query behind every "true mix" surface (the main
+    // Feed's default aggregate view and /feed/videos) — Twitter/LinkedIn/
+    // Instagram/Facebook content belongs exclusively in Following (see
+    // CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts; this used to
+    // live mixed into the main feed as a live per-request block ahead of
+    // everything else, which is exactly what broke true mix for anyone with
+    // a connected account). They currently never reach this table anyway
+    // since no app-level public token is configured (see SOURCE_CONFIG), but
+    // excluding them here explicitly means true mix stays correct even if
+    // one gets added later, instead of relying on that absence by accident.
+    params.push([...FEED_SOCIAL_TABS]);
+    clauses.push(`NOT (source = ANY($${params.length}::text[]))`);
     if (Array.isArray(source) && source.length) {
       params.push(source);
       clauses.push(`source = ANY($${params.length}::text[])`);
@@ -9295,7 +9319,8 @@ async function handleFeedRequest(req, res) {
   if (feedMode === 'following') {
     const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
-    const allFollowing = await getFollowingFeedPosts(req.user.id);
+    const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
+    const allFollowing = await getFollowingFeedPosts(req.user.id, followingSourceFilter);
     const pageRows = allFollowing.slice(offset, offset + feedLimit);
     return res.json({
       posts: pageRows,
@@ -10122,6 +10147,43 @@ async function handleVideoFeedRequest(req, res) {
 }
 app.get('/feed/videos', authenticate, handleVideoFeedRequest);
 app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
+
+// ─── Following videos — same Feed/Following split as the main feed, for video ──
+// getFollowingFeedPosts is already scoped to one user (follow graph + their own
+// connected tokens) and cheap enough to run per-request live, same as the
+// regular Following tab (handleFeedRequest's feedMode==='following' branch) —
+// no shared snapshot needed here the way the aggregate /feed/videos requires
+// one for its cross-user DB query. Source filter reuses the identical
+// ?source=/?sources= convention as the main feed for consistency.
+async function handleFollowingVideoFeedRequest(req, res) {
+  try {
+    const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
+    const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+    const sourcesParam = req.query.sources
+      ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
+    const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
+
+    const all = await getFollowingFeedPosts(req.user.id, sourceFilter);
+    const videos = all.filter(p => p.mediaType === 'video' && p.mediaUrl);
+    const offset = (reqPage - 1) * feedLimit;
+    const pageRows = videos.slice(offset, offset + feedLimit);
+    res.json({
+      posts: pageRows,
+      page: reqPage,
+      mode: 'following',
+      hasMore: videos.length > offset + feedLimit,
+      totalAvailable: videos.length,
+      followingCount: followingIds.size,
+    });
+  } catch (e) {
+    console.error('[/feed/videos/following] error:', e.message);
+    res.status(500).json({ posts: [], hasMore: false });
+  }
+}
+app.get('/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
+app.get('/office/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
 
 // ─── Proactive snapshot warming ─────────────────────────────────────────────
 // Without this, the first request after a snapshot's TTL expires pays the

@@ -127,6 +127,20 @@ const SOURCE_TABS = [
   { key: 'hackernews', label: 'News',        icon: '🗞' },
 ];
 
+// Following's own quick-filter row — the mirror image of SOURCE_TABS above:
+// this is exactly the content SOURCE_TABS deliberately excludes (native
+// UFconnect posts from people you follow, plus whichever connected social
+// accounts you've linked), so it gets its own tab vocabulary rather than
+// reusing the aggregate Feed's.
+const FOLLOWING_SOURCE_TABS = [
+  { key: 'all',        label: 'All',         icon: '⚡' },
+  { key: 'uficonnect',  label: 'UFconnect',   icon: '🌐' },
+  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
+  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
+  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
+  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
+];
+
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 5 * 60 * 1000;
@@ -178,6 +192,14 @@ const ALL_FILTER_SOURCES = [
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
 ];
+
+// Following's filter-panel options — native UFconnect posts from people you
+// follow, plus whichever connected accounts actually have content there
+// (see CONNECTED_SOCIAL_SEARCH_FETCHERS backend-side). Deliberately excludes
+// everything in ALL_FILTER_SOURCES above — that content structurally cannot
+// appear in Following, so offering it as a filter here would just be a
+// no-op that always returns nothing.
+const FOLLOWING_FILTER_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook'];
 
 const CATEGORY_COLORS = {
   'AI & ML':     { text: '#2563EB', bg: '#EFF6FF' },
@@ -1134,9 +1156,9 @@ export default function Feed() {
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Following isn't source-filterable the way the aggregate Feed is —
-    // clear any source tabs so switching in/out doesn't leave a stale
-    // filter that silently does nothing in the other view.
+    // Feed and Following each have their own source vocabulary (SOURCE_TABS
+    // vs FOLLOWING_SOURCE_TABS) — clear any source tabs so switching in/out
+    // doesn't leave a stale filter selected from the other view's list.
     activeTabsRef.current = [];
     setActiveTabs([]);
     loadFeed(true, [], {
@@ -1629,7 +1651,7 @@ export default function Feed() {
             <FilterPanel
               filters={filters}
               onChange={applyFilters}
-              sources={ALL_FILTER_SOURCES}
+              sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
             />
@@ -1666,15 +1688,15 @@ export default function Feed() {
         })}
       </div>
 
-      {/* Source tabs — only meaningful for the aggregate Feed; Following
-          isn't filterable by external platform the same way. */}
-      {viewMode === 'feed' && (
+      {/* Source tabs — Feed and Following each filter over their own
+          vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
+          list of sources can appear in the other view. */}
       <div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
         paddingBottom: 4, scrollbarWidth: 'none',
         WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
       }}>
-        {SOURCE_TABS.map(tab => {
+        {(viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS).map(tab => {
           const meta  = SOURCE_META[tab.key];
           const color = meta?.color || 'var(--primary)';
           const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
@@ -1698,9 +1720,8 @@ export default function Feed() {
           );
         })}
       </div>
-      )}
 
-      {viewMode === 'feed' && (activeTabs.length > 0 || activeFilterCount > 0) && (
+      {(activeTabs.length > 0 || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
           <span style={{ color: 'var(--muted)', fontWeight: 500, marginRight: 2 }}>Showing:</span>
 
