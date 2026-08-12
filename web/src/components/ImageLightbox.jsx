@@ -27,22 +27,24 @@ const OVERLAY_BTN_STYLE = {
 export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEnd }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
   const touchStartX = useRef(null);
-  // Muted by default — same convention as every inline video preview
-  // elsewhere in the app (Feed/PostList's <video muted>) — rather than
-  // racing an unmuted-autoplay-then-catch-and-fall-back-to-muted attempt.
-  // That race is exactly what was breaking mute/pause on mobile/tablet: the
-  // native <video controls autoPlay> this used to render had no muted
-  // attribute and no play()-rejection handling at all (the HLS path didn't
-  // even receive a muted prop), so desktop's much more lenient autoplay
-  // policy let it start fine while mobile Safari/Chrome — which block
-  // autoplay-with-sound far more aggressively — silently failed to start
-  // it with nothing to recover, and every "next" swap remounted a brand
-  // new native player that lost whatever the user had done to the last
-  // one. Starting muted sidesteps the autoplay-policy gap entirely instead
-  // of depending on a fallback race, and the state now lives here (not on
-  // the transient video element), so it survives across next/prev exactly
-  // like VideoFeedView's mute button already does for the swipe feed.
-  const [muted, setMuted] = useState(true);
+  // Unmuted by default — opening the lightbox is itself a deliberate click,
+  // same reasoning VideoFeedView already uses for the swipe feed, so video
+  // should just play with sound right away instead of requiring an extra
+  // tap to unmute every time. What was actually breaking mute/pause on
+  // mobile/tablet wasn't the unmuted default itself — it was the native
+  // <video controls autoPlay> this used to render having no play()-
+  // rejection handling at all (the HLS path didn't even receive a muted
+  // prop), so desktop's much more lenient autoplay policy let it start fine
+  // while mobile Safari/Chrome — which block autoplay-with-sound far more
+  // aggressively — silently failed to start it with nothing to recover, and
+  // every "next" swap remounted a brand new native player that lost
+  // whatever the user had done to the last one. The effect below (and
+  // HlsVideoPlayer's own internal handling for the HLS path) primes muted
+  // state right before every play() call and falls back to muted — syncing
+  // this state so the button stays truthful — only if the browser actually
+  // blocks it, and the state living here instead of on the transient video
+  // element means it survives across next/prev either way.
+  const [muted, setMuted] = useState(false);
   const [paused, setPaused] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
