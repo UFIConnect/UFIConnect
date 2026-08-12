@@ -584,6 +584,8 @@ function DeployView({ triggerDeploy, deploying, log }) {
 function AnalyticsView() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
+  const [users, setUsers] = useState(null);
+  const [usersError, setUsersError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -591,6 +593,10 @@ function AnalyticsView() {
       .then(r => r.json())
       .then(j => { if (!cancelled) setData(j); })
       .catch(() => { if (!cancelled) setError(true); });
+    officeFetch(`${API}/office/users`)
+      .then(r => r.json())
+      .then(j => { if (!cancelled) setUsers(j); })
+      .catch(() => { if (!cancelled) setUsersError(true); });
     return () => { cancelled = true; };
   }, []);
 
@@ -609,9 +615,62 @@ function AnalyticsView() {
         </Card>
       )}
 
+      {/* Registered users — pageviews above count anonymous visits, so on
+          their own they say nothing about how many of those visits actually
+          became an account. This is the other half of that picture. */}
+      <Label color="#475569">Registered Users</Label>
+      {usersError && <Card style={{ maxWidth: 520, marginTop: 12, marginBottom: 28 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load user stats.</div></Card>}
+      {!users && !usersError && <div style={{ color: '#64748b', fontSize: 13, margin: '12px 0 28px' }}>Loading…</div>}
+      {users && !users.available && (
+        <Card style={{ maxWidth: 520, marginTop: 12, marginBottom: 28 }}>
+          <div style={{ color: '#94a3b8', fontSize: 13 }}>Database not connected — no registered users can be persisted until DATABASE_URL is set.</div>
+        </Card>
+      )}
+      {users && users.available && (
+        <>
+          <div style={{ display: 'flex', gap: 16, margin: '12px 0 20px', flexWrap: 'wrap' }}>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Total signups</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{users.total}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Completed onboarding</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{users.onboarded}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>New today</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{users.today}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>New last 7 days</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{users.last7}</div>
+            </Card>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
+            {users.recent.length === 0 && (
+              <Card style={{ color: '#64748b', fontSize: 13 }}>No signups yet.</Card>
+            )}
+            {users.recent.map(u => (
+              <Card key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 18px' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.name}</div>
+                  <div style={{ fontSize: 11.5, color: '#64748b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.email}</div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 5, background: u.onboarded ? 'rgba(74,222,128,.12)' : 'rgba(251,191,36,.12)', color: u.onboarded ? '#4ade80' : '#fbbf24', whiteSpace: 'nowrap' }}>
+                  {u.onboarded ? 'onboarded' : 'incomplete'}
+                </div>
+                <div style={{ fontSize: 12, color: '#94a3b8', whiteSpace: 'nowrap' }}>{new Date(u.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
       {data && data.available && (
         <>
-          <div style={{ display: 'flex', gap: 16, marginBottom: 28, flexWrap: 'wrap' }}>
+          <Label color="#475569">Pageviews (anonymous)</Label>
+          <div style={{ display: 'flex', gap: 16, margin: '12px 0 28px', flexWrap: 'wrap' }}>
             <Card style={{ minWidth: 150 }}>
               <Label>Today</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>

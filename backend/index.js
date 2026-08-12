@@ -8628,6 +8628,49 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
   }
 });
 
+// ─── Registered-user visibility ────────────────────────────────────────────
+// The office dashboard had pageview traffic (anonymous, no-login-required —
+// see /analytics/pageview above) but nothing at all showing how many of
+// those visitors actually registered: no endpoint queried the users table,
+// so "500 visitors, 0 visible profiles" was never actually a signal that
+// signups were broken — there was just no way to see the real number either
+// way. /auth/register and /profile/onboarding both already write through to
+// the DB correctly (confirmed live: a test account survived multiple
+// redeploys and still logs in); this only adds the missing visibility.
+app.get('/office/users', requireOfficeToken, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.json({ available: false });
+    const [total, hidden, onboarded, today, last7, last30, recent] = await Promise.all([
+      db.query(`SELECT COUNT(*) FROM users`),
+      db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden = true`),
+      db.query(`SELECT COUNT(*) FROM users WHERE onboarding_complete = true`),
+      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day'`),
+      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC LIMIT 20`),
+    ]);
+    const totalCount = Number(total.rows[0].count);
+    res.json({
+      available: true,
+      total: totalCount,
+      active: totalCount - Number(hidden.rows[0].count),
+      onboarded: Number(onboarded.rows[0].count),
+      today:  Number(today.rows[0].count),
+      last7:  Number(last7.rows[0].count),
+      last30: Number(last30.rows[0].count),
+      recent: recent.rows.map(r => ({
+        id: r.id, name: r.name, email: r.email,
+        createdAt: r.created_at,
+        onboarded: r.onboarding_complete,
+        hidden: r.profile_hidden,
+      })),
+    });
+  } catch (e) {
+    console.error('GET /office/users:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 app.get('/auth/config', (_req, res) => {
   res.json({
