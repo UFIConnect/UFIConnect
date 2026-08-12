@@ -3867,7 +3867,8 @@ async function fetchFacebook(keyword, userToken = null) {
 // fetch* functions above), and simply idle at 0 posts, no error, until one
 // is configured. Per-user personalized content from a member's own connected
 // account is separate and stays scoped to just that member — see the
-// FEED_SOCIAL_TABS / socialPlatformPosts handling below in handleFeedRequest.
+// FEED_SOCIAL_TABS handling in handleFeedRequest (single-source-tab search)
+// and CONNECTED_SOCIAL_SEARCH_FETCHERS in getFollowingFeedPosts (Following).
 async function fetchTwitterShared(keyword)   { return fetchTwitter(keyword); }
 async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword); }
 async function fetchInstagramShared(keyword) { return fetchInstagram(keyword); }
@@ -7236,6 +7237,27 @@ const FOLLOWING_SOURCE_FETCHERS = {
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
 };
 
+// Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
+// available to third-party apps at all (see the block comment above) — the
+// closest thing UFconnect can actually offer once one of these is
+// connected is a keyword search scoped to the user's own interests, run
+// with their token. That used to be merged straight into the *main* true-
+// mix feed (as a live, per-request, un-cached fetch) as one raw
+// unsorted/undiversified block ahead of everything else — confirmed live
+// as the reason "true mix" broke down for anyone with a connected account:
+// the diversify/rank pipeline never saw this content at all, it was just
+// concatenated in front of it. It belongs here instead, alongside genuine
+// UFconnect-follow-graph posts, not in the algorithmically mixed feed — and
+// tagged `matchedByInterest: true` so the client can label it honestly
+// (interest-matched, not literally "people you follow on X") rather than
+// implying it's a real following timeline the way the internal posts are.
+const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
+  linkedin:  fetchLinkedIn,
+  twitter:   fetchTwitter,
+  instagram: fetchInstagram,
+  facebook:  fetchFacebook,
+};
+
 async function getFollowingFeedPosts(userId) {
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
   const internalPosts = followingIds.size
@@ -7245,8 +7267,9 @@ async function getFollowingFeedPosts(userId) {
     : [];
 
   const externalPosts = [];
+  const user = await getUser(userId);
+
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
-    const user = await getUser(userId);
     for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
       const token = user?.socialTokens?.[source];
       if (!token) continue;
@@ -7255,6 +7278,29 @@ async function getFollowingFeedPosts(userId) {
         externalPosts.push(...realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })));
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
+      }
+    }
+  }
+
+  if (user?.socialTokens) {
+    const prefs = user.preferences || {};
+    const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 3);
+    if (socialKws.length > 0) {
+      const fetches = [];
+      for (const [source, fetcher] of Object.entries(CONNECTED_SOCIAL_SEARCH_FETCHERS)) {
+        const token = user.socialTokens[source];
+        if (!token) continue;
+        socialKws.forEach(kw => fetches.push(
+          fetcher(kw, token).then(raw => realFeedPosts(raw).map(p => ({
+            ...normalizeFeedPost({ ...p, source }),
+            authorId: `${source}_${userId}`,
+            matchedByInterest: true,
+          }))).catch(() => [])
+        ));
+      }
+      if (fetches.length > 0) {
+        const results = await Promise.all(fetches);
+        externalPosts.push(...results.flat());
       }
     }
   }
@@ -9808,22 +9854,16 @@ async function handleFeedRequest(req, res) {
   // Background-cached global posts — unfiltered, same shared all-in-one pool.
   const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
 
-  // Per-user social platform posts (only when user has connected a social account)
-  const socialKws = userTopics.slice(0, 3);
-  const socialPlatformPosts = [];
-  if (user?.socialTokens && socialKws.length > 0) {
-    const socialFetches = [];
-    const { linkedin, twitter, instagram, facebook } = user.socialTokens;
-    if (linkedin)  socialKws.forEach(kw => socialFetches.push(fetchLinkedIn(kw, linkedin).catch(() => [])));
-    if (twitter)   socialKws.forEach(kw => socialFetches.push(fetchTwitter(kw, twitter).catch(() => [])));
-    if (instagram) socialKws.forEach(kw => socialFetches.push(fetchInstagram(kw, instagram).catch(() => [])));
-    if (facebook)  socialKws.forEach(kw => socialFetches.push(fetchFacebook(kw, facebook).catch(() => [])));
-    if (socialFetches.length > 0) {
-      const results = await Promise.all(socialFetches);
-      const flat = results.flat();
-      realFeedPosts(flat).forEach(p => socialPlatformPosts.push(mapExternalPost(p, p.source || 'social')));
-    }
-  }
+  // Connected Twitter/LinkedIn/Instagram/Facebook content used to be fetched
+  // live here and dropped into the main feed as a raw, undiversified block —
+  // confirmed live as the reason "true mix" broke down for anyone with a
+  // connected account: this content never passed through the diversify/rank
+  // pipeline below at all, it was just concatenated in front of it. Moved to
+  // getFollowingFeedPosts instead (see CONNECTED_SOCIAL_SEARCH_FETCHERS
+  // there) — it's genuinely a personal, per-user result set anyway, which
+  // fits the Following tab's model far better than the algorithmically
+  // mixed public feed everyone else's request also has to stay consistent
+  // with.
 
   // Joined-group posts: mark fromJoinedGroup + high relevance
   const joinedGroupPosts = joinedGroupPostsReal.map(p => {
@@ -9839,12 +9879,11 @@ async function handleFeedRequest(req, res) {
 
   // Sort external posts only: ranked (time-decay + engagement), interleaved
   // for source diversity. `internal` (community posts, genuinely per-user
-  // for likedByMe) and `socialPlatformPosts` (a specific user's connected
-  // Twitter/LinkedIn/etc. results) are deliberately excluded here and merged
-  // back in after — this array is what gets cached in the snapshot below,
-  // and it must never contain anything personalized to whichever user's
-  // request happened to trigger the recompute, since every other user reads
-  // the same cached pool for the next 10 minutes.
+  // for likedByMe) is deliberately excluded here and merged back in after —
+  // this array is what gets cached in the snapshot below, and it must never
+  // contain anything personalized to whichever user's request happened to
+  // trigger the recompute, since every other user reads the same cached
+  // pool for the next 10 minutes.
   const liveSorted = sortFeedBatch([
     ...joinedGroupPosts,
     ...redditPosts, ...githubPosts, ...devtoPosts,
@@ -9889,7 +9928,7 @@ async function handleFeedRequest(req, res) {
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
   const personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
-  const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
+  const responsePosts = [...internal, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
     reddit:        redditPosts.length,

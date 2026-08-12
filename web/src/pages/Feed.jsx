@@ -116,12 +116,11 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
   return sortPostsForView([...byId.values()], sort);
 }
 
+// Twitter/LinkedIn/Instagram/Facebook removed — see the note on
+// ALL_FILTER_SOURCES below for why they don't belong in this feed's own
+// filtering at all anymore, now that their content lives in Following.
 const SOURCE_TABS = [
   { key: 'all',        label: 'All',         icon: '⚡' },
-  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
-  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
-  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
-  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
@@ -163,9 +162,17 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
   } catch {}
 }
 
+// Twitter/LinkedIn/Instagram/Facebook are deliberately not offered as main-
+// feed filter options — there's no public app-level content for any of them
+// (see fetchTwitter/fetchLinkedIn/etc. in the backend), only a per-user
+// search proxy once someone connects their own account, and that content
+// now lives in the Following tab instead of this algorithmically-mixed
+// feed (see CONNECTED_SOCIAL_SEARCH_FETCHERS in getFollowingFeedPosts) —
+// selecting one here used to just show a "connect your account" wall or an
+// unmixed block of results, not a real filter of the true mix.
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
-  'linkedin', 'twitter', 'bluesky', 'facebook', 'instagram', 'tiktok',
+  'bluesky', 'tiktok',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
