@@ -1221,11 +1221,20 @@ export default function Feed() {
     // Feed and Following each have their own source vocabulary (SOURCE_TABS
     // vs FOLLOWING_SOURCE_TABS) — clear any source tabs so switching in/out
     // doesn't leave a stale filter selected from the other view's list.
+    // Also has to clear filters.sources (the Filter panel's own, independent
+    // source checkboxes) for the same reason — loadFeed prefers
+    // filters.sources over activeTabs when both are set, so passing the
+    // untouched filtersRef.current here meant switching to Feed while
+    // Following still had e.g. "linkedin" checked kept filtering by that,
+    // instead of actually showing the switched-to view.
     activeTabsRef.current = [];
     setActiveTabs([]);
+    const clearedFilters = { ...filtersRef.current, sources: [] };
+    filtersRef.current = clearedFilters;
+    setFilters(clearedFilters);
     loadFeed(true, [], {
       mode: nextMode,
-      filters: filtersRef.current,
+      filters: clearedFilters,
       q: searchRef.current,
       // Always a full replace now, whether this is a real context switch
       // (Feed vs Following — obviously different data) or clicking the tab
@@ -1290,8 +1299,15 @@ export default function Feed() {
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      // Clears source filtering only — sort stays whatever's set in the Sort
-      // filter (Ranked by default, Balanced still available there).
+      // Clears source filtering only — sort/timeRange stay whatever's set in
+      // the Sort filter (Ranked by default, Balanced still available there).
+      // Has to clear filters.sources too, not just activeTabs: they're two
+      // independent ways to pick sources (this chip row vs. the Filter panel
+      // checkboxes), and loadFeed prefers filters.sources when both are set
+      // (see requestedSources there) — leaving a stale filters.sources
+      // selection in place meant clicking "All" silently kept whatever the
+      // Filter panel last had checked instead of actually clearing to every
+      // source, which read as "All" just not working.
       // Every tab doubles as a refresh button now — manual:true shows the
       // refresh state and re-pulls current data. bust:false because "All"
       // spans every source: busting would force all 30+ workers to refetch
@@ -1303,7 +1319,11 @@ export default function Feed() {
       // as a refresh, a user-initiated refresh should hand back a clean
       // page-1 view instead of merging fresh posts on top of everything
       // already scrolled-in.
+      const clearedFilters = { ...filtersRef.current, sources: [] };
+      filtersRef.current = clearedFilters;
+      setFilters(clearedFilters);
       loadFeed(true, [], {
+        filters: clearedFilters,
         live: viewModeRef.current === 'feed',
         replace: true,
         bust: false,
