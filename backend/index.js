@@ -9252,12 +9252,14 @@ async function handleFeedRequest(req, res) {
         })).filter(p => !isFallbackFeedPost(p));
       } catch {}
     }
-    const merged = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
+    const merged = filterUnseen(sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
       limit: feedLimit + 1,
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
-    return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
+    }), seenIds);
+    const searchPageRows = merged.slice(0, feedLimit);
+    markPostsSeen(req.user.id, searchPageRows);
+    return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
   }
 
   // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
@@ -9529,13 +9531,15 @@ async function handleFeedRequest(req, res) {
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
-    const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
+    const result = filterUnseen(sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
+    }), seenIds);
+    const connectedPageRows = result.slice(0, feedLimit);
+    markPostsSeen(req.user.id, connectedPageRows);
     return res.json({
-      posts: result.slice(0, feedLimit),
+      posts: connectedPageRows,
       source: sourceFilter,
       connected: true,
       sort: sortMode,
@@ -9566,13 +9570,15 @@ async function handleFeedRequest(req, res) {
       : [];
     const dbPosts = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, p.source));
     allSourcePosts.push(...dbPosts);
-    const result = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
+    const result = filterUnseen(sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
+    }), seenIds);
+    const multiSourcePageRows = result.slice(0, feedLimit);
+    markPostsSeen(req.user.id, multiSourcePageRows);
     return res.json({
-      posts: result.slice(0, feedLimit),
+      posts: multiSourcePageRows,
       sources: sourcesParam,
       sort: sortMode,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
@@ -9602,14 +9608,16 @@ async function handleFeedRequest(req, res) {
     const dbPosts     = dbRows.slice(0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
-    const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
+    const result = filterUnseen(sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
+    }), seenIds);
+    const sourceTabPageRows = result.slice(0, feedLimit);
+    markPostsSeen(req.user.id, sourceTabPageRows);
 
     return res.json({
-      posts: result.slice(0, feedLimit),
+      posts: sourceTabPageRows,
       source: sourceFilter,
       sort: sortMode,
       hasMore: result.length > feedLimit || dbRows.length > feedLimit,
