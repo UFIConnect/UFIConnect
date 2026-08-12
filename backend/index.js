@@ -4579,6 +4579,65 @@ function sliceCircular(pool, lo, count) {
   return result;
 }
 
+// Per-user "already shown" tracking, so infinite scroll and the video feed
+// don't resurface the same external post to the same user twice — including
+// via sliceCircular's wraparound once a user has paged past the pool's real
+// depth, which otherwise guarantees repeats for anyone who scrolls that far.
+// In-memory Set per user for fast filtering on every request (one DB round
+// trip per user per server lifetime to warm it), backed by the seen_posts
+// table so it survives restarts/deploys and carries across devices.
+const userSeenCache = new Map(); // userId → Set<postId>
+const USER_SEEN_CACHE_MAX_USERS  = 5000; // distinct users tracked in memory at once
+const USER_SEEN_IDS_MAX_PER_USER = 4000; // ids per user kept in memory — DB has the full history
+const SYSTEM_WARMUP_USER_ID = '__system_warmup__'; // see warmMainFeedSnapshot/warmVideoFeedSnapshot — not a real viewer
+
+async function getUserSeenSet(userId) {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID) return new Set();
+  const cached = userSeenCache.get(userId);
+  if (cached) return cached;
+  const ids = new Set();
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        'SELECT post_id FROM seen_posts WHERE user_id = $1 ORDER BY seen_at DESC LIMIT $2',
+        [userId, USER_SEEN_IDS_MAX_PER_USER]
+      );
+      rows.forEach(r => ids.add(r.post_id));
+    } catch (e) { console.warn('getUserSeenSet:', e.message); }
+  }
+  userSeenCache.set(userId, ids);
+  trimOldestMapEntries(userSeenCache, USER_SEEN_CACHE_MAX_USERS);
+  return ids;
+}
+
+// Excludes posts this user has already been shown. Falls back to the
+// unfiltered pool if literally everything remaining has already been seen,
+// rather than a hard dead-end — same "never truly stop infinite scroll"
+// reasoning as sliceCircular's wraparound just above.
+function filterUnseen(posts, seenIds) {
+  if (!seenIds?.size || !posts.length) return posts;
+  const unseen = posts.filter(p => !p?.id || !seenIds.has(p.id));
+  return unseen.length ? unseen : posts;
+}
+
+function markPostsSeen(userId, posts) {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID || !posts?.length) return;
+  const ids = [...new Set(posts.map(p => p?.id).filter(Boolean))];
+  if (!ids.length) return;
+  const seenIds = userSeenCache.get(userId);
+  if (seenIds) {
+    ids.forEach(id => seenIds.add(id));
+    trimOldestSetEntries(seenIds, USER_SEEN_IDS_MAX_PER_USER);
+  }
+  if (db.isConnected()) {
+    const values = ids.map((_, i) => `($1, $${i + 2})`).join(', ');
+    db.query(
+      `INSERT INTO seen_posts (user_id, post_id) VALUES ${values} ON CONFLICT (user_id, post_id) DO NOTHING`,
+      [userId, ...ids]
+    ).catch(e => console.warn('markPostsSeen:', e.message));
+  }
+}
+
 function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
 }
@@ -7582,6 +7641,18 @@ async function migrateDB() {
       )
     `);
 
+    // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
+    // Persisted (not just in-memory) so a user doesn't see repeats after a
+    // restart/deploy or on a different device.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS seen_posts (
+        user_id TEXT NOT NULL,
+        post_id TEXT NOT NULL,
+        seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, post_id)
+      )
+    `);
+
     // Posts table — persists across deploys
     await db.query(`
       CREATE TABLE IF NOT EXISTS community_posts (
@@ -9016,6 +9087,10 @@ async function handleFeedRequest(req, res) {
   // boost inside personalizeOrder, same "applied fresh per request, never
   // baked into the shared snapshot" treatment as userTopics.
   const userCountry = getUserCountry(req);
+  // Posts this user has already been served, anywhere — filtered out of
+  // every external candidate pool below (see filterUnseen), never baked into
+  // a shared snapshot for the same reason userCountry/userTopics aren't.
+  const seenIds = await getUserSeenSet(req.user.id);
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
   // for why this is what makes a refresh return substantially different
@@ -9081,10 +9156,12 @@ async function handleFeedRequest(req, res) {
 
     if (wantsMix) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
-      const { posts: balanced } = await getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize });
+      const { posts: balancedRaw } = await getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize });
+      const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
         const pageRows = balanced.slice(0, feedLimit);
         const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
+        markPostsSeen(req.user.id, pageRows);
         return res.json({
           posts: pageRows.map(mapFeedRow),
           page: reqPage,
@@ -9099,17 +9176,17 @@ async function handleFeedRequest(req, res) {
     }
 
     const dbFetchLimit = wantsMix ? feedLimit * 3 + 1 : feedLimit + 1;
-    const dbRows = await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
+    const dbRows = filterUnseen(await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
       q: searchQuery,
       sort: sortMode,
       timeRange,
-    });
+    }), seenIds);
     let pageRows = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
     let hasMore = dbRows.length > feedLimit;
 
     if (!dbRows.length && offset === 0) {
       const rangeMs = feedTimeRangeMs(timeRange);
-      const memoryRows = sortFeedBatch(realFeedPosts([
+      const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts([
         ...globalFeedCache.posts,
         ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
       ]).filter(p => {
@@ -9125,11 +9202,12 @@ async function handleFeedRequest(req, res) {
         limit: feedLimit * (wantsMix ? 3 : 1) + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      });
+      }), seenIds);
       pageRows = wantsMix ? enforceFeedDiversity(memoryRows, feedLimit, sortMode) : memoryRows.slice(0, feedLimit);
       hasMore = memoryRows.length > feedLimit;
     }
 
+    markPostsSeen(req.user.id, pageRows);
     return res.json({
       posts: pageRows.map(mapFeedRow),
       page: reqPage,
@@ -9208,12 +9286,13 @@ async function handleFeedRequest(req, res) {
         // refresh, so this user keeps seeing the same rotation for the rest
         // of that sitting, and only jumps to a different one on their next
         // explicit refresh (see rotateForUser).
-        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
+        const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
         // shouldn't just stop.
         const pageSlice = sliceCircular(personalized, lo, feedLimit);
+        markPostsSeen(req.user.id, pageSlice);
         return res.json({
           posts: pageSlice.map(p => ({
             ...p,
@@ -9240,13 +9319,15 @@ async function handleFeedRequest(req, res) {
       // after the 24h-window + newest-mode index fixes. Still nowhere near
       // Postgres's own 120s statement_timeout, so this isn't reopening the
       // original "let it hang" problem.
-      const { posts: balanced } = await Promise.race([
+      const { posts: balancedRaw } = await Promise.race([
         getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize }),
         new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
       ]);
+      const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
         const pageRows = balanced.slice(0, feedLimit);
         const hasMore = balanced.length >= perSourcePageSize;
+        markPostsSeen(req.user.id, pageRows);
         return res.json({
           posts: pageRows.map(p => ({
             ...p,
@@ -9262,23 +9343,26 @@ async function handleFeedRequest(req, res) {
       // Falls through to the pool-based path below rather than a blank page.
     }
 
-    const dbRows     = await Promise.race([
-      getPostsFromDB([], wantsMix ? feedLimit * 3 + 1 : feedLimit + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+    // *2 (not the bare +1 this used to fetch), so there's real headroom left
+    // after filterUnseen strips already-shown posts from this window — a
+    // window sized exactly to one page left ~nothing once a few were seen.
+    const dbRows     = filterUnseen(await Promise.race([
+      getPostsFromDB([], wantsMix ? feedLimit * 3 + 1 : feedLimit * 2 + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
-    ]);
+    ]), seenIds);
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
 
     if (sourceFilter) {
       const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
-      const memoryRows = sortFeedBatch(realFeedPosts([
+      const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts([
         ...(agentSourceCache.get(agentKey)?.posts || []),
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
       ]), 'feed-page-source-memory', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      });
+      }), seenIds);
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-source-merge', {
@@ -9287,7 +9371,7 @@ async function handleFeedRequest(req, res) {
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
     } else if (sourcesParam.length > 1) {
-      const memoryRows = sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
+      const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
         const agentKey = feedWorkerKey(src);
         return [
           ...(agentSourceCache.get(agentKey)?.posts || []),
@@ -9297,7 +9381,7 @@ async function handleFeedRequest(req, res) {
         limit: offset + feedLimit + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      });
+      }), seenIds);
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-merge', {
@@ -9306,11 +9390,11 @@ async function handleFeedRequest(req, res) {
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
     } else if (!dbRows.length) {
-      pageRows = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
+      pageRows = filterUnseen(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      }).slice(offset, offset + feedLimit + 1);
+      }), seenIds).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     }
@@ -9329,6 +9413,7 @@ async function handleFeedRequest(req, res) {
 
     const result = pageRows.map(mapDbPost);
 
+    markPostsSeen(req.user.id, pageRows);
     return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
@@ -9357,9 +9442,10 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
+      const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
+      markPostsSeen(req.user.id, externalPosts);
       return res.json({
         posts: finalPosts,
         sort: sortMode,
@@ -9697,7 +9783,7 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  const personalizedExternal = personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry);
+  const personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
   const responsePosts = [...internal, ...socialPlatformPosts, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -9754,6 +9840,7 @@ async function handleFeedRequest(req, res) {
     });
   }
 
+  markPostsSeen(req.user.id, personalizedExternal.slice(0, feedLimit));
   res.json({
     posts: responsePosts,
     sort: sortMode,
@@ -9824,9 +9911,15 @@ async function handleVideoFeedRequest(req, res) {
     // rotation of the same pool every time.
     const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
     const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id, refreshSeed);
-    const personalized = personalizeOrder(rotated, userTopics);
+    // Excludes videos this user has already been shown — see filterUnseen.
+    // Falls back to allowing repeats only once literally everything in the
+    // pool has been seen, same "never truly dead-end" reasoning as the
+    // circular wraparound below.
+    const seenIds = await getUserSeenSet(req.user.id);
+    const personalized = filterUnseen(personalizeOrder(rotated, userTopics), seenIds);
     const lo = (reqPage - 1) * feedLimit;
     const pageSlice = sliceCircular(personalized, lo, feedLimit);
+    markPostsSeen(req.user.id, pageSlice);
     res.json({
       posts: pageSlice,
       page: reqPage,
@@ -12767,4 +12860,16 @@ db.initDB().then(async () => {
       .then(() => logAgentAction('feed', '🔄', `Monthly groups refresh — ${groups.length} communities loaded`, '#4ADE80'))
       .catch(e => console.warn('Monthly group refresh:', e.message));
   }, 30 * 24 * 60 * 60 * 1000);
+
+  // Daily: trim seen_posts rows old enough that "already seen" no longer
+  // matters — everything upstream (source TTLs, the archive's own time
+  // ranges) has long since moved past content that old anyway, so keeping
+  // it around forever would just grow the table for every active user
+  // indefinitely with no behavioral benefit.
+  scheduleRecurring(() => {
+    if (!db.isConnected()) return;
+    return db.query(`DELETE FROM seen_posts WHERE seen_at < NOW() - INTERVAL '90 days'`)
+      .then(r => logAgentAction('data', '🧹', `Trimmed ${r.rowCount ?? 0} stale seen-post records (90d+)`, '#FB7185'))
+      .catch(e => console.warn('seen_posts trim:', e.message));
+  }, 24 * 60 * 60 * 1000);
 });
