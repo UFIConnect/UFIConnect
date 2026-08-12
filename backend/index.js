@@ -1681,6 +1681,48 @@ async function fetchDevToByTag(tag) {
         mediaType:     (a.cover_image || a.social_image) ? 'image' : null,
         group:         { id: 'ext_devto', name: 'DEV Community', category: 'Engineering', externalUrl: 'https://dev.to' },
       }));
+    // DEV Community's article API (above) never surfaces its video content —
+    // that lives entirely on a separate, unfiltered (no ?tag= support)
+    // /api/videos endpoint. Merged in here rather than a whole new source
+    // worker since it's genuinely the same platform/community, just a
+    // different content type. Real videos, not embeds: video_source_url is
+    // always a youtube.com/youtu.be link, cloudinary_video_url when set is a
+    // self-hosted direct file — either way playable the same way any other
+    // YouTube/direct-file video post already is.
+    try {
+      const videos = await fetchJSON('https://dev.to/api/videos?per_page=24');
+      // The endpoint exposes no publish date at all (unlike /api/articles'
+      // published_at) — using "now" for every item would make every video
+      // look freshly-posted on every single refetch, forever, rather than
+      // aging out naturally. Staggering by list position (assumed newest
+      // first, matching dev.to/videos' own ordering) at least keeps them
+      // sorted sensibly relative to each other within one fetch.
+      const now = Date.now();
+      (videos || []).forEach((v, i) => {
+        if (!v.id || !v.path || !v.title) return;
+        const ytId = (v.video_source_url || v.video || '').match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i)?.[1];
+        const mediaUrl = v.cloudinary_video_url || (ytId ? `https://www.youtube.com/watch?v=${ytId}` : null);
+        if (!mediaUrl) return;
+        posts.push({
+          id:          `devto_video_${v.id}`,
+          authorId:    `devto_${v.user?.name || 'creator'}`,
+          groupId:     'ext_devto',
+          content:     v.title,
+          title:       v.title,
+          source:      'devto',
+          sourceLabel: 'DEV Community',
+          sourceUrl:   `https://dev.to${v.path}`,
+          topic:       tag,
+          author:      { id: `devto_${v.user?.name || 'creator'}`, name: v.user?.name || 'DEV Community', title: 'DEV Community', organization: 'DEV Community' },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(now - i * 5 * 60000),
+          isExternal:  true,
+          mediaUrl,
+          mediaType:   'video',
+          group:       { id: 'ext_devto', name: 'DEV Community', category: 'Engineering', externalUrl: 'https://dev.to' },
+        });
+      });
+    } catch { /* videos are a bonus on top of the article fetch above — its own failure already surfaces through the outer catch */ }
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -2738,18 +2780,45 @@ function parseRSSItems(xml) {
     if (!image && enclosureTag && /type=["']image\//i.test(enclosureTag)) {
       image = attr(enclosureTag, 'url');
     }
+    // Some feeds carry a real, directly-playable video file the same way
+    // they'd carry an image — <media:content medium="video"> or <enclosure
+    // type="video/...">. CSS-Tricks confirmed live: <enclosure url="....mp4"
+    // type="video/mp4" />, a genuine self-hosted file, no embed/player work
+    // needed beyond what Reddit/Mastodon's direct-file video posts already do.
+    let video = null;
+    if (mediaContentTag && /medium=["']video["']/i.test(mediaContentTag)) {
+      video = attr(mediaContentTag, 'url');
+    }
+    if (!video && enclosureTag && /type=["']video\//i.test(enclosureTag)) {
+      video = attr(enclosureTag, 'url');
+    }
+    // Lazily decoded raw body, shared by the image-in-content and
+    // video-in-content fallbacks below — some feeds (InfoQ confirmed live)
+    // don't use CDATA at all, they put HTML-entity-escaped markup directly
+    // as XML text content, so tags only exist as literal "&lt;img..." /
+    // "&lt;iframe..." text until decoded.
+    let _rawBody;
+    const rawBody = () => _rawBody ?? (_rawBody = decodeHTMLEntities(
+      rawField('content:encoded') || rawField('content') || rawField('description') || rawField('summary')
+    ));
+    // Falls back to the first embedded YouTube iframe/link in the article
+    // body — The Verge, freeCodeCamp, TheNewStack, and the YC blog all embed
+    // real YouTube videos this way with no dedicated media tag at all (yc
+    // confirmed live: <iframe src="https://www.youtube.com/embed/ID?...">).
+    // Normalized to a plain watch URL so it's recoverable the same way every
+    // other YouTube post's embedId already is client-side (extractYouTubeId
+    // matches watch/embed/youtu.be forms interchangeably).
+    if (!video) {
+      const yt = rawBody().match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
+      if (yt) video = `https://www.youtube.com/watch?v=${yt[1]}`;
+    }
     // Falls back to the first <img> actually embedded in the article body —
     // plenty of feeds (The Verge, Medium, MIT Tech Review confirmed live)
     // never use a dedicated media tag at all, they just put a real <img> in
     // the content/description HTML, which every path above ignores since
     // field() already strips all tags before this point.
     if (!image) {
-      // Some feeds (InfoQ confirmed live) don't use CDATA at all — they put
-      // HTML-entity-escaped markup directly as XML text content, so the
-      // <img> tag itself only exists as literal "&lt;img src=...&gt;" text
-      // until decoded.
-      const rawBody = decodeHTMLEntities(rawField('content:encoded') || rawField('content') || rawField('description') || rawField('summary'));
-      image = rawBody.match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] || null;
+      image = rawBody().match(/<img[^>]+src=["']([^"']+)["']/i)?.[1] || null;
     }
     items.push({
       title,
@@ -2758,6 +2827,7 @@ function parseRSSItems(xml) {
       pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
       image,
+      video,
     });
   }
   return items;
@@ -2787,8 +2857,14 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     likes: [], likesCount: 0, commentsCount: 0,
     createdAt:   normalizeTimestamp(item.pubDate),
     isExternal:  true,
-    mediaType:   item.image ? 'image' : null,
-    mediaUrl:    item.image || null,
+    // A real embedded video wins over a static image when both exist on the
+    // same item (rare, but the video is strictly the richer of the two) —
+    // see parseRSSItems for how each is extracted. A YouTube video's
+    // mediaUrl is a plain watch URL; the client recovers the playable ID
+    // from it the same way it already does for every other YouTube post
+    // (see extractYouTubeId in videoMedia.jsx).
+    mediaType:   item.video ? 'video' : (item.image ? 'image' : null),
+    mediaUrl:    item.video || item.image || null,
     group:       { id: groupId, name: groupName, category, externalUrl: item.link },
   };
 }

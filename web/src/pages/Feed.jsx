@@ -116,15 +116,24 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
   return sortPostsForView([...byId.values()], sort);
 }
 
-// Twitter/LinkedIn/Instagram/Facebook removed — see the note on
-// ALL_FILTER_SOURCES below for why they don't belong in this feed's own
-// filtering at all anymore, now that their content lives in Following.
+// Twitter/LinkedIn/Instagram/Facebook are back as single-source tabs —
+// clicking one still routes through the backend's FEED_SOCIAL_TABS gate
+// (a completely separate query path from the aggregate true mix, see
+// getBalancedFeedPosts's exclusion of these sources), showing either the
+// SocialConnectGate wall or that platform's connected content. They were
+// pulled from here once under the mistaken idea that removing the *true
+// mix* leak also meant removing the tabs entirely — it didn't; only the
+// aggregate/Following mixing needed to change, not this single-source path.
 const SOURCE_TABS = [
   { key: 'all',        label: 'All',         icon: '⚡' },
   { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
   { key: 'github',     label: 'GitHub',      icon: '🐙' },
   { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
   { key: 'hackernews', label: 'News',        icon: '🗞' },
+  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
+  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
+  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
+  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
 ];
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
@@ -176,17 +185,16 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
   } catch {}
 }
 
-// Twitter/LinkedIn/Instagram/Facebook are deliberately not offered as main-
-// feed filter options — there's no public app-level content for any of them
-// (see fetchTwitter/fetchLinkedIn/etc. in the backend), only a per-user
-// search proxy once someone connects their own account, and that content
-// now lives in the Following tab instead of this algorithmically-mixed
-// feed (see CONNECTED_SOCIAL_SEARCH_FETCHERS in getFollowingFeedPosts) —
-// selecting one here used to just show a "connect your account" wall or an
-// unmixed block of results, not a real filter of the true mix.
+// Twitter/LinkedIn/Instagram/Facebook are included here too (multi-select
+// filter panel) — selecting one alongside other sources just contributes
+// whatever's in that platform's worker cache (empty until connected/an
+// app-level token exists, same as any other source that's temporarily
+// thin), no lock wall in that combined view. The single-source lock wall
+// (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
+// path above, not this multi-select one.
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
-  'bluesky', 'tiktok',
+  'bluesky', 'tiktok', 'linkedin', 'twitter', 'instagram', 'facebook',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
@@ -417,16 +425,20 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
 }
 
 /** YouTube embed card */
-function YouTubeCard({ post }) {
-  // Autoplays (muted, same convention as every other inline video preview)
-  // once scrolled into view, instead of sitting as a thumbnail requiring a
-  // click — same visibility-gated approach as InlineAutoplayVideo, just
-  // driving an iframe embed instead of a <video> element since that's all
-  // YouTube's embed API exposes. A manual click still works as a fallback
-  // (e.g. if the observer hasn't fired yet).
+// Click-to-play YouTube embed: sits as a poster + play button until clicked
+// (or scrolled into view, when autoPlayOnVisible is set), then swaps in the
+// real iframe — an <iframe> is all YouTube's embed API exposes, no
+// programmatic autoplay-on-scroll without the visible poster stage first.
+// Shared by YouTubeCard (dedicated YouTube posts) and PostCard's generic
+// video block (any source whose article embeds a YouTube video — see
+// parseRSSItems' video detection backend-side) so both get the exact same
+// playable behavior instead of one silently trying to <img>-render a
+// youtube.com/watch URL and failing.
+function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true }) {
   const [playing, setPlaying] = useState(false);
   const containerRef = useRef(null);
   useEffect(() => {
+    if (!autoPlayOnVisible) return;
     const el = containerRef.current;
     if (!el || playing) return;
     const observer = new IntersectionObserver(
@@ -435,7 +447,43 @@ function YouTubeCard({ post }) {
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [playing]);
+  }, [playing, autoPlayOnVisible]);
+  if (playing) {
+    return (
+      <div ref={containerRef} style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
+        <iframe width="100%" height="100%"
+          src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=1`}
+          title={title} frameBorder="0"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen style={{ display: 'block' }} />
+      </div>
+    );
+  }
+  return (
+    <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', background: 'var(--border)' }} onClick={() => setPlaying(true)}>
+      {poster && <img src={poster} alt={title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight }}
+        onError={e => {
+          e.currentTarget.style.display = 'none';
+          const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
+          if (fallback) fallback.style.display = 'flex';
+        }} />}
+      <div data-youtube-fallback style={{
+        display: poster ? 'none' : 'flex', position: 'absolute', inset: 0,
+        alignItems: 'center', justifyContent: 'center',
+        background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
+      }}>
+        🎥 Thumbnail unavailable
+      </div>
+      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+        <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
+          <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function YouTubeCard({ post }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
@@ -450,36 +498,9 @@ function YouTubeCard({ post }) {
       </div>
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
-        playing ? (
-          <div ref={containerRef} style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 10 }}>
-            <iframe width="100%" height="100%"
-              src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=1`}
-              title={post.title} frameBorder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen style={{ display: 'block' }} />
-          </div>
-        ) : (
-          <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', marginBottom: 10, background: 'var(--border)' }} onClick={() => setPlaying(true)}>
-            {post.mediaUrl && <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
-              onError={e => {
-                e.currentTarget.style.display = 'none';
-                const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
-                if (fallback) fallback.style.display = 'flex';
-              }} />}
-            <div data-youtube-fallback style={{
-              display: post.mediaUrl ? 'none' : 'flex', position: 'absolute', inset: 0,
-              alignItems: 'center', justifyContent: 'center',
-              background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
-            }}>
-              🎥 Thumbnail unavailable
-            </div>
-            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-              <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
-                <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
-              </div>
-            </div>
-          </div>
-        )
+        <div style={{ marginBottom: 10 }}>
+          <YouTubeEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} maxHeight={280} />
+        </div>
       ) : post.mediaUrl ? (
         <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
           <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
@@ -605,8 +626,13 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const isJob          = JOB_SOURCES.has(post.source);
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
   const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && isDirectVideoUrl(post.mediaUrl);
-  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile);
+  // Articles from any RSS source can embed a real YouTube video (see
+  // parseRSSItems' video detection backend-side — mediaUrl is a plain watch
+  // URL in that case, same as a dedicated YouTube post's). Checked before
+  // isDirectVideoUrl since a watch URL is never a direct file.
+  const videoYouTubeId = hasVideo ? extractYouTubeId(post.mediaUrl) : null;
+  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && isDirectVideoUrl(post.mediaUrl);
+  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId);
   const commentCount   = post.commentsCount || 0;
   const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
   const commUrl        = commentUrl(post);
@@ -736,7 +762,26 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
         </button>
       )}
 
-      {hasVideo && (
+      {hasVideo && videoYouTubeId ? (
+        // A YouTube embed manages its own click-to-play/iframe swap (see
+        // YouTubeEmbedBlock) — not wrapped in the onMediaOpen button below,
+        // since that would nest an interactive iframe inside a button and
+        // fight it for clicks. The thumbnail comes from YouTube's own CDN
+        // (post.mediaUrl is the watch URL itself, not an image) — same
+        // i.ytimg.com pattern the dedicated YouTube fetcher and the video
+        // feed's resolveVideoSource both already rely on.
+        <div style={{ marginTop: 12, position: 'relative' }}>
+          <YouTubeEmbedBlock
+            embedId={videoYouTubeId}
+            poster={`https://i.ytimg.com/vi/${videoYouTubeId}/hqdefault.jpg`}
+            title={post.title}
+            maxHeight={360}
+          />
+          <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
+            {src.icon} {src.label}
+          </span>
+        </div>
+      ) : hasVideo && (
         <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
             {videoIsPlayable ? (
@@ -981,6 +1026,10 @@ export default function Feed() {
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
+  // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
+  // server-side) — a gated platform tab clicked without that account connected.
+  // null whenever the current view isn't a locked single-gated-source tab.
+  const [lockedPlatform, setLockedPlatform] = useState(null);
   const _cache = readFeedCache();
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [loading,       setLoading]      = useState(!_cache);
@@ -1083,6 +1132,19 @@ export default function Feed() {
       }
       const url = `/office/feed?${params.toString()}`;
       const { data } = await client.get(url);
+      if (data.locked) {
+        // Single gated-source tab, not connected — show the connect wall
+        // instead of an empty/broken post list. Clears itself the moment
+        // any other view is loaded (tab switch, viewMode switch, etc.) since
+        // every other loadFeed call path runs this same branch and would
+        // simply not set it again.
+        setLockedPlatform(data.source || requestedSources[0] || null);
+        setPosts([]);
+        setRemoteHasMore(false);
+        setLastRefresh(new Date());
+        return;
+      }
+      setLockedPlatform(null);
       const incoming = data.posts || [];
       const previous = postsRef.current;
       // "Updated Xm ago" used to always show however long ago the browser
@@ -1860,7 +1922,20 @@ export default function Feed() {
         </div>
       )}
 
-      {loading ? (
+      {lockedPlatform ? (
+        <SocialConnectGate
+          platform={lockedPlatform}
+          connecting={connecting}
+          onConnect={async () => {
+            setConnecting(true);
+            try {
+              const { data } = await client.get(`/auth/social/${lockedPlatform}/start`);
+              if (data?.url) { window.location.href = data.url; return; }
+            } catch {}
+            setConnecting(false);
+          }}
+        />
+      ) : loading ? (
         <div>
           <div style={{
             marginBottom: 16,

@@ -9,10 +9,15 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 // uses for a single item, but centralized here since this view needs it for
 // every slide, not just one at a time.
 function resolveVideoSource(post) {
-  if (post.source === 'youtube') {
-    const id = post.embedId || extractYouTubeId(post.sourceUrl);
-    return id ? { kind: 'youtube', id, poster: `https://i.ytimg.com/vi/${id}/hqdefault.jpg` } : null;
-  }
+  // Dedicated YouTube posts carry embedId (or a recoverable sourceUrl); any
+  // other source's article can embed a real YouTube video too (see
+  // parseRSSItems' video detection backend-side), in which case mediaUrl
+  // itself is the watch URL — checked as a fallback so e.g. a YC blog post
+  // with an embedded video plays the same way a dedicated YouTube post does.
+  const ytId = post.source === 'youtube'
+    ? (post.embedId || extractYouTubeId(post.sourceUrl))
+    : extractYouTubeId(post.mediaUrl);
+  if (ytId) return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` };
   if (post.source === 'bluesky') {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaUrl } : null;
@@ -588,13 +593,18 @@ export default function VideoFeedView({ onExit }) {
       </div>
 
       {/* Following's own platform filter — mirrors FOLLOWING_SOURCE_TABS in
-          pages/Feed.jsx, compact/icon-first to fit the overlay. */}
+          pages/Feed.jsx, compact/icon-first to fit the overlay. TikTok is
+          video-only, so it's offered here even though it isn't part of the
+          regular (text/image) Following tab's filter set — same OAuth
+          connect flow as the others, just no fetcher behind it yet (see
+          the tiktok status note server-side), so it'll show empty until
+          that lands rather than being left out of the picker entirely. */}
       {viewMode === 'following' && (
         <div style={{
           position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
           zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
         }}>
-          {['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook'].map(key => {
+          {['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].map(key => {
             const meta = SOURCE_META[key] || {};
             const active = sourceFilter === key;
             return (
