@@ -9420,13 +9420,18 @@ async function handleFeedRequest(req, res) {
   // Internal posts (user-created) — always computed live and per-user
   // (likedByMe genuinely differs per user), so these are never part of the
   // shared snapshot below; they're merged on top of it every request.
-  const internal = posts.map((p) => {
+  // Filtered through the same already-seen exclusion as external content —
+  // confirmed live that leaving internal posts out of this was exactly what
+  // let a real account see repeats: with a small community-post pool, the
+  // same handful of internal posts resurface at the top of every "newest"
+  // page since nothing else was rotating them out.
+  const internal = filterUnseen(posts.map((p) => {
     const post = serializeCommunityPost(p, req.user.id);
     return {
       ...post,
       fromJoinedGroup: joined.has(p.groupId),
     };
-  });
+  }), seenIds);
 
   // Default aggregate view (no source filter, no multi-source, page 1 — the
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
@@ -9445,6 +9450,11 @@ async function handleFeedRequest(req, res) {
       const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
+      // Only the internal posts that actually survived the feedLimit slice
+      // above (it's [...internal, ...externalPosts] sliced, so that's
+      // always internal's own first N) — marking more than what was truly
+      // shown would hide posts from a later page they never actually saw.
+      markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
       markPostsSeen(req.user.id, externalPosts);
       return res.json({
         posts: finalPosts,
@@ -9840,6 +9850,10 @@ async function handleFeedRequest(req, res) {
     });
   }
 
+  // Same "only what actually survived the feedLimit slice" precision as the
+  // snapshot-read branch above — internal is first in the concat that built
+  // responsePosts, so its own first N is exactly what was shown.
+  markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
   markPostsSeen(req.user.id, personalizedExternal.slice(0, feedLimit));
   res.json({
     posts: responsePosts,
