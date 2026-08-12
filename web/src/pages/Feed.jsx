@@ -1027,6 +1027,16 @@ export default function Feed() {
         const prevIds = new Set(previous.map(p => p.id).filter(Boolean));
         const fresh = nextPosts.filter(p => p?.id && !prevIds.has(p.id)).length;
         if (fresh > 0 && manual && !preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else if (manual && replace && !preserveScroll && previous.length > FEED_PAGE_SIZE) {
+        // A user-initiated refresh with replace:true (tab-click refresh, the
+        // Feed/Following toggle) swaps the whole list for a short fresh
+        // page-1 view. If the list was previously long and the user was
+        // scrolled deep into it, replacing it out from under them leaves the
+        // viewport pointed at whitespace past the end of the new, much
+        // shorter list — looking exactly like the refresh emptied the feed.
+        // Only jumps when the old list was actually long enough for this to
+        // matter, so a routine top-of-page refresh doesn't visibly "jump".
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       }
 
       // Only for same-view refreshes (merge, not replace) — a refresh that

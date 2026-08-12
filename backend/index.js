@@ -4318,6 +4318,21 @@ function normalizeFeedSort(value, fallback = 'ranked') {
   return ['ranked', 'newest', 'popular', 'balanced'].includes(value) ? value : fallback;
 }
 
+// mainFeedSnapshots is a plain Map keyed by `${sortMode}::${timeRange}` with
+// no eviction — sortMode was already whitelisted via normalizeFeedSort, but
+// timeRange was taken straight from ?timeRange= with only an empty-string
+// fallback. feedTimeRangeMs() already treats any unrecognized value as "no
+// filter" (same as 'all'), so an unrecognized value never changed what was
+// actually queried — it only changed the cache key. That meant every
+// distinct garbage ?timeRange= value (a bug hitting this with an off value,
+// or someone doing it on purpose) permanently added a new ~300-post
+// snapshot entry that nothing ever cleans up — unbounded memory growth from
+// query-string cardinality alone, no elevated request rate needed.
+const FEED_TIME_RANGES = ['1h', '6h', 'today', '24h', '2d', 'week', '7d', 'month', '30d', 'all'];
+function normalizeFeedTimeRange(value) {
+  return FEED_TIME_RANGES.includes(value) ? value : 'all';
+}
+
 function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
   const pool = [...posts];
   const output = [];
@@ -8390,7 +8405,7 @@ async function handleFeedRequest(req, res) {
   ), 250);
   const feedMode = req.query.mode === 'archive' ? 'archive' : req.query.mode === 'following' ? 'following' : 'feed';
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
-  const timeRange = req.query.timeRange || req.query.range || 'all';
+  const timeRange = normalizeFeedTimeRange(req.query.timeRange || req.query.range);
   // 'ranked' sort computes its score per row with no supporting index, so an
   // unfiltered, unbounded 'all' range means Postgres sorts the whole table
   // on every request. dbFeedOrder() wraps post_created_at in COALESCE() for
