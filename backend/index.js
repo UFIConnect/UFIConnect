@@ -4650,6 +4650,17 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
       const rankDelta = postRankScore(b, bMax) - postRankScore(a, aMax);
       return rankDelta || (postTimestamp(b) - postTimestamp(a));
     });
+    // Every caller besides the main aggregate feed's pool-building step used
+    // to only ask for this when the *user* picked Balanced sort — single-
+    // source tabs, multi-source selection, search, and connected-social
+    // feeds all skipped diversification for the default Ranked/Newest/
+    // Popular modes, so a source that happened to rank consecutively could
+    // still wall up a page even with several sources in play. Made
+    // unconditional at every call site now that diversifyBySource is a
+    // cheap, correct round-robin (previously a buggy nearest-alternate
+    // search that could itself wall up an unrelated source — see its own
+    // comment) — there's no real downside to applying it everywhere, and
+    // "true mix" shouldn't be a Balanced-sort-only guarantee.
     const shouldDiversify = options.diversify || sortMode === 'balanced';
     const output = shouldDiversify
       ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2)
@@ -8600,7 +8611,7 @@ async function handleFeedRequest(req, res) {
       }), 'archive-memory-fallback', {
         limit: feedLimit * (wantsMix ? 3 : 1) + 1,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
       pageRows = wantsMix ? enforceFeedDiversity(memoryRows, feedLimit, sortMode) : memoryRows.slice(0, feedLimit);
       hasMore = memoryRows.length > feedLimit;
@@ -8625,7 +8636,7 @@ async function handleFeedRequest(req, res) {
     ]), 'feed-search-memory', {
       limit: Math.max(feedLimit * 3, feedLimit + 1),
       sort: sortMode,
-      diversify: sortMode === 'balanced',
+      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     const searchRangeMs = feedTimeRangeMs(timeRange);
     const memMatches = allCached.filter(p => {
@@ -8653,7 +8664,7 @@ async function handleFeedRequest(req, res) {
     const merged = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
       limit: feedLimit + 1,
       sort: sortMode,
-      diversify: sortMode === 'balanced',
+      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     return res.json({ posts: merged.slice(0, feedLimit), hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
   }
@@ -8753,14 +8764,14 @@ async function handleFeedRequest(req, res) {
       ]), 'feed-page-source-memory', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-source-merge', {
         limit: feedLimit,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
     } else if (sourcesParam.length > 1) {
       const memoryRows = sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
@@ -8772,20 +8783,20 @@ async function handleFeedRequest(req, res) {
       })), 'feed-page-multi-memory', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
       pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-merge', {
         limit: feedLimit,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
     } else if (!dbRows.length) {
       pageRows = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
-        diversify: sortMode === 'balanced',
+        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       }).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
@@ -8912,7 +8923,7 @@ async function handleFeedRequest(req, res) {
     const result = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, 500),
       sort: sortMode,
-      diversify: sortMode === 'balanced',
+      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     return res.json({
       posts: result.slice(0, feedLimit),
@@ -8949,7 +8960,7 @@ async function handleFeedRequest(req, res) {
     const result = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
       sort: sortMode,
-      diversify: sortMode === 'balanced',
+      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     return res.json({
       posts: result.slice(0, feedLimit),
@@ -8985,7 +8996,7 @@ async function handleFeedRequest(req, res) {
     const result = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
       sort: sortMode,
-      diversify: sortMode === 'balanced',
+      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
 
     return res.json({
