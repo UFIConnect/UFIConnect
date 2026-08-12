@@ -136,3 +136,62 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
       style={{ width: '100%', display: 'block', background: '#000', ...style }} />
   );
 }
+
+// Muted, looping, plays only while actually scrolled into view — used for
+// feed-card video previews (Feed.jsx/PostList.jsx), which just need a
+// lightweight autoplaying loop, unlike VideoFeedView's full-screen swipe
+// slides or ImageLightbox's maximized single-video view, which both have
+// their own dedicated play/pause/mute/seek UI. Visibility-gated so a long
+// feed with many video posts doesn't try to decode and play all of them at
+// once — matches the "only the active slide actually plays" behavior
+// VideoFeedView already uses, just triggered by real scroll position
+// instead of a swipe-snap container.
+export function InlineAutoplayVideo({ kind, src, poster, style }) {
+  const containerRef = useRef(null);
+  const fileRef = useRef(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { threshold: 0.4 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Direct-file case drives its own <video> element here; the HLS case
+  // (below, in the render) hands autoplay off to HlsVideoPlayer instead,
+  // which already primes muted state right before play() and falls back
+  // gracefully if a browser still blocks it regardless (same handling
+  // ImageLightbox's video playback relies on).
+  useEffect(() => {
+    if (kind !== 'file') return;
+    const v = fileRef.current;
+    if (!v) return;
+    if (inView) {
+      v.muted = true;
+      v.defaultMuted = true;
+      v.playsInline = true;
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [inView, kind]);
+
+  return (
+    <div ref={containerRef}>
+      {kind === 'hls' ? (
+        inView ? (
+          <HlsVideoPlayer src={src} poster={poster} autoPlay muted loop style={style} />
+        ) : (
+          <img src={poster} alt="" style={style} />
+        )
+      ) : (
+        <video ref={fileRef} src={src} muted loop playsInline preload="metadata" style={style} />
+      )}
+    </div>
+  );
+}

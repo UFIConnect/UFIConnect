@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
+import { InlineAutoplayVideo } from './videoMedia';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -224,13 +225,13 @@ export default function PostList({
                     onClick={() => setMediaLightboxPostId(post.id)}
                     style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', position: 'relative' }}
                   >
-                    <video src={post.mediaUrl} muted preload="metadata" playsInline
-                      style={{ width: '100%', maxHeight: 420, display: 'block', opacity: 0.85 }} />
-                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
-                        <span style={{ color: '#fff', fontSize: '1.4rem', marginLeft: 3 }}>▶</span>
-                      </div>
-                    </div>
+                    {/* Autoplays muted/looping as it scrolls into view instead
+                        of sitting as a static frame with a "tap to play"
+                        badge — click-to-maximize is unchanged, same as
+                        photos: this button still opens ImageLightbox for
+                        sound, seeking, and next/prev. */}
+                    <InlineAutoplayVideo kind="file" src={post.mediaUrl}
+                      style={{ width: '100%', maxHeight: 420, display: 'block' }} />
                   </button>
                 ) : (
                   <button

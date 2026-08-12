@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, isDirectVideoUrl } from '../components/videoMedia';
+import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, InlineAutoplayVideo } from '../components/videoMedia';
 import { SOURCE_META } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 
@@ -558,7 +558,9 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
-  const videoIsDirectFile = hasVideo && isDirectVideoUrl(post.mediaUrl);
+  const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
+  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && isDirectVideoUrl(post.mediaUrl);
+  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile);
   const commentCount   = post.commentsCount || 0;
   const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
   const commUrl        = commentUrl(post);
@@ -691,30 +693,41 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
       {hasVideo && (
         <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
-            {videoIsDirectFile ? (
-              <video src={post.mediaUrl} muted preload="metadata" playsInline
-                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }} />
+            {videoIsPlayable ? (
+              // Autoplays muted/looping as it scrolls into view (see
+              // InlineAutoplayVideo) instead of sitting as a static frame
+              // with a "tap to play" badge — the click-to-maximize behavior
+              // is unchanged, same as photos: the button wrapping this
+              // still opens ImageLightbox for sound, seeking, and next/prev.
+              <InlineAutoplayVideo
+                kind={videoPlaylistUrl ? 'hls' : 'file'}
+                src={videoPlaylistUrl || post.mediaUrl}
+                poster={videoPlaylistUrl ? post.mediaUrl : undefined}
+                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
+              />
             ) : (
-              <img src={post.mediaUrl} alt="Video"
-                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
-                onError={e => {
-                  e.currentTarget.style.display = 'none';
-                  const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
-                  if (fallback) fallback.style.display = 'flex';
-                }} />
+              <>
+                <img src={post.mediaUrl} alt="Video"
+                  style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
+                  onError={e => {
+                    e.currentTarget.style.display = 'none';
+                    const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
+                    if (fallback) fallback.style.display = 'flex';
+                  }} />
+                <div data-video-fallback style={{
+                  display: 'none', position: 'absolute', inset: 0,
+                  alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(0,0,0,0.5)', color: 'var(--muted)', fontSize: '.85rem',
+                }}>
+                  🎬 Video unavailable
+                </div>
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: 60, height: 60, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
+                    <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
+                  </div>
+                </div>
+              </>
             )}
-            <div data-video-fallback style={{
-              display: 'none', position: 'absolute', inset: 0,
-              alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(0,0,0,0.5)', color: 'var(--muted)', fontSize: '.85rem',
-            }}>
-              🎬 Video unavailable
-            </div>
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 60, height: 60, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
-                <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
-              </div>
-            </div>
             <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4 }}>
               {src.icon} {src.label}
             </span>
