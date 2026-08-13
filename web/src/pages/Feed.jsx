@@ -37,22 +37,6 @@ function feedPostTime(post) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function postEngagement(post) {
-  const likes = Number(post?.likesCount || post?.likes || 0);
-  const comments = Number(post?.commentsCount || post?.comments || 0);
-  return Math.max(0, likes) + Math.max(0, comments) * 2;
-}
-
-function postRankScore(post) {
-  const ts = feedPostTime(post);
-  const ageHours = ts > 0 ? Math.max(0, (Date.now() - ts) / (60 * 60 * 1000)) : 9999;
-  const recency = Math.max(0, 100 - ageHours * 1.8);
-  const engagement = Math.log1p(postEngagement(post)) * 12;
-  const communityBoost = post?.fromJoinedGroup ? 18 : 0;
-  const firstPartyBoost = (post?.source || 'uficonnect') === 'uficonnect' ? 10 : 0;
-  return recency + engagement + communityBoost + firstPartyBoost;
-}
-
 function normalizeFeedSort(value) {
   return ['ranked', 'newest', 'popular', 'balanced', 'bylink'].includes(value) ? value : 'ranked';
 }
@@ -70,38 +54,18 @@ function sortByLink(posts = []) {
   });
 }
 
-function diversifyPostsBySource(posts = [], maxConsecutive = 2) {
-  const pool = [...posts];
-  const output = [];
-  let lastSource = null;
-  let streak = 0;
-
-  while (pool.length) {
-    let pickIndex = 0;
-    if (lastSource && streak >= maxConsecutive) {
-      const alternate = pool.findIndex(p => (p?.source || 'unknown') !== lastSource);
-      if (alternate >= 0) pickIndex = alternate;
-    }
-    const [post] = pool.splice(pickIndex, 1);
-    const source = post?.source || 'unknown';
-    if (source === lastSource) streak += 1;
-    else { lastSource = source; streak = 1; }
-    output.push(post);
-  }
-
-  return output;
-}
-
+// The backend already sorts every mode except "By Domain" (bylink is a
+// pure client-side grouping with no server equivalent) — ranked/newest/
+// popular/balanced all arrive pre-sorted and, for balanced/ranked/newest,
+// pre-diversified across sources. Re-sorting any of those client-side on
+// top of an already-correct response undid that work on every single
+// event that touched the post list — a manual refresh, a live merge, or
+// just scrolling to load the next page — which is exactly what made a
+// carefully interleaved feed look like it kept reshuffling itself. Only
+// bylink still needs a real client-side sort; everything else trusts
+// what the server already sent, unchanged.
 function sortPostsForView(list = [], sort = 'ranked') {
-  const sortMode = normalizeFeedSort(sort);
-  if (sortMode === 'bylink') return sortByLink(list);
-  const result = [...list];
-  result.sort((a, b) => {
-    if (sortMode === 'newest') return feedPostTime(b) - feedPostTime(a);
-    if (sortMode === 'popular') return (postEngagement(b) - postEngagement(a)) || (feedPostTime(b) - feedPostTime(a));
-    return (postRankScore(b) - postRankScore(a)) || (feedPostTime(b) - feedPostTime(a));
-  });
-  return sortMode === 'balanced' ? diversifyPostsBySource(result) : result;
+  return normalizeFeedSort(sort) === 'bylink' ? sortByLink(list) : list;
 }
 
 function mergeFeedPosts(list = [], sort = 'ranked') {
@@ -1212,29 +1176,31 @@ export default function Feed() {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
 
+  // This is now the app's one real "refresh" action — clicking Feed (while
+  // already on Feed) re-pulls the current view exactly as filtered, rather
+  // than resetting to the unfiltered aggregate. Individual source-tab chips
+  // (see toggleTab) just change which filter is active now; they no longer
+  // trigger their own refresh — Feed is the single place that does, so
+  // there's one clear path responsible for going back to the server for
+  // fresh, freshly-sorted data instead of several buttons each doing their
+  // own version of it.
   const switchViewMode = useCallback((mode) => {
     const nextMode = mode === 'following' ? 'following' : 'feed';
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Feed and Following each have their own source vocabulary (SOURCE_TABS
-    // vs FOLLOWING_SOURCE_TABS) — clear any source tabs so switching in/out
-    // doesn't leave a stale filter selected from the other view's list.
-    // Also has to clear filters.sources (the Filter panel's own, independent
-    // source checkboxes) for the same reason — loadFeed prefers
-    // filters.sources over activeTabs when both are set, so passing the
-    // untouched filtersRef.current here meant switching to Feed while
-    // Following still had e.g. "linkedin" checked kept filtering by that,
-    // instead of actually showing the switched-to view.
-    activeTabsRef.current = [];
-    setActiveTabs([]);
-    const clearedFilters = { ...filtersRef.current, sources: [] };
-    filtersRef.current = clearedFilters;
-    setFilters(clearedFilters);
-    loadFeed(true, [], {
+    // Deliberately does NOT clear activeTabs/filters.sources — switching
+    // into Feed (or refreshing while already there) keeps whatever's
+    // currently selected instead of resetting to "All." A source that only
+    // really makes sense in the other view (e.g. Following's "linkedin")
+    // carried into Feed just falls through to whatever that source
+    // normally does there (the connect gate for a gated platform, an empty
+    // result for one with nothing to show) rather than a crash — the same
+    // honest outcome picking it any other way would produce.
+    loadFeed(true, activeTabsRef.current, {
       mode: nextMode,
-      filters: clearedFilters,
+      filters: filtersRef.current,
       q: searchRef.current,
       // Always a full replace now, whether this is a real context switch
       // (Feed vs Following — obviously different data) or clicking the tab
@@ -1296,6 +1262,11 @@ export default function Feed() {
     searchRef.current = '';
     setSearch('');
     setSearchInput('');
+    // Source tabs just change which filter is active now — they no longer
+    // double as their own refresh (that's Feed's job now, see
+    // switchViewMode). manual:false means no seed reshuffle, no forced
+    // live/bust refetch, no "refreshing" UI treatment — this is a filter
+    // change, not the user asking to go fetch newer data.
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
@@ -1308,25 +1279,12 @@ export default function Feed() {
       // selection in place meant clicking "All" silently kept whatever the
       // Filter panel last had checked instead of actually clearing to every
       // source, which read as "All" just not working.
-      // Every tab doubles as a refresh button now — manual:true shows the
-      // refresh state and re-pulls current data. bust:false because "All"
-      // spans every source: busting would force all 30+ workers to refetch
-      // externally on every click, the same burst that crashed the API
-      // under concurrent load. The background pipeline already keeps
-      // sources fresh continuously, so this still returns real current data.
-      // replace:true unconditionally — whether this is a real context
-      // switch (coming from a filtered source tab) or clicking "All" again
-      // as a refresh, a user-initiated refresh should hand back a clean
-      // page-1 view instead of merging fresh posts on top of everything
-      // already scrolled-in.
       const clearedFilters = { ...filtersRef.current, sources: [] };
       filtersRef.current = clearedFilters;
       setFilters(clearedFilters);
-      loadFeed(true, [], {
+      loadFeed(false, [], {
         filters: clearedFilters,
-        live: viewModeRef.current === 'feed',
         replace: true,
-        bust: false,
       });
       return;
     }
@@ -1334,12 +1292,8 @@ export default function Feed() {
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
     activeTabsRef.current = next;
     setActiveTabs(next);
-    // Bust only when exactly one source is targeted — that's a single
-    // lightweight worker refetch, not the all-sources burst.
-    loadFeed(true, next, {
-      live: viewModeRef.current === 'feed',
+    loadFeed(false, next, {
       replace: true,
-      bust: next.length === 1,
     });
   }, [loadFeed]); // eslint-disable-line
 
