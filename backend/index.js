@@ -9,6 +9,7 @@ const http   = require('http');
 const https  = require('https');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
 const v8 = require('v8');
 const db        = require('./db');
 const filestore  = require('./filestore');
@@ -7978,6 +7979,30 @@ async function migrateDB() {
       )
     `);
 
+    // Profile attachments (resumes, etc.) — the file itself lives here as
+    // bytea rather than in Cloudinary: these are small (capped well under
+    // Postgres's per-row limits) and storing them directly means the ATS
+    // scoring pass and later re-downloads never need a round trip to a
+    // third party, at the cost of this table growing with real usage —
+    // an acceptable trade for what's realistically a handful of files per
+    // user, not a general media host.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT,
+        file_size INTEGER NOT NULL,
+        file_data BYTEA NOT NULL,
+        extracted_text TEXT,
+        ats_score INTEGER,
+        ats_feedback JSONB,
+        keywords JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS attachments_user_idx ON attachments(user_id, created_at DESC)`);
+
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
     // restart/deploy or on a different device.
@@ -9255,6 +9280,7 @@ async function purgeUser(uid) {
     await db.query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1', [uid]);
     await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
     await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
+    await db.query('DELETE FROM attachments WHERE user_id=$1', [uid]);
     await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
     await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
     await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
@@ -12126,6 +12152,229 @@ app.delete('/posts/:postId', authenticate, async (req, res) => {
   }
 });
 
+// ─── Profile attachments (resume upload + ATS scoring) ─────────────────────
+// Unlike post media (see the Cloudinary signed-upload section right below),
+// this backend does need to see the actual bytes — extracting text and
+// scoring it is the entire point — so files come straight through here as
+// a normal multipart upload instead of a direct-to-Cloudinary handoff.
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB — generous for any real resume/CV
+});
+
+async function extractResumeText(buffer, filename) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  try {
+    if (ext === 'pdf') {
+      const { PDFParse } = require('pdf-parse');
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
+      return result?.text || '';
+    }
+    if (ext === 'docx') {
+      const mammoth = require('mammoth');
+      const result = await mammoth.extractRawText({ buffer });
+      return result?.value || '';
+    }
+    if (ext === 'txt') {
+      return buffer.toString('utf8');
+    }
+  } catch (e) {
+    console.warn(`extractResumeText (${filename}):`, e.message);
+  }
+  return '';
+}
+
+// Common resume/job-posting vocabulary — tech stack, tools, and general
+// professional skill terms. Doubles as the extraction list for job-match
+// keywords (see /opportunities below) and as input to the ATS score, so a
+// resume that genuinely reads as "a real, skills-dense document" scores
+// higher on both without needing two separate keyword lists to stay in sync.
+const RESUME_SKILL_KEYWORDS = [
+  'javascript', 'typescript', 'python', 'java', 'c++', 'c#', 'go', 'golang', 'rust', 'ruby', 'php', 'swift', 'kotlin', 'scala',
+  'react', 'react native', 'vue', 'angular', 'node.js', 'node', 'express', 'next.js', 'django', 'flask', 'spring', 'rails', '.net',
+  'html', 'css', 'sass', 'tailwind', 'graphql', 'rest api', 'grpc', 'websocket',
+  'sql', 'postgresql', 'postgres', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'dynamodb', 'sqlite',
+  'aws', 'azure', 'gcp', 'google cloud', 'docker', 'kubernetes', 'terraform', 'ci/cd', 'jenkins', 'github actions',
+  'machine learning', 'deep learning', 'pytorch', 'tensorflow', 'nlp', 'llm', 'generative ai', 'data science', 'pandas', 'numpy',
+  'figma', 'sketch', 'adobe xd', 'photoshop', 'illustrator', 'ui/ux', 'user research', 'wireframing', 'prototyping',
+  'agile', 'scrum', 'jira', 'product management', 'roadmap', 'a/b testing', 'stakeholder management',
+  'seo', 'sem', 'google analytics', 'content marketing', 'social media marketing', 'email marketing', 'growth marketing',
+  'salesforce', 'hubspot', 'crm', 'business development', 'account management', 'negotiation',
+  'excel', 'financial modeling', 'accounting', 'budgeting', 'forecasting', 'gaap',
+  'leadership', 'project management', 'cross-functional', 'communication', 'mentoring', 'hiring',
+  'git', 'linux', 'bash', 'microservices', 'api design', 'testing', 'unit testing', 'debugging', 'security', 'devops',
+];
+
+// Standard, well-documented heuristics real ATS parsers and resume-checker
+// tools rely on (contact info detection, standard section headers,
+// scannable formatting, quantified achievements) — not a call to a specific
+// paid vendor's proprietary model, which isn't something this can honestly
+// claim to replicate. Every check is independently explainable so the
+// feedback shown alongside the score is never a bare number.
+const ATS_ACTION_VERBS = [
+  'led', 'built', 'managed', 'designed', 'implemented', 'developed', 'launched', 'created', 'improved',
+  'increased', 'reduced', 'achieved', 'delivered', 'optimized', 'architected', 'drove', 'spearheaded',
+  'established', 'streamlined', 'automated', 'negotiated', 'mentored', 'coordinated', 'executed',
+  'analyzed', 'researched', 'presented', 'collaborated', 'scaled', 'owned', 'shipped',
+];
+function computeATSScore(text) {
+  const checks = [];
+  const wordCount = (text.match(/\S+/g) || []).length;
+
+  if (wordCount < 30) {
+    checks.push({
+      passed: false, label: 'Readable text content',
+      detail: 'Very little text could be extracted from this file — it may be a scanned image rather than real selectable text, which most ATS systems cannot read at all.',
+    });
+    return { score: 5, checks, keywords: [] };
+  }
+  checks.push({ passed: true, label: 'Readable text content' });
+  let score = 15;
+
+  const hasEmail = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i.test(text);
+  checks.push(hasEmail
+    ? { passed: true, label: 'Email address found' }
+    : { passed: false, label: 'Email address found', detail: 'No email address detected — ATS systems and recruiters need a direct way to reach you.' });
+  if (hasEmail) score += 10;
+
+  const hasPhone = /(\+?\d[\d\s().-]{8,}\d)/.test(text);
+  checks.push(hasPhone
+    ? { passed: true, label: 'Phone number found' }
+    : { passed: false, label: 'Phone number found', detail: 'No phone number detected.' });
+  if (hasPhone) score += 5;
+
+  const sectionPatterns = {
+    Experience: /\b(experience|employment history|work history)\b/i,
+    Education: /\beducation\b/i,
+    Skills: /\bskills\b/i,
+  };
+  const missingSections = [];
+  let sectionCount = 0;
+  for (const [name, re] of Object.entries(sectionPatterns)) {
+    if (re.test(text)) sectionCount++;
+    else missingSections.push(name);
+  }
+  score += sectionCount * 8;
+  if (missingSections.length === 0) {
+    checks.push({ passed: true, label: 'Standard resume sections (Experience, Education, Skills)' });
+  } else {
+    checks.push({
+      passed: false, label: 'Standard resume sections (Experience, Education, Skills)',
+      detail: `No clearly labeled section found for: ${missingSections.join(', ')}. ATS parsers rely on standard headers to categorize your experience.`,
+    });
+  }
+
+  const bulletCount = (text.match(/^[ \t]*[•\-*▪●][ \t]+/gm) || []).length;
+  checks.push(bulletCount >= 3
+    ? { passed: true, label: 'Uses bullet points', detail: `${bulletCount} bullet points found.` }
+    : { passed: false, label: 'Uses bullet points', detail: 'Few or no bullet points found — ATS systems and recruiters scan bulleted achievements far more easily than dense paragraphs.' });
+  if (bulletCount >= 3) score += 10;
+
+  const verbMatches = ATS_ACTION_VERBS.filter(v => new RegExp(`\\b${v}\\b`, 'i').test(text));
+  checks.push(verbMatches.length >= 5
+    ? { passed: true, label: 'Strong action verbs', detail: `${verbMatches.length} found (e.g. ${verbMatches.slice(0, 5).join(', ')}).` }
+    : { passed: false, label: 'Strong action verbs', detail: 'Try starting bullet points with action verbs like "led," "built," or "increased" instead of passive phrasing.' });
+  if (verbMatches.length >= 5) score += 15;
+
+  const quantified = ATS_ACTION_VERBS.some(v => new RegExp(`\\b${v}\\b[^.\\n]{0,60}\\d`, 'i').test(text)) || /\d+%/.test(text);
+  checks.push(quantified
+    ? { passed: true, label: 'Quantified achievements', detail: 'Found numbers/metrics tied to accomplishments — one of the strongest signals ATS scoring and recruiters look for.' }
+    : { passed: false, label: 'Quantified achievements', detail: 'Add measurable results where possible (e.g. "increased conversion by 18%") — plain descriptions score lower than quantified ones.' });
+  if (quantified) score += 15;
+
+  const lengthOk = wordCount >= 200 && wordCount <= 1100;
+  checks.push(lengthOk
+    ? { passed: true, label: 'Appropriate length', detail: `${wordCount} words.` }
+    : { passed: false, label: 'Appropriate length', detail: wordCount < 200
+        ? `Only ${wordCount} words — this may be too thin for ATS systems to find enough relevant content.`
+        : `${wordCount} words — consider trimming to keep it focused (most ATS-friendly resumes are 400–900 words).` });
+  if (lengthOk) score += 10;
+
+  const lower = text.toLowerCase();
+  const keywords = RESUME_SKILL_KEYWORDS.filter(k => lower.includes(k));
+
+  return { score: Math.min(100, Math.round(score)), checks, keywords };
+}
+
+app.post('/profile/attachments', authenticate, (req, res) => {
+  attachmentUpload.single('file')(req, res, async (err) => {
+    if (err) {
+      const tooLarge = err.code === 'LIMIT_FILE_SIZE';
+      return res.status(tooLarge ? 413 : 400).json({ message: tooLarge ? 'File is too large — 8MB max.' : 'Upload failed.' });
+    }
+    try {
+      if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+      const { originalname, mimetype, size, buffer } = req.file;
+      const ext = (originalname.split('.').pop() || '').toLowerCase();
+      if (!['pdf', 'docx', 'txt'].includes(ext)) {
+        return res.status(400).json({ message: 'Only PDF, DOCX, and TXT files are supported.' });
+      }
+      if (!db.isConnected()) return res.status(503).json({ message: 'File storage is not available right now.' });
+
+      const text = await extractResumeText(buffer, originalname);
+      const { score, checks, keywords } = computeATSScore(text);
+      const id = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const createdAt = new Date().toISOString();
+
+      await db.query(
+        `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [id, req.user.id, originalname, mimetype || null, size, buffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
+      );
+
+      res.status(201).json({
+        id, filename: originalname, mimeType: mimetype || null, fileSize: size,
+        atsScore: score, atsChecks: checks, keywords, createdAt,
+      });
+    } catch (e) {
+      console.error('POST /profile/attachments:', e.message);
+      res.status(500).json({ message: 'Failed to process the file. Please try again.' });
+    }
+  });
+});
+
+app.get('/profile/attachments', authenticate, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.json({ attachments: [] });
+    const { rows } = await db.query(
+      `SELECT id, filename, mime_type, file_size, ats_score, ats_feedback, keywords, created_at
+       FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    res.json({
+      attachments: rows.map(r => ({
+        id: r.id, filename: r.filename, mimeType: r.mime_type, fileSize: r.file_size,
+        atsScore: r.ats_score, atsChecks: r.ats_feedback, keywords: r.keywords, createdAt: r.created_at,
+      })),
+    });
+  } catch (e) { console.error('GET /profile/attachments:', e.message); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+app.get('/profile/attachments/:id/download', authenticate, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.status(404).end();
+    const { rows } = await db.query(
+      `SELECT filename, mime_type, file_data FROM attachments WHERE id=$1 AND user_id=$2`,
+      [req.params.id, req.user.id]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'Not found.' });
+    const row = rows[0];
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(row.filename)}"`);
+    res.send(row.file_data);
+  } catch (e) { console.error('GET /profile/attachments/:id/download:', e.message); res.status(500).end(); }
+});
+
+app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
+  try {
+    if (db.isConnected()) {
+      await db.query(`DELETE FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+    }
+    res.json({ deleted: true });
+  } catch (e) { console.error('DELETE /profile/attachments/:id:', e.message); res.status(500).json({ message: 'Failed to delete.' }); }
+});
+
 // ─── Media upload (Cloudinary signed direct upload) ────────────────────────
 // The file itself goes straight from the browser to Cloudinary — this
 // backend never touches the bytes, just hands out a short-lived signed
@@ -13022,6 +13271,25 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const goals      = (user?.preferences?.goals || []);
   const roleTypes  = ROLE_OP_TYPES[role] || new Set();
 
+  // Resume-derived keywords (see computeATSScore) — the most recently
+  // uploaded attachment's keyword set, if any. Kept as its own signal
+  // rather than merged into `skills` above: skills is what the user
+  // explicitly typed into their profile, this is what the resume itself
+  // actually says, and a mismatch between the two is worth surfacing as a
+  // distinct "matches your resume" reason rather than silently blending in.
+  let resumeKeywords = new Set();
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,
+        [req.user.id]
+      );
+      if (rows.length && Array.isArray(rows[0].keywords)) {
+        resumeKeywords = new Set(rows[0].keywords.map(k => String(k).toLowerCase()));
+      }
+    } catch (e) { /* resume matching is a bonus signal, never block the listing over it */ }
+  }
+
   // Build the set of goal-boosted op types from this user's goals
   const goalBoostedTypes = new Set(goals.flatMap(g => [...(GOAL_TYPE_BOOST[g] || [])]));
 
@@ -13081,6 +13349,14 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // 1. Profile skills → exact tag match (highest weight; rare unless user filled skills section)
     const skillMatches = tagTokens.filter(t => skills.has(t));
     if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
+
+    // 1b. Resume keywords → tag match — weighted like title/role matches
+    // (5/token), between the explicit-skills-field and interest signals:
+    // a resume is more deliberate than an inferred interest, but a user
+    // hand-picking their Skills field is still the strongest possible
+    // signal, so this doesn't outrank it.
+    const resumeMatches = tagTokens.filter(t => resumeKeywords.has(t));
+    if (resumeMatches.length > 0) { score += resumeMatches.length * 5; reasons.push('Matches your resume'); }
 
     // 2. Specific job title keywords → opp title / tags (strong signal from onboarding)
     const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;

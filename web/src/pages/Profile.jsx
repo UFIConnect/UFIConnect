@@ -43,6 +43,13 @@ export default function Profile() {
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
+  // Attachments (resume upload + ATS score)
+  const [attachments,        setAttachments]        = useState([]);
+  const [attachmentsLoading, setAttachmentsLoading]  = useState(false);
+  const [uploading,          setUploading]           = useState(false);
+  const [uploadError,        setUploadError]         = useState('');
+  const [expandedAttachment, setExpandedAttachment]  = useState(null);
+  const [deletingAttachment, setDeletingAttachment]  = useState(null);
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -66,6 +73,72 @@ export default function Profile() {
       .catch(() => setPosts([]))
       .finally(() => setPostsLoading(false));
   }, [profile?.id]);
+
+  function fetchAttachments() {
+    setAttachmentsLoading(true);
+    client.get('/profile/attachments')
+      .then(({ data }) => setAttachments(data.attachments || []))
+      .catch(() => setAttachments([]))
+      .finally(() => setAttachmentsLoading(false));
+  }
+
+  // Loaded lazily on first visit to the tab rather than on every profile
+  // page load — most sessions never open Attachments at all.
+  useEffect(() => {
+    if (tab === 'Attachments' && attachments.length === 0 && !attachmentsLoading) fetchAttachments();
+  }, [tab]); // eslint-disable-line
+
+  async function handleAttachmentUpload(file) {
+    if (!file) return;
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['pdf', 'docx', 'txt'].includes(ext)) {
+      setUploadError('Only PDF, DOCX, and TXT files are supported.');
+      return;
+    }
+    setUploading(true);
+    setUploadError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await client.post('/profile/attachments', formData);
+      setAttachments(prev => [data, ...prev]);
+      setExpandedAttachment(data.id);
+    } catch (err) {
+      setUploadError(err?.response?.data?.message || 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleAttachmentDelete(id) {
+    setDeletingAttachment(id);
+    try {
+      await client.delete(`/profile/attachments/${id}`);
+      setAttachments(prev => prev.filter(a => a.id !== id));
+      if (expandedAttachment === id) setExpandedAttachment(null);
+    } catch {}
+    finally { setDeletingAttachment(null); }
+  }
+
+  async function handleAttachmentDownload(attachment) {
+    try {
+      const { data } = await client.get(`/profile/attachments/${attachment.id}/download`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = attachment.filename || 'resume';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {}
+  }
+
+  function scoreColor(score) {
+    if (score >= 80) return { text: '#059669', bg: '#ECFDF5', border: '#A7F3D0' };
+    if (score >= 50) return { text: '#D97706', bg: '#FFFBEB', border: '#FDE68A' };
+    return { text: '#DC2626', bg: '#FEF2F2', border: '#FECACA' };
+  }
 
 
   function addSkill() {
@@ -427,26 +500,93 @@ export default function Profile() {
       {/* ── ATTACHMENTS TAB ──────────────────────────────────── */}
       {tab === 'Attachments' && !editing && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-          <div className="card" style={{ position:'relative', overflow:'hidden' }}>
-            {/* Coming Soon overlay */}
-            <div style={{
-              position:'absolute', inset:0, zIndex:10,
-              backdropFilter:'blur(5px)', WebkitBackdropFilter:'blur(5px)',
-              background:'rgba(var(--bg-rgb,255,255,255),.55)',
-              display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:10,
-            }}>
-              <span style={{ fontSize:'1.6rem' }}>📎</span>
-              <div style={{ fontWeight:700, fontSize:'.95rem' }}>Files &amp; Attachments</div>
-              <span style={{
-                fontSize:'.72rem', fontWeight:700, letterSpacing:'.5px',
-                background:'var(--primary)', color:'#fff',
-                padding:'3px 12px', borderRadius:20,
-              }}>Coming Soon</span>
-              <p style={{ fontSize:'.78rem', color:'var(--muted)', textAlign:'center', maxWidth:260, lineHeight:1.5, margin:0 }}>
-                Resume upload and portfolio links are coming in the next update.
-              </p>
+          {/* Resume upload + ATS score */}
+          <div className="card">
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
+              <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Resume / CV</h3>
+              <span style={{ fontSize:'.72rem', color:'var(--muted)' }}>ATS-style scoring</span>
             </div>
 
+            <label style={{
+              display:'flex', alignItems:'center', gap:10, padding:'12px 14px',
+              border:'2px dashed var(--border)', borderRadius:8, cursor: uploading ? 'default' : 'pointer',
+              fontSize:'.875rem', color:'var(--muted)', opacity: uploading ? 0.6 : 1, marginBottom: uploadError ? 8 : 0,
+            }}>
+              {uploading ? <span className="spinner" style={{ width:16, height:16 }} /> : <span>📤</span>}
+              {uploading ? 'Uploading and scoring…' : 'Click to upload a resume (PDF, DOCX, or TXT — 8MB max)'}
+              <input type="file" accept=".pdf,.docx,.txt" style={{ display:'none' }} disabled={uploading}
+                onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleAttachmentUpload(file); }} />
+            </label>
+            {uploadError && <div className="auth-error" style={{ marginTop: 8 }}>{uploadError}</div>}
+
+            <div style={{ marginTop: 14, display:'flex', flexDirection:'column', gap:10 }}>
+              {attachmentsLoading ? (
+                <div style={{ display:'flex', justifyContent:'center', padding:'16px 0' }}><span className="spinner spinner-primary" /></div>
+              ) : attachments.length === 0 ? (
+                <div className="empty-state" style={{ padding:'20px 0' }}>
+                  <div className="empty-icon">📄</div>
+                  <div className="empty-title">No resume uploaded yet</div>
+                  <div className="empty-desc">Upload one to get an ATS-style score and see which opportunities best match it.</div>
+                </div>
+              ) : attachments.map(a => {
+                const colors = scoreColor(a.atsScore);
+                const isExpanded = expandedAttachment === a.id;
+                return (
+                  <div key={a.id} style={{ border:'1.5px solid var(--border)', borderRadius:'var(--radius-sm)', overflow:'hidden' }}>
+                    <button
+                      onClick={() => setExpandedAttachment(isExpanded ? null : a.id)}
+                      style={{ all:'unset', display:'flex', alignItems:'center', gap:12, padding:'12px 14px', width:'100%', boxSizing:'border-box', cursor:'pointer' }}
+                    >
+                      <span style={{ fontSize:'1.2rem' }}>📄</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontWeight:600, fontSize:'.875rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.filename}</div>
+                        <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{new Date(a.createdAt).toLocaleDateString()} · {(a.fileSize / 1024).toFixed(0)} KB</div>
+                      </div>
+                      {/* Score next to the attachment, as asked */}
+                      <span style={{
+                        fontSize:'.8rem', fontWeight:800, padding:'4px 10px', borderRadius:20,
+                        color: colors.text, background: colors.bg, border: `1px solid ${colors.border}`, flexShrink:0,
+                      }}>
+                        {a.atsScore}/100
+                      </span>
+                      <span style={{ color:'var(--muted)', fontSize:'.8rem', flexShrink:0 }}>{isExpanded ? '▲' : '▼'}</span>
+                    </button>
+
+                    {isExpanded && (
+                      <div style={{ padding:'0 14px 14px', borderTop:'1px solid var(--border)' }}>
+                        <div style={{ display:'flex', flexDirection:'column', gap:6, marginTop:12 }}>
+                          {(a.atsChecks || []).map((c, i) => (
+                            <div key={i} style={{ display:'flex', gap:8, fontSize:'.8rem', lineHeight:1.5 }}>
+                              <span style={{ color: c.passed ? '#059669' : '#DC2626', flexShrink:0 }}>{c.passed ? '✓' : '✕'}</span>
+                              <div>
+                                <span style={{ fontWeight:600 }}>{c.label}</span>
+                                {c.detail && <div style={{ color:'var(--muted)' }}>{c.detail}</div>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ display:'flex', gap:8, marginTop:14 }}>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleAttachmentDownload(a)}>
+                            Download
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => handleAttachmentDelete(a.id)}
+                            disabled={deletingAttachment === a.id}
+                            style={{ color:'#DC2626' }}
+                          >
+                            {deletingAttachment === a.id ? <span className="spinner" /> : 'Delete'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card">
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
               <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px' }}>Files &amp; Links</h3>
             </div>
@@ -485,22 +625,13 @@ export default function Profile() {
           {error && <div className="auth-error" style={{ marginBottom:14 }}>{error}</div>}
           <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:16 }}>Files &amp; Links</h3>
 
-          {/* Resume upload */}
+          {/* Resume link (file uploads + ATS scoring happen from the Attachments tab directly) */}
           <div className="form-group">
-            <label className="form-label">📄 Resume / CV <span style={{ color:'var(--muted)', fontWeight:400 }}>(upload or link)</span></label>
-            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-              <label style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', border:'2px dashed var(--border)', borderRadius:8, cursor:'pointer', fontSize:'.875rem', color:'var(--muted)' }}>
-                <span>📤</span> Click to upload a file (PDF, DOCX)
-                <input type="file" accept=".pdf,.doc,.docx" style={{ display:'none' }}
-                  onChange={e => {
-                    const file = e.target.files[0];
-                    if (file) setLinks(l => ({ ...l, resume: `[${file.name}]` }));
-                  }} />
-              </label>
-              <input className="form-input" type="url" name="resume"
-                value={links?.resume?.startsWith('[') ? '' : (links?.resume || '')}
-                onChange={handleLinkChange} placeholder="or paste a link: https://drive.google.com/..." />
-            </div>
+            <label className="form-label">📄 Resume / CV link <span style={{ color:'var(--muted)', fontWeight:400 }}>(optional, e.g. Google Drive)</span></label>
+            <input className="form-input" type="url" name="resume"
+              value={links?.resume?.startsWith('[') ? '' : (links?.resume || '')}
+              onChange={handleLinkChange} placeholder="https://drive.google.com/..." />
+            <span style={{ fontSize:'.72rem', color:'var(--muted)' }}>To upload a resume file and get an ATS score, use the upload box on the Attachments tab.</span>
           </div>
 
           {LINK_FIELDS.filter(f => f.key !== 'resume').map(({ key, label, icon, placeholder }) => (
