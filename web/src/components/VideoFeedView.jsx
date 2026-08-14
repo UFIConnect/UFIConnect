@@ -592,13 +592,49 @@ export default function VideoFeedView({ onExit }) {
         })}
       </div>
 
-      {/* Following's own platform filter — mirrors FOLLOWING_SOURCE_TABS in
-          pages/Feed.jsx, compact/icon-first to fit the overlay. TikTok is
-          video-only, so it's offered here even though it isn't part of the
-          regular (text/image) Following tab's filter set — same OAuth
+      {/* Platform filter — the data plumbing (sourceFilter state,
+          toggleSourceFilter, the ?source= param sent by loadPage) was
+          already mode-agnostic; only this row was gated to Following. Feed
+          mode's own pool draws from every public source (see
+          handleVideoFeedRequest server-side), but most of them never
+          actually produce video content — offering all 30+ would be mostly
+          dead ends, so this list is scoped to the sources that genuinely do
+          (mediaType:'video' producers: YouTube, Reddit, Mastodon, Bluesky,
+          DEV Community). Following's row below stays as-is: connected-
+          account platforms plus native UFconnect, an entirely different
+          pool from this one. TikTok is offered there even though it isn't
+          part of the regular Following tab's filter set — same OAuth
           connect flow as the others, just no fetcher behind it yet (see
           the tiktok status note server-side), so it'll show empty until
           that lands rather than being left out of the picker entirely. */}
+      {viewMode === 'feed' && (
+        <div style={{
+          position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
+        }}>
+          {['youtube', 'reddit', 'mastodon', 'bluesky', 'devto'].map(key => {
+            const meta = SOURCE_META[key] || {};
+            const active = sourceFilter === key;
+            return (
+              <button
+                key={key}
+                onClick={() => toggleSourceFilter(key)}
+                aria-label={meta.label || key}
+                style={{
+                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4,
+                  padding: '5px 10px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
+                  fontWeight: 700, fontSize: '.72rem',
+                  border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
+                  background: active ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.35)',
+                  color: '#fff',
+                }}
+              >
+                <span>{meta.icon}</span>{meta.label || key}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {viewMode === 'following' && (
         <div style={{
           position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',

@@ -88,17 +88,26 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
 // pulled from here once under the mistaken idea that removing the *true
 // mix* leak also meant removing the tabs entirely — it didn't; only the
 // aggregate/Following mixing needed to change, not this single-source path.
+// Kept as an explicit, hand-ordered list (most-recognizable platforms first)
+// rather than deriving straight from ALL_FILTER_SOURCES — this is the row
+// users scan first and scroll through on every visit, so display order
+// matters here in a way it doesn't for the secondary Filters panel, which
+// just needs to contain everything.  Every key still must exist in both
+// ALL_FILTER_SOURCES and SOURCE_META so it also works from that panel.
 const SOURCE_TABS = [
-  { key: 'all',        label: 'All',         icon: '⚡' },
-  { key: 'reddit',     label: 'Reddit',      icon: '🟠' },
-  { key: 'github',     label: 'GitHub',      icon: '🐙' },
-  { key: 'youtube',    label: 'YouTube',     icon: '▶️' },
-  { key: 'hackernews', label: 'News',        icon: '🗞' },
-  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
-  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
-  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
-  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
-];
+  { key: 'all' },
+  { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
+  { key: 'linkedin' }, { key: 'twitter' }, { key: 'instagram' }, { key: 'facebook' },
+  { key: 'mastodon' }, { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
+  { key: 'gitlab' }, { key: 'medium' }, { key: 'hashnode' }, { key: 'lobsters' },
+  { key: 'arxiv' }, { key: 'producthunt' }, { key: 'indiehackers' }, { key: 'yc' },
+  { key: 'crunchbase' }, { key: 'techcrunch' }, { key: 'theverge' }, { key: 'arstechnica' },
+  { key: 'wired' }, { key: 'theregister' }, { key: 'venturebeat' }, { key: 'infoq' },
+  { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
+  { key: 'designweb' }, { key: 'indeed' }, { key: 'remoteok' }, { key: 'usajobs' },
+].map(({ key }) => key === 'all'
+  ? { key: 'all', label: 'All', icon: '⚡' }
+  : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' });
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
 // this is exactly the content SOURCE_TABS deliberately excludes (native
@@ -157,10 +166,10 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 // (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
 // path above, not this multi-select one.
 const ALL_FILTER_SOURCES = [
-  'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube',
+  'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube', 'hackernews',
   'bluesky', 'tiktok', 'linkedin', 'twitter', 'instagram', 'facebook',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
-  'indeed', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
 ];

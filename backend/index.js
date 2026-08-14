@@ -10434,6 +10434,13 @@ async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+    // Same ?source=/?sources= convention as the main feed — filters the one
+    // shared snapshot per-request rather than building a separate snapshot
+    // per source combination, since it's rebuilt on a short TTL anyway.
+    const sourcesParam = req.query.sources
+      ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+      : [];
+    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
     if (req.query.bust === '1') videoFeedSnapshot = null;
 
     if (!videoFeedSnapshot || (Date.now() - videoFeedSnapshot.computedAt) >= VIDEO_FEED_SNAPSHOT_TTL) {
@@ -10467,7 +10474,10 @@ async function handleVideoFeedRequest(req, res) {
     // a refresh return substantially different videos instead of the same
     // rotation of the same pool every time.
     const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
-    const rotated = rotateForUser(videoFeedSnapshot.posts, req.user.id, refreshSeed);
+    const sourcePool = sourceFilter
+      ? videoFeedSnapshot.posts.filter(p => Array.isArray(sourceFilter) ? sourceFilter.includes(p.source) : p.source === sourceFilter)
+      : videoFeedSnapshot.posts;
+    const rotated = rotateForUser(sourcePool, req.user.id, refreshSeed);
     // Excludes videos this user has already been shown — see filterUnseen.
     // Falls back to allowing repeats only once literally everything in the
     // pool has been seen, same "never truly dead-end" reasoning as the
@@ -10480,7 +10490,12 @@ async function handleVideoFeedRequest(req, res) {
     res.json({
       posts: pageSlice,
       page: reqPage,
-      hasMore: videoFeedSnapshot.posts.length > 0,
+      // Was videoFeedSnapshot.posts.length > 0 — always true regardless of
+      // filter, since it checked the *unfiltered* shared pool. A source
+      // filter with genuinely nothing in it (sourcePool.length === 0) kept
+      // claiming hasMore, so infinite scroll would just keep requesting
+      // empty pages forever instead of correctly stopping.
+      hasMore: sourcePool.length > 0,
       snapshotAt: videoFeedSnapshot.computedAt,
     });
   } catch (e) {
