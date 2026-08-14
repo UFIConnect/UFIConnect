@@ -10063,7 +10063,22 @@ async function handleFeedRequest(req, res) {
       // See the single-source branch just above for why this is widened
       // from feedLimit*3+1.
       const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-      const sourcePool = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourcesParam, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+      // One query PER source, not source=ANY([...]) in a single combined
+      // query — a single ORDER BY <rank> LIMIT N across every selected
+      // source lets whichever source happens to rank/sort higher fill the
+      // entire window before diversifyBySource ever gets a chance to run,
+      // so a lower-ranked selected source could get shut out completely
+      // (live-tested a 3-source selection where one source came back with
+      // zero posts and another took >80% despite the maxSharePct cap
+      // below — diversifyBySource can only interleave what's actually in
+      // the pool, not conjure up rows the SQL query never returned).
+      // Independent per-source queries guarantee every selected source
+      // gets its own fair shot at the row limit regardless of how its rank
+      // compares to the others.
+      const perSourceLimit = Math.max(feedLimit * 3, 300) + 1;
+      const sourcePool = (await Promise.all(sourcesParam.map(src =>
+        getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange: dbTimeRange }).catch(() => [])
+      ))).flat();
       const pool = sortFeedBatch(realFeedPosts([
         ...sourcesParam.flatMap(src => {
           const agentKey = feedWorkerKey(src);
@@ -10262,16 +10277,20 @@ async function handleFeedRequest(req, res) {
       allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts);
     }
     if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
-    // Widened floor of 300 (not just feedLimit*3, ~60) — see the
-    // rotateForUser/sliceCircular pool built below: a small window here
-    // meant real multi-source supply got truncated and started
-    // reshuffle-repeating within a few pages instead of scrolling through
-    // everything genuinely available first.
+    // One query PER source (not source=ANY([...]) in a single combined
+    // query) — see the page>1 multi-source branch's comment for why: a
+    // single ORDER BY <rank> LIMIT N across every selected source lets
+    // whichever source ranks/sorts higher fill the whole window before
+    // diversifyBySource ever runs, silently shutting out a lower-ranked
+    // selected source entirely. Also widened per-source floor of 300 (not
+    // just feedLimit*3, ~60) — this pool feeds the rotateForUser/
+    // sliceCircular wraparound below, so a small window meant real supply
+    // got truncated and started reshuffle-repeating within a few pages.
+    const perSourceLimit = Math.max(feedLimit * 3, 300) + 1;
     const dbRows = sourcesParam.length > 0
-      ? await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourcesParam, {
-          sort: sortMode,
-          timeRange,
-        })
+      ? (await Promise.all(sourcesParam.map(src =>
+          getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => [])
+        ))).flat()
       : [];
     const dbPosts = dbRows.map(p => mapExternalPost(p, p.source));
     allSourcePosts.push(...dbPosts);
