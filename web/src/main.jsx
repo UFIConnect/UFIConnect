@@ -40,7 +40,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <OptionalAuth0Provider>
         <BrowserRouter basename={import.meta.env.BASE_URL}>
           <AuthProvider>
-            <App />
+            <ToastProvider>
+              <App />
+            </ToastProvider>
           </AuthProvider>
         </BrowserRouter>
       </OptionalAuth0Provider>
