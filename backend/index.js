@@ -9935,7 +9935,24 @@ async function handleFeedRequest(req, res) {
         // refresh, so this user keeps seeing the same rotation for the rest
         // of that sitting, and only jumps to a different one on their next
         // explicit refresh (see rotateForUser).
-        const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
+        //
+        // Deliberately NOT run through filterUnseen here (unlike page 1's
+        // copy of this same pool, further down) — filterUnseen strips
+        // already-shown posts from the pool, and markPostsSeen (below)
+        // permanently adds each page's posts to that same seen-set before
+        // the next page's request arrives. Combined with `lo` advancing by
+        // a full page every request, that was two mechanisms independently
+        // "advancing" past the same content: page 2 first lost its own
+        // first `feedLimit` posts to filterUnseen (page 1's posts, now
+        // seen), THEN lo=feedLimit skipped a further page's worth on top —
+        // this compounds every page (page 3 lost ~2 pages,
+        // page 4 ~3, ...), exhausting the pool many pages before real
+        // supply justified it, which read as infinite scroll "hitting an
+        // end" (or visibly repeating) far too soon. sliceCircular's lo
+        // offset already guarantees no repeats within a lap on its own —
+        // filterUnseen was pure double-counting here, not an extra
+        // safeguard.
+        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -10003,47 +10020,59 @@ async function handleFeedRequest(req, res) {
     let pageRows     = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
 
     if (sourceFilter) {
-      const agentKey = sourceFilter ? feedWorkerKey(sourceFilter) : null;
-      const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts([
+      // Rebuilt as a fixed, page-independent top-N pool (offset always 0)
+      // instead of DB-offset pagination merged with a filterUnseen'd memory
+      // window — that combination double-skipped content on every page
+      // (memoryRows already had prior pages' posts stripped out by
+      // filterUnseen, then got ANOTHER offset-based slice on top of that
+      // already-shrunk array), exhausting a single source's real supply
+      // far faster than it should have and hard-stopping scroll. Same
+      // rotate+circular-reslice treatment as the "All" tab and video feed
+      // now handles the per-page windowing instead (see
+      // rotateForUser/sliceCircular) — a real, finite per-source pool
+      // scrolls forever, reshuffled once fully lapped, rather than
+      // dead-ending.
+      const agentKey = feedWorkerKey(sourceFilter);
+      const sourcePool = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+      const pool = sortFeedBatch(realFeedPosts([
         ...(agentSourceCache.get(agentKey)?.posts || []),
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
-      ]), 'feed-page-source-memory', {
-        limit: offset + feedLimit + 1,
-        sort: sortMode,
-        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      }), seenIds);
-      const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
-      hasMore = hasMore || memoryRows.length > offset + feedLimit;
-      pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-source-merge', {
-        limit: feedLimit,
+        ...sourcePool,
+      ]), 'feed-page-source-pool', {
+        limit: feedLimit * 3,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
+      const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+      pageRows = sliceCircular(rotated, offset, feedLimit);
+      hasMore = rotated.length > 0;
     } else if (sourcesParam.length > 1) {
       // Same proportional cap as the page-1 multi-source handler — see its
       // comment. Kept in sync so scrolling to page 2+ of the same
       // multi-source selection doesn't regress to plain streak-limiting.
+      // Rebuilt the same way as the single-source branch just above — see
+      // its comment for why the old DB-offset + filterUnseen'd memory merge
+      // double-skipped content every page.
       const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-      const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
-        const agentKey = feedWorkerKey(src);
-        return [
-          ...(agentSourceCache.get(agentKey)?.posts || []),
-          ...globalFeedCache.posts.filter(p => p.source === src),
-        ];
-      })), 'feed-page-multi-memory', {
-        limit: offset + feedLimit + 1,
-        sort: sortMode,
-        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-        maxSharePct: multiSourceMaxShare,
-      }), seenIds);
-      const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
-      hasMore = hasMore || memoryRows.length > offset + feedLimit;
-      pageRows = sortFeedBatch([...pageRows, ...memoryPage], 'feed-page-merge', {
-        limit: feedLimit,
+      const sourcePool = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourcesParam, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+      const pool = sortFeedBatch(realFeedPosts([
+        ...sourcesParam.flatMap(src => {
+          const agentKey = feedWorkerKey(src);
+          return [
+            ...(agentSourceCache.get(agentKey)?.posts || []),
+            ...globalFeedCache.posts.filter(p => p.source === src),
+          ];
+        }),
+        ...sourcePool,
+      ]), 'feed-page-multi-pool', {
+        limit: feedLimit * 3,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
         maxSharePct: multiSourceMaxShare,
       });
+      const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+      pageRows = sliceCircular(rotated, offset, feedLimit);
+      hasMore = rotated.length > 0;
     } else if (!dbRows.length) {
       pageRows = filterUnseen(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
         limit: offset + feedLimit + 1,
@@ -10187,20 +10216,24 @@ async function handleFeedRequest(req, res) {
     const dbPosts = dbRows.map(p => mapExternalPost(p, sourceFilter));
     if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
-    const result = filterUnseen(sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
-      limit: Math.max(feedLimit + 1, 500),
+    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice —
+    // see the multi-source/source-tab branches below for why (thin supply
+    // was hard-stopping scroll instead of ever wrapping).
+    const pool = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
+      limit: Math.max(feedLimit * 3, 500),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    }), seenIds);
-    const connectedPageRows = result.slice(0, feedLimit);
+    });
+    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    const connectedPageRows = sliceCircular(rotated, 0, feedLimit);
     markPostsSeen(req.user.id, connectedPageRows);
     return res.json({
       posts: connectedPageRows,
       source: sourceFilter,
       connected: true,
       sort: sortMode,
-      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
-      totalAvailable: result.length,
+      hasMore: rotated.length > 0,
+      totalAvailable: rotated.length,
     });
   }
 
@@ -10239,20 +10272,29 @@ async function handleFeedRequest(req, res) {
     // sources in the full aggregate feed and would badly under-fill a
     // narrow 2-3 source selection.
     const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-    const result = filterUnseen(sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
-      limit: Math.max(feedLimit + 1, sortAgentLimit()),
+    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice — a
+    // handful of explicitly-selected sources can have thin real supply, and
+    // the old approach hard-stopped scroll once this bounded candidate pool
+    // ran dry instead of ever wrapping (see rotateForUser/sliceCircular,
+    // same treatment as the "All" tab and video feed already get). Also
+    // sidesteps the page-2+ double-skip bug this same filterUnseen pattern
+    // had (see the page>1 branch's comment) by never mixing seen-filtering
+    // with page-offset math in the first place.
+    const pool = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
+      limit: Math.max(feedLimit * 3, sortAgentLimit()),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       maxSharePct: multiSourceMaxShare,
-    }), seenIds);
-    const multiSourcePageRows = result.slice(0, feedLimit);
+    });
+    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit);
     markPostsSeen(req.user.id, multiSourcePageRows);
     return res.json({
       posts: multiSourcePageRows,
       sources: sourcesParam,
       sort: sortMode,
-      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
-      totalAvailable: result.length,
+      hasMore: rotated.length > 0,
+      totalAvailable: rotated.length,
       refresh: {
         live: shouldFetchLive,
         liveCount: liveSourcePostsForCache.length,
@@ -10285,20 +10327,24 @@ async function handleFeedRequest(req, res) {
     const dbPosts     = dbRows.map(p => mapExternalPost(p, sourceFilter));
     if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
 
-    const result = filterUnseen(sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
-      limit: Math.max(feedLimit + 1, sortAgentLimit()),
+    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice —
+    // see the multi-source branch just above for why (thin single-source
+    // supply was hard-stopping scroll instead of ever wrapping).
+    const pool = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
+      limit: Math.max(feedLimit * 3, sortAgentLimit()),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    }), seenIds);
-    const sourceTabPageRows = result.slice(0, feedLimit);
+    });
+    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit);
     markPostsSeen(req.user.id, sourceTabPageRows);
 
     return res.json({
       posts: sourceTabPageRows,
       source: sourceFilter,
       sort: sortMode,
-      hasMore: result.length > feedLimit || dbRows.length > feedLimit,
-      totalAvailable: result.length,
+      hasMore: rotated.length > 0,
+      totalAvailable: rotated.length,
       refresh: {
         live: shouldFetchLive,
         liveCount: liveRaw.length,
@@ -10627,12 +10673,20 @@ async function handleVideoFeedRequest(req, res) {
       sourcePool = diversifyBySource(sourcePool, sourcePool.length, 2, maxSharePct);
     }
     const rotated = rotateForUser(sourcePool, req.user.id, refreshSeed);
-    // Excludes videos this user has already been shown — see filterUnseen.
-    // Falls back to allowing repeats only once literally everything in the
-    // pool has been seen, same "never truly dead-end" reasoning as the
-    // circular wraparound below.
-    const seenIds = await getUserSeenSet(req.user.id);
-    const personalized = filterUnseen(personalizeOrder(rotated, userTopics), seenIds);
+    // Deliberately NOT run through filterUnseen here — it strips
+    // already-shown videos from the pool, and markPostsSeen (below)
+    // permanently adds each page's videos to that same seen-set before the
+    // next page's request arrives. Combined with `lo` advancing by a full
+    // page every request, that was two mechanisms independently advancing
+    // past the same content: page 2 first lost its own first `feedLimit`
+    // videos to filterUnseen (page 1's videos, now seen), THEN lo=feedLimit
+    // skipped a further page's worth on top — this compounds
+    // every page (page 3 lost ~2 pages, page 4 ~3, ...), so a real,
+    // moderately-sized pool ran out and started repeating many pages before
+    // it should have. sliceCircular's lo offset already guarantees no
+    // repeats within a lap on its own — filterUnseen was pure
+    // double-counting here, not an extra safeguard.
+    const personalized = personalizeOrder(rotated, userTopics);
     const lo = (reqPage - 1) * feedLimit;
     const pageSlice = sliceCircular(personalized, lo, feedLimit);
     markPostsSeen(req.user.id, pageSlice);
