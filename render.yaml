@@ -13,7 +13,6 @@ services:
     buildCommand: npm install
     startCommand: node --max-old-space-size=768 index.js
     plan: starter
-    restartPolicyInterval: 5
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
