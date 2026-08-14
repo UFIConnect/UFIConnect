@@ -7701,7 +7701,7 @@ function fullProfile(user) {
     avatarUrl: user.avatarUrl || '',
     authProvider: user.authProvider || 'local',
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
-    profileHidden: false,
+    profileHidden: !!user.profileHidden,
     preferences: user.preferences,
     links: user.links || {},
     roleSettings: user.roleSettings || {},
@@ -7953,6 +7953,28 @@ async function migrateDB() {
         following_id TEXT NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         PRIMARY KEY (follower_id, following_id)
+      )
+    `);
+
+    // Mutual connection requests (LinkedIn-style — distinct from the
+    // one-way follows above). Previously in-memory only: every pending/
+    // accepted request was wiped on each restart or deploy, and there was
+    // no UI path that could even create one in the first place — the
+    // POST /users/:id/connect endpoint only ever got called from
+    // Notifications' accept flow, never to send a fresh request. "Either
+    // direction is the same relationship" (A→B and B→A can't coexist) is
+    // enforced at the application layer, same as it already was in
+    // memory — this table's own uniqueness is just the literal
+    // (from,to) pair, a safety net against a double-submit, not the full
+    // bidirectional rule.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS connections (
+        id TEXT PRIMARY KEY,
+        from_id TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (from_id, to_id)
       )
     `);
 
@@ -9097,7 +9119,7 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization, links, roleSettings } = req.body;
+  const { name, title, bio, skills, organization, links, roleSettings, profileHidden } = req.body;
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
   const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
@@ -9110,7 +9132,13 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
-  user.profileHidden = false;
+  // Was unconditionally reset to false on every save regardless of what the
+  // request sent — meaning even a real "hide my profile" toggle could never
+  // actually stick, since the very next profile edit (or the same request
+  // that set it) would silently clear it right back. Confirmed live: the
+  // column and the enforcement plumbing existed, but there was no way to
+  // durably set it to true at all.
+  if (profileHidden !== undefined) user.profileHidden = !!profileHidden;
   try {
     if (db.isConnected() && isDBId(user.id)) {
       await db.query(
@@ -9216,15 +9244,17 @@ async function purgeUser(uid) {
     users.forEach(u => { u.joinedGroups = (u.joinedGroups || []).filter(id => !ownedGroupIds.includes(id)); });
   }
   if (db.isConnected() && isDBId(uid)) {
-    // NB: social_accounts/connections tables don't exist in the live schema
-    // (migrateDB never creates them — social tokens live on users.social_tokens,
-    // connections/follows besides the `follows` table are in-memory only), so
-    // only touch tables that actually exist. A prior version of this function
-    // deleted from a nonexistent social_accounts table first, which threw and
-    // silently aborted every subsequent statement — including DELETE FROM
-    // users — while still reporting success.
+    // NB: social_accounts doesn't exist in the live schema (migrateDB never
+    // creates it — social tokens live on users.social_tokens instead), so
+    // only touch tables that actually exist. A prior version of this
+    // function deleted from a nonexistent social_accounts table first,
+    // which threw and silently aborted every subsequent statement —
+    // including DELETE FROM users — while still reporting success.
+    // connections now has a real table (see migrateDB) — was skipped here
+    // before too, for the same in-memory-only reason.
     await db.query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1', [uid]);
     await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
+    await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
     await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
     await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
     await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
@@ -12187,7 +12217,12 @@ app.get('/users/search', authenticate, (req, res) => {
   const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
   const myRole      = (myUser?.preferences?.role || '').toLowerCase();
 
-  let results = users.filter(u => u.id && u.email);
+  // profileHidden opts a user out of search/discovery entirely — still
+  // shows up for themselves (browsing your own listing while hidden
+  // shouldn't look broken) and doesn't touch existing relationships
+  // (follows/connections list him fine; this is about not being found by
+  // people who don't already know the id, not erasing the account).
+  let results = users.filter(u => u.id && u.email && (!isProfileHidden(u) || u.id === myId));
 
   if (q) {
     results = results.filter(u =>
@@ -12252,16 +12287,45 @@ app.get('/users/search', authenticate, (req, res) => {
       interests: (u.preferences?.interests || []).slice(0, 6),
       followersCount: followerCount[u.id] || 0,
       isFollowing: myFollowing.has(u.id),
+      connectionStatus: u.id === myId ? 'self' : getConnectionStatus(myId, u.id),
       sharedInterests,
       isSelf: u.id === myId,
     })),
   });
 });
 
+// Two separate settings both meant "don't let strangers find/view me," and
+// neither actually did anything: users.profile_hidden is a real column
+// with backend plumbing but no Settings UI ever exposed it, while
+// Settings' own "Public profile" toggle (roleSettings.privacy_publicProfile,
+// confirmed live in the Settings page) saves correctly but was never read
+// by anything — flipping it off had zero effect on search or the profile
+// page. Either one now counts as hidden rather than picking just one and
+// leaving the other equally dead.
+function isProfileHidden(user) {
+  return !!user.profileHidden || user.roleSettings?.privacy_publicProfile === false;
+}
+
+// A hidden profile is still visible to people who already have a real
+// relationship with it (follow it, are followed by it, or are connected) —
+// "hide from discovery" isn't "block everyone," it's "stop strangers who
+// only have the id from finding this." Shared by the profile and posts
+// routes below so both apply the exact same rule.
+function canViewHiddenProfile(user, viewerId) {
+  if (user.id === viewerId) return true;
+  return follows.some(f =>
+    (f.followerId === viewerId && f.followingId === user.id) ||
+    (f.followerId === user.id && f.followingId === viewerId)
+  ) || getConnectionStatus(viewerId, user.id) === 'connected';
+}
+
 app.get('/users/:id', authenticate, async (req, res) => {
   try {
     const user = await getUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (isProfileHidden(user) && !canViewHiddenProfile(user, req.user.id)) {
+      return res.status(403).json({ hidden: true, message: 'This profile is private.' });
+    }
     const followersCount = follows.filter(f => f.followingId === user.id).length;
     const followingCount = follows.filter(f => f.followerId === user.id).length;
     const isFollowing    = follows.some(f => f.followerId === req.user.id && f.followingId === user.id);
@@ -12275,6 +12339,7 @@ app.get('/users/:id', authenticate, async (req, res) => {
       experience: user.preferences?.experience || '',
       roleSettings: user.roleSettings || {},
       followersCount, followingCount, isFollowing, followsYouBack,
+      connectionStatus: user.id === req.user.id ? 'self' : getConnectionStatus(req.user.id, user.id),
       links: user.links || {},
     });
   } catch (e) { console.error('GET /users/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
@@ -12284,6 +12349,9 @@ app.get('/users/:id/posts', authenticate, async (req, res) => {
   try {
     const user = await getUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (isProfileHidden(user) && !canViewHiddenProfile(user, req.user.id)) {
+      return res.status(403).json({ hidden: true, message: 'This profile is private.' });
+    }
     const limit = boundedLimit(req.query.limit, 50, 100);
     const userPosts = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit });
     res.json({ posts: userPosts });
@@ -12364,26 +12432,59 @@ app.get('/users/:id/following', authenticate, async (req, res) => {
 });
 
 // ─── Connections ──────────────────────────────────────────────────────────────
-app.post('/users/:id/connect', authenticate, (req, res) => {
-  const fromId = req.user.id;
-  const toId = req.params.id;
-  if (fromId === toId) return res.status(400).json({ message: 'Cannot connect with yourself.' });
+app.post('/users/:id/connect', authenticate, async (req, res) => {
+  try {
+    const fromId = req.user.id;
+    const toId = req.params.id;
+    if (fromId === toId) return res.status(400).json({ message: 'Cannot connect with yourself.' });
+    if (!(await getUser(toId))) return res.status(404).json({ message: 'User not found.' });
 
-  const existing = connections.find(
-    (c) => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId)
-  );
+    const existing = connections.find(
+      (c) => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId)
+    );
 
-  if (!existing) {
-    connections.push({ id: `conn${Date.now()}`, fromId, toId, status: 'pending', createdAt: new Date().toISOString() });
-    return res.json({ connectionStatus: 'pending_sent' });
-  }
+    if (!existing) {
+      const id = `conn${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      connections.push({ id, fromId, toId, status: 'pending', createdAt: new Date().toISOString() });
+      if (db.isConnected()) {
+        await db.query(
+          `INSERT INTO connections (id, from_id, to_id, status) VALUES ($1,$2,$3,'pending') ON CONFLICT (from_id, to_id) DO NOTHING`,
+          [id, fromId, toId]
+        );
+      }
+      return res.json({ connectionStatus: 'pending_sent' });
+    }
 
-  if (existing.status === 'pending' && existing.toId === fromId) {
-    existing.status = 'accepted';
-    return res.json({ connectionStatus: 'connected' });
-  }
+    if (existing.status === 'pending' && existing.toId === fromId) {
+      existing.status = 'accepted';
+      if (db.isConnected()) {
+        await db.query(`UPDATE connections SET status='accepted' WHERE id=$1`, [existing.id]);
+      }
+      return res.json({ connectionStatus: 'connected' });
+    }
 
-  res.json({ connectionStatus: getConnectionStatus(fromId, toId) });
+    res.json({ connectionStatus: getConnectionStatus(fromId, toId) });
+  } catch (e) { console.error('POST /users/:id/connect:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Cancels a request you sent, or declines/removes one you received —
+// same endpoint either way since it's just "this pending or accepted
+// relationship shouldn't exist anymore," symmetric with how connect()
+// treats either direction as the same relationship.
+app.delete('/users/:id/connect', authenticate, async (req, res) => {
+  try {
+    const myId = req.user.id;
+    const otherId = req.params.id;
+    const idx = connections.findIndex(
+      (c) => (c.fromId === myId && c.toId === otherId) || (c.fromId === otherId && c.toId === myId)
+    );
+    if (idx === -1) return res.json({ connectionStatus: 'none' });
+    const [removed] = connections.splice(idx, 1);
+    if (db.isConnected()) {
+      await db.query(`DELETE FROM connections WHERE id=$1`, [removed.id]);
+    }
+    res.json({ connectionStatus: 'none' });
+  } catch (e) { console.error('DELETE /users/:id/connect:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/users/connections', authenticate, (req, res) => {
@@ -13315,6 +13416,16 @@ async function preloadUsersFromDB() {
     const { rows: fRows } = await db.query('SELECT follower_id, following_id FROM follows');
     fRows.forEach(r => follows.push({ followerId: r.follower_id, followingId: r.following_id }));
     console.log(`[startup] Loaded ${fRows.length} follow relationships`);
+  } catch (_) {}
+
+  // Load connections (mutual requests — see the connections table comment
+  // in migrateDB for why this didn't exist until now)
+  try {
+    const { rows: cRows } = await db.query('SELECT id, from_id, to_id, status, created_at FROM connections');
+    cRows.forEach(r => connections.push({
+      id: r.id, fromId: r.from_id, toId: r.to_id, status: r.status, createdAt: r.created_at,
+    }));
+    console.log(`[startup] Loaded ${cRows.length} connections`);
   } catch (_) {}
 }
 

@@ -77,6 +77,7 @@ export default function PublicProfile() {
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [toggling, setToggling] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [modal,    setModal]    = useState(null);
   const [posts,    setPosts]    = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -85,7 +86,10 @@ export default function PublicProfile() {
     setLoading(true);
     client.get(`/users/${id}`)
       .then(({ data }) => { setUser(data); setError(''); })
-      .catch(() => setError('User not found.'))
+      // A hidden profile 403s with { hidden: true } — distinguished from a
+      // genuine 404 so the empty state below can say the accurate thing
+      // ("this profile is private") instead of the misleading "not found."
+      .catch((err) => setError(err?.response?.data?.hidden ? 'hidden' : 'notfound'))
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -116,6 +120,24 @@ export default function PublicProfile() {
     finally { setToggling(false); }
   }
 
+  // connectionStatus: 'none' | 'pending_sent' | 'pending_received' | 'connected'.
+  // Same POST endpoint sends a fresh request *or* accepts one already
+  // pointed at you (see POST /users/:id/connect server-side) — which one
+  // happens is implicit in the current status, not something this button
+  // needs to know about itself.
+  async function toggleConnect() {
+    if (!user) return;
+    setConnecting(true);
+    try {
+      const isActive = user.connectionStatus === 'pending_sent' || user.connectionStatus === 'connected';
+      const { data } = isActive
+        ? await client.delete(`/users/${user.id}/connect`)
+        : await client.post(`/users/${user.id}/connect`);
+      setUser(u => ({ ...u, connectionStatus: data.connectionStatus }));
+    } catch {}
+    finally { setConnecting(false); }
+  }
+
   if (loading) return (
     <Layout>
       <div className="empty-state"><span className="spinner spinner-primary" /></div>
@@ -125,8 +147,15 @@ export default function PublicProfile() {
   if (error || !user) return (
     <Layout>
       <div className="card" style={{ textAlign: 'center', padding: '40px 24px' }}>
-        <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>👤</div>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>User not found</div>
+        <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>{error === 'hidden' ? '🔒' : '👤'}</div>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>
+          {error === 'hidden' ? 'This profile is private' : 'User not found'}
+        </div>
+        {error === 'hidden' && (
+          <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: '0 0 12px' }}>
+            This member has limited who can see their profile.
+          </p>
+        )}
         <button className="btn-back" onClick={() => navigate('/search')}><span className="btn-back-icon">‹</span> Back to Search</button>
       </div>
     </Layout>
@@ -211,6 +240,19 @@ export default function PublicProfile() {
               style={{ minWidth: 110 }}
             >
               {toggling ? <span className="spinner" /> : user.isFollowing ? '✓ Following' : '+ Follow'}
+            </button>
+            <button
+              className={(user.connectionStatus === 'none' || user.connectionStatus === 'pending_received') ? 'btn btn-primary' : 'btn btn-ghost'}
+              onClick={toggleConnect}
+              disabled={connecting}
+              style={{ minWidth: 110 }}
+            >
+              {connecting ? <span className="spinner" /> : {
+                none: '🤝 Connect',
+                pending_sent: 'Pending ✕',
+                pending_received: 'Accept request',
+                connected: '✓ Connected',
+              }[user.connectionStatus || 'none']}
             </button>
             <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
               💬 Message
