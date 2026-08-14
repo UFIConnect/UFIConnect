@@ -4742,6 +4742,61 @@ function mainFeedSnapshotKey(sortMode, timeRange) {
   return `${sortMode}::${timeRange || 'all'}`;
 }
 
+// Same snapshot-caching rationale as mainFeedSnapshots above, applied to the
+// Feed tab's single-source and multi-source filtered views — those used to
+// rebuild their candidate pool from a live DB query on every single request.
+// 'ranked' mode's score bakes in NOW() (see dbFeedOrder), and the underlying
+// table keeps growing as background workers insert new rows, so two page
+// requests even a few seconds apart could legitimately come back with
+// different relative ordering. Combined with rotateForUser/sliceCircular's
+// *positional* pagination (each page reads a fixed offset into "the pool"),
+// that reordering meant page N's offset landed on a different actual post
+// than it did moments earlier — live-tested scrolling 15 pages deep into a
+// single-source tab and got a 68% duplicate rate even though the pool held
+// 300+ genuinely distinct posts. Freezing the pool for a TTL window (same
+// 5-minute cadence as the main feed) makes every page within that window
+// slice the identical, stable array.
+const FILTERED_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
+const FILTERED_FEED_SNAPSHOT_MAX_KEYS = 200; // bounds memory — arbitrary multi-source combos could otherwise grow unbounded
+const filteredFeedSnapshots = new Map();
+function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
+  const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean).slice().sort();
+  return `${list.join(',')}::${sortMode}::${timeRange || 'all'}`;
+}
+// Per-source queries run in parallel (not one source=ANY([...]) query) —
+// see the "Fix multi-source Feed filter shutting out lower-ranked sources"
+// commit: a single combined ORDER BY <rank> LIMIT query lets whichever
+// selected source ranks higher fill the entire window, silently excluding
+// a lower-ranked selected source before diversifyBySource ever runs.
+async function getFilteredFeedPool(sources, sortMode, timeRange) {
+  const key = filteredFeedSnapshotKey(sources, sortMode, timeRange);
+  const cached = filteredFeedSnapshots.get(key);
+  if (cached && (Date.now() - cached.computedAt) < FILTERED_FEED_SNAPSHOT_TTL) return cached.pool;
+
+  const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean);
+  const perSourceLimit = 301;
+  const dbRowsBySource = await Promise.all(list.map(src =>
+    getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => [])
+  ));
+  const memRows = list.flatMap(src => {
+    const agentKey = feedWorkerKey(src);
+    return [
+      ...(agentSourceCache.get(agentKey)?.posts || []),
+      ...globalFeedCache.posts.filter(p => p.source === src),
+    ];
+  });
+  const maxSharePct = list.length > 1 ? Math.min(0.65, (1 / list.length) + 0.15) : null;
+  const pool = sortFeedBatch(realFeedPosts([...memRows, ...dbRowsBySource.flat()]).map(normalizeFeedPost), `filtered-pool-${key}`, {
+    limit: Math.max(1000, sortAgentLimit()),
+    sort: sortMode,
+    diversify: true,
+    maxSharePct,
+  });
+  filteredFeedSnapshots.set(key, { computedAt: Date.now(), pool });
+  trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
+  return pool;
+}
+
 // Every user reading the same cached pool in the same order was the actual
 // complaint behind "users shouldn't all see the same feed" — the shared
 // snapshot is what makes the sort stable and cheap, but it was being served
@@ -10019,81 +10074,19 @@ async function handleFeedRequest(req, res) {
     let hasMore      = dbRows.length > feedLimit;
     let pageRows     = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
 
-    if (sourceFilter) {
-      // Rebuilt as a fixed, page-independent top-N pool (offset always 0)
-      // instead of DB-offset pagination merged with a filterUnseen'd memory
-      // window — that combination double-skipped content on every page
-      // (memoryRows already had prior pages' posts stripped out by
-      // filterUnseen, then got ANOTHER offset-based slice on top of that
-      // already-shrunk array), exhausting a single source's real supply
-      // far faster than it should have and hard-stopping scroll. Same
-      // rotate+circular-reslice treatment as the "All" tab and video feed
-      // now handles the per-page windowing instead (see
-      // rotateForUser/sliceCircular) — a real, finite per-source pool
-      // scrolls forever, reshuffled once fully lapped, rather than
-      // dead-ending.
-      // Widened from the old feedLimit*3+1 (~60 rows) — that was sized for
-      // "one page plus headroom for filterUnseen," but here it's the WHOLE
-      // candidate pool sliceCircular laps through, so a small window meant
-      // real, plentiful single-source supply (often several hundred rows
-      // in feed_posts_cache) got artificially truncated and started
-      // reshuffle-repeating after only ~3 pages even though far more
-      // distinct content genuinely existed.
-      const agentKey = feedWorkerKey(sourceFilter);
-      const sourcePool = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourceFilter, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
-      const pool = sortFeedBatch(realFeedPosts([
-        ...(agentSourceCache.get(agentKey)?.posts || []),
-        ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
-        ...sourcePool,
-      ]), 'feed-page-source-pool', {
-        limit: Math.max(feedLimit * 3, sortAgentLimit()),
-        sort: sortMode,
-        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      });
-      const rotated = rotateForUser(pool, req.user.id, refreshSeed);
-      pageRows = sliceCircular(rotated, offset, feedLimit);
-      hasMore = rotated.length > 0;
-    } else if (sourcesParam.length > 1) {
-      // Same proportional cap as the page-1 multi-source handler — see its
-      // comment. Kept in sync so scrolling to page 2+ of the same
-      // multi-source selection doesn't regress to plain streak-limiting.
-      // Rebuilt the same way as the single-source branch just above — see
-      // its comment for why the old DB-offset + filterUnseen'd memory merge
-      // double-skipped content every page.
-      // See the single-source branch just above for why this is widened
-      // from feedLimit*3+1.
-      const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-      // One query PER source, not source=ANY([...]) in a single combined
-      // query — a single ORDER BY <rank> LIMIT N across every selected
-      // source lets whichever source happens to rank/sort higher fill the
-      // entire window before diversifyBySource ever gets a chance to run,
-      // so a lower-ranked selected source could get shut out completely
-      // (live-tested a 3-source selection where one source came back with
-      // zero posts and another took >80% despite the maxSharePct cap
-      // below — diversifyBySource can only interleave what's actually in
-      // the pool, not conjure up rows the SQL query never returned).
-      // Independent per-source queries guarantee every selected source
-      // gets its own fair shot at the row limit regardless of how its rank
-      // compares to the others.
-      const perSourceLimit = Math.max(feedLimit * 3, 300) + 1;
-      const sourcePool = (await Promise.all(sourcesParam.map(src =>
-        getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange: dbTimeRange }).catch(() => [])
-      ))).flat();
-      const pool = sortFeedBatch(realFeedPosts([
-        ...sourcesParam.flatMap(src => {
-          const agentKey = feedWorkerKey(src);
-          return [
-            ...(agentSourceCache.get(agentKey)?.posts || []),
-            ...globalFeedCache.posts.filter(p => p.source === src),
-          ];
-        }),
-        ...sourcePool,
-      ]), 'feed-page-multi-pool', {
-        limit: Math.max(feedLimit * 3, sortAgentLimit()),
-        sort: sortMode,
-        diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-        maxSharePct: multiSourceMaxShare,
-      });
+    if (sourceFilter || sourcesParam.length > 1) {
+      // Reads the same frozen, TTL'd pool page 1's copy of this branch
+      // builds (see getFilteredFeedPool) instead of rebuilding one live on
+      // every request — rotateForUser/sliceCircular's positional windowing
+      // only stays non-repeating/non-skipping if the pool it's indexing
+      // into is stable across a scroll session; a live-rebuilt pool
+      // reordered under it (see getFilteredFeedPool's comment) and produced
+      // a 68% duplicate rate over 15 pages in testing. Deliberately
+      // `timeRange` here, not the tightened `dbTimeRange` used elsewhere in
+      // this branch — page 1's copy of this same call (below) keys its
+      // cache entry on the plain `timeRange`, and a mismatched key would
+      // silently split page 1 and page 2+ onto two different pools again.
+      const pool = await getFilteredFeedPool(pageSources, sortMode, timeRange);
       const rotated = rotateForUser(pool, req.user.id, refreshSeed);
       pageRows = sliceCircular(rotated, offset, feedLimit);
       hasMore = rotated.length > 0;
@@ -10265,61 +10258,17 @@ async function handleFeedRequest(req, res) {
 
   // ── Multi-source: merge posts from each requested source ────────────────────
   if (sourcesParam.length > 1) {
-    const allSourcePosts = [];
-    const liveSourcePostsForCache = [];
-    for (const src of sourcesParam) {
-      const agentKey = feedWorkerKey(src);
-      const liveRaw = shouldFetchLive ? realFeedPosts(liveResult[agentKey] || []) : [];
-      const livePosts = liveRaw.map(p => mapExternalPost(p, src));
-      const workerPosts  = realFeedPosts(agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, src));
-      const globalPosts  = realFeedPosts(globalFeedCache.posts.filter(p => p.source === src)).map(p => mapExternalPost(p, src));
-      liveSourcePostsForCache.push(...liveRaw);
-      allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts);
-    }
-    if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
-    // One query PER source (not source=ANY([...]) in a single combined
-    // query) — see the page>1 multi-source branch's comment for why: a
-    // single ORDER BY <rank> LIMIT N across every selected source lets
-    // whichever source ranks/sorts higher fill the whole window before
-    // diversifyBySource ever runs, silently shutting out a lower-ranked
-    // selected source entirely. Also widened per-source floor of 300 (not
-    // just feedLimit*3, ~60) — this pool feeds the rotateForUser/
-    // sliceCircular wraparound below, so a small window meant real supply
-    // got truncated and started reshuffle-repeating within a few pages.
-    const perSourceLimit = Math.max(feedLimit * 3, 300) + 1;
-    const dbRows = sourcesParam.length > 0
-      ? (await Promise.all(sourcesParam.map(src =>
-          getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => [])
-        ))).flat()
-      : [];
-    const dbPosts = dbRows.map(p => mapExternalPost(p, p.source));
-    allSourcePosts.push(...dbPosts);
-    // A handful of explicitly-selected sources (e.g. the Jobs filter's
-    // indeed+remoteok+usajobs) can have very different real supply — plain
-    // anti-clustering only stops long runs, not overall skew, so a
-    // consistently higher-yield source still ends up dominating the page
-    // even with no run longer than 2 (confirmed live: 42/18 RemoteOK/Indeed
-    // on a 2-source request). Scales with source count rather than reusing
-    // enforceFeedDiversity's fixed ≤18% — that's sized for dozens of
-    // sources in the full aggregate feed and would badly under-fill a
-    // narrow 2-3 source selection.
-    const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice — a
-    // handful of explicitly-selected sources can have thin real supply, and
-    // the old approach hard-stopped scroll once this bounded candidate pool
-    // ran dry instead of ever wrapping (see rotateForUser/sliceCircular,
-    // same treatment as the "All" tab and video feed already get). Also
-    // sidesteps the page-2+ double-skip bug this same filterUnseen pattern
-    // had (see the page>1 branch's comment) by never mixing seen-filtering
-    // with page-offset math in the first place.
-    const pool = sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
-      limit: Math.max(feedLimit * 3, sortAgentLimit()),
-      sort: sortMode,
-      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      maxSharePct: multiSourceMaxShare,
-    });
+    // Reads the same frozen, TTL'd pool the page>1 branch shares — see
+    // getFilteredFeedPool's comment for why a source-filtered pool needs to
+    // be snapshotted (not rebuilt live every request) for rotateForUser/
+    // sliceCircular's positional pagination to actually stay non-repeating,
+    // and why it queries each selected source independently instead of one
+    // combined query (a lower-ranked selected source could otherwise get
+    // shut out of the row limit entirely — live-tested a 3-source selection
+    // that came back with one source at zero posts and another over 80%).
+    const pool = await getFilteredFeedPool(sourcesParam, sortMode, timeRange);
     const rotated = rotateForUser(pool, req.user.id, refreshSeed);
-    const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit);
+    const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, p.source));
     markPostsSeen(req.user.id, multiSourcePageRows);
     return res.json({
       posts: multiSourcePageRows,
@@ -10329,46 +10278,20 @@ async function handleFeedRequest(req, res) {
       totalAvailable: rotated.length,
       refresh: {
         live: shouldFetchLive,
-        liveCount: liveSourcePostsForCache.length,
+        liveCount: 0,
         cacheRefreshedAt: globalFeedCache.refreshedAt || null,
       },
     });
   }
 
-  // ── Source-tab: always serve worker cache + live fetch, newest-first ────────
+  // ── Source-tab: reads the shared, TTL'd filtered pool ────────────────────
   if (sourceFilter) {
-    const agentKey  = feedWorkerKey(sourceFilter);
-
-    const workerPosts = realFeedPosts(agentSourceCache.get(agentKey)?.posts || []).map(p => mapExternalPost(p, sourceFilter));
-    const globalSourcePosts = realFeedPosts(globalFeedCache.posts)
-      .filter(p => p.source === sourceFilter)
-      .map(p => mapExternalPost(p, sourceFilter));
-    const liveRaw     = realFeedPosts(liveResult[agentKey] || []);
-    const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
-    // Widened floor of 300 (not just feedLimit*3, ~60) — a single source's
-    // workerPosts/globalSourcePosts caches are thin on their own (capped at
-    // 40/300 posts respectively, further whittled down once filtered to one
-    // source), and this pool now feeds rotateForUser/sliceCircular's
-    // wraparound below, so a small DB window meant real supply got
-    // truncated and started reshuffle-repeating within a few pages instead
-    // of scrolling through everything genuinely available first.
-    const dbRows      = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourceFilter, {
-      sort: sortMode,
-      timeRange,
-    });
-    const dbPosts     = dbRows.map(p => mapExternalPost(p, sourceFilter));
-    if (shouldFetchLive && liveRaw.length) addAndBroadcast(liveRaw);
-
-    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice —
-    // see the multi-source branch just above for why (thin single-source
-    // supply was hard-stopping scroll instead of ever wrapping).
-    const pool = sortFeedBatch([...livePosts, ...workerPosts, ...globalSourcePosts, ...dbPosts], `source-tab-${sourceFilter}`, {
-      limit: Math.max(feedLimit * 3, sortAgentLimit()),
-      sort: sortMode,
-      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
+    // See the multi-source branch just above / getFilteredFeedPool's
+    // comment for why this is a shared, cached pool rather than a
+    // live-rebuilt one.
+    const pool = await getFilteredFeedPool(sourceFilter, sortMode, timeRange);
     const rotated = rotateForUser(pool, req.user.id, refreshSeed);
-    const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit);
+    const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     markPostsSeen(req.user.id, sourceTabPageRows);
 
     return res.json({
@@ -10379,7 +10302,7 @@ async function handleFeedRequest(req, res) {
       totalAvailable: rotated.length,
       refresh: {
         live: shouldFetchLive,
-        liveCount: liveRaw.length,
+        liveCount: 0,
         cacheRefreshedAt: globalFeedCache.refreshedAt || null,
       },
     });
