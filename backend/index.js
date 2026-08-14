@@ -6241,7 +6241,7 @@ function runSortOptimizerCheck() {
 }
 
 // ─── Deploy Agent: ping all three live services and log each response ────────
-function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
+function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const requestUrl = new URL(url);
@@ -6251,13 +6251,13 @@ function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3 } = {}) {
       hostname: requestUrl.hostname,
       port: requestUrl.port || (requestUrl.protocol === 'http:' ? 80 : 443),
       path: requestUrl.pathname + requestUrl.search,
-      headers: { 'User-Agent': 'UFconnect-WebOptimizer/1.0' },
+      headers: { 'User-Agent': 'UFconnect-WebOptimizer/1.0', ...headers },
     }, (res) => {
       const location = res.headers.location;
       if ([301, 302, 307, 308].includes(res.statusCode) && location && redirects > 0) {
         res.resume();
         const nextUrl = new URL(location, url).toString();
-        fetchPublicText(nextUrl, { maxBytes, redirects: redirects - 1 }).then(resolve).catch(reject);
+        fetchPublicText(nextUrl, { maxBytes, redirects: redirects - 1, headers }).then(resolve).catch(reject);
         return;
       }
 
@@ -6489,7 +6489,12 @@ async function runWebApiSubAgent() {
     const health = await fetchPublicText(new URL('/health', WEB_OPTIMIZER_API_URL).toString(), { maxBytes: 100_000 });
     let parsed = null;
     try { parsed = JSON.parse(health.body || '{}'); } catch {}
-    const agents = await fetchPublicText(new URL('/office/agents', WEB_OPTIMIZER_API_URL).toString(), { maxBytes: 500_000 }).catch(() => null);
+    // /office/agents is behind requireOfficeToken once OFFICE_TOKEN is set —
+    // this is a same-process self-check, not a real external client, so it
+    // sends the token itself the same way office.uficonnect.org's browser
+    // would, rather than reading this as a real degradation every time.
+    const officeAuthHeaders = process.env.OFFICE_TOKEN ? { 'x-office-token': process.env.OFFICE_TOKEN } : {};
+    const agents = await fetchPublicText(new URL('/office/agents', WEB_OPTIMIZER_API_URL).toString(), { maxBytes: 500_000, headers: officeAuthHeaders }).catch(() => null);
     let agentCount = 0;
     let hasOptimizerAgents = false;
     try {
