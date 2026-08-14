@@ -10032,14 +10032,21 @@ async function handleFeedRequest(req, res) {
       // rotateForUser/sliceCircular) — a real, finite per-source pool
       // scrolls forever, reshuffled once fully lapped, rather than
       // dead-ending.
+      // Widened from the old feedLimit*3+1 (~60 rows) — that was sized for
+      // "one page plus headroom for filterUnseen," but here it's the WHOLE
+      // candidate pool sliceCircular laps through, so a small window meant
+      // real, plentiful single-source supply (often several hundred rows
+      // in feed_posts_cache) got artificially truncated and started
+      // reshuffle-repeating after only ~3 pages even though far more
+      // distinct content genuinely existed.
       const agentKey = feedWorkerKey(sourceFilter);
-      const sourcePool = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+      const sourcePool = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourceFilter, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
       const pool = sortFeedBatch(realFeedPosts([
         ...(agentSourceCache.get(agentKey)?.posts || []),
         ...globalFeedCache.posts.filter(p => p.source === sourceFilter),
         ...sourcePool,
       ]), 'feed-page-source-pool', {
-        limit: feedLimit * 3,
+        limit: Math.max(feedLimit * 3, sortAgentLimit()),
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
@@ -10053,8 +10060,10 @@ async function handleFeedRequest(req, res) {
       // Rebuilt the same way as the single-source branch just above — see
       // its comment for why the old DB-offset + filterUnseen'd memory merge
       // double-skipped content every page.
+      // See the single-source branch just above for why this is widened
+      // from feedLimit*3+1.
       const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
-      const sourcePool = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourcesParam, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
+      const sourcePool = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourcesParam, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []);
       const pool = sortFeedBatch(realFeedPosts([
         ...sourcesParam.flatMap(src => {
           const agentKey = feedWorkerKey(src);
@@ -10065,7 +10074,7 @@ async function handleFeedRequest(req, res) {
         }),
         ...sourcePool,
       ]), 'feed-page-multi-pool', {
-        limit: feedLimit * 3,
+        limit: Math.max(feedLimit * 3, sortAgentLimit()),
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
         maxSharePct: multiSourceMaxShare,
@@ -10206,10 +10215,12 @@ async function handleFeedRequest(req, res) {
       new Promise(resolve => setTimeout(() => resolve([]), 4500)),
     ]);
     const livePosts = realFeedPosts((settled || []).flatMap(r => r.status === 'fulfilled' ? r.value : []));
-    // *3 — same headroom-for-filterUnseen reasoning as the source-tab branch
-    // below: a window sized to exactly one page leaves almost nothing once
-    // already-seen posts are excluded.
-    const dbRows = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, {
+    // Widened floor of 300 (not just feedLimit*3, ~60) — this pool now
+    // feeds rotateForUser/sliceCircular's wraparound below, so a small
+    // window meant real supply got truncated and started
+    // reshuffle-repeating within a few pages instead of scrolling through
+    // everything genuinely available first.
+    const dbRows = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourceFilter, {
       sort: sortMode,
       timeRange,
     });
@@ -10251,11 +10262,13 @@ async function handleFeedRequest(req, res) {
       allSourcePosts.push(...livePosts, ...workerPosts, ...globalPosts);
     }
     if (liveSourcePostsForCache.length) addAndBroadcast(liveSourcePostsForCache);
-    // *3 — same headroom-for-filterUnseen reasoning as the source-tab branch
-    // below; passed live testing at the exact +1 size once, but that's not
-    // a guarantee against thinning out the same way under sustained use.
+    // Widened floor of 300 (not just feedLimit*3, ~60) — see the
+    // rotateForUser/sliceCircular pool built below: a small window here
+    // meant real multi-source supply got truncated and started
+    // reshuffle-repeating within a few pages instead of scrolling through
+    // everything genuinely available first.
     const dbRows = sourcesParam.length > 0
-      ? await getPostsFromDB([], feedLimit * 3 + 1, 0, sourcesParam, {
+      ? await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourcesParam, {
           sort: sortMode,
           timeRange,
         })
@@ -10313,14 +10326,14 @@ async function handleFeedRequest(req, res) {
       .map(p => mapExternalPost(p, sourceFilter));
     const liveRaw     = realFeedPosts(liveResult[agentKey] || []);
     const livePosts   = liveRaw.map(p => mapExternalPost(p, sourceFilter));
-    // *3 (not the bare +1 this used to fetch) — a single source's
+    // Widened floor of 300 (not just feedLimit*3, ~60) — a single source's
     // workerPosts/globalSourcePosts caches are thin on their own (capped at
     // 40/300 posts respectively, further whittled down once filtered to one
-    // source), so a DB window sized to exactly one page left filterUnseen
-    // with almost no headroom: confirmed live that a fresh account
-    // re-fetching a single-source tab got the identical 30/30 posts back,
-    // since the *entire* thin pool got marked seen on the first request.
-    const dbRows      = await getPostsFromDB([], feedLimit * 3 + 1, 0, sourceFilter, {
+    // source), and this pool now feeds rotateForUser/sliceCircular's
+    // wraparound below, so a small DB window meant real supply got
+    // truncated and started reshuffle-repeating within a few pages instead
+    // of scrolling through everything genuinely available first.
+    const dbRows      = await getPostsFromDB([], Math.max(feedLimit * 3, 300) + 1, 0, sourceFilter, {
       sort: sortMode,
       timeRange,
     });
