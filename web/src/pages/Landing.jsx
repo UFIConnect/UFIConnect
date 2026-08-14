@@ -136,18 +136,10 @@ export default function Landing() {
               <span className="landing-logo-text" style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFconnect</span>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <Link to="/login"
-                style={{ padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: 'var(--primary)', border: '1.5px solid var(--primary)', background: 'transparent', textDecoration: 'none' }}
-                onMouseEnter={e => e.target.style.background = 'var(--primary-light)'}
-                onMouseLeave={e => e.target.style.background = 'transparent'}
-              >
+              <Link to="/login" className="btn btn-outline">
                 Sign In
               </Link>
-              <Link to="/register" className="landing-nav-join"
-                style={{ padding: '8px 16px', borderRadius: 'var(--radius-sm)', fontSize: '.875rem', fontWeight: '600', color: '#fff', background: 'var(--primary)', textDecoration: 'none' }}
-                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
-                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
-              >
+              <Link to="/register" className="btn btn-primary landing-nav-join">
                 Get Started
               </Link>
             </div>
@@ -167,18 +159,10 @@ export default function Landing() {
               A personalized feed, communities, messaging, and career opportunities — all tailored to your role and professional interests.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
-              <Link to="/register"
-                style={{ padding: '13px 36px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
-                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
-                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
-              >
+              <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
                 Get Started Free →
               </Link>
-              <a href="#features"
-                style={{ padding: '13px 36px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '600', color: 'var(--primary)', background: 'transparent', border: '1.5px solid var(--primary)', textDecoration: 'none', display: 'inline-block' }}
-                onMouseEnter={e => e.target.style.background = 'var(--primary-light)'}
-                onMouseLeave={e => e.target.style.background = 'transparent'}
-              >
+              <a href="#features" className="btn btn-outline btn-lg" style={{ padding: '13px 36px' }}>
                 Learn More
               </a>
             </div>
@@ -333,11 +317,7 @@ export default function Landing() {
               <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '28px', lineHeight: 1.6 }}>
                 Sign up free. Select your role, customize your preferences, and start connecting with professionals in your field.
               </p>
-              <Link to="/register"
-                style={{ padding: '14px 40px', borderRadius: 'var(--radius-sm)', fontSize: '1rem', fontWeight: '700', color: '#fff', background: 'var(--primary)', textDecoration: 'none', display: 'inline-block' }}
-                onMouseEnter={e => e.target.style.background = 'var(--primary-hover)'}
-                onMouseLeave={e => e.target.style.background = 'var(--primary)'}
-              >
+              <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '14px 40px', fontWeight: 700 }}>
                 Get Started Free →
               </Link>
             </div>

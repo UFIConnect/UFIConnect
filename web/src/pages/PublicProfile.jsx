@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
 import PostList from '../components/PostList';
 import client from '../api/client';
+import { useToast } from '../contexts/ToastContext';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -72,12 +73,14 @@ export default function PublicProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { profile: myProfile } = useAuth();
+  const { showToast } = useToast();
 
   const [user,     setUser]     = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState('');
   const [toggling, setToggling] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [blocking, setBlocking] = useState(false);
   const [modal,    setModal]    = useState(null);
   const [posts,    setPosts]    = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
@@ -116,7 +119,9 @@ export default function PublicProfile() {
         isFollowing: !u.isFollowing,
         followersCount: data.followersCount ?? u.followersCount,
       }));
-    } catch {}
+    } catch {
+      showToast('Something went wrong — please try again.', 'error');
+    }
     finally { setToggling(false); }
   }
 
@@ -134,7 +139,11 @@ export default function PublicProfile() {
         ? await client.delete(`/users/${user.id}/connect`)
         : await client.post(`/users/${user.id}/connect`);
       setUser(u => ({ ...u, connectionStatus: data.connectionStatus }));
-    } catch {}
+      if (data.connectionStatus === 'pending_sent') showToast('Connection request sent', 'success');
+      else if (data.connectionStatus === 'connected') showToast('You are now connected', 'success');
+    } catch {
+      showToast('Something went wrong — please try again.', 'error');
+    }
     finally { setConnecting(false); }
   }
 
@@ -151,8 +160,29 @@ export default function PublicProfile() {
     try {
       const { data } = await client.delete(`/users/${user.id}/connect`);
       setUser(u => ({ ...u, connectionStatus: data.connectionStatus }));
-    } catch {}
+    } catch {
+      showToast('Something went wrong — please try again.', 'error');
+    }
     finally { setConnecting(false); }
+  }
+
+  // Blocking severs the follow/connection on the backend and makes this
+  // profile 403 for both people going forward — navigate away immediately
+  // rather than trying to keep showing a page that's about to become
+  // inaccessible. Unblocking only happens from Settings > Privacy, not from
+  // here, since this page won't be reachable again once blocked.
+  async function handleBlock() {
+    if (!user) return;
+    if (!window.confirm(`Block ${user.name}? They won't be able to follow, message, or connect with you, and neither of you will be able to view each other's profile. You can unblock from Settings > Privacy at any time.`)) return;
+    setBlocking(true);
+    try {
+      await client.post(`/users/${user.id}/block`);
+      showToast(`Blocked ${user.name}`, 'success');
+      navigate('/');
+    } catch {
+      showToast('Failed to block — please try again.', 'error');
+      setBlocking(false);
+    }
   }
 
   if (loading) return (
@@ -189,19 +219,25 @@ export default function PublicProfile() {
         <span className="btn-back-icon">‹</span> Back
       </button>
 
-      {/* Cover — role-colored gradient */}
+      {/* Cover — the user's own photo if they've set one, else a role-colored gradient */}
       <div style={{
         height: 100, borderRadius: '12px 12px 0 0', marginBottom: 0,
-        background: `linear-gradient(135deg, ${meta.color}22 0%, ${meta.color}44 100%)`,
+        ...(user.coverUrl
+          ? { backgroundImage: `url(${user.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' }
+          : { background: `linear-gradient(135deg, ${meta.color}22 0%, ${meta.color}44 100%)` }),
         border: `1px solid ${meta.color}22`,
       }} />
 
       {/* Header card */}
       <div className="profile-header" style={{ borderTop: 'none', borderRadius: '0 0 12px 12px' }}>
         <div className="profile-avatar-wrap" style={{ marginTop: -40 }}>
-          <div className="avatar avatar-xl" style={{ border: `3px solid ${meta.color}`, background: meta.color }}>
-            {initials(user.name)}
-          </div>
+          {user.avatarUrl ? (
+            <img src={user.avatarUrl} alt="" className="avatar-xl" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block', border: `3px solid ${meta.color}` }} />
+          ) : (
+            <div className="avatar avatar-xl" style={{ border: `3px solid ${meta.color}`, background: meta.color }}>
+              {initials(user.name)}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 8 }}>
@@ -294,6 +330,17 @@ export default function PublicProfile() {
             <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
               💬 Message
             </Link>
+            <button
+              onClick={handleBlock}
+              disabled={blocking}
+              title="Block this user"
+              style={{
+                all: 'unset', cursor: blocking ? 'default' : 'pointer', color: 'var(--muted)',
+                fontSize: '.78rem', padding: '9px 10px', opacity: blocking ? 0.6 : 1,
+              }}
+            >
+              {blocking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🚫 Block'}
+            </button>
           </div>
         )}
         {isOwn && (

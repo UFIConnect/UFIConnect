@@ -61,11 +61,7 @@ export default function PrivacyPolicy() {
         </Link>
         <div style={{ display: 'flex', gap: 16, fontSize: '.85rem' }}>
           <Link to="/login"    style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
-          <Link to="/register" style={{
-            color: '#fff', background: 'var(--primary)',
-            padding: '6px 16px', borderRadius: 8,
-            textDecoration: 'none', fontWeight: 700,
-          }}>Join free</Link>
+          <Link to="/register" className="btn btn-primary btn-sm">Join free</Link>
         </div>
       </header>
 

@@ -7430,6 +7430,11 @@ let connections = [];
 // Follows — unidirectional
 let follows = [];
 
+// Blocks — unidirectional in storage (who blocked whom), but checked
+// bidirectionally everywhere it's enforced (see isBlockedEitherWay) since a
+// block should stop contact both ways regardless of who initiated it.
+let blocks = [];
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getConnectionStatus(fromId, toId) {
@@ -7442,8 +7447,15 @@ function getConnectionStatus(fromId, toId) {
   return 'pending_received';
 }
 
+function isBlockedEitherWay(userId1, userId2) {
+  return blocks.some(b =>
+    (b.blockerId === userId1 && b.blockedId === userId2) ||
+    (b.blockerId === userId2 && b.blockedId === userId1)
+  );
+}
+
 function sanitizeUser(u) {
-  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: asArray(u.skills) };
+  return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: asArray(u.skills), avatarUrl: u.avatarUrl || '' };
 }
 
 function serializeCommunityPost(post, viewerId = null) {
@@ -7759,6 +7771,7 @@ function fullProfile(user) {
     id: user.id, name: user.name, email: user.email, title: user.title,
     bio: user.bio, skills: Array.isArray(user.skills) ? user.skills : [], organization: user.organization,
     avatarUrl: user.avatarUrl || '',
+    coverUrl: user.coverUrl || '',
     authProvider: user.authProvider || 'local',
     joinedGroups: user.joinedGroups, onboardingComplete: user.onboardingComplete,
     profileHidden: !!user.profileHidden,
@@ -7787,6 +7800,7 @@ function dbRowToMemUser(row) {
     authProvider: row.auth_provider || 'local',
     authSubject: row.auth_subject || null,
     avatarUrl: row.avatar_url || '',
+    coverUrl: row.cover_url || '',
     title: row.title || '',
     bio: row.bio || '',
     skills: asArray(row.skills),
@@ -7803,6 +7817,7 @@ function dbRowToMemUser(row) {
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
     plan: row.plan || 'free',
+    createdAt: row.created_at || null,
   };
 }
 
@@ -7983,6 +7998,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT ''`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
 
     // Groups table — persists across deploys
@@ -8039,6 +8055,16 @@ async function migrateDB() {
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (from_id, to_id)
+      )
+    `);
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS blocks (
+        id TEXT PRIMARY KEY,
+        blocker_id TEXT NOT NULL,
+        blocked_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE (blocker_id, blocked_id)
       )
     `);
 
@@ -9207,12 +9233,12 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const { name, title, bio, skills, organization, links, roleSettings, profileHidden } = req.body;
+  const { name, title, bio, skills, organization, links, roleSettings, profileHidden, avatarUrl, coverUrl } = req.body;
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
   const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
     organization: user.organization, links: user.links, roleSettings: user.roleSettings,
-    profileHidden: user.profileHidden };
+    profileHidden: user.profileHidden, avatarUrl: user.avatarUrl, coverUrl: user.coverUrl };
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
@@ -9220,6 +9246,13 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
   if (roleSettings !== undefined) user.roleSettings = roleSettings;
+  // Trusts the URL as given rather than re-validating it points at our own
+  // Cloudinary account — same trust boundary as mediaUrl on regular posts
+  // (see POST /groups/:id/posts), which takes Cloudinary's signed-upload
+  // response at face value too. A forged non-Cloudinary URL here just means
+  // a broken-looking avatar for that one user, not a security issue.
+  if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
+  if (coverUrl !== undefined) user.coverUrl = coverUrl;
   // Was unconditionally reset to false on every save regardless of what the
   // request sent — meaning even a real "hide my profile" toggle could never
   // actually stick, since the very next profile edit (or the same request
@@ -9230,9 +9263,10 @@ app.patch('/profile', authenticate, async (req, res) => {
   try {
     if (db.isConnected() && isDBId(user.id)) {
       await db.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8 WHERE id=$9`,
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10 WHERE id=$11`,
         [user.name, user.title, user.bio, user.skills, user.organization,
-         JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false, user.id]
+         JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false,
+         user.avatarUrl || '', user.coverUrl || '', user.id]
       );
     } else {
       filestore.saveUsers(users);
@@ -9242,6 +9276,39 @@ app.patch('/profile', authenticate, async (req, res) => {
     console.error('PATCH /profile DB:', e.message);
     Object.assign(user, prev);
     res.status(500).json({ message: 'Failed to save changes. Please try again.' });
+  }
+});
+
+// Change password while logged in — distinct from /auth/reset-password
+// (the logged-out, email-token flow for someone who's lost access). Reuses
+// authLimiter since it's exactly the kind of endpoint a compromised/guessed
+// session could hammer to brute-force the current password.
+app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(404).json({ message: 'Not found.' });
+  if (user.authProvider === 'auth0') {
+    return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFconnect.' });
+  }
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Current and new password are required.' });
+  if (newPassword.length < 6) return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+  if (!user.passwordHash || !bcrypt.compareSync(currentPassword, user.passwordHash)) {
+    return res.status(401).json({ message: 'Current password is incorrect.' });
+  }
+  const hash = bcrypt.hashSync(newPassword, 10);
+  const prevHash = user.passwordHash;
+  try {
+    if (db.isConnected() && isDBId(user.id)) {
+      await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, user.id]);
+    } else {
+      filestore.saveUsers(users);
+    }
+    user.passwordHash = hash;
+    res.json({ ok: true, message: 'Password updated.' });
+  } catch (e) {
+    console.error('POST /profile/password DB:', e.message);
+    user.passwordHash = prevHash;
+    res.status(500).json({ message: 'Could not update your password. Please try again.' });
   }
 });
 
@@ -9317,6 +9384,7 @@ async function purgeUser(uid) {
   posts = posts.filter(p => p.authorId !== uid);
   follows = follows.filter(f => f.followerId !== uid && f.followingId !== uid);
   connections = connections.filter(c => c.fromId !== uid && c.toId !== uid);
+  blocks = blocks.filter(b => b.blockerId !== uid && b.blockedId !== uid);
   for (let i = conversations.length - 1; i >= 0; i--) {
     if (conversations[i].participants.includes(uid)) conversations.splice(i, 1);
   }
@@ -9343,6 +9411,7 @@ async function purgeUser(uid) {
     await db.query('DELETE FROM direct_messages WHERE sender_id=$1 OR receiver_id=$1', [uid]);
     await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
     await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
+    await db.query('DELETE FROM blocks WHERE blocker_id=$1 OR blocked_id=$1', [uid]);
     await db.query('DELETE FROM attachments WHERE user_id=$1', [uid]);
     // seen_posts (used by getUserSeenSet/markPostsSeen to keep refreshes from
     // re-serving the same posts) was never purged here — every other
@@ -9357,6 +9426,60 @@ async function purgeUser(uid) {
     filestore.saveUsers(users);
   }
 }
+
+// Data export — everything this account has actually authored/stored, as
+// one downloadable JSON file. Not a GDPR-certified export (no legal review
+// behind the exact field set), but the standard "download your data"
+// expectation on any platform that also offers account deletion.
+app.get('/profile/export', authenticate, async (req, res) => {
+  try {
+    const user = await getUser(req.user.id);
+    if (!user) return res.status(404).json({ message: 'Not found.' });
+    const uid = user.id;
+
+    const myPosts = posts.filter(p => p.authorId === uid).map(p => ({
+      id: p.id, content: p.content, mediaUrl: p.mediaUrl || null,
+      createdAt: p.createdAt, likesCount: (p.likes || []).length,
+    }));
+    const myComments = postComments.filter(c => c.authorId === uid).map(c => ({
+      id: c.id, postId: c.postId, content: c.content, createdAt: c.createdAt,
+    }));
+    let myAttachments = [];
+    if (db.isConnected()) {
+      const { rows } = await db.query(
+        `SELECT id, filename, file_size, ats_score, keywords, created_at FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`,
+        [uid]
+      );
+      myAttachments = rows.map(r => ({
+        id: r.id, filename: r.filename, fileSize: r.file_size,
+        atsScore: r.ats_score, keywords: r.keywords, createdAt: r.created_at,
+      }));
+    }
+    const following = follows.filter(f => f.followerId === uid).map(f => f.followingId);
+    const followerIds = follows.filter(f => f.followingId === uid).map(f => f.followerId);
+    const myConnections = connections
+      .filter(c => (c.fromId === uid || c.toId === uid) && c.status === 'accepted')
+      .map(c => (c.fromId === uid ? c.toId : c.fromId));
+
+    res.setHeader('Content-Disposition', `attachment; filename="uficonnect-data-export-${uid}.json"`);
+    res.json({
+      exportedAt: new Date().toISOString(),
+      profile: {
+        id: user.id, name: user.name, email: user.email, title: user.title,
+        bio: user.bio, skills: asArray(user.skills), organization: user.organization,
+        links: user.links || {}, roleSettings: user.roleSettings || {},
+        preferences: user.preferences || null, createdAt: user.createdAt || null,
+      },
+      posts: myPosts,
+      comments: myComments,
+      attachments: myAttachments,
+      social: { following, followers: followerIds, connections: myConnections },
+    });
+  } catch (e) {
+    console.error('GET /profile/export:', e.message);
+    res.status(500).json({ message: 'Could not build your data export. Please try again.' });
+  }
+});
 
 app.delete('/profile', authenticate, async (req, res) => {
   try {
@@ -12491,6 +12614,15 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
 // signature so Cloudinary knows the upload is authorized. No-ops with a
 // clear error until CLOUDINARY_* env vars are actually set; there was no
 // object storage configured at all before this.
+// Folder is caller-selected (post media vs. profile avatar/cover) but only
+// from a fixed allowlist — letting the query param flow straight into the
+// signed string unchecked would let a client sign an upload into an
+// arbitrary Cloudinary folder.
+const UPLOAD_FOLDERS = {
+  posts:   'uficonnect-posts',
+  avatars: 'uficonnect-avatars',
+  covers:  'uficonnect-covers',
+};
 app.get('/media/upload-signature', authenticate, (req, res) => {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
   const apiKey    = process.env.CLOUDINARY_API_KEY;
@@ -12499,7 +12631,7 @@ app.get('/media/upload-signature', authenticate, (req, res) => {
     return res.status(503).json({ message: 'Media upload is not configured yet.' });
   }
   const timestamp = Math.round(Date.now() / 1000);
-  const folder = 'uficonnect-posts';
+  const folder = UPLOAD_FOLDERS[req.query.folder] || UPLOAD_FOLDERS.posts;
   // Cloudinary's signature recipe: sha1 of every param-to-sign (everything
   // except file/api_key/signature/cloud_name), sorted alphabetically as
   // key=value pairs joined by &, with the API secret appended — this is
@@ -12682,6 +12814,9 @@ app.get('/users/:id', authenticate, async (req, res) => {
   try {
     const user = await getUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (user.id !== req.user.id && isBlockedEitherWay(req.user.id, user.id)) {
+      return res.status(403).json({ blocked: true, message: 'This profile is not available.' });
+    }
     if (isProfileHidden(user) && !canViewHiddenProfile(user, req.user.id)) {
       return res.status(403).json({ hidden: true, message: 'This profile is private.' });
     }
@@ -12692,6 +12827,7 @@ app.get('/users/:id', authenticate, async (req, res) => {
     res.json({
       id: user.id, name: user.name, title: user.title || '', bio: user.bio || '',
       organization: user.organization || '', skills: asArray(user.skills),
+      avatarUrl: user.avatarUrl || '', coverUrl: user.coverUrl || '',
       role: user.preferences?.role || '',
       interests: user.preferences?.interests || [],
       goals: user.preferences?.goals || [],
@@ -12708,6 +12844,9 @@ app.get('/users/:id/posts', authenticate, async (req, res) => {
   try {
     const user = await getUser(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (user.id !== req.user.id && isBlockedEitherWay(req.user.id, user.id)) {
+      return res.status(403).json({ blocked: true, message: 'This profile is not available.' });
+    }
     if (isProfileHidden(user) && !canViewHiddenProfile(user, req.user.id)) {
       return res.status(403).json({ hidden: true, message: 'This profile is private.' });
     }
@@ -12722,6 +12861,7 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
     const followingId = req.params.id;
     const followerId  = req.user.id;
     if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
+    if (isBlockedEitherWay(followerId, followingId)) return res.status(403).json({ message: 'Unable to follow this user.' });
     if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
       follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
       if (db.isConnected()) {
@@ -12752,10 +12892,24 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
 });
 
 // ─── Followers / Following lists ──────────────────────────────────────────────
+// A profile owner turning off "who can see my connections" should mean
+// exactly that — not just filtering individually-hidden users out of the
+// list, but withholding the list itself from anyone who isn't the owner or
+// already connected to them. Shared by both directions below.
+async function connectionsListRestricted(ownerId, viewerId) {
+  if (ownerId === viewerId) return false;
+  const owner = await getUser(ownerId);
+  if (!owner || owner.roleSettings?.privacy_showConnections !== false) return false;
+  return getConnectionStatus(viewerId, ownerId) !== 'connected';
+}
+
 app.get('/users/:id/followers', authenticate, async (req, res) => {
   try {
     const userId  = req.params.id;
     const myId    = req.user.id;
+    if (await connectionsListRestricted(userId, myId)) {
+      return res.json({ users: [], restricted: true });
+    }
     const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
     const followerIds    = follows.filter(f => f.followingId === userId).map(f => f.followerId);
     // A hidden third party (no relationship to *this viewer*) showing up by
@@ -12769,7 +12923,7 @@ app.get('/users/:id/followers', authenticate, async (req, res) => {
       .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
     res.json({
       users: followerUsers.map(u => ({
-        id: u.id, name: u.name, title: u.title || '',
+        id: u.id, name: u.name, title: u.title || '', avatarUrl: u.avatarUrl || '',
         organization: u.organization || '', role: u.preferences?.role || '',
         followersCount: follows.filter(f => f.followingId === u.id).length,
         isFollowing: myFollowingSet.has(u.id),
@@ -12783,6 +12937,9 @@ app.get('/users/:id/following', authenticate, async (req, res) => {
   try {
     const userId       = req.params.id;
     const myId         = req.user.id;
+    if (await connectionsListRestricted(userId, myId)) {
+      return res.json({ users: [], restricted: true });
+    }
     const myFollowingSet  = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
     const followingIds    = follows.filter(f => f.followerId === userId).map(f => f.followingId);
     // See matching comment in /users/:id/followers above — same leak, same fix.
@@ -12791,7 +12948,7 @@ app.get('/users/:id/following', authenticate, async (req, res) => {
       .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
     res.json({
       users: followingUsers.map(u => ({
-        id: u.id, name: u.name, title: u.title || '',
+        id: u.id, name: u.name, title: u.title || '', avatarUrl: u.avatarUrl || '',
         organization: u.organization || '', role: u.preferences?.role || '',
         followersCount: follows.filter(f => f.followingId === u.id).length,
         isFollowing: myFollowingSet.has(u.id),
@@ -12808,6 +12965,7 @@ app.post('/users/:id/connect', authenticate, async (req, res) => {
     const toId = req.params.id;
     if (fromId === toId) return res.status(400).json({ message: 'Cannot connect with yourself.' });
     if (!(await getUser(toId))) return res.status(404).json({ message: 'User not found.' });
+    if (isBlockedEitherWay(fromId, toId)) return res.status(403).json({ message: 'Unable to connect with this user.' });
 
     const existing = connections.find(
       (c) => (c.fromId === fromId && c.toId === toId) || (c.fromId === toId && c.toId === fromId)
@@ -12868,6 +13026,66 @@ app.get('/users/connections', authenticate, (req, res) => {
     })
     .filter(Boolean);
   res.json({ connections: myConnections });
+});
+
+// ─── Blocking ───────────────────────────────────────────────────────────────
+// Deliberately severs any existing follow/connection between the two people
+// in both directions — leaving one intact after a block would still let the
+// blocked side see the blocker's content via that relationship (e.g. a
+// still-live follow feeding the Following tab), quietly defeating the point.
+app.post('/users/:id/block', authenticate, async (req, res) => {
+  try {
+    const blockerId = req.user.id;
+    const blockedId = req.params.id;
+    if (blockerId === blockedId) return res.status(400).json({ message: "Can't block yourself." });
+    if (!(await getUser(blockedId))) return res.status(404).json({ message: 'User not found.' });
+
+    if (!blocks.find(b => b.blockerId === blockerId && b.blockedId === blockedId)) {
+      const id = `block_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      blocks.push({ id, blockerId, blockedId, createdAt: new Date().toISOString() });
+      if (db.isConnected()) {
+        await db.query(
+          `INSERT INTO blocks (id, blocker_id, blocked_id) VALUES ($1,$2,$3) ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+          [id, blockerId, blockedId]
+        );
+      }
+    }
+
+    follows = follows.filter(f =>
+      !((f.followerId === blockerId && f.followingId === blockedId) ||
+        (f.followerId === blockedId && f.followingId === blockerId)));
+    const removedConn = connections.find(c =>
+      (c.fromId === blockerId && c.toId === blockedId) || (c.fromId === blockedId && c.toId === blockerId));
+    connections = connections.filter(c => c !== removedConn);
+    if (db.isConnected()) {
+      await db.query(`DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)`, [blockerId, blockedId]);
+      if (removedConn) await db.query(`DELETE FROM connections WHERE id=$1`, [removedConn.id]);
+    }
+
+    res.json({ ok: true, blocked: true });
+  } catch (e) { console.error('POST /users/:id/block:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+app.delete('/users/:id/block', authenticate, async (req, res) => {
+  try {
+    const blockerId = req.user.id;
+    const blockedId = req.params.id;
+    const idx = blocks.findIndex(b => b.blockerId === blockerId && b.blockedId === blockedId);
+    if (idx >= 0) blocks.splice(idx, 1);
+    if (db.isConnected()) {
+      await db.query(`DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2`, [blockerId, blockedId]);
+    }
+    res.json({ ok: true, blocked: false });
+  } catch (e) { console.error('DELETE /users/:id/block:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+app.get('/users/blocked', authenticate, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const blockedIds = blocks.filter(b => b.blockerId === uid).map(b => b.blockedId);
+    const blockedUsers = (await Promise.all(blockedIds.map(id => getUser(id)))).filter(Boolean);
+    res.json({ users: blockedUsers.map(sanitizeUser) });
+  } catch (e) { console.error('GET /users/blocked:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Notifications: pending connection requests + new followers ───────────────
@@ -13735,6 +13953,15 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
     if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
     const otherUser = await getUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
+    if (isBlockedEitherWay(uid, otherId)) return res.status(403).json({ message: 'Unable to send messages to this user.' });
+    // 'connections' restricts new conversations to accepted connections only
+    // — doesn't touch an already-existing conversation, so tightening this
+    // setting can't retroactively strand a chat that was fine when it started.
+    if (otherUser.roleSettings?.privacy_messagePermission === 'connections'
+      && getConnectionStatus(uid, otherId) !== 'connected'
+      && !conversations.some(c => c.participants.includes(uid) && c.participants.includes(otherId))) {
+      return res.status(403).json({ message: 'This person only accepts messages from their connections.' });
+    }
 
     let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
     if (!conv) {
@@ -13823,6 +14050,15 @@ async function preloadUsersFromDB() {
       id: r.id, fromId: r.from_id, toId: r.to_id, status: r.status, createdAt: r.created_at,
     }));
     console.log(`[startup] Loaded ${cRows.length} connections`);
+  } catch (_) {}
+
+  // Load blocks
+  try {
+    const { rows: bRows } = await db.query('SELECT id, blocker_id, blocked_id, created_at FROM blocks');
+    bRows.forEach(r => blocks.push({
+      id: r.id, blockerId: r.blocker_id, blockedId: r.blocked_id, createdAt: r.created_at,
+    }));
+    console.log(`[startup] Loaded ${bRows.length} blocks`);
   } catch (_) {}
 }
 

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { useToast } from '../contexts/ToastContext';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -19,6 +20,7 @@ function timeAgo(iso) {
 
 export default function Notifications() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(false);
@@ -47,8 +49,10 @@ export default function Notifications() {
     try {
       await client.post(`/users/${notification.user.id}/connect`);
       setAccepted(prev => new Set(prev).add(notification.id));
+      showToast('Connection accepted', 'success');
     } catch {
       // leave as pending — user can retry
+      showToast('Failed to accept — please try again.', 'error');
     } finally {
       setAccepting(null);
     }
@@ -64,6 +68,7 @@ export default function Notifications() {
       setDeclined(prev => new Set(prev).add(notification.id));
     } catch {
       // leave as pending — user can retry
+      showToast('Failed to decline — please try again.', 'error');
     } finally {
       setDeclining(null);
     }

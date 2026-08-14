@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import PostList from '../components/PostList';
 import client from '../api/client';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
+import { useToast } from '../contexts/ToastContext';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -29,6 +30,7 @@ const COMMUNITY_ICONS = {
 
 export default function Post() {
   const { profile } = useAuth();
+  const { showToast } = useToast();
   const textareaRef = useRef(null);
 
   const [groups,   setGroups]   = useState([]);
@@ -148,6 +150,7 @@ export default function Post() {
       resetMedia();
       setComposing(false);
       setPosted(p => !p); // trigger feed reload
+      showToast('Post published!', 'success');
     } catch {
       setError('Failed to publish. Please try again.');
     } finally {

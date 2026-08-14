@@ -5,6 +5,7 @@ import { HelmetProvider } from 'react-helmet-async';
 import { Auth0Provider } from '@auth0/auth0-react';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
+import { ToastProvider } from './contexts/ToastContext';
 import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth/auth0Config';
 import './index.css';
 

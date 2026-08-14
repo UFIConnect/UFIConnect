@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS } from '../data/roles';
@@ -93,20 +94,22 @@ function SectionHeading({ children }) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Settings() {
   const { profile, updateProfileLocally, logout } = useAuth();
+  const { showToast } = useToast();
   const role = profile?.preferences?.role || '';
   const meta = ROLE_META[role] || DEFAULT_META;
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState('account');
   const [deleteModal, setDeleteModal] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    if (tab === 'preferences') setActiveTab('preferences');
+    if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab)) setActiveTab(tab);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── General / role-specific settings state ────────────────────────────────
+  // ── Account / role-specific settings state ────────────────────────────────
   const [form, setForm] = useState({
     name:         profile?.name         || '',
     title:        profile?.title        || '',
@@ -122,11 +125,13 @@ export default function Settings() {
     mentions:         roleSettings.notifs_mentions         ?? true,
   });
   const [privacy, setPrivacy] = useState({
-    publicProfile: roleSettings.privacy_publicProfile ?? true,
-    showEmail:     roleSettings.privacy_showEmail     ?? false,
-    showSkills:    roleSettings.privacy_showSkills    ?? true,
-    showGroups:    roleSettings.privacy_showGroups    ?? true,
+    publicProfile:   roleSettings.privacy_publicProfile   ?? true,
+    showEmail:       roleSettings.privacy_showEmail       ?? false,
+    showSkills:      roleSettings.privacy_showSkills      ?? true,
+    showGroups:      roleSettings.privacy_showGroups      ?? true,
+    showConnections: roleSettings.privacy_showConnections ?? true,
   });
+  const [messagePermission, setMessagePermission] = useState(roleSettings.privacy_messagePermission || 'everyone');
   const [saving, setSaving] = useState(false);
   const [saved,  setSaved]  = useState(false);
   const [error,  setError]  = useState('');
@@ -149,14 +154,90 @@ export default function Settings() {
         privacy_showEmail:       privacy.showEmail,
         privacy_showSkills:      privacy.showSkills,
         privacy_showGroups:      privacy.showGroups,
+        privacy_showConnections: privacy.showConnections,
+        privacy_messagePermission: messagePermission,
       };
       const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean), roleSettings: merged };
       const { data } = await client.patch('/profile', payload);
       updateProfileLocally(data.profile || data);
       setSaved(true);
+      showToast('Settings saved', 'success');
       setTimeout(() => setSaved(false), 3000);
     } catch { setError('Failed to save. Please try again.'); }
     finally { setSaving(false); }
+  }
+
+  // ── Security: change password ─────────────────────────────────────────────
+  const [pwForm, setPwForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError,  setPwError]  = useState('');
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setPwError('');
+    if (pwForm.newPassword.length < 6) { setPwError('New password must be at least 6 characters.'); return; }
+    if (pwForm.newPassword !== pwForm.confirmPassword) { setPwError('New passwords do not match.'); return; }
+    setPwSaving(true);
+    try {
+      await client.post('/profile/password', {
+        currentPassword: pwForm.currentPassword,
+        newPassword: pwForm.newPassword,
+      });
+      setPwForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      showToast('Password updated', 'success');
+    } catch (err) {
+      setPwError(err?.response?.data?.message || 'Failed to update password. Please try again.');
+    } finally {
+      setPwSaving(false);
+    }
+  }
+
+  // ── Privacy: blocked users ────────────────────────────────────────────────
+  const [blockedUsers, setBlockedUsers] = useState([]);
+  const [blockedLoading, setBlockedLoading] = useState(false);
+  const [unblockingId, setUnblockingId] = useState(null);
+
+  useEffect(() => {
+    if (activeTab !== 'privacy') return;
+    setBlockedLoading(true);
+    client.get('/users/blocked')
+      .then(({ data }) => setBlockedUsers(data.users || []))
+      .catch(() => setBlockedUsers([]))
+      .finally(() => setBlockedLoading(false));
+  }, [activeTab]);
+
+  async function handleUnblock(userId) {
+    setUnblockingId(userId);
+    try {
+      await client.delete(`/users/${userId}/block`);
+      setBlockedUsers(prev => prev.filter(u => u.id !== userId));
+      showToast('Unblocked', 'success');
+    } catch {
+      showToast('Failed to unblock — please try again.', 'error');
+    } finally {
+      setUnblockingId(null);
+    }
+  }
+
+  // ── Account: data export ──────────────────────────────────────────────────
+  async function handleExportData() {
+    setExporting(true);
+    try {
+      const { data } = await client.get('/profile/export', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'uficonnect-data-export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('Data export downloaded', 'success');
+    } catch {
+      showToast('Failed to export your data — please try again.', 'error');
+    } finally {
+      setExporting(false);
+    }
   }
 
   // ── Preferences tab state ─────────────────────────────────────────────────
@@ -195,6 +276,7 @@ export default function Settings() {
       });
       updateProfileLocally(data.profile || data);
       setPrefSaved(true);
+      showToast('Preferences saved', 'success');
       setTimeout(() => setPrefSaved(false), 3000);
     } catch { setPrefError('Failed to save preferences. Please try again.'); }
     finally { setPrefSaving(false); }
@@ -204,26 +286,54 @@ export default function Settings() {
     <Layout><div className="empty-state"><span className="spinner spinner-primary" /></div></Layout>
   );
 
+  const isLocalAuth = (profile.authProvider || 'local') === 'local';
+
   const TABS = [
-    { key: 'general',     label: 'General' },
-    { key: 'preferences', label: '🎯 Preferences' },
+    { key: 'account',       label: 'Account' },
+    { key: 'security',      label: '🔒 Security' },
+    { key: 'privacy',       label: '🛡️ Privacy' },
+    { key: 'notifications', label: '🔔 Notifications' },
+    { key: 'preferences',   label: '🎯 Preferences' },
   ];
+
+  // Shared by Account/Privacy/Notifications — all three save through the
+  // same handleSave (one combined PATCH /profile), just split across tabs
+  // for scannability instead of one long scrolling form. Rendering this at
+  // the bottom of each of those three tabs keeps that single-save-covers-
+  // everything behavior honest instead of implying a per-tab save that
+  // isn't actually independent.
+  function SaveBar() {
+    return (
+      <>
+        {error && <div className="auth-error">{error}</div>}
+        {saved && (
+          <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>
+            ✓ Settings saved
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 10, paddingBottom: 32 }}>
+          <button className="btn btn-primary" type="submit" disabled={saving}>
+            {saving ? <span className="spinner" /> : 'Save changes'}
+          </button>
+        </div>
+      </>
+    );
+  }
 
   return (
     <Layout>
       <Link to="/profile" className="btn-back" style={{ marginBottom: 14 }}><span className="btn-back-icon">‹</span> Back to Profile</Link>
       <div className="page-header">
         <h1 className="page-title">Settings</h1>
-        <p className="page-subtitle">Manage your profile, preferences, and account details.</p>
+        <p className="page-subtitle">Manage your account, privacy, and preferences.</p>
       </div>
 
       {/* Tab bar */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0, overflowX: 'auto' }}>
         {TABS.map(tab => (
           <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-            style={{ padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: activeTab === tab.key ? 700 : 500, fontSize: '.875rem', color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)', borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6 }}>
+            style={{ padding: '8px 16px', border: 'none', background: 'none', cursor: 'pointer', fontWeight: activeTab === tab.key ? 700 : 500, fontSize: '.875rem', color: activeTab === tab.key ? 'var(--primary)' : 'var(--muted)', borderBottom: activeTab === tab.key ? '2px solid var(--primary)' : '2px solid transparent', marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
             {tab.label}
-            {tab.badge ? <span style={{ background: 'var(--primary)', color: '#fff', borderRadius: 10, fontSize: '.65rem', fontWeight: 700, padding: '1px 6px', lineHeight: 1.4 }}>{tab.badge}</span> : null}
           </button>
         ))}
       </div>
@@ -354,23 +464,20 @@ export default function Settings() {
         </form>
       )}
 
-      {/* ── General tab ──────────────────────────────────────────────────────── */}
-      {activeTab === 'general' && (
+      {/* ── Account tab ──────────────────────────────────────────────────────── */}
+      {activeTab === 'account' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {error && <div className="auth-error">{error}</div>}
-          {saved && (
-            <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>
-              ✓ Settings saved
-            </div>
-          )}
-
           {/* Account info */}
           <div className="card">
             <SectionHeading>Account</SectionHeading>
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8 }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.9rem' }}>
-                {(profile.name || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
-              </div>
+              {profile.avatarUrl ? (
+                <img src={profile.avatarUrl} alt="" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+              ) : (
+                <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.9rem', flexShrink: 0 }}>
+                  {(profile.name || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
+                </div>
+              )}
               <div>
                 <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{profile.name}</div>
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{profile.email}</div>
@@ -380,6 +487,9 @@ export default function Settings() {
               <label className="form-label">Email address</label>
               <input className="form-input" value={profile.email} disabled style={{ background: 'var(--bg-secondary)', color: 'var(--muted)' }} />
               <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Email cannot be changed. Contact support if you need help.</span>
+            </div>
+            <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
+              Profile photo and cover image are managed from your <Link to="/profile">profile page</Link>.
             </div>
           </div>
 
@@ -442,42 +552,20 @@ export default function Settings() {
             </div>
           )}
 
-          {/* Notifications */}
-          <div className="card">
-            <SectionHeading>🔔 Notifications</SectionHeading>
-            {[
-              { key: 'emailDigest',       label: 'Weekly email digest',     desc: 'A summary of top posts and opportunities in your groups.' },
-              { key: 'communityUpdates',  label: 'Community updates',       desc: 'New members, posts, and announcements from your groups.' },
-              { key: 'newOpportunities',  label: 'New opportunities',       desc: 'Job listings, gigs, and grants matching your profile.' },
-              { key: 'mentions',          label: 'Mentions and replies',    desc: 'When someone mentions or replies to you.' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
-                  <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
-                </div>
-                <Toggle value={!!notifs[key]} onChange={() => setNotifs(n => ({ ...n, [key]: !n[key] }))} />
-              </div>
-            ))}
-          </div>
+          <SaveBar />
 
-          {/* Privacy */}
+          {/* Data export */}
           <div className="card">
-            <SectionHeading>🔒 Privacy</SectionHeading>
-            {[
-              { key: 'publicProfile',  label: 'Public profile',    desc: 'Allow anyone on UFconnect to view your profile.' },
-              { key: 'showEmail',      label: 'Show email address', desc: 'Display your email on your public profile.' },
-              { key: 'showSkills',     label: 'Show skills',        desc: 'Display your skill tags on your profile card.' },
-              { key: 'showGroups',     label: 'Show groups',        desc: 'Let others see which groups you belong to.' },
-            ].map(({ key, label, desc }) => (
-              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
-                  <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
-                </div>
-                <Toggle value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
+            <SectionHeading>📦 Your Data</SectionHeading>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Download your data</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Get a copy of your profile, posts, comments, and attachment metadata as a JSON file.</div>
               </div>
-            ))}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={handleExportData} disabled={exporting}>
+                {exporting ? <span className="spinner" /> : 'Download'}
+              </button>
+            </div>
           </div>
 
           {/* Danger zone */}
@@ -521,13 +609,140 @@ export default function Settings() {
               </div>
             </div>
           )}
+        </form>
+      )}
 
-          {/* Save */}
-          <div style={{ display: 'flex', gap: 10, paddingBottom: 32 }}>
-            <button className="btn btn-primary" type="submit" disabled={saving}>
-              {saving ? <span className="spinner" /> : 'Save all settings'}
-            </button>
+      {/* ── Security tab ─────────────────────────────────────────────────────── */}
+      {activeTab === 'security' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="card">
+            <SectionHeading>🔒 Password</SectionHeading>
+            {!isLocalAuth ? (
+              <div style={{ fontSize: '.85rem', color: 'var(--muted)' }}>
+                Your password is managed by your sign-in provider, not UFconnect — there's nothing to change here.
+              </div>
+            ) : (
+              <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {pwError && <div className="auth-error" style={{ marginBottom: 8 }}>{pwError}</div>}
+                <div className="form-group">
+                  <label className="form-label">Current password</label>
+                  <input className="form-input" type="password" autoComplete="current-password"
+                    value={pwForm.currentPassword}
+                    onChange={e => setPwForm(f => ({ ...f, currentPassword: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">New password</label>
+                  <input className="form-input" type="password" autoComplete="new-password"
+                    value={pwForm.newPassword}
+                    onChange={e => setPwForm(f => ({ ...f, newPassword: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Confirm new password</label>
+                  <input className="form-input" type="password" autoComplete="new-password"
+                    value={pwForm.confirmPassword}
+                    onChange={e => setPwForm(f => ({ ...f, confirmPassword: e.target.value }))} />
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button className="btn btn-primary btn-sm" type="submit" disabled={pwSaving || !pwForm.currentPassword || !pwForm.newPassword}>
+                    {pwSaving ? <span className="spinner" /> : 'Update password'}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* ── Privacy tab ──────────────────────────────────────────────────────── */}
+      {activeTab === 'privacy' && (
+        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="card">
+            <SectionHeading>🔒 Privacy</SectionHeading>
+            {[
+              { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFconnect to view your profile.' },
+              { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
+              { key: 'showSkills',      label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
+              { key: 'showGroups',      label: 'Show groups',         desc: 'Let others see which groups you belong to.' },
+              { key: 'showConnections', label: 'Show connections',    desc: "Let others see your followers/following lists. People you're connected with can always see it." },
+            ].map(({ key, label, desc }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
+                  <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+                </div>
+                <Toggle value={!!privacy[key]} onChange={() => setPrivacy(p => ({ ...p, [key]: !p[key] }))} />
+              </div>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', gap: 12 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Who can message you</div>
+                <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Existing conversations are never affected by this.</div>
+              </div>
+              <select className="form-input" style={{ width: 'auto', padding: '6px 10px' }}
+                value={messagePermission} onChange={e => setMessagePermission(e.target.value)}>
+                <option value="everyone">Everyone</option>
+                <option value="connections">Connections only</option>
+              </select>
+            </div>
+          </div>
+
+          <SaveBar />
+
+          {/* Blocked users */}
+          <div className="card">
+            <SectionHeading>🚫 Blocked Users</SectionHeading>
+            {blockedLoading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}><span className="spinner spinner-primary" /></div>
+            ) : blockedUsers.length === 0 ? (
+              <div style={{ fontSize: '.82rem', color: 'var(--muted)' }}>You haven't blocked anyone.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {blockedUsers.map(u => (
+                  <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    {u.avatarUrl ? (
+                      <img src={u.avatarUrl} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                    ) : (
+                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: '.72rem', flexShrink: 0 }}>
+                        {(u.name || '?').split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase()}
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: '.85rem' }}>{u.name}</div>
+                      {u.title && <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>{u.title}</div>}
+                    </div>
+                    <button type="button" className="btn btn-ghost btn-sm" disabled={unblockingId === u.id} onClick={() => handleUnblock(u.id)}>
+                      {unblockingId === u.id ? <span className="spinner" /> : 'Unblock'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </form>
+      )}
+
+      {/* ── Notifications tab ────────────────────────────────────────────────── */}
+      {activeTab === 'notifications' && (
+        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="card">
+            <SectionHeading>🔔 Notifications</SectionHeading>
+            {[
+              { key: 'emailDigest',       label: 'Weekly email digest',     desc: 'A summary of top posts and opportunities in your groups.' },
+              { key: 'communityUpdates',  label: 'Community updates',       desc: 'New members, posts, and announcements from your groups.' },
+              { key: 'newOpportunities',  label: 'New opportunities',       desc: 'Job listings, gigs, and grants matching your profile.' },
+              { key: 'mentions',          label: 'Mentions and replies',    desc: 'When someone mentions or replies to you.' },
+            ].map(({ key, label, desc }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: '.875rem' }}>{label}</div>
+                  <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>{desc}</div>
+                </div>
+                <Toggle value={!!notifs[key]} onChange={() => setNotifs(n => ({ ...n, [key]: !n[key] }))} />
+              </div>
+            ))}
+          </div>
+
+          <SaveBar />
         </form>
       )}
     </Layout>

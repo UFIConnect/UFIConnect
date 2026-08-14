@@ -5,6 +5,8 @@ import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
 import PostList from '../components/PostList';
 import client from '../api/client';
+import { useToast } from '../contexts/ToastContext';
+import { uploadMedia } from '../api/upload';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -26,6 +28,7 @@ const NAV_TABS = { 'Connected Accounts': '/connected-accounts', 'Sources': '/sou
 
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const [tab,         setTab]         = useState('Overview');
   const [editing,     setEditing]     = useState(false);
@@ -43,6 +46,9 @@ export default function Profile() {
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
+  // Avatar / cover photo upload
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingCover,  setUploadingCover]  = useState(false);
   // Attachments (resume upload + ATS score)
   const [attachments,        setAttachments]        = useState([]);
   const [attachmentsLoading, setAttachmentsLoading]  = useState(false);
@@ -88,6 +94,36 @@ export default function Profile() {
     if (tab === 'Attachments' && attachments.length === 0 && !attachmentsLoading) fetchAttachments();
   }, [tab]); // eslint-disable-line
 
+  async function handleAvatarUpload(file) {
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const { url } = await uploadMedia(file, null, 'avatars');
+      const { data } = await client.patch('/profile', { avatarUrl: url });
+      updateProfileLocally(data.profile || data);
+      showToast('Profile photo updated', 'success');
+    } catch {
+      showToast('Failed to upload photo — please try again.', 'error');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  async function handleCoverUpload(file) {
+    if (!file) return;
+    setUploadingCover(true);
+    try {
+      const { url } = await uploadMedia(file, null, 'covers');
+      const { data } = await client.patch('/profile', { coverUrl: url });
+      updateProfileLocally(data.profile || data);
+      showToast('Cover photo updated', 'success');
+    } catch {
+      showToast('Failed to upload cover photo — please try again.', 'error');
+    } finally {
+      setUploadingCover(false);
+    }
+  }
+
   async function handleAttachmentUpload(file) {
     if (!file) return;
     const ext = file.name.split('.').pop()?.toLowerCase();
@@ -103,6 +139,7 @@ export default function Profile() {
       const { data } = await client.post('/profile/attachments', formData);
       setAttachments(prev => [data, ...prev]);
       setExpandedAttachment(data.id);
+      showToast(`Resume scored ${data.atsScore}/100`, 'success');
     } catch (err) {
       setUploadError(err?.response?.data?.message || 'Upload failed. Please try again.');
     } finally {
@@ -116,8 +153,9 @@ export default function Profile() {
       await client.delete(`/profile/attachments/${id}`);
       setAttachments(prev => prev.filter(a => a.id !== id));
       if (expandedAttachment === id) setExpandedAttachment(null);
-    } catch {}
-    finally { setDeletingAttachment(null); }
+    } catch {
+      showToast('Failed to delete — please try again.', 'error');
+    } finally { setDeletingAttachment(null); }
   }
 
   async function handleAttachmentDownload(attachment) {
@@ -197,6 +235,7 @@ export default function Profile() {
       // Support both { profile: {...} } and flat profile shapes
       updateProfileLocally(data.profile || data);
       setEditing(false);
+      showToast('Profile saved', 'success');
     } catch {
       setError('Failed to save. Please try again.');
     } finally {
@@ -216,12 +255,44 @@ export default function Profile() {
   return (
     <Layout>
       {/* Cover */}
-      <div className="profile-cover" />
+      <div
+        className="profile-cover"
+        style={{
+          position: 'relative',
+          ...(profile.coverUrl ? { backgroundImage: `url(${profile.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}),
+        }}
+      >
+        <label style={{
+          position: 'absolute', right: 10, bottom: 10, cursor: uploadingCover ? 'default' : 'pointer',
+          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20,
+          background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: '.72rem', fontWeight: 700,
+          backdropFilter: 'blur(4px)',
+        }}>
+          {uploadingCover ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
+          {uploadingCover ? 'Uploading…' : 'Change cover'}
+          <input type="file" accept="image/*" style={{ display: 'none' }} disabled={uploadingCover}
+            onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleCoverUpload(file); }} />
+        </label>
+      </div>
 
       {/* Header card */}
       <div className="profile-header">
-        <div className="profile-avatar-wrap">
-          <div className="avatar avatar-xl">{initials(profile.name)}</div>
+        <div className="profile-avatar-wrap" style={{ position: 'relative', width: 80 }}>
+          {profile.avatarUrl ? (
+            <img src={profile.avatarUrl} alt="" className="avatar-xl" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+          ) : (
+            <div className="avatar avatar-xl">{initials(profile.name)}</div>
+          )}
+          <label style={{
+            position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingAvatar ? 'default' : 'pointer',
+            background: 'var(--primary)', color: '#fff', fontSize: '.75rem',
+            border: '2px solid var(--card)',
+          }} title="Change photo">
+            {uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
+            <input type="file" accept="image/*" style={{ display: 'none' }} disabled={uploadingAvatar}
+              onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleAvatarUpload(file); }} />
+          </label>
         </div>
         <div className="profile-name">{profile.name}</div>
         <div className="profile-title">{profile.title || 'UFconnect Member'}</div>
@@ -248,8 +319,8 @@ export default function Profile() {
 
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
-          <Link to={`/u/${profile.id}`}>
-            <button className="btn btn-ghost btn-sm">👁 Public view</button>
+          <Link to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">
+            <button className="btn btn-ghost btn-sm">👁 Preview as public</button>
           </Link>
         </div>
       </div>

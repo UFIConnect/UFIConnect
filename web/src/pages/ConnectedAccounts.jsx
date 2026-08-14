@@ -283,7 +283,7 @@ function PlatformCard({
               {disconnecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
             </button>
           ) : comingSoon ? (
-            <button className="btn btn-sm btn-outline" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>
+            <button className="btn btn-sm btn-outline" disabled>
               Coming Soon
             </button>
           ) : (

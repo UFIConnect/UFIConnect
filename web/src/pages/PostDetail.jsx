@@ -227,8 +227,8 @@ export default function PostDetail() {
                 className="input"
                 style={{ flex: 1 }}
               />
-              <button type="submit" className="btn btn-primary btn-sm" disabled={!commentDraft.trim() || commentSending}>
-                Post
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!commentDraft.trim() || commentSending} style={{ minWidth: 56 }}>
+                {commentSending ? <span className="spinner" /> : 'Post'}
               </button>
             </form>
           )}

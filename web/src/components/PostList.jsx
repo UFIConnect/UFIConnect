@@ -167,7 +167,11 @@ export default function PostList({
                   to={post.authorId && post.authorId === currentUserId ? '/profile' : `/u/${post.authorId || post.author?.id}`}
                   style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, textDecoration: 'none', color: 'inherit' }}
                 >
-                  <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
+                  {post.author?.avatarUrl ? (
+                    <img src={post.author.avatarUrl} alt="" className="avatar-sm" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+                  ) : (
+                    <div className="avatar avatar-sm">{initials(post.author?.name)}</div>
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
                     <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

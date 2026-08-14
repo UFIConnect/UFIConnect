@@ -17,6 +17,7 @@ export default function GroupDetail() {
   const [group,   setGroup]   = useState(null);
   const [members, setMembers] = useState([]);
   const [joined,  setJoined]  = useState(false);
+  const [joining, setJoining] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [groupPosts,    setGroupPosts]    = useState([]);
@@ -55,6 +56,8 @@ export default function GroupDetail() {
   useScrollToRefresh(() => loadGroupPosts({ silent: true }), { enabled: !postsLoading });
 
   async function handleJoin() {
+    if (joining) return;
+    setJoining(true);
     try {
       if (joined) {
         await client.delete(`/groups/${id}/join`);
@@ -66,6 +69,7 @@ export default function GroupDetail() {
         setGroup((g) => g ? { ...g, members: g.members + 1 } : g);
       }
     } catch (err) { console.error(err); }
+    finally { setJoining(false); }
   }
 
   function openCompose() {
@@ -112,8 +116,8 @@ export default function GroupDetail() {
               <span>📂 {group.category}</span>
             </div>
           </div>
-          <button className={`btn ${joined ? 'btn-ghost' : 'btn-primary'}`} onClick={handleJoin}>
-            {joined ? 'Leave group' : 'Join group'}
+          <button className={`btn ${joined ? 'btn-ghost' : 'btn-primary'}`} onClick={handleJoin} disabled={joining} style={{ minWidth: 104 }}>
+            {joining ? <span className={joined ? 'spinner spinner-primary' : 'spinner'} /> : joined ? 'Leave group' : 'Join group'}
           </button>
         </div>
       </div>

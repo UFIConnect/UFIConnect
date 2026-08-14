@@ -220,6 +220,7 @@ function GroupsContent() {
   const [refreshing,  setRefreshing]  = useState(false);
   const [lastRefresh, setLastRefresh] = useState(null);
   const [showCreate,  setShowCreate]  = useState(false);
+  const [joiningId,   setJoiningId]   = useState(null);
 
   const searchRef = useRef('');
 
@@ -269,7 +270,9 @@ function GroupsContent() {
 
   async function handleJoin(e, groupId) {
     e.stopPropagation();
+    if (joiningId) return;
     const isJoined = joined.has(groupId);
+    setJoiningId(groupId);
     try {
       if (isJoined) {
         await client.delete(`/groups/${groupId}/join`);
@@ -294,6 +297,8 @@ function GroupsContent() {
       }
     } catch (err) {
       console.error('Failed to join/leave group:', err);
+    } finally {
+      setJoiningId(null);
     }
   }
 
@@ -751,13 +756,17 @@ function GroupsContent() {
                           isJoined ? ' btn-ghost' : ' btn-primary'
                         }`}
                         onClick={(e) => handleJoin(e, group.id)}
+                        disabled={joiningId === group.id}
+                        style={{ minWidth: 64 }}
                         aria-label={
                           isJoined
                             ? `Leave ${group.name} group`
                             : `Join ${group.name} group`
                         }
                       >
-                        {isJoined ? '✓ Joined' : 'Join'}
+                        {joiningId === group.id
+                          ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} style={{ width: 14, height: 14 }} />
+                          : isJoined ? '✓ Joined' : 'Join'}
                       </button>
                     )}
                   </div>

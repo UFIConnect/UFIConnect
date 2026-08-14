@@ -8,13 +8,14 @@ function initials(name = '') {
 
 export default function FollowListModal({ userId, type, title, onClose }) {
   const navigate = useNavigate();
-  const [users,   setUsers]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [users,      setUsers]      = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [restricted, setRestricted] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     client.get(`/users/${userId}/${type}`)
-      .then(({ data }) => setUsers(data.users || []))
+      .then(({ data }) => { setUsers(data.users || []); setRestricted(!!data.restricted); })
       .catch(() => setUsers([]))
       .finally(() => setLoading(false));
   }, [userId, type]);
@@ -70,7 +71,12 @@ export default function FollowListModal({ userId, type, title, onClose }) {
               <span className="spinner spinner-primary" />
             </div>
           )}
-          {!loading && users.length === 0 && (
+          {!loading && restricted && (
+            <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: '.9rem' }}>
+              🔒 This list is private.
+            </div>
+          )}
+          {!loading && !restricted && users.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: '.9rem' }}>
               Nobody here yet.
             </div>
@@ -81,7 +87,11 @@ export default function FollowListModal({ userId, type, title, onClose }) {
               style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
               onClick={() => { onClose(); navigate(user.isSelf ? '/profile' : `/u/${user.id}`); }}
             >
-              <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>{initials(user.name)}</div>
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt="" className="avatar-sm" style={{ borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+              ) : (
+                <div className="avatar avatar-sm" style={{ flexShrink: 0 }}>{initials(user.name)}</div>
+              )}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: '.9rem' }}>{user.name}</div>
                 {(user.title || user.role) && (

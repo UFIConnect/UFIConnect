@@ -5,8 +5,8 @@ import client from './client';
 // passes through our own Express server, so a large video doesn't tie up a
 // Render instance's bandwidth/memory. XHR (not fetch) specifically so we can
 // report upload progress.
-export function uploadMedia(file, onProgress) {
-  return client.get('/media/upload-signature').then(({ data: sig }) => new Promise((resolve, reject) => {
+export function uploadMedia(file, onProgress, folder = 'posts') {
+  return client.get('/media/upload-signature', { params: { folder } }).then(({ data: sig }) => new Promise((resolve, reject) => {
     const form = new FormData();
     form.append('file', file);
     form.append('api_key', sig.apiKey);
