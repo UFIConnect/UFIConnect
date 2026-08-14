@@ -5192,7 +5192,7 @@ function normalizeFeedTimeRange(value) {
 // consecutive same-source runs grew well past maxConsecutive (confirmed via
 // a synthetic 6-source benchmark: worst-case run of 16 vs. this version's 3,
 // out-of-order pairs cut by two-thirds on the same input).
-function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
+function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxSharePct = null) {
   const queue = posts.filter(Boolean);
   // Posts skipped past because their source was already on cooldown —
   // resolved back in the instant a different source breaks the streak,
@@ -5201,18 +5201,36 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
   // original position as the cap allows instead of piling up at the end.
   const held = [];
   const output = [];
+  const sourceCounts = new Map();
   let lastSource = null;
   let streak = 0;
   let qi = 0;
 
+  // Streak-limiting alone stops long runs but not overall skew — two sources
+  // with very different underlying supply (e.g. RemoteOK's loose substring
+  // match against its live pool vs. Remotive's precise per-keyword search)
+  // still settle into whatever ratio the input naturally has, just spread
+  // out instead of clustered (confirmed live: 42/18 RemoteOK/Indeed on the
+  // Jobs filter, no run longer than maxConsecutive but badly lopsided
+  // overall). Optional and off by default — only callers picking a small,
+  // explicit set of sources (see the Jobs filter's multi-source path) pass
+  // this; the general aggregate feed already has its own proportional cap
+  // via enforceFeedDiversity, sized for dozens of sources instead of a
+  // handful, so this would be the wrong ceiling there.
+  function overShare(src) {
+    if (!maxSharePct || output.length < 6) return false;
+    const count = sourceCounts.get(src) || 0;
+    return (count + 1) / (output.length + 1) > maxSharePct;
+  }
+
   while (output.length < limit && (qi < queue.length || held.length)) {
     let picked = null;
-    if (held.length && (held[0].source || 'unknown') !== lastSource) {
+    if (held.length && (held[0].source || 'unknown') !== lastSource && !overShare(held[0].source || 'unknown')) {
       picked = held.shift();
     } else if (qi < queue.length) {
       const next = queue[qi];
       const src = next?.source || 'unknown';
-      if (src === lastSource && streak >= maxConsecutive) {
+      if ((src === lastSource && streak >= maxConsecutive) || overShare(src)) {
         held.push(next);
         qi++;
         continue;
@@ -5228,6 +5246,7 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2) {
     if (!picked) break;
     const src = picked.source || 'unknown';
     output.push(picked);
+    sourceCounts.set(src, (sourceCounts.get(src) || 0) + 1);
     if (src === lastSource) streak++; else { lastSource = src; streak = 1; }
   }
   return output;
@@ -5502,7 +5521,7 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
     // "true mix" shouldn't be a Balanced-sort-only guarantee.
     const shouldDiversify = options.diversify || sortMode === 'balanced';
     const output = shouldDiversify
-      ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2)
+      ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2, options.maxSharePct || null)
       : unique.slice(0, limit);
 
     sortAgentState.totalRuns += 1;
@@ -9840,6 +9859,10 @@ async function handleFeedRequest(req, res) {
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       });
     } else if (sourcesParam.length > 1) {
+      // Same proportional cap as the page-1 multi-source handler — see its
+      // comment. Kept in sync so scrolling to page 2+ of the same
+      // multi-source selection doesn't regress to plain streak-limiting.
+      const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
       const memoryRows = filterUnseen(sortFeedBatch(realFeedPosts(sourcesParam.flatMap(src => {
         const agentKey = feedWorkerKey(src);
         return [
@@ -9850,6 +9873,7 @@ async function handleFeedRequest(req, res) {
         limit: offset + feedLimit + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
+        maxSharePct: multiSourceMaxShare,
       }), seenIds);
       const memoryPage = memoryRows.slice(offset, offset + feedLimit + 1);
       hasMore = hasMore || memoryRows.length > offset + feedLimit;
@@ -9857,6 +9881,7 @@ async function handleFeedRequest(req, res) {
         limit: feedLimit,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
+        maxSharePct: multiSourceMaxShare,
       });
     } else if (!dbRows.length) {
       pageRows = filterUnseen(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
@@ -10043,10 +10068,21 @@ async function handleFeedRequest(req, res) {
       : [];
     const dbPosts = dbRows.map(p => mapExternalPost(p, p.source));
     allSourcePosts.push(...dbPosts);
+    // A handful of explicitly-selected sources (e.g. the Jobs filter's
+    // indeed+remoteok+usajobs) can have very different real supply — plain
+    // anti-clustering only stops long runs, not overall skew, so a
+    // consistently higher-yield source still ends up dominating the page
+    // even with no run longer than 2 (confirmed live: 42/18 RemoteOK/Indeed
+    // on a 2-source request). Scales with source count rather than reusing
+    // enforceFeedDiversity's fixed ≤18% — that's sized for dozens of
+    // sources in the full aggregate feed and would badly under-fill a
+    // narrow 2-3 source selection.
+    const multiSourceMaxShare = Math.min(0.65, (1 / sourcesParam.length) + 0.15);
     const result = filterUnseen(sortFeedBatch(allSourcePosts, `multi-source-${sourcesParam.join('-')}`, {
       limit: Math.max(feedLimit + 1, sortAgentLimit()),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
+      maxSharePct: multiSourceMaxShare,
     }), seenIds);
     const multiSourcePageRows = result.slice(0, feedLimit);
     markPostsSeen(req.user.id, multiSourcePageRows);

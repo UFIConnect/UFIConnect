@@ -266,7 +266,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                   borderRadius: 16, padding: '6px 14px', fontWeight: 600, cursor: 'pointer',
                 }}
               >
-                View on UFconnect
+                View
               </button>
             )}
             {/* Video items previously had a "watch on source" link in the

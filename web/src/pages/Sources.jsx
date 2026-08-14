@@ -47,6 +47,7 @@ const SOURCE_META = {
   behance:       { label: 'Behance',           icon: '🖼️', color: '#053EFF', desc: 'Creative portfolio projects' },
   designweb:     { label: 'Design & Web',      icon: '✏️', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
   indeed:        { label: 'Indeed',            icon: '💼', color: '#2557A7', desc: 'Remote job listings' },
+  usajobs:       { label: 'USAJobs',           icon: '🏛️', color: '#005EA8', desc: 'U.S. federal government job openings' },
   uficonnect:    { label: 'UFconnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
 };
 
@@ -56,7 +57,7 @@ const CATEGORIES = [
   { id: 'social',     label: 'Social & Community',   sources: ['reddit', 'mastodon', 'bluesky', 'indiehackers'] },
   { id: 'content',    label: 'Writing & Video',       sources: ['medium', 'hashnode', 'youtube', 'smashing'] },
   { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
-  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok'] },
+  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'usajobs'] },
   { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
   { id: 'community',  label: 'UFconnect',            sources: ['uficonnect'] },
 ];

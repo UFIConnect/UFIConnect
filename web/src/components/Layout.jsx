@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 
@@ -24,11 +24,22 @@ function initials(name = '') {
 export default function Layout({ children }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
 
   function handleLogout() {
     logout();
     navigate('/login');
+  }
+
+  // Clicking Feed while already on the feed page is a no-op for NavLink
+  // (same route, no navigation fires) — this is the only nav item where
+  // "go back to where this takes you" and "you're already there, scroll
+  // up" are both things a user reasonably expects from one click.
+  function handleNavClick(to) {
+    if (to === '/' && location.pathname === '/') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
   }
 
   return (
@@ -46,6 +57,7 @@ export default function Layout({ children }) {
               key={to}
               to={to}
               end={to === '/'}
+              onClick={() => handleNavClick(to)}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon">{icon}</span>
@@ -112,6 +124,7 @@ export default function Layout({ children }) {
             key={to}
             to={to}
             end={to === '/'}
+            onClick={() => handleNavClick(to)}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon">{icon}</span>

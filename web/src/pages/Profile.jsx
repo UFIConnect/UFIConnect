@@ -269,7 +269,6 @@ export default function Profile() {
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
           const icons = { Overview: '👤', 'Connected Accounts': '🔗', Sources: '📡', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
-          const comingSoon = new Set(['Attachments']);
           return (
             <button key={t} onClick={() => {
               if (NAV_TABS[t]) { navigate(NAV_TABS[t]); return; }
@@ -284,11 +283,6 @@ export default function Profile() {
                 display:'flex', alignItems:'center', gap:6,
               }}>
               {icons[t]} {t}
-              {comingSoon.has(t) && (
-                <span style={{ fontSize:'.6rem', fontWeight:700, background:'var(--primary)', color:'#fff', padding:'1px 6px', borderRadius:10, letterSpacing:'.3px' }}>
-                  Soon
-                </span>
-              )}
             </button>
           );
         })}
