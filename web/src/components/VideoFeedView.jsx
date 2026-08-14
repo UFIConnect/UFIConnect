@@ -101,7 +101,7 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
         // the mute button and every subsequent slide reflect reality.
         if (!v.muted) {
           v.muted = true;
-          setMuted(true);
+          onToggleMute?.();
           v.play().catch(() => {});
         }
       });

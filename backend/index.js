@@ -1344,13 +1344,25 @@ function extractRedditRSSMedia(rawEntryXml, rawContentHtml) {
     /(v\.redd\.it|gfycat\.com|redgifs\.com|streamable\.com|youtube\.com|youtu\.be)/i.test(destUrl)
   );
   if (isKnownVideoHost) {
-    // Only worth tagging as video if there's an actual image to show —
-    // otherwise mediaUrl would be a YouTube/v.redd.it page link, which
-    // can't render as an <img>. Confirmed live as roughly half of Reddit's
-    // "video" posts showing as unavailable: whenever a post had no preview
-    // thumbnail, mediaUrl fell back to that unrenderable page link instead
-    // of just not claiming to have media at all.
-    if (validPoster) return { mediaType: 'video', mediaUrl: validPoster };
+    // Still only two cases this app can actually play in-app (see
+    // resolveVideoSource client-side: YouTube via the IFrame API, or a
+    // direct file by extension — v.redd.it/gfycat/redgifs/streamable are
+    // none of those, they need their own per-host embed/manifest handling
+    // this app doesn't have). The previous fix here only addressed one
+    // symptom (an unrenderable page link landing in mediaUrl when there was
+    // no poster) while leaving the more common case — tagging mediaType
+    // 'video' with mediaUrl set to the *poster image*, not the video —
+    // still broken: the dedicated Videos tab pulls anything tagged 'video'
+    // into its swipeable pool, where a poster-only post can't resolve to
+    // anything playable and shows as a dead "Video unavailable" tile,
+    // confirmed live as exactly the "not clear" symptom users hit swiping
+    // through. A directly-playable destUrl (YouTube, or already a raw
+    // video file) is tagged video for real; everything else falls back to
+    // its poster as a normal image post instead of a false promise.
+    const isDirectFile = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(destUrl);
+    const isYouTube = /(youtube\.com|youtu\.be)/i.test(destUrl);
+    if (isDirectFile || isYouTube) return { mediaType: 'video', mediaUrl: destUrl };
+    if (validPoster) return { mediaType: 'image', mediaUrl: validPoster };
     return { mediaType: null, mediaUrl: null };
   }
   if (destUrl && /\.(jpg|jpeg|png|gif|webp)(\?|$)/i.test(destUrl)) {
@@ -2897,44 +2909,58 @@ async function fetchIndeedJobs(keyword) {
   const key = `indeed_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  // Primary: Remotive.com public API (free JSON, no auth)
+  // Remotive.com's search API (free JSON, no auth) and We Work Remotely's
+  // RSS used to be primary/fallback — WWR was only ever fetched when
+  // Remotive returned literally zero hits for a keyword, so any keyword
+  // where Remotive had even one match never pulled in WWR's own distinct
+  // postings at all. Confirmed live: Indeed's real total pool sat at 18
+  // posts against RemoteOK's 42 for the same 60-post window, not because
+  // remote jobs are actually that much rarer, but because this fallback-only
+  // pattern was quietly discarding most of WWR's inventory. Merged instead —
+  // both run every time, deduped by url, so Indeed's real supply reflects
+  // both boards' combined postings instead of whichever answered first.
   let lastError = null;
+  let remotivePosts = [];
+  let wwrPosts = [];
   try {
     const data = await fetchJSON(`https://remotive.com/api/remote-jobs?search=${encodeURIComponent(keyword)}&limit=100`);
     const jobs = data?.jobs || [];
-    if (jobs.length) {
-      const posts = jobs.map(j => ({
-        id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
-        authorId:    'indeed_jobs',
-        groupId:     'ext_indeed',
-        content:     decodeHTMLEntities((j.description || j.company_name || '').replace(/<[^>]+>/g,' ')).slice(0,400),
-        title:       j.title,
-        source:      'indeed', sourceLabel: 'Indeed',
-        sourceUrl:   j.url,
-        topic:       keyword,
-        author:      { id: 'indeed_jobs', name: j.company_name || 'Company', title: 'Employer', organization: j.company_name },
-        likes: [], likesCount: 0, commentsCount: 0,
+    remotivePosts = jobs.map(j => ({
+      id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
+      authorId:    'indeed_jobs',
+      groupId:     'ext_indeed',
+      content:     decodeHTMLEntities((j.description || j.company_name || '').replace(/<[^>]+>/g,' ')).slice(0,400),
+      title:       j.title,
+      source:      'indeed', sourceLabel: 'Indeed',
+      sourceUrl:   j.url,
+      topic:       keyword,
+      author:      { id: 'indeed_jobs', name: j.company_name || 'Company', title: 'Employer', organization: j.company_name },
+      likes: [], likesCount: 0, commentsCount: 0,
       createdAt:   normalizeTimestamp(j.publication_date),
-        isExternal:  true,
-        mediaUrl:    j.company_logo_url || null,
-        mediaType:   j.company_logo_url ? 'image' : null,
-        location:    j.candidate_required_location || null,
-        group:       { id: 'ext_indeed', name: 'Remote Jobs', category: 'Opportunities', externalUrl: 'https://remotive.com' },
-      }));
-      setCached(key, posts);
-      return posts;
-    }
+      isExternal:  true,
+      mediaUrl:    j.company_logo_url || null,
+      mediaType:   j.company_logo_url ? 'image' : null,
+      location:    j.candidate_required_location || null,
+      group:       { id: 'ext_indeed', name: 'Remote Jobs', category: 'Opportunities', externalUrl: 'https://remotive.com' },
+    }));
   } catch (e) { lastError = e; console.warn(`Remotive "${keyword}":`, e.message); }
-  // Fallback: We Work Remotely RSS
   try {
     const xml = await fetchText('https://weworkremotely.com/remote-jobs.rss');
     const items = parseRSSItems(xml);
-    const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
-    if (posts.length) { setCached(key, posts); return posts; }
-    lastError = null; // completed cleanly, just nothing matched — not a failure
-  } catch (e) { lastError = e; console.warn(`WWR "${keyword}":`, e.message); }
+    wwrPosts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indeed', 'Indeed', 'ext_indeed', 'Remote Jobs', 'Opportunities', keyword));
+    lastError = null; // at least one leg completed cleanly — see the failure check below
+  } catch (e) { if (!remotivePosts.length) lastError = e; console.warn(`WWR "${keyword}":`, e.message); }
+
+  const seenUrls = new Set();
+  const posts = [...remotivePosts, ...wwrPosts].filter(p => {
+    const dedupeKey = p.sourceUrl || p.id;
+    if (seenUrls.has(dedupeKey)) return false;
+    seenUrls.add(dedupeKey);
+    return true;
+  });
+  if (posts.length) { setCached(key, posts); return posts; }
   // Only a real "failure" worth surfacing to the shared circuit breaker if
-  // the *last* attempt actually threw — see the main fetcher catch blocks.
+  // both legs actually threw — see the main fetcher catch blocks.
   if (lastError) {
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
