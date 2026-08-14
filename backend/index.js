@@ -2572,27 +2572,36 @@ async function fetchMastodonByTag(tag) {
 }
 
 // ─── Lobsters: tech link aggregator ──────────────────────────────────────────
+// Every value here is a real lobste.rs tag (verified against https://lobste.rs/tags
+// and by fetching https://lobste.rs/t/<tag>.json directly) — 9 of the previous
+// mappings (datascience, frontend, backend, tools ×2, crypto ×2, gamedev, db,
+// architecture, cloud) pointed at tags that don't exist on lobste.rs and were
+// 404ing on every single fetch cycle, permanently, for those categories. Where
+// no accurate real tag exists (data science, dev tools/productivity, web3/
+// crypto as in cryptocurrency — lobste.rs's "cryptography" tag means encryption,
+// not blockchain — and software architecture), the mapping is dropped entirely
+// rather than pointed at a real-but-wrong-topic tag, same as the many other
+// categories below that were never given a Lobsters mapping in the first place.
 const LOBSTERS_TAGS = {
   'AI & Machine Learning': 'ml',     'Generative AI': 'ai',
   'LLMs & Chatbots': 'ai',           'Computer Vision': 'ml',
-  'Data Science': 'datascience',     'Frontend Dev': 'frontend',
-  'Backend Dev': 'backend',          'Cybersecurity': 'security',
+  'Frontend Dev': 'web',              'Backend Dev': 'programming',
+  'Cybersecurity': 'security',
   'Cloud & DevOps': 'devops',        'Open Source': 'release',
-  'Developer Tools': 'tools',        'Web3 / Crypto': 'crypto',
-  'Game Dev': 'gamedev',             'Mobile Dev': 'programming',
-  'Database': 'db',                  'APIs & Integrations': 'web',
+  'Mobile Dev': 'programming',       'Game Dev': 'games',
+  'Database': 'databases',           'APIs & Integrations': 'web',
   'SaaS': 'programming',             'UI/UX Design': 'design',
-  'Career Growth': 'programming',    'Productivity': 'tools',
+  'Career Growth': 'programming',
   'Side Projects': 'programming',    'Web Development': 'web',
   'Performance': 'performance',      'No-Code / Low-Code': 'web',
   'TypeScript': 'javascript',        'Python': 'python',
   'Rust': 'rust',                    'Go': 'go',
   'Linux': 'unix',                   'Docker & Containers': 'devops',
-  'Kubernetes': 'devops',            'Architecture': 'architecture',
-  'Testing & QA': 'programming',     'Serverless': 'cloud',
-  'Blockchain / Web3': 'crypto',     'Robotics': 'hardware',
+  'Kubernetes': 'devops',
+  'Testing & QA': 'programming',     'Serverless': 'devops',
+  'Robotics': 'hardware',
   'GraphQL': 'api',                  'CI/CD & Automation': 'devops',
-  'Data Engineering': 'datascience', 'Networking': 'networking',
+  'Networking': 'networking',
   'Hardware': 'hardware',            'Science': 'science',
   'Mathematics': 'math',             'Formal Methods': 'formalmethods',
 };
