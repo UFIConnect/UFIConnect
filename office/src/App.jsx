@@ -180,7 +180,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
   if (!web) return null;
 
   const subEntries = Object.entries(web.subAgents || {});
-  const isRunning  = triggering['website_optimizer'] || web.status === 'running';
+  const isRunning  = triggering['web_optimizer'] || web.status === 'running';
 
   const ttfbColor = !web.lastTtfbMs  ? '#64748b'
     : web.lastTtfbMs  > 800  ? '#f87171'
@@ -188,7 +188,11 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
   const loadColor = !web.lastTotalMs ? '#64748b'
     : web.lastTotalMs > 2500 ? '#f87171' : '#4ade80';
   const sizeKb    = web.lastBytes ? (web.lastBytes / 1024).toFixed(1) : null;
-  const sizeColor = !sizeKb ? '#64748b' : web.lastBytes > 460 * 1024 ? '#f87171' : '#4ade80';
+  // 450,000 bytes matches the "HTML payload heavier than target" threshold
+  // in scoreWebsiteSnapshot on the backend — was 460*1024 (470,910 bytes)
+  // here, which meant this metric could still read green while the
+  // Findings list below was already flagging the payload as too heavy.
+  const sizeColor = !sizeKb ? '#64748b' : web.lastBytes > 450000 ? '#f87171' : '#4ade80';
   const scoreColor = web.score >= 80 ? '#4ade80' : web.score >= 60 ? '#fbbf24' : '#f87171';
 
   return (
@@ -211,7 +215,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
           <span style={{ fontSize: 24, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>
             {web.score != null ? `${web.score}/100` : '—'}
           </span>
-          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('website_optimizer')} disabled={isRunning}>
+          <Btn size="sm" variant="ghost" onClick={() => triggerAgent('web_optimizer')} disabled={isRunning}>
             {isRunning ? '...' : '↺ Re-run'}
           </Btn>
         </div>
@@ -408,6 +412,7 @@ function HealthBadge({ health }) {
     critical: { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Critical' },
     degraded: { bg: 'rgba(251,191,36,.12)', color: '#fbbf24', label: 'Degraded' },
     paused:   { bg: 'rgba(239,68,68,.1)',   color: '#f87171', label: 'Paused' },
+    gated:    { bg: 'rgba(148,163,184,.12)',color: '#94a3b8', label: 'Gated' },
   }[health.status] || { bg: 'rgba(148,163,184,.1)', color: '#94a3b8', label: '—' };
   return (
     <span style={{
@@ -881,6 +886,7 @@ function SourcesView({ status, triggerAgent, triggering }) {
     degraded: { dot: '#f59e0b', bg: 'rgba(251,191,36,.07)', border: 'rgba(251,191,36,.2)',  label: 'Degraded' },
     paused:   { dot: '#ef4444', bg: 'rgba(239,68,68,.07)',  border: 'rgba(239,68,68,.22)',  label: 'Paused' },
     pro:      { dot: '#f59e0b', bg: 'rgba(245,158,11,.07)', border: 'rgba(245,158,11,.2)',  label: 'Pro' },
+    gated:    { dot: '#64748b', bg: 'rgba(148,163,184,.06)', border: 'rgba(148,163,184,.18)', label: 'Gated' },
   };
 
   return (
@@ -1296,7 +1302,15 @@ export default function App() {
 
   const triggerAgent = async (id) => {
     setTriggering(prev => ({ ...prev, [id]: true }));
-    try { await officeFetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' }); } catch {}
+    try {
+      const r = await officeFetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' });
+      // A 404 here means this id isn't a key in the backend's trigger map (or
+      // a live SOURCE_FETCHERS entry) — a silent no-op otherwise. Surface it
+      // in the console so a future button/id mismatch like this is visible
+      // to whoever's driving the dashboard, instead of just looking like the
+      // agent quietly did nothing.
+      if (!r.ok) console.error(`Trigger failed for "${id}": HTTP ${r.status}`);
+    } catch (e) { console.error(`Trigger failed for "${id}":`, e); }
     setTimeout(() => setTriggering(prev => ({ ...prev, [id]: false })), 2000);
   };
 

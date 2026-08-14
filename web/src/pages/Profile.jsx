@@ -528,7 +528,7 @@ export default function Profile() {
                   <div className="empty-title">No resume uploaded yet</div>
                   <div className="empty-desc">Upload one to get an ATS-style score and see which opportunities best match it.</div>
                 </div>
-              ) : attachments.map(a => {
+              ) : attachments.map((a, idx) => {
                 const colors = scoreColor(a.atsScore);
                 const isExpanded = expandedAttachment === a.id;
                 return (
@@ -540,7 +540,10 @@ export default function Profile() {
                       <span style={{ fontSize:'1.2rem' }}>📄</span>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontWeight:600, fontSize:'.875rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.filename}</div>
-                        <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>{new Date(a.createdAt).toLocaleDateString()} · {(a.fileSize / 1024).toFixed(0)} KB</div>
+                        <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>
+                          {new Date(a.createdAt).toLocaleDateString()} · {(a.fileSize / 1024).toFixed(0)} KB
+                          {idx === 0 && attachments.length > 1 && <span style={{ color:'var(--primary)', fontWeight:600 }}> · Used for opportunity matching</span>}
+                        </div>
                       </div>
                       {/* Score next to the attachment, as asked */}
                       <span style={{

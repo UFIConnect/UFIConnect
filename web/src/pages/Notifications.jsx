@@ -24,6 +24,8 @@ export default function Notifications() {
   const [error,      setError]      = useState(false);
   const [accepting,  setAccepting]  = useState(null);
   const [accepted,   setAccepted]   = useState(new Set());
+  const [declining,  setDeclining]  = useState(null);
+  const [declined,   setDeclined]   = useState(new Set());
 
   function load(opts = {}) {
     setError(false);
@@ -49,6 +51,21 @@ export default function Notifications() {
       // leave as pending — user can retry
     } finally {
       setAccepting(null);
+    }
+  }
+
+  // Same DELETE the profile page's cancel/decline button uses — previously
+  // this list only ever offered Accept, so a request from someone you don't
+  // want to connect with had no way to go away except being ignored forever.
+  async function handleDecline(notification) {
+    setDeclining(notification.id);
+    try {
+      await client.delete(`/users/${notification.user.id}/connect`);
+      setDeclined(prev => new Set(prev).add(notification.id));
+    } catch {
+      // leave as pending — user can retry
+    } finally {
+      setDeclining(null);
     }
   }
 
@@ -97,6 +114,7 @@ export default function Notifications() {
           {items.map((n) => {
             const isRequest = n.type === 'connection_request';
             const isAccepted = accepted.has(n.id);
+            const isDeclined = declined.has(n.id);
             return (
               <div key={n.id} className="conv-item" style={{ cursor: 'default' }}>
                 <Link to={`/u/${n.user.id}`} style={{ flexShrink: 0 }}>
@@ -118,14 +136,25 @@ export default function Notifications() {
                   {isRequest && (
                     isAccepted ? (
                       <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Connected</span>
+                    ) : isDeclined ? (
+                      <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)' }}>Declined</span>
                     ) : (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        disabled={accepting === n.id}
-                        onClick={() => handleAccept(n)}
-                      >
-                        {accepting === n.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Accept'}
-                      </button>
+                      <>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          disabled={accepting === n.id || declining === n.id}
+                          onClick={() => handleAccept(n)}
+                        >
+                          {accepting === n.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Accept'}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          disabled={accepting === n.id || declining === n.id}
+                          onClick={() => handleDecline(n)}
+                        >
+                          {declining === n.id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Decline'}
+                        </button>
+                      </>
                     )
                   )}
                 </div>

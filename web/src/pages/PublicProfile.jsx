@@ -138,6 +138,23 @@ export default function PublicProfile() {
     finally { setConnecting(false); }
   }
 
+  // Declining a request someone sent you is the same DELETE the "cancel"
+  // path above uses (see the backend's DELETE /users/:id/connect comment —
+  // it treats "cancel one you sent" and "decline one you received" as the
+  // same "this pending relationship shouldn't exist" action), but it needed
+  // its own button: pending_received's single toggleConnect button already
+  // means Accept, so there was previously no way to decline a request from
+  // this page at all — only accept it or leave it pending forever.
+  async function declineConnect() {
+    if (!user) return;
+    setConnecting(true);
+    try {
+      const { data } = await client.delete(`/users/${user.id}/connect`);
+      setUser(u => ({ ...u, connectionStatus: data.connectionStatus }));
+    } catch {}
+    finally { setConnecting(false); }
+  }
+
   if (loading) return (
     <Layout>
       <div className="empty-state"><span className="spinner spinner-primary" /></div>
@@ -241,19 +258,39 @@ export default function PublicProfile() {
             >
               {toggling ? <span className="spinner" /> : user.isFollowing ? '✓ Following' : '+ Follow'}
             </button>
-            <button
-              className={(user.connectionStatus === 'none' || user.connectionStatus === 'pending_received') ? 'btn btn-primary' : 'btn btn-ghost'}
-              onClick={toggleConnect}
-              disabled={connecting}
-              style={{ minWidth: 110 }}
-            >
-              {connecting ? <span className="spinner" /> : {
-                none: '🤝 Connect',
-                pending_sent: 'Pending ✕',
-                pending_received: 'Accept request',
-                connected: '✓ Connected',
-              }[user.connectionStatus || 'none']}
-            </button>
+            {user.connectionStatus === 'pending_received' ? (
+              <>
+                <button
+                  className="btn btn-primary"
+                  onClick={toggleConnect}
+                  disabled={connecting}
+                  style={{ minWidth: 110 }}
+                >
+                  {connecting ? <span className="spinner" /> : 'Accept request'}
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  onClick={declineConnect}
+                  disabled={connecting}
+                  style={{ minWidth: 90 }}
+                >
+                  Decline
+                </button>
+              </>
+            ) : (
+              <button
+                className={user.connectionStatus === 'none' ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={toggleConnect}
+                disabled={connecting}
+                style={{ minWidth: 110 }}
+              >
+                {connecting ? <span className="spinner" /> : {
+                  none: '🤝 Connect',
+                  pending_sent: 'Pending ✕',
+                  connected: '✓ Connected',
+                }[user.connectionStatus || 'none']}
+              </button>
+            )}
             <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
               💬 Message
             </Link>

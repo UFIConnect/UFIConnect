@@ -7734,7 +7734,11 @@ function dbRowToMemUser(row) {
     organization: row.organization || '',
     joinedGroups: row.joined_groups || [],
     onboardingComplete: row.onboarding_complete || false,
-    profileHidden: false,
+    // Was hardcoded false regardless of the real column value — meaning
+    // every user's "hide my profile" setting silently reverted to visible
+    // on every process restart, since preloadUsersFromDB() rehydrates the
+    // entire users[] cache through this function on startup.
+    profileHidden: !!row.profile_hidden,
     preferences: row.role ? { role: row.role, goals: asArray(row.goals), interests: asArray(row.interests), experience: row.experience } : null,
     links: row.links || {},
     roleSettings: row.role_settings || {},
@@ -9281,6 +9285,11 @@ async function purgeUser(uid) {
     await db.query('DELETE FROM follows WHERE follower_id=$1 OR following_id=$1', [uid]);
     await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
     await db.query('DELETE FROM attachments WHERE user_id=$1', [uid]);
+    // seen_posts (used by getUserSeenSet/markPostsSeen to keep refreshes from
+    // re-serving the same posts) was never purged here — every other
+    // per-user table gets cleaned above, but this one kept accumulating rows
+    // against a user_id that no longer existed in `users` after a delete.
+    await db.query('DELETE FROM seen_posts WHERE user_id=$1', [uid]);
     await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
     await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
     await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
@@ -11538,8 +11547,18 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       postCount: 0, fallbackCount: 0,
     });
   }
-  // Append connected-account social agents (per-user OAuth, not continuous cyclers)
+  // Append connected-account social agents (per-user OAuth, not continuous cyclers).
+  // Guarded against SOURCE_CONFIG: these 4 ids are now ALSO continuous
+  // app-level workers (see SOURCE_CONFIG above — they idle at 0 posts with
+  // no error until an app bearer token is configured), so the main
+  // Object.keys(SOURCE_CONFIG) loop above already emits a real entry for
+  // each of them. Without this guard every one of them was pushed a second
+  // time here with a contradictory status ("ready"/isConnectedSource vs the
+  // real "healthy" worker entry), which duplicated their id in
+  // sources.workers, inflated total/healthy counts, and rendered two
+  // conflicting cards for the same platform in the office Sources view.
   for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
+    if (SOURCE_CONFIG[id]) continue;
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({
       id, emoji: def.emoji, color: def.color, name: def.name,
@@ -12648,7 +12667,15 @@ app.get('/users/:id/followers', authenticate, async (req, res) => {
     const myId    = req.user.id;
     const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
     const followerIds    = follows.filter(f => f.followingId === userId).map(f => f.followerId);
-    const followerUsers  = (await Promise.all(followerIds.map(id => getUser(id)))).filter(Boolean);
+    // A hidden third party (no relationship to *this viewer*) showing up by
+    // name in someone else's public followers/following list would leak
+    // exactly what profileHidden/privacy_publicProfile promise not to —
+    // "stop strangers who only have the id from finding this" applies here
+    // too, not just to the direct GET /users/:id route. Same filter as
+    // /users/search and the profile route (isProfileHidden + canViewHiddenProfile).
+    const followerUsers  = (await Promise.all(followerIds.map(id => getUser(id))))
+      .filter(Boolean)
+      .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
     res.json({
       users: followerUsers.map(u => ({
         id: u.id, name: u.name, title: u.title || '',
@@ -12667,7 +12694,10 @@ app.get('/users/:id/following', authenticate, async (req, res) => {
     const myId         = req.user.id;
     const myFollowingSet  = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
     const followingIds    = follows.filter(f => f.followerId === userId).map(f => f.followingId);
-    const followingUsers  = (await Promise.all(followingIds.map(id => getUser(id)))).filter(Boolean);
+    // See matching comment in /users/:id/followers above — same leak, same fix.
+    const followingUsers  = (await Promise.all(followingIds.map(id => getUser(id))))
+      .filter(Boolean)
+      .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
     res.json({
       users: followingUsers.map(u => ({
         id: u.id, name: u.name, title: u.title || '',
