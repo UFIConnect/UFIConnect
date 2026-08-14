@@ -15,6 +15,13 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(
   k => !['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].includes(k)
 );
+// Following mode's own filter set — connected-account platforms plus native
+// UFconnect, an entirely different pool from FEED_VIDEO_SOURCES above (see
+// getFollowingFeedPosts server-side). TikTok is included even though it
+// isn't part of the regular Following tab's filter set — same OAuth connect
+// flow as the others, just no fetcher behind it yet, so it'll show empty
+// until that lands rather than being left out of the picker entirely.
+const FOLLOWING_VIDEO_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'];
 
 // Figures out how a given post's video can actually be played in-app, per
 // platform — the same Bluesky-playlist/direct-file detection ImageLightbox
@@ -403,6 +410,10 @@ export default function VideoFeedView({ onExit }) {
   // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
   // single-value toggle could never combine sources in the first place.
   const [sourceFilter, setSourceFilter] = useState([]);
+  // Whether the platform-filter sheet (opened from the "Filters" button) is
+  // showing — see its render block below for why this replaced an
+  // always-visible chip row.
+  const [filterOpen, setFilterOpen] = useState(false);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
   // the current value instead of whatever was captured at its own creation —
@@ -540,6 +551,17 @@ export default function VideoFeedView({ onExit }) {
     loadPage(1);
   }, [loadPage]);
 
+  const clearSourceFilter = useCallback(() => {
+    if (!sourceFilterRef.current.length) return;
+    sourceFilterRef.current = [];
+    setSourceFilter([]);
+    setActiveIndex(0);
+    setPage(1);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage(1);
+  }, [loadPage]);
+
   // Scrolling back up to video 1 after having scrolled further in acts as
   // pull-to-refresh, same mechanism as every other list on the site — no
   // separate touch-drag handling needed since the snap-scroll container
@@ -667,77 +689,103 @@ export default function VideoFeedView({ onExit }) {
         })}
       </div>
 
-      {/* Platform filter — the data plumbing (sourceFilter state,
-          toggleSourceFilter, the ?source= param sent by loadPage) was
-          already mode-agnostic; only this row was gated to Following.
-          Covers every publicly-aggregated source (FEED_VIDEO_SOURCES) —
-          this used to be hand-curated to just 5 "known video producers",
-          but that list was built from an incomplete grep: ~20 more RSS
-          sources (TechCrunch, Smashing Magazine, WIRED, etc.) share the
-          same server-side video-embed detection and can just as easily
-          carry one. A source with genuinely no video content just shows
-          the existing "no videos yet" empty state, so being exhaustive
-          here costs nothing. Following's row below stays as-is: connected-
-          account platforms plus native UFconnect, an entirely different
-          pool from this one. TikTok is offered there even though it isn't
-          part of the regular Following tab's filter set — same OAuth
-          connect flow as the others, just no fetcher behind it yet (see
-          the tiktok status note server-side), so it'll show empty until
-          that lands rather than being left out of the picker entirely. */}
-      {viewMode === 'feed' && (
-        <div style={{
+      {/* Platform filter — used to be a permanently-visible row of every
+          publicly-aggregated source (FEED_VIDEO_SOURCES, ~30 of them)
+          floating over the video at all times, which read as visual
+          overload on top of an already-full-bleed video. Collapsed into a
+          single button that opens a sheet with the full picker instead —
+          same set of sources/multi-select behavior (toggleSourceFilter),
+          just not permanently on-screen. Following mode uses its own,
+          separate source list (FOLLOWING_VIDEO_SOURCES) — an entirely
+          different pool from Feed mode's (see getFollowingFeedPosts
+          server-side) — the sheet below switches between them based on
+          viewMode. */}
+      <button
+        onClick={() => setFilterOpen(true)}
+        aria-label="Filter by platform"
+        style={{
           position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
-        }}>
-          {FEED_VIDEO_SOURCES.map(key => {
-            const meta = SOURCE_META[key] || {};
-            const active = sourceFilter.includes(key);
-            return (
+          zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
+          padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
+          fontWeight: 700, fontSize: '.78rem',
+          border: `1px solid ${sourceFilter.length ? '#fff' : 'rgba(255,255,255,.25)'}`,
+          background: sourceFilter.length ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+          backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+          color: '#fff',
+        }}
+      >
+        🎛 Filters{sourceFilter.length > 0 ? ` · ${sourceFilter.length}` : ''}
+      </button>
+
+      {filterOpen && (
+        <div
+          onClick={e => { if (e.target === e.currentTarget) setFilterOpen(false); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,.55)', display: 'flex',
+            alignItems: 'flex-end', justifyContent: 'center',
+          }}
+        >
+          <div style={{
+            background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
+            width: '100%', maxWidth: 540, maxHeight: '72vh',
+            display: 'flex', flexDirection: 'column',
+            boxShadow: '0 -4px 32px rgba(0,0,0,.4)',
+          }}>
+            <div style={{ padding: '12px 20px 0', textAlign: 'center', flexShrink: 0 }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter by platform</h2>
+                <button
+                  onClick={() => setFilterOpen(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'rgba(255,255,255,.6)', lineHeight: 1 }}
+                >×</button>
+              </div>
+            </div>
+            <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1, display: 'flex', flexWrap: 'wrap', gap: 8, alignContent: 'flex-start' }}>
+              {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
+                const meta = SOURCE_META[key] || {};
+                const active = sourceFilter.includes(key);
+                return (
+                  <button
+                    key={key}
+                    onClick={() => toggleSourceFilter(key)}
+                    aria-label={meta.label || key}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 5,
+                      padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
+                      fontWeight: 700, fontSize: '.78rem',
+                      border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
+                      background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)',
+                      color: '#fff',
+                    }}
+                  >
+                    <span>{meta.icon}</span>{meta.label || key}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
-                key={key}
-                onClick={() => toggleSourceFilter(key)}
-                aria-label={meta.label || key}
+                onClick={clearSourceFilter}
+                disabled={sourceFilter.length === 0}
                 style={{
-                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '5px 10px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
-                  fontWeight: 700, fontSize: '.72rem',
-                  border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                  background: active ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.35)',
-                  color: '#fff',
+                  flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
+                  border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
+                  color: sourceFilter.length === 0 ? 'rgba(255,255,255,.35)' : '#fff',
+                  fontWeight: 700, fontSize: '.85rem', cursor: sourceFilter.length === 0 ? 'default' : 'pointer',
                 }}
               >
-                <span>{meta.icon}</span>{meta.label || key}
+                Clear all
               </button>
-            );
-          })}
-        </div>
-      )}
-      {viewMode === 'following' && (
-        <div style={{
-          position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
-        }}>
-          {['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].map(key => {
-            const meta = SOURCE_META[key] || {};
-            const active = sourceFilter.includes(key);
-            return (
               <button
-                key={key}
-                onClick={() => toggleSourceFilter(key)}
-                aria-label={meta.label || key}
-                style={{
-                  flexShrink: 0, display: 'flex', alignItems: 'center', gap: 4,
-                  padding: '5px 10px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
-                  fontWeight: 700, fontSize: '.72rem',
-                  border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                  background: active ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.35)',
-                  color: '#fff',
-                }}
+                onClick={() => setFilterOpen(false)}
+                style={{ flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10, border: 'none', background: '#fff', color: '#000', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer' }}
               >
-                <span>{meta.icon}</span>{meta.label || key}
+                Done
               </button>
-            );
-          })}
+            </div>
+          </div>
         </div>
       )}
 
