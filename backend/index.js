@@ -2830,15 +2830,27 @@ function parseRSSItems(xml) {
     const rawBody = () => _rawBody ?? (_rawBody = decodeHTMLEntities(
       rawField('content:encoded') || rawField('content') || rawField('description') || rawField('summary')
     ));
-    // Falls back to the first embedded YouTube iframe/link in the article
-    // body — The Verge, freeCodeCamp, TheNewStack, and the YC blog all embed
-    // real YouTube videos this way with no dedicated media tag at all (yc
+    // Falls back to the first embedded YouTube iframe in the article body —
+    // The Verge, freeCodeCamp, TheNewStack, and the YC blog all embed real
+    // YouTube videos this way with no dedicated media tag at all (yc
     // confirmed live: <iframe src="https://www.youtube.com/embed/ID?...">).
     // Normalized to a plain watch URL so it's recoverable the same way every
     // other YouTube post's embedId already is client-side (extractYouTubeId
     // matches watch/embed/youtu.be forms interchangeably).
+    //
+    // Was matching a bare youtube.com/watch or youtu.be URL *anywhere* in
+    // the article body, not just inside an <iframe> — Smashing Magazine
+    // confirmed live: a plain inline promo link ("Jump to a free preview"
+    // for a paid course) pointed at a YouTube watch URL, and every article
+    // carrying that same boilerplate promo (5 of 40 in one fetch, all
+    // unrelated topics) got tagged as if it had its own unique embedded
+    // video — same repeated, irrelevant video landing in the Videos tab for
+    // several completely different articles. Requiring an actual <iframe
+    // src="..."> wrapper is what the confirmed-working sources (YC etc.)
+    // already use, so this only narrows out the false-positive case.
     if (!video) {
-      const yt = rawBody().match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
+      const iframeSrc = rawBody().match(/<iframe[^>]+src=["']([^"']*(?:youtube(?:-nocookie)?\.com|youtu\.be)[^"']*)["']/i)?.[1];
+      const yt = iframeSrc?.match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
       if (yt) video = `https://www.youtube.com/watch?v=${yt[1]}`;
     }
     // Falls back to the first <img> actually embedded in the article body —
@@ -10597,9 +10609,23 @@ async function handleVideoFeedRequest(req, res) {
     // a refresh return substantially different videos instead of the same
     // rotation of the same pool every time.
     const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
-    const sourcePool = sourceFilter
+    let sourcePool = sourceFilter
       ? videoFeedSnapshot.posts.filter(p => Array.isArray(sourceFilter) ? sourceFilter.includes(p.source) : p.source === sourceFilter)
       : videoFeedSnapshot.posts;
+    // videoFeedSnapshot is already balanced for the *full*, unfiltered pool
+    // (getBalancedFeedPosts' own per-source pull) — filtering it down to a
+    // caller-selected subset doesn't inherit that balance, since the
+    // filtered posts' relative order/proportions are whatever survived from
+    // a diversification pass tuned for 30+ sources, not this specific
+    // 2-or-more-source selection. Same fix as the main feed's multi-source
+    // filter (see the Jobs filter's maxSharePct comment there): re-
+    // diversify with a cap that scales to how many sources are actually
+    // selected, so one consistently higher-supply source can't dominate a
+    // filtered view even though the raw snapshot order would let it.
+    if (Array.isArray(sourceFilter) && sourceFilter.length > 1) {
+      const maxSharePct = Math.min(0.65, (1 / sourceFilter.length) + 0.15);
+      sourcePool = diversifyBySource(sourcePool, sourcePool.length, 2, maxSharePct);
+    }
     const rotated = rotateForUser(sourcePool, req.user.id, refreshSeed);
     // Excludes videos this user has already been shown — see filterUnseen.
     // Falls back to allowing repeats only once literally everything in the

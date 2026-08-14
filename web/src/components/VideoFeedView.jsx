@@ -4,6 +4,18 @@ import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoP
 import { SOURCE_META } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
+// Feed mode's filter row — every publicly-aggregated source, since any of
+// them can carry a real video (a dedicated video source like YouTube, a
+// direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
+// one — see rssPost/parseRSSItems server-side, which is shared by ~20 RSS
+// sources, not just the handful that were originally assumed to be the only
+// ones capable of it). Excludes the Following-only sources (native
+// UFconnect posts + connected-account platforms), which have their own
+// separate filter row below with a different pool entirely.
+const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(
+  k => !['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].includes(k)
+);
+
 // Figures out how a given post's video can actually be played in-app, per
 // platform — the same Bluesky-playlist/direct-file detection ImageLightbox
 // uses for a single item, but centralized here since this view needs it for
@@ -58,7 +70,7 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function VideoSlide({ post, active, muted, onToggleMute }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -163,6 +175,29 @@ function VideoSlide({ post, active, muted, onToggleMute }) {
     if (src?.kind !== 'youtube' || !ytPlayerRef.current) return;
     if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
   }, [muted, src?.kind]);
+
+  // Pause for the duration of an active scroll gesture, deliberately kept
+  // separate from the active/inactive effect above: that one owns real
+  // slide transitions (play-from-start, pause-and-rewind-to-0 for the next
+  // viewer). This one only pauses-in-place and resumes-in-place while
+  // scrolling happens to pass over an already-active slide without fully
+  // leaving it — no rewind, no re-priming autoplay, just a hold. Declared
+  // after the active-effect above so if both fire in the same commit (a
+  // fresh slide becomes active while still mid-scroll), this one's pause
+  // is what actually lands.
+  useEffect(() => {
+    if (!active) return;
+    if (src?.kind === 'youtube') {
+      const p = ytPlayerRef.current;
+      if (!p) return;
+      if (isScrolling) p.pauseVideo?.(); else p.playVideo?.();
+      return;
+    }
+    const v = getNativeEl();
+    if (!v) return;
+    if (isScrolling) v.pause();
+    else v.play().catch(() => {});
+  }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
     if (src?.kind === 'youtube') {
@@ -363,13 +398,17 @@ export default function VideoFeedView({ onExit }) {
   // (gated platforms only ever appear in Following, see FEED_SOCIAL_TABS
   // backend-side), so switching mode also resets the source filter.
   const [viewMode, setViewMode] = useState('feed');
-  const [sourceFilter, setSourceFilter] = useState(null);
+  // Array, not a single value — selecting more than one platform at once is
+  // exactly what makes the server's true-mix rebalancing (see the
+  // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
+  // single-value toggle could never combine sources in the first place.
+  const [sourceFilter, setSourceFilter] = useState([]);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
   // the current value instead of whatever was captured at its own creation —
   // same pattern as refreshSeedRef below and viewModeRef in pages/Feed.jsx.
   const viewModeRef = useRef('feed');
-  const sourceFilterRef = useRef(null);
+  const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
   const loadingMoreRef = useRef(false);
@@ -402,7 +441,9 @@ export default function VideoFeedView({ onExit }) {
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
       let params = `limit=10&page=${pageNum}&seed=${refreshSeedRef.current}${bust ? '&bust=1' : ''}`;
-      if (src) params += `&source=${encodeURIComponent(src)}`;
+      // Same ?source= (single)/?sources= (multi) convention as the main feed.
+      if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
+      else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
       // Following's pool is a live per-user query (see getFollowingFeedPosts
       // backend-side), not the cross-user snapshot the aggregate endpoint
       // caches — bust=1 doesn't apply to it, there's nothing to bust.
@@ -474,8 +515,8 @@ export default function VideoFeedView({ onExit }) {
     if (next === viewModeRef.current) return;
     viewModeRef.current = next;
     setViewMode(next);
-    sourceFilterRef.current = null;
-    setSourceFilter(null);
+    sourceFilterRef.current = [];
+    setSourceFilter([]);
     setActiveIndex(0);
     setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
@@ -483,8 +524,13 @@ export default function VideoFeedView({ onExit }) {
     loadPage(1);
   }, [loadPage]);
 
+  // Multi-select: tapping an unselected chip adds it, tapping a selected one
+  // removes it — combining platforms is what actually exercises the
+  // server's true-mix rebalancing for a filtered selection (see loadPage's
+  // ?sources= param).
   const toggleSourceFilter = useCallback((key) => {
-    const next = sourceFilterRef.current === key ? null : key;
+    const current = sourceFilterRef.current;
+    const next = current.includes(key) ? current.filter(k => k !== key) : [...current, key];
     sourceFilterRef.current = next;
     setSourceFilter(next);
     setActiveIndex(0);
@@ -516,6 +562,35 @@ export default function VideoFeedView({ onExit }) {
     }, { root: container, threshold: [0.6] });
     slideRefs.current.forEach(el => el && observer.observe(el));
     return () => observer.disconnect();
+  }, [videoPosts.length]);
+
+  // Actively-scrolling detection, separate from the intersection-based
+  // "which slide is active" above — that one only fires once a slide has
+  // settled past the 60% threshold, so a fast fling through several videos
+  // still briefly crossed 60% on each one along the way, each flicker
+  // triggering a real decode+play() just to be paused again a moment later
+  // (confirmed live as audible stutter during a fast scroll). Pausing
+  // whatever's active for the duration of the scroll gesture — not
+  // switching slides, not touching playback position — and resuming once
+  // scrolling has actually stopped avoids that thrash. 150ms of no scroll
+  // events is the same kind of settle window native mobile UIs use for
+  // "has scrolling stopped" (a real end-of-scroll event isn't reliably
+  // available across browsers, so this is the standard debounce fallback).
+  const [isScrolling, setIsScrolling] = useState(false);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let settleTimer;
+    const handleScroll = () => {
+      setIsScrolling(true);
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => setIsScrolling(false), 150);
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      clearTimeout(settleTimer);
+    };
   }, [videoPosts.length]);
 
   // Fetch the next page a couple of slides before actually running out.
@@ -594,13 +669,15 @@ export default function VideoFeedView({ onExit }) {
 
       {/* Platform filter — the data plumbing (sourceFilter state,
           toggleSourceFilter, the ?source= param sent by loadPage) was
-          already mode-agnostic; only this row was gated to Following. Feed
-          mode's own pool draws from every public source (see
-          handleVideoFeedRequest server-side), but most of them never
-          actually produce video content — offering all 30+ would be mostly
-          dead ends, so this list is scoped to the sources that genuinely do
-          (mediaType:'video' producers: YouTube, Reddit, Mastodon, Bluesky,
-          DEV Community). Following's row below stays as-is: connected-
+          already mode-agnostic; only this row was gated to Following.
+          Covers every publicly-aggregated source (FEED_VIDEO_SOURCES) —
+          this used to be hand-curated to just 5 "known video producers",
+          but that list was built from an incomplete grep: ~20 more RSS
+          sources (TechCrunch, Smashing Magazine, WIRED, etc.) share the
+          same server-side video-embed detection and can just as easily
+          carry one. A source with genuinely no video content just shows
+          the existing "no videos yet" empty state, so being exhaustive
+          here costs nothing. Following's row below stays as-is: connected-
           account platforms plus native UFconnect, an entirely different
           pool from this one. TikTok is offered there even though it isn't
           part of the regular Following tab's filter set — same OAuth
@@ -612,9 +689,9 @@ export default function VideoFeedView({ onExit }) {
           position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
           zIndex: 10, display: 'flex', gap: 6, maxWidth: 'calc(100vw - 32px)', overflowX: 'auto',
         }}>
-          {['youtube', 'reddit', 'mastodon', 'bluesky', 'devto'].map(key => {
+          {FEED_VIDEO_SOURCES.map(key => {
             const meta = SOURCE_META[key] || {};
-            const active = sourceFilter === key;
+            const active = sourceFilter.includes(key);
             return (
               <button
                 key={key}
@@ -642,7 +719,7 @@ export default function VideoFeedView({ onExit }) {
         }}>
           {['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].map(key => {
             const meta = SOURCE_META[key] || {};
-            const active = sourceFilter === key;
+            const active = sourceFilter.includes(key);
             return (
               <button
                 key={key}
@@ -695,7 +772,7 @@ export default function VideoFeedView({ onExit }) {
               data-idx={idx}
               style={{ height: '100dvh', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
-              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={() => setMuted(m => !m)} />
+              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={() => setMuted(m => !m)} isScrolling={isScrolling} />
             </div>
           ))}
         </div>
