@@ -148,6 +148,26 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+      # No CSP here: this app aggregates content/avatars from dozens of
+      # external sources (Reddit, GitHub, YouTube, etc.) with no fixed
+      # domain list, so a real img-src/connect-src allowlist needs its own
+      # dedicated audit rather than a guess that risks silently breaking
+      # feed images. These are the headers safe to set without that risk.
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=63072000; includeSubDomains; preload
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api-708r.onrender.com
@@ -184,6 +204,27 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+      - path: /*
+        name: Strict-Transport-Security
+        value: max-age=63072000; includeSubDomains; preload
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: camera=(), microphone=(), geolocation=()
+      # Internal ops dashboard — no reason for this to be publicly
+      # searchable. robots.txt covers well-behaved crawlers; this header
+      # is the more reliable belt-and-suspenders version.
+      - path: /*
+        name: X-Robots-Tag
+        value: noindex, nofollow
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api-708r.onrender.com
