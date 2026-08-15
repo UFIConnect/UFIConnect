@@ -4763,11 +4763,39 @@ function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
   const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean).slice().sort();
   return `${list.join(',')}::${sortMode}::${timeRange || 'all'}`;
 }
+// Takes each of `lists` (already sorted best-first) and interleaves them
+// one-at-a-time — [a0,b0,c0, a1,b1,c1, a2,b2, ...] once a source runs out —
+// so no source can ever be more than one item ahead of any other in any
+// prefix, by construction, rather than by a probabilistic cap. Replaced a
+// generic streak/share-based diversify pass over one combined queue (see
+// diversifyBySource's maxSharePct) for the specific case of a small,
+// explicit multi-source selection: that approach turned out not to
+// reliably cap a source that's simply much denser/fresher-ranked than its
+// selected companions — live-tested a 4-source Feed filter where the
+// richest of the four took 18 of page 1's 20 posts despite a 40% cap,
+// because the cap only engages once 6 items have already been emitted
+// (and by then the damage was done) and otherwise only prevents 3-in-a-row
+// runs, not overall skew.
+function roundRobinMerge(lists) {
+  const active = lists.filter(l => l.length);
+  const result = [];
+  for (let i = 0; ; i++) {
+    let addedAny = false;
+    for (const l of active) {
+      if (i < l.length) { result.push(l[i]); addedAny = true; }
+    }
+    if (!addedAny) break;
+  }
+  return result;
+}
 // Per-source queries run in parallel (not one source=ANY([...]) query) —
 // see the "Fix multi-source Feed filter shutting out lower-ranked sources"
 // commit: a single combined ORDER BY <rank> LIMIT query lets whichever
 // selected source ranks higher fill the entire window, silently excluding
-// a lower-ranked selected source before diversifyBySource ever runs.
+// a lower-ranked selected source before diversifyBySource ever runs. Each
+// source's own candidates are sorted independently, then interleaved via
+// roundRobinMerge above rather than concatenated into one queue and
+// diversified after the fact — see its comment for why.
 async function getFilteredFeedPool(sources, sortMode, timeRange) {
   const key = filteredFeedSnapshotKey(sources, sortMode, timeRange);
   const cached = filteredFeedSnapshots.get(key);
@@ -4775,23 +4803,21 @@ async function getFilteredFeedPool(sources, sortMode, timeRange) {
 
   const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean);
   const perSourceLimit = 301;
-  const dbRowsBySource = await Promise.all(list.map(src =>
-    getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => [])
-  ));
-  const memRows = list.flatMap(src => {
+  const bySource = await Promise.all(list.map(async src => {
     const agentKey = feedWorkerKey(src);
-    return [
+    const dbRows = await getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => []);
+    const memRows = [
       ...(agentSourceCache.get(agentKey)?.posts || []),
       ...globalFeedCache.posts.filter(p => p.source === src),
     ];
-  });
-  const maxSharePct = list.length > 1 ? Math.min(0.65, (1 / list.length) + 0.15) : null;
-  const pool = sortFeedBatch(realFeedPosts([...memRows, ...dbRowsBySource.flat()]).map(normalizeFeedPost), `filtered-pool-${key}`, {
-    limit: Math.max(1000, sortAgentLimit()),
-    sort: sortMode,
-    diversify: true,
-    maxSharePct,
-  });
+    return sortFeedBatch(realFeedPosts([...memRows, ...dbRows]).map(normalizeFeedPost), `filtered-source-${src}`, {
+      limit: perSourceLimit,
+      sort: sortMode,
+      diversify: false, // single source here — nothing to interleave with yet, that happens below
+    });
+  }));
+
+  const pool = list.length > 1 ? roundRobinMerge(bySource) : (bySource[0] || []);
   filteredFeedSnapshots.set(key, { computedAt: Date.now(), pool });
   trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
   return pool;
@@ -8572,7 +8598,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
 // — there's no skewed pool to correct because it was never built. Uses one
 // query with ROW_NUMBER() OVER (PARTITION BY source ...) rather than N
 // separate per-source queries, so it's still a single DB round-trip.
-async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null } = {}) {
+async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null, equalize = true } = {}) {
   if (!db.isConnected()) return { posts: [], perSourceCount: 0 };
   try {
     const clauses = [
@@ -8660,6 +8686,26 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     for (const p of mapped) (bySource[p.source] = bySource[p.source] || []).push(p);
     const counts = Object.values(bySource).map(arr => arr.length);
     if (!counts.length) return { posts: [], perSourceCount: 0 };
+    // equalize:false — video content is far sparser per source than general
+    // posts, so hard-equalizing to whichever source has the FEWEST matching
+    // rows is catastrophic there: live-tested a 7-day pool with 7 sources
+    // and 140 real video posts get crushed down to 14 total because one
+    // source only had 2. Infinite scroll then dead-ends almost immediately
+    // (the client's own dedup window suppresses re-showing the same 14
+    // forever) and whatever little variety exists reads as broken "true
+    // mix" too. Round-robin interleaving (see roundRobinMerge) keeps every
+    // source's real supply instead of throwing most of it away, while
+    // still preventing one source from dominating — by construction,
+    // rather than diversifyBySource's probabilistic streak/share cap
+    // (confirmed separately, for the Feed tab's own multi-source filter,
+    // that cap doesn't reliably hold once one source is much denser than
+    // its companions). Used only by the video snapshot; every other caller
+    // (the main feed's "All" tab, Feed Manager's "All Collected") keeps the
+    // strict equalize behavior, where the general-content candidate pool is
+    // large enough per source that this squeeze basically never bites.
+    if (!equalize) {
+      return { posts: roundRobinMerge(Object.values(bySource)), perSourceCount: Math.max(...counts) };
+    }
     const evenCount = Math.min(...counts);
     const equalized = Object.values(bySource).flatMap(arr => arr.slice(0, evenCount));
     return { posts: diversifyBySource(equalized, equalized.length, 1), perSourceCount: evenCount };
@@ -10582,11 +10628,17 @@ async function handleVideoFeedRequest(req, res) {
     if (!videoFeedSnapshot || (Date.now() - videoFeedSnapshot.computedAt) >= VIDEO_FEED_SNAPSHOT_TTL) {
       // Video posts are a small slice of all content, so a handful of
       // sources splitting a 24h window (getBalancedFeedPosts' default) runs
-      // thin fast — widened to 7 days, and a generous perSourcePageSize (25,
+      // thin fast — widened to 7 days, and a generous perSourcePageSize (50,
       // not just enough for one page) since this pool now has to cover
       // several pages of infinite-scroll, not just the first one.
+      // equalize:false — video's per-source supply is naturally far more
+      // uneven than general content (confirmed live: 7 sources with 140
+      // real video posts between them, one of which had just 2), so the
+      // default hard-equalize-to-the-sparsest-source behavior was crushing
+      // the whole pool down to a small multiple of whatever the thinnest
+      // source had — see getBalancedFeedPosts' own comment.
       const { posts } = await Promise.race([
-        getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: 1, perSourcePageSize: 25, mediaType: 'video' }),
+        getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: 1, perSourcePageSize: 50, mediaType: 'video', equalize: false }),
         new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
       ]);
       videoFeedSnapshot = { computedAt: Date.now(), posts };
@@ -10617,15 +10669,18 @@ async function handleVideoFeedRequest(req, res) {
     // (getBalancedFeedPosts' own per-source pull) — filtering it down to a
     // caller-selected subset doesn't inherit that balance, since the
     // filtered posts' relative order/proportions are whatever survived from
-    // a diversification pass tuned for 30+ sources, not this specific
-    // 2-or-more-source selection. Same fix as the main feed's multi-source
-    // filter (see the Jobs filter's maxSharePct comment there): re-
-    // diversify with a cap that scales to how many sources are actually
-    // selected, so one consistently higher-supply source can't dominate a
-    // filtered view even though the raw snapshot order would let it.
+    // a mix tuned for every video source, not this specific 2-or-more-
+    // source selection. Same fix as the Feed tab's multi-source filter (see
+    // getFilteredFeedPool/roundRobinMerge): regroup by source and
+    // interleave one-at-a-time, so one consistently higher-supply source
+    // can't dominate a filtered view — diversifyBySource's probabilistic
+    // streak/share cap doesn't reliably hold once one source is much
+    // denser than its companions (confirmed live for the Feed tab's
+    // equivalent filter).
     if (Array.isArray(sourceFilter) && sourceFilter.length > 1) {
-      const maxSharePct = Math.min(0.65, (1 / sourceFilter.length) + 0.15);
-      sourcePool = diversifyBySource(sourcePool, sourcePool.length, 2, maxSharePct);
+      const bySource = {};
+      for (const p of sourcePool) (bySource[p.source] = bySource[p.source] || []).push(p);
+      sourcePool = roundRobinMerge(Object.values(bySource));
     }
     const rotated = rotateForUser(sourcePool, req.user.id, refreshSeed);
     // Deliberately NOT run through filterUnseen here — it strips
