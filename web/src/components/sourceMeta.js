@@ -10,6 +10,8 @@ export const SOURCE_META = {
   tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
   github:        { label: 'GitHub',        color: '#24292F', icon: '🐙' },
   gitlab:        { label: 'GitLab',        color: '#FC6D26', icon: 'GL' },
+  discord:       { label: 'Discord',       color: '#5865F2', icon: '🎮' },
+  dribbble:      { label: 'Dribbble',      color: '#EA4C89', icon: '🏀' },
   youtube:       { label: 'YouTube',       color: '#FF0000', icon: '▶️' },
   medium:        { label: 'Medium',        color: '#1A8917', icon: '📝' },
   stackoverflow: { label: 'Stack Overflow',color: '#F48024', icon: '📚' },
@@ -38,3 +40,20 @@ export const SOURCE_META = {
   designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
   uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
 };
+
+// Every platform a user can link via Connected Accounts (mirrors
+// CONNECTED_SOCIAL_PLATFORMS server-side) — the single canonical list
+// behind every Following-mode platform picker (the main Feed's Following
+// slide bar + filter panel, the video feed's Following filter sheet), so a
+// newly connectable platform only needs adding here once instead of
+// separately re-hardcoded in each picker. Not every entry has a live
+// "following timeline" fetcher wired up yet (see FOLLOWING_SOURCE_FETCHERS/
+// CONNECTED_SOCIAL_SEARCH_FETCHERS server-side) — one without a fetcher
+// just shows the existing empty state once selected, same as any other
+// source with temporarily-thin supply, rather than being left off the
+// picker entirely.
+export const CONNECTED_SOCIAL_PLATFORMS = [
+  'linkedin', 'twitter', 'instagram', 'facebook',
+  'github', 'gitlab', 'discord', 'youtube', 'reddit',
+  'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
+];

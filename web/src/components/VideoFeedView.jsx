@@ -1,27 +1,38 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi } from './videoMedia';
-import { SOURCE_META } from './sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
+// Platforms with no public aggregate fetcher at all (not in SOURCE_CONFIG
+// server-side) — pure Connected-Accounts/Following-only identifiers, never
+// real entries in the shared Feed-mode video pool. Twitter/LinkedIn/
+// Instagram/Facebook do have SOURCE_CONFIG entries, but are still excluded
+// here since the aggregate pool itself excludes them (see FEED_SOCIAL_TABS
+// server-side) — selecting them in Feed mode would be a guaranteed-empty
+// filter either way.
+const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok', 'discord', 'dribbble'];
 // Feed mode's filter row — every publicly-aggregated source, since any of
 // them can carry a real video (a dedicated video source like YouTube, a
 // direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
 // one — see rssPost/parseRSSItems server-side, which is shared by ~20 RSS
 // sources, not just the handful that were originally assumed to be the only
 // ones capable of it). Excludes the Following-only sources (native
-// UFconnect posts + connected-account platforms), which have their own
-// separate filter row below with a different pool entirely.
-const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(
-  k => !['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'].includes(k)
-);
-// Following mode's own filter set — connected-account platforms plus native
-// UFconnect, an entirely different pool from FEED_VIDEO_SOURCES above (see
-// getFollowingFeedPosts server-side). TikTok is included even though it
-// isn't part of the regular Following tab's filter set — same OAuth connect
-// flow as the others, just no fetcher behind it yet, so it'll show empty
-// until that lands rather than being left out of the picker entirely.
-const FOLLOWING_VIDEO_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok'];
+// UFconnect posts + connected-account platforms with no aggregate
+// fetcher), which have their own separate filter row below with a
+// different pool entirely.
+const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(k => !FEED_ONLY_EXCLUDED_SOURCES.includes(k));
+// Following mode's own filter set — every platform Connected Accounts
+// offers (CONNECTED_SOCIAL_PLATFORMS), plus native UFconnect, an entirely
+// different pool from FEED_VIDEO_SOURCES above (see getFollowingFeedPosts
+// server-side). This used to be hand-limited to LinkedIn/Twitter/
+// Instagram/Facebook/TikTok, so a user who'd connected e.g. GitHub or
+// Reddit had no way to even select it here. Not every entry has a live
+// Following-timeline fetcher wired up yet (see FOLLOWING_SOURCE_FETCHERS/
+// CONNECTED_SOCIAL_SEARCH_FETCHERS server-side) — one without a fetcher
+// just shows the existing "no videos yet" empty state once selected,
+// rather than being left off the picker entirely.
+const FOLLOWING_VIDEO_SOURCES = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
 
 // Figures out how a given post's video can actually be played in-app, per
 // platform — the same Bluesky-playlist/direct-file detection ImageLightbox

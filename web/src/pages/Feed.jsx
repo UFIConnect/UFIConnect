@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, InlineAutoplayVideo } from '../components/videoMedia';
-import { SOURCE_META } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 
 // Utility: debounce function for search input
@@ -113,14 +113,15 @@ const SOURCE_TABS = [
 // this is exactly the content SOURCE_TABS deliberately excludes (native
 // UFconnect posts from people you follow, plus whichever connected social
 // accounts you've linked), so it gets its own tab vocabulary rather than
-// reusing the aggregate Feed's.
+// reusing the aggregate Feed's. Covers every platform Connected Accounts
+// offers (CONNECTED_SOCIAL_PLATFORMS), not just the 4 with a live
+// keyword-search fallback today — this used to be hand-limited to
+// LinkedIn/Twitter/Instagram/Facebook, so a user who'd connected e.g.
+// GitHub or Reddit had no way to even select it here.
 const FOLLOWING_SOURCE_TABS = [
-  { key: 'all',        label: 'All',         icon: '⚡' },
-  { key: 'uficonnect',  label: 'UFconnect',   icon: '🌐' },
-  { key: 'linkedin',   label: 'LinkedIn',    icon: '💼' },
-  { key: 'twitter',    label: 'X (Twitter)', icon: '𝕏' },
-  { key: 'instagram',  label: 'Instagram',   icon: '📸' },
-  { key: 'facebook',   label: 'Facebook',    icon: '🔵' },
+  { key: 'all', label: 'All', icon: '⚡' },
+  { key: 'uficonnect', label: 'UFconnect', icon: '🌐' },
+  ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' })),
 ];
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
@@ -175,12 +176,13 @@ const ALL_FILTER_SOURCES = [
 ];
 
 // Following's filter-panel options — native UFconnect posts from people you
-// follow, plus whichever connected accounts actually have content there
-// (see CONNECTED_SOCIAL_SEARCH_FETCHERS backend-side). Deliberately excludes
-// everything in ALL_FILTER_SOURCES above — that content structurally cannot
-// appear in Following, so offering it as a filter here would just be a
-// no-op that always returns nothing.
-const FOLLOWING_FILTER_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook'];
+// follow, plus every platform Connected Accounts offers (see
+// FOLLOWING_SOURCE_TABS above for why this now matches that full list
+// instead of just the 4 with a live keyword-search fallback). Deliberately
+// excludes everything in ALL_FILTER_SOURCES above — that content
+// structurally cannot appear in Following, so offering it as a filter here
+// would just be a no-op that always returns nothing.
+const FOLLOWING_FILTER_SOURCES = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
 
 const CATEGORY_COLORS = {
   'AI & ML':     { text: '#2563EB', bg: '#EFF6FF' },
