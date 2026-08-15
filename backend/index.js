@@ -10627,10 +10627,17 @@ async function handleVideoFeedRequest(req, res) {
 
     if (!videoFeedSnapshot || (Date.now() - videoFeedSnapshot.computedAt) >= VIDEO_FEED_SNAPSHOT_TTL) {
       // Video posts are a small slice of all content, so a handful of
-      // sources splitting a 24h window (getBalancedFeedPosts' default) runs
-      // thin fast — widened to 7 days, and a generous perSourcePageSize (50,
-      // not just enough for one page) since this pool now has to cover
-      // several pages of infinite-scroll, not just the first one.
+      // sources splitting a narrow window runs thin fast — widened from 7
+      // days to 'month' (30d — feedTimeRangeMs doesn't have a token for
+      // the exact 42-day retention ceiling in STALE_POST_MAX_AGE_MS, but
+      // 30 gets most of the way there using an existing, already-tested
+      // range instead of a one-off). A thin source only had 7 days of
+      // real supply to draw from before; this gives it roughly 4x more
+      // history to pull from, directly widening the "true mix" pool
+      // instead of leaving weeks of already-retained content unused. Also
+      // a generous perSourcePageSize (50, not just enough for one page)
+      // since this pool now has to cover several pages of infinite-scroll,
+      // not just the first one.
       // equalize:false — video's per-source supply is naturally far more
       // uneven than general content (confirmed live: 7 sources with 140
       // real video posts between them, one of which had just 2), so the
@@ -10638,7 +10645,7 @@ async function handleVideoFeedRequest(req, res) {
       // the whole pool down to a small multiple of whatever the thinnest
       // source had — see getBalancedFeedPosts' own comment.
       const { posts } = await Promise.race([
-        getBalancedFeedPosts({ sortMode: 'newest', timeRange: '7d', page: 1, perSourcePageSize: 50, mediaType: 'video', equalize: false }),
+        getBalancedFeedPosts({ sortMode: 'newest', timeRange: 'month', page: 1, perSourcePageSize: 50, mediaType: 'video', equalize: false }),
         new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
       ]);
       videoFeedSnapshot = { computedAt: Date.now(), posts };
