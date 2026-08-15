@@ -8643,17 +8643,32 @@ function decodeFeedCursor(str) {
 // Proper k-way merge by actual timestamp (not roundRobinMerge's plain
 // position-based interleave) — "always based on time, newest on top" means
 // the genuinely most-recent candidate across every source should come next,
-// not whichever source's "turn" it is. A max-consecutive streak cap is the
-// only concession to mix: without it, a single bursty source would
-// naturally fill the page just by having more recent posts than everyone
-// else, which is real skew, not a mixing bug — the cap keeps that skew from
-// reading as a monotonous wall of one source without pretending sources
-// with genuinely different posting cadences are equally frequent.
-function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2) {
+// not whichever source's "turn" it is. Two concessions to mix on top of
+// pure recency: a max-consecutive streak cap (no source appears 3+ times in
+// a row), and a maxSharePct overall-proportion cap. The streak cap alone
+// turned out not to be enough — live-tested the unfiltered feed (~30
+// candidate sources) and got only 5 of them ever appearing across 200
+// posts, because two sources (Bluesky, Mastodon) simply post at a far
+// higher real cadence than the other ~28 combined, so they were "the
+// genuinely most recent candidate" often enough to win almost every pick
+// even with no run longer than 2. The share cap makes a source ineligible
+// once it's already over its allotted proportion, the same overShare
+// mechanism diversifyBySource uses — recency still decides *within* the
+// eligible set, so this doesn't reintroduce the "sources shown in
+// artificial round-robin order regardless of actual age" problem
+// roundRobinMerge had; it only stops a specific source from ever
+// exceeding its share, not from winning on merit within it.
+function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2, maxSharePct = null) {
   const idx = lists.map(() => 0);
   const result = [];
+  const sourceCounts = new Map();
   let lastSource = null;
   let streak = 0;
+  function overShare(src) {
+    if (!maxSharePct || result.length < 6) return false;
+    const count = sourceCounts.get(src) || 0;
+    return (count + 1) / (result.length + 1) > maxSharePct;
+  }
   for (;;) {
     let bestI = -1, bestTs = -Infinity;
     let fallbackI = -1, fallbackTs = -Infinity;
@@ -8661,20 +8676,22 @@ function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2) {
       if (idx[i] >= lists[i].length) continue;
       const item = lists[i][idx[i]];
       const ts = postTimestamp(item);
+      const src = item.source || 'unknown';
       if (ts > fallbackTs) { fallbackTs = ts; fallbackI = i; }
-      const wouldExceedStreak = (item.source || 'unknown') === lastSource && streak >= maxConsecutive;
-      if (!wouldExceedStreak && ts > bestTs) { bestTs = ts; bestI = i; }
+      const wouldExceedStreak = src === lastSource && streak >= maxConsecutive;
+      if (!wouldExceedStreak && !overShare(src) && ts > bestTs) { bestTs = ts; bestI = i; }
     }
-    // Nothing satisfies the streak cap this round (every remaining
-    // candidate is the same over-streaked source) — same graceful-
-    // degradation reasoning as diversifyBySource's own fallback: drain the
-    // real next-most-recent item anyway rather than stalling.
+    // Nothing satisfies the caps this round (every remaining candidate is
+    // either over-streaked or over-share) — same graceful-degradation
+    // reasoning as diversifyBySource's own fallback: drain the real
+    // next-most-recent item anyway rather than stalling.
     const pickI = bestI >= 0 ? bestI : fallbackI;
     if (pickI < 0) break;
     const item = lists[pickI][idx[pickI]];
     idx[pickI]++;
     result.push(item);
     const src = item.source || 'unknown';
+    sourceCounts.set(src, (sourceCounts.get(src) || 0) + 1);
     if (src === lastSource) streak++; else { lastSource = src; streak = 1; }
   }
   return result;
@@ -8699,7 +8716,14 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   const extraKeys = Object.keys(extraLists);
   const allSources = [...sources, ...extraKeys];
   const allLists = [...bySource, ...extraKeys.map(k => extraLists[k] || [])];
-  const merged = mergeByRecencyWithStreakCap(allLists, 2);
+  // Same scaling formula used everywhere else in this codebase for a
+  // proportional "true mix" cap (see the Jobs filter's maxSharePct
+  // comment): tighter with more candidate sources (~18% once there are
+  // 30+, matching enforceFeedDiversity's own ceiling for the full
+  // aggregate pool), looser for a narrow explicit selection so a 2-source
+  // filter isn't forced into an artificial 50/50 split.
+  const maxSharePct = allSources.length > 1 ? Math.min(0.65, (1 / allSources.length) + 0.15) : null;
+  const merged = mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
   const page = merged.slice(0, limit);
 
   const nextCursor = { ...cursorMap };
