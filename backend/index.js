@@ -8721,8 +8721,18 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // comment): tighter with more candidate sources (~18% once there are
   // 30+, matching enforceFeedDiversity's own ceiling for the full
   // aggregate pool), looser for a narrow explicit selection so a 2-source
-  // filter isn't forced into an artificial 50/50 split.
-  const maxSharePct = allSources.length > 1 ? Math.min(0.65, (1 / allSources.length) + 0.15) : null;
+  // filter isn't forced into an artificial 50/50 split. Scaled off how many
+  // sources actually came back with at least one post, not the requested
+  // source count — video specifically asks across ~30 sources but only a
+  // handful genuinely carry video content, so sizing the cap off the full
+  // request list made it far tighter than real diversity could satisfy,
+  // which just meant the "nothing eligible" fallback (drain the real
+  // next-most-recent regardless of cap) kept kicking in and a source ended
+  // up over-cap anyway — confirmed live at 36.7% for a cap nominally set to
+  // 18%. A cap sized to real contributors is one the merge can actually
+  // hold to instead of constantly falling back past it.
+  const contributingCount = allLists.filter(l => l.length > 0).length;
+  const maxSharePct = contributingCount > 1 ? Math.min(0.65, (1 / contributingCount) + 0.15) : null;
   const merged = mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
   const page = merged.slice(0, limit);
 
