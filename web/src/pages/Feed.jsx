@@ -1581,7 +1581,21 @@ export default function Feed() {
     if (processed.length < 20) loadMoreRemote();
   }, [filters, search, processed.length, loading, loadingMore, remoteHasMore, loadMoreRemote]);
 
-  // Infinite scroll: fetch next remote page when sentinel enters the viewport
+  // Infinite scroll: fetch next remote page when sentinel enters the viewport.
+  // The sentinel <div> only renders once loading is false and there's at
+  // least one post (see the loading/empty/displayed branches below) — on a
+  // fresh page load (no cache, loading starts true) this effect's first run
+  // captured sentinelRef.current as null and bailed out before the sentinel
+  // ever mounted. Depending only on [loadMoreRemote] meant nothing ever
+  // re-ran that capture once loading actually finished, so the observer was
+  // silently never attached for the rest of the session — confirmed live
+  // via an instrumented IntersectionObserver that no observer with this
+  // effect's rootMargin was ever constructed on a fresh session, and
+  // scrolling to the true bottom of the page never fired a single
+  // follow-up /feed request. Re-running whenever loading finishes or the
+  // rendered list's length changes (covers both "sentinel just mounted"
+  // and "sentinel's position moved because more content loaded") re-reads
+  // the current ref each time instead of relying on a one-time capture.
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
@@ -1591,7 +1605,7 @@ export default function Feed() {
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadMoreRemote]);
+  }, [loadMoreRemote, loading, processed.length]);
 
   // Close filter panel and source picker on outside click
   useEffect(() => {
