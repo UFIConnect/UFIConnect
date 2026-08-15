@@ -41,6 +41,16 @@ function normalizeFeedSort(value) {
   return ['ranked', 'newest', 'popular', 'balanced', 'bylink'].includes(value) ? value : 'ranked';
 }
 
+// Mirrors handleFeedRequest's own date-cursor eligibility check
+// server-side: Newest sort, plain Feed mode (not Following — that's a live
+// per-user query with no cursor of its own), no active search (a cursor
+// has no defined meaning against a text-match result set). Kept as one
+// function so loadMoreRemote's choice of ?cursor= vs ?page= can't drift
+// from what the backend actually honors.
+function isCursorEligible(mode, sort, search) {
+  return mode === 'feed' && normalizeFeedSort(sort) === 'newest' && !search.trim();
+}
+
 function extractDomain(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); }
   catch { return url || ''; }
@@ -1056,6 +1066,13 @@ export default function Feed() {
   // this, refreshing handed back the exact same rotation of the exact same
   // pool every time, since neither the user nor the still-warm pool changed.
   const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
+  // Opaque date-cursor from the backend (see getCursorFeedPage server-side)
+  // for the newest-sort feed/filtered views — null means "start from now."
+  // Only meaningful when isCursorEligible() below is true; ignored
+  // otherwise (Ranked/Popular/Balanced sort and Following mode still page
+  // by number, since neither has a natural date-cursor semantic — see
+  // handleFeedRequest's own eligibility check, which this mirrors).
+  const remoteCursorRef = useRef(null);
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
     const {
@@ -1166,7 +1183,16 @@ export default function Feed() {
       knownIds.current = new Set(knownIdsQueue.current);
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(nextPosts);
-      if (!shouldMerge || previous.length === 0 || replace) setRemotePage(2);
+      // Only reset pagination state (page counter AND cursor) on a genuine
+      // context reset, same condition as the existing remotePage reset —
+      // a merge (silent background top-up) must NOT rewind the cursor,
+      // since loadMoreRemote may already be paginated well past what this
+      // small merge batch's own cursor would imply, and rewinding it would
+      // re-fetch (and re-show) content already scrolled past.
+      if (!shouldMerge || previous.length === 0 || replace) {
+        setRemotePage(2);
+        remoteCursorRef.current = data.cursor || null;
+      }
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date(refreshTimestamp));
     } catch (e) { console.error(e); }
@@ -1316,17 +1342,27 @@ export default function Feed() {
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
       activeFilters.sort = normalizeFeedSort(activeFilters.sort);
       const requestedSources = activeFilters.sources?.length ? activeFilters.sources : tabs;
+      const q = searchRef.current.trim();
+      const useCursor = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
       const params = new URLSearchParams({
-        page: `${remotePage}`,
         limit: `${FEED_PAGE_SIZE}`,
         mode: viewModeRef.current,
         sort: activeFilters.sort,
+      });
+      if (useCursor) {
+        // Date-cursor pagination (see getCursorFeedPage server-side) —
+        // genuinely older content per request rather than slicing a bounded
+        // pre-built pool, so scrolling keeps surfacing real distinct posts
+        // for as long as the server retains history instead of eventually
+        // reshuffling and repeating.
+        if (remoteCursorRef.current) params.set('cursor', remoteCursorRef.current);
+      } else {
+        params.set('page', `${remotePage}`);
         // Same seed as the last refresh (see refreshSeedRef) — pagination
         // must keep slicing the same rotated view a refresh landed on,
         // otherwise page 2 wouldn't logically follow from page 1.
-        seed: refreshSeedRef.current,
-      });
-      const q = searchRef.current.trim();
+        params.set('seed', refreshSeedRef.current);
+      }
       if (q) params.set('q', q);
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
@@ -1342,13 +1378,16 @@ export default function Feed() {
       // "duplicate posts" appearing in quick succession. A bounded rolling
       // window (see FEED_DEDUP_WINDOW) filters near-term repeats from
       // either cause while still admitting a genuine repeat once a user has
-      // scrolled far enough that it's fallen out of the window.
+      // scrolled far enough that it's fallen out of the window. (Cursor
+      // mode shouldn't produce near-term repeats in the first place, but
+      // the same dedup is harmless insurance against a straddled request.)
       const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
         setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));
       }
-      setRemotePage(p => p + 1);
+      if (useCursor) remoteCursorRef.current = data.cursor || remoteCursorRef.current;
+      else setRemotePage(p => p + 1);
       setRemoteHasMore(data.hasMore !== false);
     } catch {}
     finally { setLoadingMore(false); }

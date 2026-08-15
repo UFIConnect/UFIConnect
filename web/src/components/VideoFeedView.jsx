@@ -406,7 +406,6 @@ export default function VideoFeedView({ onExit }) {
   // muted automatically (see VideoSlide) if a browser blocks it anyway, so
   // this never silently fails to play at all.
   const [muted, setMuted] = useState(false);
-  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -440,14 +439,13 @@ export default function VideoFeedView({ onExit }) {
   // the backend's seenPostIds/seenPostIdQueue pattern).
   const knownIds = useRef(new Set());
   const knownIdsQueue = useRef([]);
-  // Sent as ?seed= on every request — the backend folds it into this user's
-  // rotation offset into the shared video pool (see rotateForUser server-
-  // side). Without this, a refresh handed back the exact same rotation of
-  // the exact same pool every time, since neither the user nor the still-
-  // warm pool changed — regenerated below whenever a fresh page-1 load
-  // happens (mount or explicit refresh), left alone for page 2+ so
-  // pagination keeps slicing the same rotated view within one sitting.
-  const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
+  // Feed mode: opaque date-cursor from the backend (see getCursorFeedPage
+  // server-side) — null means "start from now." Following mode still pages
+  // by number (getFollowingFeedPosts is a live per-user query with no
+  // cursor of its own), tracked separately since the two modes pull from
+  // entirely different endpoints/pools (see switchViewMode).
+  const cursorRef = useRef(null);
+  const followingPageRef = useRef(1);
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
@@ -457,27 +455,34 @@ export default function VideoFeedView({ onExit }) {
     }
   }, []);
 
-  const loadPage = useCallback(async (pageNum, { bust = false } = {}) => {
+  const loadPage = useCallback(async ({ reset = false, bust = false } = {}) => {
     try {
-      if (pageNum === 1) refreshSeedRef.current = Math.random().toString(36).slice(2);
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
-      let params = `limit=10&page=${pageNum}&seed=${refreshSeedRef.current}${bust ? '&bust=1' : ''}`;
+      let params = `limit=10`;
       // Same ?source= (single)/?sources= (multi) convention as the main feed.
       if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
       else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
-      // Following's pool is a live per-user query (see getFollowingFeedPosts
-      // backend-side), not the cross-user snapshot the aggregate endpoint
-      // caches — bust=1 doesn't apply to it, there's nothing to bust.
-      const endpoint = mode === 'following' ? '/office/feed/videos/following' : '/office/feed/videos';
+      let endpoint;
+      if (mode === 'following') {
+        if (reset) followingPageRef.current = 1;
+        params += `&page=${followingPageRef.current}`;
+        // Following's pool is a live per-user query (see getFollowingFeedPosts
+        // backend-side) — bust=1 doesn't apply to it, there's nothing to bust.
+        endpoint = '/office/feed/videos/following';
+      } else {
+        if (reset) cursorRef.current = null;
+        if (cursorRef.current) params += `&cursor=${encodeURIComponent(cursorRef.current)}`;
+        if (bust) params += `&bust=1`;
+        endpoint = '/office/feed/videos';
+      }
       const { data } = await client.get(`${endpoint}?${params}`);
       const incoming = (data.posts || []).filter(p => p?.mediaUrl);
-      if (pageNum === 1) {
-        // A fresh page-1 load is a full reset (initial mount, or a
-        // user-initiated refresh) — the dedup window needs to reset with
-        // it, otherwise videos from before a refresh would still count as
-        // "recently seen" and suppress legitimately-fresh page-2+ content
-        // right after.
+      if (reset) {
+        // A reset (initial mount, mode/filter switch, or a user-initiated
+        // refresh) needs the dedup window to reset with it, otherwise
+        // videos from before the reset would still count as "recently
+        // seen" and suppress legitimately-fresh content right after.
         knownIds.current = new Set();
         knownIdsQueue.current = [];
       }
@@ -485,22 +490,24 @@ export default function VideoFeedView({ onExit }) {
         // A flat all-time dedup here used to make infinite scroll dead-end
         // (once a user had scrolled through the whole real pool once, every
         // later page was "all already seen" and got filtered to nothing) —
-        // but no dedup at all made the opposite mistake: the server's video
-        // pool gets rebuilt periodically, so two page requests straddling a
-        // rebuild can hand back overlapping content well before a user has
-        // scrolled anywhere near the full pool, which read as duplicate
-        // videos appearing in quick succession. A bounded rolling window
-        // filters near-term repeats from either cause while still admitting
-        // a genuine repeat once it's fallen out of the window. React keys
-        // below are still (id + index) since a repeat past the window is
-        // still expected eventually.
-        const fresh = pageNum === 1 ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+        // but no dedup at all made the opposite mistake: two page requests
+        // can still hand back overlapping content near a mode/filter
+        // switch boundary, which read as duplicate videos appearing in
+        // quick succession. A bounded rolling window filters near-term
+        // repeats from either cause while still admitting a genuine repeat
+        // once it's fallen out of the window. React keys below are still
+        // (id + index) since a repeat past the window is still expected
+        // eventually, especially now that Following mode can still lap its
+        // own smaller pool.
+        const fresh = reset ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
         fresh.forEach(p => markKnownId(p.id));
-        // pageNum===1 always replaces wholesale rather than merging — a
+        // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
         // old and new videos interleaved indefinitely.
-        return pageNum === 1 ? fresh : [...prev, ...fresh];
+        return reset ? fresh : [...prev, ...fresh];
       });
+      if (mode === 'following') followingPageRef.current += 1;
+      else if (data.cursor) cursorRef.current = data.cursor;
       setHasMore(data.hasMore !== false && incoming.length > 0);
       setError(false);
     } catch {
@@ -510,21 +517,19 @@ export default function VideoFeedView({ onExit }) {
     }
   }, [markKnownId]);
 
-  useEffect(() => { loadPage(1); }, [loadPage]);
+  useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
 
-  // Manual refresh — busts the server's cached pool (see VIDEO_FEED_SNAPSHOT_TTL
-  // backend-side) and fully replaces the queue with a fresh page 1, same as
-  // the main Feed's refresh — the view is already jumping back to the first
-  // slide, so there's no "losing your place" cost to a full reset here, and
-  // it means refresh actually reads as a refresh instead of old and new
-  // videos staying interleaved together indefinitely.
+  // Manual refresh — fully replaces the queue with a fresh first page, same
+  // as the main Feed's refresh — the view is already jumping back to the
+  // first slide, so there's no "losing your place" cost to a full reset
+  // here, and it means refresh actually reads as a refresh instead of old
+  // and new videos staying interleaved together indefinitely.
   const handleRefresh = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
     setActiveIndex(0);
-    setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
-    await loadPage(1, { bust: true });
+    await loadPage({ reset: true, bust: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
 
@@ -540,10 +545,9 @@ export default function VideoFeedView({ onExit }) {
     sourceFilterRef.current = [];
     setSourceFilter([]);
     setActiveIndex(0);
-    setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
-    loadPage(1);
+    loadPage({ reset: true });
   }, [loadPage]);
 
   // Multi-select: tapping an unselected chip adds it, tapping a selected one
@@ -556,10 +560,9 @@ export default function VideoFeedView({ onExit }) {
     sourceFilterRef.current = next;
     setSourceFilter(next);
     setActiveIndex(0);
-    setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
-    loadPage(1);
+    loadPage({ reset: true });
   }, [loadPage]);
 
   const clearSourceFilter = useCallback(() => {
@@ -567,10 +570,9 @@ export default function VideoFeedView({ onExit }) {
     sourceFilterRef.current = [];
     setSourceFilter([]);
     setActiveIndex(0);
-    setPage(1);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
-    loadPage(1);
+    loadPage({ reset: true });
   }, [loadPage]);
 
   // Scrolling back up to video 1 after having scrolled further in acts as
@@ -631,11 +633,9 @@ export default function VideoFeedView({ onExit }) {
     if (!hasMore || loadingMoreRef.current || loading) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
-      const next = page + 1;
-      setPage(next);
-      loadPage(next).finally(() => { loadingMoreRef.current = false; });
+      loadPage({}).finally(() => { loadingMoreRef.current = false; });
     }
-  }, [activeIndex, videoPosts.length, hasMore, loading, page, loadPage]);
+  }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
 
   useEffect(() => {
     const handleKey = (e) => { if (e.key === 'Escape') onExit(); };

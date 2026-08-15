@@ -4911,7 +4911,7 @@ function sliceCircular(pool, lo, count) {
 const userSeenCache = new Map(); // userId → Set<postId>
 const USER_SEEN_CACHE_MAX_USERS  = 5000; // distinct users tracked in memory at once
 const USER_SEEN_IDS_MAX_PER_USER = 4000; // ids per user kept in memory — DB has the full history
-const SYSTEM_WARMUP_USER_ID = '__system_warmup__'; // see warmMainFeedSnapshot/warmVideoFeedSnapshot — not a real viewer
+const SYSTEM_WARMUP_USER_ID = '__system_warmup__'; // see warmMainFeedSnapshot — not a real viewer
 
 async function getUserSeenSet(userId) {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID) return new Set();
@@ -7200,6 +7200,12 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 
 // Feed tabs that gate content behind an OAuth token (pure social APIs with no public fallback)
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+// Every source with a real public aggregate fetcher (SOURCE_CONFIG), minus
+// the OAuth-gated FEED_SOCIAL_TABS ones — the canonical "everything" list
+// for the unfiltered newest-sort cursor feed (see getCursorFeedPage) and
+// any other caller that needs "every real Feed-tab source" without
+// hand-maintaining a separate copy of SOURCE_CONFIG's key list.
+const AGGREGATE_FEED_SOURCES = Object.keys(SOURCE_CONFIG).filter(k => !FEED_SOCIAL_TABS.has(k));
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -8563,6 +8569,10 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       params.push(`%${options.q}%`);
       clauses.push(`(title ILIKE $${params.length} OR content ILIKE $${params.length} OR author_name ILIKE $${params.length} OR topic ILIKE $${params.length} OR source ILIKE $${params.length})`);
     }
+    if (options.mediaType) {
+      params.push(options.mediaType);
+      clauses.push(`media_type = $${params.length}`);
+    }
     const rangeMs = feedTimeRangeMs(options.timeRange);
     if (rangeMs > 0) {
       // Plain post_created_at (not COALESCE-wrapped) so Postgres can actually
@@ -8574,6 +8584,14 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       // across the entire (up to 250k-row) table on every request.
       params.push(new Date(Date.now() - rangeMs).toISOString());
       clauses.push(`post_created_at >= $${params.length}`);
+    }
+    // Cursor pagination (see getCursorFeedPage) — "everything strictly
+    // older than the last post this cursor already showed," same
+    // uncoerced-column reasoning as post_created_at >= above so the index
+    // still applies.
+    if (options.before) {
+      params.push(new Date(options.before).toISOString());
+      clauses.push(`post_created_at < $${params.length}`);
     }
     params.push(limit);
     const limitParam = params.length;
@@ -8589,6 +8607,117 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     );
     return rows.map(dbRowToFeedPost).filter(p => !isFallbackFeedPost(p));
   } catch { return []; }
+}
+
+// ─── True chronological infinite scroll: per-source date-cursor pagination ───
+// Replaces the "pre-build a bounded snapshot pool, rotate per user, wrap
+// around with a reshuffle once exhausted" approach (mainFeedSnapshots/
+// getFilteredFeedPool/videoFeedSnapshot) for newest-sort scrolling. Those
+// pools were always capped at a few hundred posts per source — once a user
+// scrolled past that, the feed started re-showing (reshuffled) content
+// instead of ever reaching genuinely older real posts, even though the DB
+// keeps up to 42 days of real history (STALE_POST_MAX_AGE_MS) that a bounded
+// pool was simply never querying. This fetches strictly-older-than-cursor
+// content fresh on every page, per selected source, so scrolling keeps
+// surfacing real distinct posts for as long as retained history allows,
+// always newest-first, with no pre-built pool to exhaust.
+//
+// Cursor is a small { [source]: isoTimestamp } map, opaque to the client
+// (see encodeFeedCursor/decodeFeedCursor) — a source with no entry starts
+// from "now." Only sources that actually contribute a post to a given page
+// get their entry advanced; a source that had nothing new keeps its old
+// cursor so a later page still tries it from the same point rather than
+// silently skipping whatever it might publish after.
+function encodeFeedCursor(map) {
+  try {
+    return Buffer.from(JSON.stringify(map || {})).toString('base64url');
+  } catch { return ''; }
+}
+function decodeFeedCursor(str) {
+  if (!str) return {};
+  try {
+    const parsed = JSON.parse(Buffer.from(String(str), 'base64url').toString('utf8'));
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch { return {}; }
+}
+// Proper k-way merge by actual timestamp (not roundRobinMerge's plain
+// position-based interleave) — "always based on time, newest on top" means
+// the genuinely most-recent candidate across every source should come next,
+// not whichever source's "turn" it is. A max-consecutive streak cap is the
+// only concession to mix: without it, a single bursty source would
+// naturally fill the page just by having more recent posts than everyone
+// else, which is real skew, not a mixing bug — the cap keeps that skew from
+// reading as a monotonous wall of one source without pretending sources
+// with genuinely different posting cadences are equally frequent.
+function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2) {
+  const idx = lists.map(() => 0);
+  const result = [];
+  let lastSource = null;
+  let streak = 0;
+  for (;;) {
+    let bestI = -1, bestTs = -Infinity;
+    let fallbackI = -1, fallbackTs = -Infinity;
+    for (let i = 0; i < lists.length; i++) {
+      if (idx[i] >= lists[i].length) continue;
+      const item = lists[i][idx[i]];
+      const ts = postTimestamp(item);
+      if (ts > fallbackTs) { fallbackTs = ts; fallbackI = i; }
+      const wouldExceedStreak = (item.source || 'unknown') === lastSource && streak >= maxConsecutive;
+      if (!wouldExceedStreak && ts > bestTs) { bestTs = ts; bestI = i; }
+    }
+    // Nothing satisfies the streak cap this round (every remaining
+    // candidate is the same over-streaked source) — same graceful-
+    // degradation reasoning as diversifyBySource's own fallback: drain the
+    // real next-most-recent item anyway rather than stalling.
+    const pickI = bestI >= 0 ? bestI : fallbackI;
+    if (pickI < 0) break;
+    const item = lists[pickI][idx[pickI]];
+    idx[pickI]++;
+    result.push(item);
+    const src = item.source || 'unknown';
+    if (src === lastSource) streak++; else { lastSource = src; streak = 1; }
+  }
+  return result;
+}
+// extraLists: pre-fetched { [sourceKey]: post[] } for content that isn't in
+// feed_posts_cache and needs its own fetch path (e.g. native UFconnect
+// community posts — see the unfiltered branch in handleFeedRequest) but
+// should still be merged into the SAME recency pass and get the SAME
+// per-source cursor bookkeeping as everything else, rather than being
+// glued on before/after as a separate step (which would double-trim and
+// desync the cursor from what was actually shown).
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {} }) {
+  const perSourceLimit = Math.max(limit, 20);
+  const bySource = await Promise.all(sources.map(src =>
+    getPostsFromDB([], perSourceLimit, 0, src, {
+      sort: 'newest',
+      before: cursorMap[src] || null,
+      timeRange,
+      mediaType,
+    }).then(rows => rows.map(normalizeFeedPost)).catch(() => [])
+  ));
+  const extraKeys = Object.keys(extraLists);
+  const allSources = [...sources, ...extraKeys];
+  const allLists = [...bySource, ...extraKeys.map(k => extraLists[k] || [])];
+  const merged = mergeByRecencyWithStreakCap(allLists, 2);
+  const page = merged.slice(0, limit);
+
+  const nextCursor = { ...cursorMap };
+  for (const src of allSources) {
+    const shown = page.filter(p => p.source === src);
+    if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
+    const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
+    nextCursor[src] = new Date(postTimestamp(oldest)).toISOString();
+  }
+
+  return {
+    posts: page,
+    nextCursor: encodeFeedCursor(nextCursor),
+    // Honest signal: only false once every single selected source came back
+    // with zero rows before its own cursor — i.e., truly nothing left
+    // anywhere, not just "this page happened to be thin."
+    hasMore: allLists.some(arr => arr.length > 0),
+  };
 }
 
 // ─── Feed Manager: pull an equal share from every source, not a mixed pool ───
@@ -9866,6 +9995,68 @@ async function handleFeedRequest(req, res) {
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
+  // True chronological infinite scroll (see getCursorFeedPage) — the
+  // client's own default sort, so this covers the primary Feed experience,
+  // both unfiltered and single/multi-source filtered. Deliberately scoped
+  // to sortMode==='newest' only: Ranked/Popular/Balanced don't have a
+  // natural date-cursor semantic (their ordering isn't monotonic in time),
+  // so they keep the existing snapshot-based pagination below untouched.
+  // Connected-social tabs (Twitter/LinkedIn/Instagram/Facebook as a single
+  // source filter) keep their own live-fetch branch further down instead —
+  // that content was deliberately excluded from feed_posts_cache's true-mix
+  // pool from the start (see FEED_SOCIAL_TABS), so there's nothing for a
+  // cursor to page through here.
+  if (feedMode === 'feed' && sortMode === 'newest' && !searchQuery &&
+      !(sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter))) {
+    const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
+    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
+    const cursorMap = decodeFeedCursor(req.query.cursor);
+    const cursorTimeRange = timeRange === 'all' ? null : timeRange;
+
+    let extraLists = {};
+    if (isUnfiltered) {
+      // Native UFconnect community posts aren't in feed_posts_cache, so
+      // they need their own fetch path — merged into the SAME recency pass
+      // as everything else (see getCursorFeedPage's extraLists) rather
+      // than force-pinned to the top regardless of actual age, which is
+      // what the old snapshot-based aggregate view did.
+      const beforeMs = cursorMap.uficonnect ? new Date(cursorMap.uficonnect).getTime() : Infinity;
+      extraLists = {
+        uficonnect: posts
+          .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
+          .sort((a, b) => postTimestamp(b) - postTimestamp(a))
+          .slice(0, feedLimit)
+          .map(p => serializeCommunityPost(p, req.user.id))
+          .map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) })),
+      };
+    }
+
+    const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+      sources: cursorSources,
+      cursorMap,
+      limit: feedLimit,
+      timeRange: cursorTimeRange,
+      extraLists,
+    });
+
+    const result = cursorPosts.map(p => p.isExternal === false ? p : {
+      ...p,
+      group:           groups.find(g => g.id === p.groupId) || p.group,
+      likedByMe:       false,
+      fromJoinedGroup: joined.has(p.groupId),
+      forYou:          true,
+      relevance:       1,
+    });
+    markPostsSeen(req.user.id, cursorPosts);
+    return res.json({
+      posts: result,
+      sort: sortMode,
+      cursor: nextCursor,
+      hasMore: cursorHasMore,
+      ...(sourcesParam.length > 1 ? { sources: sourcesParam } : sourceFilter ? { source: sourceFilter } : {}),
+    });
+  }
+
   function mapFeedRow(p) {
     const grp = groups.find(g => g.id === p.groupId);
     return {
@@ -10597,127 +10788,43 @@ app.get('/feed', authenticate, handleFeedRequest);
 app.get('/office/feed', authenticate, handleFeedRequest);
 
 // ─── Video feed (TikTok-style) — true mix of video posts across every platform ──
-// Reuses getBalancedFeedPosts (the same "pull the same amount as the least
-// platform" query that powers the main feed's mix) with a media_type filter,
-// so no source can dominate the video rail just because it happens to post
-// more video than everyone else.
-//
-// Same root cause and fix as the main feed's mainFeedSnapshots: this used to
-// call getBalancedFeedPosts independently for every page, each with its own
-// fresh ROW_NUMBER partitioning — if any new video landed between page 1's
-// query and page 2's, everything after it shifted rank by one, so page 2
-// could re-serve content page 1 already showed. Confirmed live as "repeated
-// posts" while scrolling. One shared, periodically-refreshed pool that every
-// page slices from instead — no independent queries, no shifting ranks.
-let videoFeedSnapshot = null; // { computedAt, posts }
-const VIDEO_FEED_SNAPSHOT_TTL = 5 * 60 * 1000; // shorter than the main feed's 10min — video supply is thinner, and there's a manual refresh button for anyone who wants newer sooner
-
+// Same date-cursor pagination as the main Feed's newest-sort scroll (see
+// getCursorFeedPage) — replaced the old shared-snapshot-pool-with-
+// wraparound approach entirely (video only ever had one sort order, so
+// there's no "other sort modes keep the old mechanism" split to make here
+// the way handleFeedRequest has). That snapshot was always bounded to a few
+// hundred posts total; once a user scrolled past it, the rail started
+// re-showing (reshuffled) content instead of ever reaching genuinely older
+// real videos, even with weeks of real history still sitting in the DB
+// unused (confirmed live: a 7-source pool with 140 real videos got crushed
+// to 14 usable ones by the old equalize step, and even after fixing that,
+// still capped at whatever the snapshot's one-time query happened to
+// fetch). This fetches strictly-older-than-cursor video posts fresh per
+// page, per source, so scrolling keeps surfacing real distinct videos for
+// as long as retained history allows (see STALE_POST_MAX_AGE_MS),
+// genuinely newest-first, with no pre-built pool to exhaust.
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
-    const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
-    // Same ?source=/?sources= convention as the main feed — filters the one
-    // shared snapshot per-request rather than building a separate snapshot
-    // per source combination, since it's rebuilt on a short TTL anyway.
     const sourcesParam = req.query.sources
       ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
       : [];
-    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
-    if (req.query.bust === '1') videoFeedSnapshot = null;
+    const sourceFilter = req.query.source || null;
+    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
+    // ?bust=1 has no cache to bust anymore (no snapshot) — kept as a no-op
+    // accepted param so older clients that still send it don't break.
+    const cursorMap = decodeFeedCursor(req.query.cursor);
 
-    if (!videoFeedSnapshot || (Date.now() - videoFeedSnapshot.computedAt) >= VIDEO_FEED_SNAPSHOT_TTL) {
-      // Video posts are a small slice of all content, so a handful of
-      // sources splitting a narrow window runs thin fast — widened from 7
-      // days to 'month' (30d — feedTimeRangeMs doesn't have a token for
-      // the exact 42-day retention ceiling in STALE_POST_MAX_AGE_MS, but
-      // 30 gets most of the way there using an existing, already-tested
-      // range instead of a one-off). A thin source only had 7 days of
-      // real supply to draw from before; this gives it roughly 4x more
-      // history to pull from, directly widening the "true mix" pool
-      // instead of leaving weeks of already-retained content unused. Also
-      // a generous perSourcePageSize (50, not just enough for one page)
-      // since this pool now has to cover several pages of infinite-scroll,
-      // not just the first one.
-      // equalize:false — video's per-source supply is naturally far more
-      // uneven than general content (confirmed live: 7 sources with 140
-      // real video posts between them, one of which had just 2), so the
-      // default hard-equalize-to-the-sparsest-source behavior was crushing
-      // the whole pool down to a small multiple of whatever the thinnest
-      // source had — see getBalancedFeedPosts' own comment.
-      const { posts } = await Promise.race([
-        getBalancedFeedPosts({ sortMode: 'newest', timeRange: 'month', page: 1, perSourcePageSize: 50, mediaType: 'video', equalize: false }),
-        new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
-      ]);
-      videoFeedSnapshot = { computedAt: Date.now(), posts };
-    }
-
-    // Same per-user rotation + circular wraparound as the main feed — so
-    // different users don't all scroll through videos in the exact same
-    // order, and the rail never just dead-ends once real supply runs out.
-    // Rotation alone isn't personalization though — it just varies the
-    // starting point, everyone still eventually sees the same set in the
-    // same relative order. personalizeOrder on top actually biases toward
-    // this specific user's interests, same as the main feed.
-    const user = await getUser(req.user.id);
-    const prefs = user?.preferences || {};
-    const userTopics = [
-      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
-    ];
-    // Client-generated, changes only on an explicit refresh — see the
-    // identical refreshSeed in handleFeedRequest for why this is what makes
-    // a refresh return substantially different videos instead of the same
-    // rotation of the same pool every time.
-    const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
-    let sourcePool = sourceFilter
-      ? videoFeedSnapshot.posts.filter(p => Array.isArray(sourceFilter) ? sourceFilter.includes(p.source) : p.source === sourceFilter)
-      : videoFeedSnapshot.posts;
-    // videoFeedSnapshot is already balanced for the *full*, unfiltered pool
-    // (getBalancedFeedPosts' own per-source pull) — filtering it down to a
-    // caller-selected subset doesn't inherit that balance, since the
-    // filtered posts' relative order/proportions are whatever survived from
-    // a mix tuned for every video source, not this specific 2-or-more-
-    // source selection. Same fix as the Feed tab's multi-source filter (see
-    // getFilteredFeedPool/roundRobinMerge): regroup by source and
-    // interleave one-at-a-time, so one consistently higher-supply source
-    // can't dominate a filtered view — diversifyBySource's probabilistic
-    // streak/share cap doesn't reliably hold once one source is much
-    // denser than its companions (confirmed live for the Feed tab's
-    // equivalent filter).
-    if (Array.isArray(sourceFilter) && sourceFilter.length > 1) {
-      const bySource = {};
-      for (const p of sourcePool) (bySource[p.source] = bySource[p.source] || []).push(p);
-      sourcePool = roundRobinMerge(Object.values(bySource));
-    }
-    const rotated = rotateForUser(sourcePool, req.user.id, refreshSeed);
-    // Deliberately NOT run through filterUnseen here — it strips
-    // already-shown videos from the pool, and markPostsSeen (below)
-    // permanently adds each page's videos to that same seen-set before the
-    // next page's request arrives. Combined with `lo` advancing by a full
-    // page every request, that was two mechanisms independently advancing
-    // past the same content: page 2 first lost its own first `feedLimit`
-    // videos to filterUnseen (page 1's videos, now seen), THEN lo=feedLimit
-    // skipped a further page's worth on top — this compounds
-    // every page (page 3 lost ~2 pages, page 4 ~3, ...), so a real,
-    // moderately-sized pool ran out and started repeating many pages before
-    // it should have. sliceCircular's lo offset already guarantees no
-    // repeats within a lap on its own — filterUnseen was pure
-    // double-counting here, not an extra safeguard.
-    const personalized = personalizeOrder(rotated, userTopics);
-    const lo = (reqPage - 1) * feedLimit;
-    const pageSlice = sliceCircular(personalized, lo, feedLimit);
-    markPostsSeen(req.user.id, pageSlice);
-    res.json({
-      posts: pageSlice,
-      page: reqPage,
-      // Was videoFeedSnapshot.posts.length > 0 — always true regardless of
-      // filter, since it checked the *unfiltered* shared pool. A source
-      // filter with genuinely nothing in it (sourcePool.length === 0) kept
-      // claiming hasMore, so infinite scroll would just keep requesting
-      // empty pages forever instead of correctly stopping.
-      hasMore: sourcePool.length > 0,
-      snapshotAt: videoFeedSnapshot.computedAt,
+    const { posts, nextCursor, hasMore } = await getCursorFeedPage({
+      sources: cursorSources,
+      cursorMap,
+      limit: feedLimit,
+      mediaType: 'video',
+      timeRange: null, // unbounded (up to the DB's own retention ceiling) — no expensive ranked/partitioned query here to protect against, just cheap indexed range scans
     });
+
+    markPostsSeen(req.user.id, posts);
+    res.json({ posts, cursor: nextCursor, hasMore });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -10779,19 +10886,15 @@ function warmMainFeedSnapshot(sortMode, timeRange) {
   const res = { status() { return this; }, json() {}, headersSent: false };
   handleFeedRequest(req, res).catch(e => console.warn('warmMainFeedSnapshot:', e.message));
 }
-function warmVideoFeedSnapshot() {
-  const req = { query: { limit: '10', page: '1' }, user: { id: '__system_warmup__' } };
-  const res = { status() { return this; }, json() {}, headersSent: false };
-  handleVideoFeedRequest(req, res).catch(e => console.warn('warmVideoFeedSnapshot:', e.message));
-}
-// 30s before the TTL actually expires — 'newest' is the frontend's actual
-// default sort; 'ranked' is warmed too since it's the fallback for any
-// caller that omits ?sort entirely (legacy /feed consumers).
+// 30s before the TTL actually expires. 'newest' isn't warmed here anymore —
+// it now runs through getCursorFeedPage's per-request date-cursor
+// pagination (see handleFeedRequest/handleVideoFeedRequest), which has no
+// shared pool to keep warm; 'ranked' still uses mainFeedSnapshots and is
+// warmed since it's the fallback for any caller that omits ?sort entirely
+// (legacy /feed consumers).
 setInterval(() => {
-  warmMainFeedSnapshot('newest', 'all');
   warmMainFeedSnapshot('ranked', 'all');
-  warmVideoFeedSnapshot();
-}, Math.min(MAIN_FEED_SNAPSHOT_TTL, VIDEO_FEED_SNAPSHOT_TTL) - 30 * 1000);
+}, MAIN_FEED_SNAPSHOT_TTL - 30 * 1000);
 
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
 app.get('/feed/stream', authenticateSSE, (req, res) => {
