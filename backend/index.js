@@ -1821,24 +1821,6 @@ function decodeHTMLEntities(str) {
     .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ');
 }
 
-function parseMediumRSS(xml) {
-  const items = [];
-  for (const match of xml.matchAll(/<item>([\s\S]*?)<\/item>/g)) {
-    const s     = match[1];
-    const get   = (re) => (re.exec(s) || [])[1]?.trim() || '';
-    const title   = decodeHTMLEntities(get(/<title><!\[CDATA\[(.*?)\]\]><\/title>/));
-    const link    = get(/<link>(https?:\/\/[^\s<]+)<\/link>/);
-    const creator = decodeHTMLEntities(get(/<dc:creator><!\[CDATA\[(.*?)\]\]><\/dc:creator>/));
-    const pubDate = get(/<pubDate>(.*?)<\/pubDate>/);
-    const guid    = get(/<guid[^>]*>(.*?)<\/guid>/);
-    const snippet = decodeHTMLEntities(
-      get(/<p class="medium-feed-snippet">(.*?)<\/p>/).replace(/<[^>]+>/g, '')
-    );
-    if (title && link) items.push({ title, link, creator, pubDate, guid, snippet });
-  }
-  return items;
-}
-
 function fetchText(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
@@ -1955,23 +1937,21 @@ async function fetchMediumByTag(tag) {
   if (cached) return cached;
   try {
     const xml   = await fetchText(`https://medium.com/feed/tag/${encodeURIComponent(tag)}`);
-    const items = parseMediumRSS(xml);
-    const posts = items.map(a => ({
-      id:          `medium_${a.guid.split('/p/')[1] || Buffer.from(a.link).toString('hex').slice(0,16)}`,
-      authorId:    `medium_${a.creator}`,
-      groupId:     'ext_medium',
-      content:     a.snippet || a.title,
-      title:       a.title,
-      source:      'medium',
-      sourceLabel: 'Medium',
-      sourceUrl:   a.link,
-      topic:       tag,
-      author:      { id: `medium_${a.creator}`, name: a.creator, title: 'Medium', organization: 'Medium' },
-      likes: [], likesCount: 0, commentsCount: 0,
-      createdAt:   normalizeTimestamp(a.pubDate),
-      isExternal:  true,
-      group:       { id: 'ext_medium', name: 'Medium', category: 'Engineering', externalUrl: 'https://medium.com' },
-    }));
+    // Was parseMediumRSS — a Medium-specific parser that only ever kept a
+    // plain-text snippet (<p class="medium-feed-snippet">, HTML tags
+    // stripped out entirely) and never looked at the article's actual
+    // content HTML at all. Medium articles routinely embed a YouTube video
+    // right in the body the same way any other blog does, but there was no
+    // raw HTML left by the time this ran for that embed to even be found
+    // in. Switched to the shared parseRSSItems/rssPost pipeline every other
+    // RSS-based source already uses (see fetchProductHunt etc.) — its
+    // rawBody() reads <content:encoded> directly, so the same
+    // iframe-src-based YouTube detection built for Smashing Magazine's
+    // false-positive fix now applies to Medium's real content for free,
+    // plus rssPost's collision-safe MD5 id (see its own comment) instead
+    // of this fetcher's separate guid-slicing scheme.
+    const items = parseRSSItems(xml);
+    const posts = filterAndSlice(items, tag, 1000).map(it => rssPost(it, 'medium', 'Medium', 'ext_medium', 'Medium', 'Engineering', tag));
     setCached(key, posts);
     return posts;
   } catch (e) {
