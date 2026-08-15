@@ -10120,8 +10120,70 @@ async function handleFeedRequest(req, res) {
   }
 
   if (feedMode === 'archive') {
-    const offset = (reqPage - 1) * feedLimit;
     const archiveSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    // Same date-cursor pagination as the main Feed's newest-sort scroll
+    // (see getCursorFeedPage) — Feed Manager's own balanced-query approach
+    // had the identical class of bug the main feed's old mainFeedSnapshots
+    // was built to fix: a fresh, uncached getBalancedFeedPosts call on
+    // every single page request, with no shared pool between them, so a
+    // new row landing between page 1 and page 2's queries shifted every
+    // later ROW_NUMBER rank by one and could re-serve (or skip) content.
+    // Scoped the same way as the Feed branch above: only when there's a
+    // natural date-cursor semantic to page by (Newest sort, no active
+    // search — Ranked/Popular/Balanced and search keep the existing
+    // approach below untouched).
+    if (sortMode === 'newest' && !searchQuery) {
+      const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
+      const cursorMap = decodeFeedCursor(req.query.cursor);
+      const cursorTimeRange = timeRange === 'all' ? null : timeRange;
+      const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
+
+      let extraLists = {};
+      if (isUnfiltered) {
+        // "All Collected" means literally all collected content, including
+        // native UFconnect posts — same extraLists merge the Feed's own
+        // unfiltered cursor branch uses, so a community post competes on
+        // actual recency instead of being force-pinned ahead of everything
+        // else regardless of age.
+        const beforeMs = cursorMap.uficonnect ? new Date(cursorMap.uficonnect).getTime() : Infinity;
+        extraLists = {
+          uficonnect: posts
+            .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
+            .sort((a, b) => postTimestamp(b) - postTimestamp(a))
+            .slice(0, feedLimit)
+            .map(p => serializeCommunityPost(p, req.user.id))
+            .map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) })),
+        };
+      }
+
+      const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+        sources: cursorSources,
+        cursorMap,
+        limit: feedLimit,
+        timeRange: cursorTimeRange,
+        extraLists,
+      });
+
+      const result = cursorPosts.map(p => p.isExternal === false ? p : {
+        ...p,
+        group:           groups.find(g => g.id === p.groupId) || p.group,
+        likedByMe:       false,
+        fromJoinedGroup: joined.has(p.groupId),
+        forYou:          true,
+        relevance:       1,
+      });
+      markPostsSeen(req.user.id, cursorPosts);
+      return res.json({
+        posts: result,
+        mode: 'archive',
+        sort: sortMode,
+        cursor: nextCursor,
+        hasMore: cursorHasMore,
+        ...(sourcesParam.length > 1 ? { sources: sourcesParam } : sourceFilter ? { source: sourceFilter } : {}),
+      });
+    }
+
+    const offset = (reqPage - 1) * feedLimit;
     // Feed Manager: no source filter and no search means "All Collected"
     // wants a true mix — pull an equal share directly from every source
     // instead of fetching a pool and correcting it after the fact.
