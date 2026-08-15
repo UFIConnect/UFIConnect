@@ -7,6 +7,7 @@ import client from '../api/client';
 import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, InlineAutoplayVideo } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
+import { useEngagementTracking } from '../hooks/useEngagementTracking';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -468,12 +469,12 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   );
 }
 
-function YouTubeCard({ post }) {
+function YouTubeCard({ post, cardRef }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
   return (
-    <div className="card post-card" style={{ marginBottom: 12 }}>
+    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
@@ -599,13 +600,20 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const [commentDraft,    setCommentDraft]    = useState('');
   const [commentSending,  setCommentSending]  = useState(false);
   const [commentPostError,setCommentPostError]= useState(false);
+  // Genuine-read engagement (see api/engagement.js) — declared before the
+  // early returns below so it runs unconditionally on every render
+  // (Rules of Hooks), reporting once this specific card has been ~60%
+  // visible for 2s+. post?.id is undefined until the `if (!post...)` guard
+  // below passes, which the hook already treats as "nothing to track yet."
+  const cardRef = useRef(null);
+  useEngagementTracking(cardRef, post?.id);
 
   if (!post || typeof post !== 'object') return null;
 
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  if (post.source === 'youtube') return <YouTubeCard post={post} />;
+  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
@@ -669,7 +677,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   }
 
   return (
-    <div className="card post-card" style={{ marginBottom: 12 }}>
+    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>

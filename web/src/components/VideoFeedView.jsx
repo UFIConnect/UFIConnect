@@ -3,6 +3,15 @@ import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { reportEngaged } from '../api/engagement';
+
+// A video counts as genuinely watched (as opposed to just scrolled past —
+// see api/engagement.js for the view-vs-seen distinction) once playback
+// crosses ~3s or ~50% of its length, whichever comes first — long enough
+// that a fast scroll-by can't trigger it, short enough that a real
+// full-length watch doesn't need to finish for it to register.
+const VIDEO_ENGAGED_SECONDS = 3;
+const VIDEO_ENGAGED_FRACTION = 0.5;
 
 // Platforms with no public aggregate fetcher at all (not in SOURCE_CONFIG
 // server-side) — pure Connected-Accounts/Following-only identifiers, never
@@ -104,6 +113,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
   const [seeking, setSeeking] = useState(false);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
+
+  // Genuine-watch engagement signal (see api/engagement.js) — currentTime
+  // already updates continuously during real playback (onTimeUpdate/the
+  // YouTube poll below), so this just watches for it crossing the
+  // threshold rather than needing its own timer. Only reachable while
+  // active (a background/inactive slide's currentTime is reset, not
+  // advancing) so a fast scroll-by can't cross the seconds threshold by
+  // accident.
+  useEffect(() => {
+    if (!active || !post?.id) return;
+    if (currentTime >= VIDEO_ENGAGED_SECONDS || (duration > 0 && currentTime / duration >= VIDEO_ENGAGED_FRACTION)) {
+      reportEngaged(post.id);
+    }
+  }, [active, post?.id, currentTime, duration]);
 
   // file/hls: play on becoming active, pause + rewind on becoming inactive
   // (leaving a video mid-scrub-progress for the next viewer would be

@@ -4888,6 +4888,14 @@ function sliceCircular(pool, lo, count) {
 // In-memory Set per user for fast filtering on every request (one DB round
 // trip per user per server lifetime to warm it), backed by the seen_posts
 // table so it survives restarts/deploys and carries across devices.
+//
+// This is VIEW tracking, not engagement — despite the table/function names
+// (kept as-is; renaming a table + ~15 call sites for a label change alone
+// wasn't worth the risk), a row here means a post was *returned* to this
+// user, the instant it was, with no signal at all about whether they
+// actually looked at it. markPostsEngaged/engaged_at below is the real
+// "did they watch/read this" signal — a separate, later write against the
+// same row once a genuine engagement threshold is crossed client-side.
 const userSeenCache = new Map(); // userId → Set<postId>
 const USER_SEEN_CACHE_MAX_USERS  = 5000; // distinct users tracked in memory at once
 const USER_SEEN_IDS_MAX_PER_USER = 4000; // ids per user kept in memory — DB has the full history
@@ -4938,6 +4946,25 @@ function markPostsSeen(userId, posts) {
       [userId, ...ids]
     ).catch(e => console.warn('markPostsSeen:', e.message));
   }
+}
+
+// The genuine "seen" signal (see the engaged_at migration/comment above) —
+// called from POST /posts/engaged once the client has already independently
+// decided a real engagement threshold was crossed (video watched past
+// ~3s/50%, or a feed post visible on screen for ~2s+ — see
+// VideoFeedView.jsx/PostList.jsx), never inferred here. Every id passed in
+// is expected to already have a seen_posts row (engagement can only happen
+// after a post was delivered, i.e. after markPostsSeen already ran for it);
+// WHERE engaged_at IS NULL just avoids a wasted write on a repeat call for
+// the same post rather than gating correctness on it.
+function markPostsEngaged(userId, postIds) {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID || !postIds?.length || !db.isConnected()) return;
+  const ids = [...new Set(postIds.filter(Boolean))].slice(0, 100);
+  if (!ids.length) return;
+  db.query(
+    `UPDATE seen_posts SET engaged_at = NOW() WHERE user_id = $1 AND post_id = ANY($2::text[]) AND engaged_at IS NULL`,
+    [userId, ids]
+  ).catch(e => console.warn('markPostsEngaged:', e.message));
 }
 
 function feedWorkerKey(source) {
@@ -8182,6 +8209,22 @@ async function migrateDB() {
         PRIMARY KEY (user_id, post_id)
       )
     `);
+    // The (user_id, post_id) primary key already serves the user_id half of
+    // getUserSeenSet's "WHERE user_id = $1 ORDER BY seen_at DESC LIMIT N",
+    // but ordering by seen_at still needs an in-memory sort of every one of
+    // that user's rows first since seen_at isn't part of the key's own
+    // order. A dedicated index gets the ORDER BY for free from the index
+    // itself, same reasoning as fpc_source_time_idx just above.
+    await db.query(`CREATE INDEX IF NOT EXISTS seen_posts_user_time_idx ON seen_posts(user_id, seen_at DESC)`);
+    // engaged_at: see markPostsEngaged/POST /posts/engaged — a genuine
+    // "the user actually watched/read this" signal, distinct from
+    // seen_posts' existing row (written the moment a post is merely
+    // *returned* to the client — an impression, not engagement). Same
+    // table/row rather than a separate one: every engaged post already has
+    // a seen_posts row from the instant it was served (engagement can only
+    // happen after delivery), so this is strictly additional information
+    // about a row that already exists, not a new relationship to track.
+    await db.query(`ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS engaged_at TIMESTAMPTZ`);
 
     // Posts table — persists across deploys
     await db.query(`
@@ -8253,6 +8296,18 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
+    // getCursorFeedPage (the Feed/Video/Archive newest-sort pagination) runs
+    // "WHERE source = $1 AND post_created_at < $2 ORDER BY post_created_at
+    // DESC LIMIT N" once per selected source, per page — for the unfiltered
+    // view that's ~30 of these queries on every single scroll-triggered
+    // request. The single-column source/time indexes above can each serve
+    // half of that (filter by source, OR walk in time order) but not both
+    // at once, so the planner either sorts the matched rows in memory or
+    // walks the full time-ordered index checking every row's source along
+    // the way — neither scales with how often this specific pattern now
+    // runs. A compound index lets it jump straight to the source's own
+    // slice, already in the right order, and stop after N rows.
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
     // Added for location-based job matching — only Indeed/Remote OK's real
     // API responses ever populate this (candidate_required_location /
     // location); never inferred or guessed for sources that don't have it.
@@ -8684,7 +8739,17 @@ function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2, maxSharePct = nu
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
 async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {} }) {
-  const perSourceLimit = Math.max(limit, 20);
+  // Was a flat Math.max(limit, 20) per source regardless of how many
+  // sources were asked for — harmless for a 1-3 source filter (each one
+  // genuinely needs to supply most of the page), but the unfiltered case
+  // asks ~30 sources for a full page's worth of rows each, even though the
+  // share cap (see mergeByRecencyWithStreakCap) means no single source can
+  // ever contribute more than roughly its capped fraction of one page —
+  // ~30 queries fetching 20-25 rows to actually use 1-2 of them each.
+  // Scales down as source count grows, up for a narrow selection where
+  // each source needs real depth; floored at 10 so a request never starves
+  // a source that just fetched slightly late.
+  const perSourceLimit = Math.max(10, Math.ceil((limit * 2) / sources.length));
   const bySource = await Promise.all(sources.map(src =>
     getPostsFromDB([], perSourceLimit, 0, src, {
       sort: 'newest',
@@ -11008,6 +11073,21 @@ app.post('/feed/refresh', authenticate, (req, res) => {
     enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed refresh endpoint');
     setTimeout(runCacheHelperCheck, 5000);
   });
+});
+
+// Genuine engagement ("seen"), distinct from the automatic "returned to the
+// client" view tracking every feed/video response already does via
+// markPostsSeen — see its comment. The client decides what counts as
+// engaged (a video watched past ~3s/50%, a post visible ~2s+ — see
+// VideoFeedView.jsx/PostList.jsx) and batches ids here rather than firing
+// one request per post; this endpoint just records whatever it's told.
+// Fire-and-forget from the client's perspective (204, nothing to react to)
+// — losing an engagement ping to a dropped request isn't worth retry logic
+// for a signal that's not on any critical path yet.
+app.post('/posts/engaged', authenticate, (req, res) => {
+  const ids = Array.isArray(req.body?.postIds) ? req.body.postIds.filter(id => typeof id === 'string') : [];
+  markPostsEngaged(req.user.id, ids);
+  res.status(204).end();
 });
 
 // ─── Feed source stats (posts per source in DB) ───────────────────────────────
