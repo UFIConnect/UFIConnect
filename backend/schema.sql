@@ -1,5 +1,5 @@
 -- ============================================================
---  ProConnect — PostgreSQL Schema
+--  UFconnect — PostgreSQL Schema
 --  Run once:  psql $DATABASE_URL -f schema.sql
 -- ============================================================
 

@@ -11,7 +11,7 @@ function postJson(url, payload, timeout = 8000) {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
-          'User-Agent': 'proconnect-holomine/1.0',
+          'User-Agent': 'uficonnect-holomine/1.0',
         },
         timeout,
       };

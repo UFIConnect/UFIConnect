@@ -1,6 +1,6 @@
 export default ({ config }) => ({
   ...config,
-  name: 'ProConnect',
+  name: 'UFconnect',
   slug: 'pro-connect',
   version: '1.0.0',
   orientation: 'portrait',
@@ -17,12 +17,12 @@ export default ({ config }) => ({
   assetBundlePatterns: ['**/*'],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.proconnect.app',
+    bundleIdentifier: 'com.uficonnect.app',
     buildNumber: '1',
     infoPlist: {
-      NSPhotoLibraryUsageDescription: 'ProConnect uses your photo library to share images in messages.',
-      NSCameraUsageDescription: 'ProConnect uses your camera to capture photos to share.',
-      NSMicrophoneUsageDescription: 'ProConnect uses your microphone for voice messages.',
+      NSPhotoLibraryUsageDescription: 'UFconnect uses your photo library to share images in messages.',
+      NSCameraUsageDescription: 'UFconnect uses your camera to capture photos to share.',
+      NSMicrophoneUsageDescription: 'UFconnect uses your microphone for voice messages.',
       ITSAppUsesNonExemptEncryption: false,
     },
   },
@@ -31,7 +31,7 @@ export default ({ config }) => ({
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#2563EB',
     },
-    package: 'com.proconnect.app',
+    package: 'com.uficonnect.app',
     versionCode: 1,
     permissions: [
       'READ_EXTERNAL_STORAGE',
@@ -43,8 +43,8 @@ export default ({ config }) => ({
   },
   extra: {
     // Set API_URL env var when running EAS builds for production.
-    // e.g.: eas secret:create --scope project --name API_URL --value https://api.proconnect.app
-    apiUrl: process.env.API_URL || 'https://proconnect-api-production-d9bb.up.railway.app',
+    // e.g.: eas secret:create --scope project --name API_URL --value https://uficonnect-api-708r.onrender.com
+    apiUrl: process.env.API_URL || 'https://uficonnect-api-708r.onrender.com',
     eas: {
       projectId: 'ee9644f6-0881-49a8-93f5-aa373a67bc92',
     },

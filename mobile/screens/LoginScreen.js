@@ -30,7 +30,7 @@ export default function LoginScreen({ navigation }) {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.logo}>ProConnect</Text>
+          <Text style={styles.logo}>UFconnect</Text>
           <Text style={styles.tagline}>Professional networking, no ads.</Text>
         </View>
 

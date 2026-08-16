@@ -59,7 +59,7 @@ function OAuthModal({ platform, onConfirm, onCancel, loading }) {
             <Text style={ms.infoTitle}>In production</Text>
             <Text style={ms.infoText}>
               You will be redirected to {platform.name} to authorise these permissions.
-              ProConnect never stores your {platform.name} password.
+              UFconnect never stores your {platform.name} password.
             </Text>
             <Text style={[ms.infoText, { marginTop: 6 }]}>
               Set up your app credentials at: {platform.setupUrl}
@@ -231,7 +231,7 @@ export default function ConnectedAccountsScreen() {
       <View style={ss.legalBox}>
         <Text style={ss.legalTitle}>About permissions</Text>
         <Text style={ss.legalText}>
-          ProConnect uses OAuth 2.0. We never store your passwords.
+          UFconnect uses OAuth 2.0. We never store your passwords.
           Access tokens are kept encrypted. You can disconnect any account at any time.
           Posts imported from other platforms remain subject to each platform's
           Terms of Service and copyright — we display them in-app only, never re-host or redistribute.

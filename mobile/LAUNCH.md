@@ -1,6 +1,6 @@
-# ProConnect — App Store Launch Guide
+# UFconnect — App Store Launch Guide
 
-This guide walks you through every step needed to submit ProConnect to the Apple App Store (and optionally Google Play). The code is ready; what remains is account setup and build commands.
+This guide walks you through every step needed to submit UFconnect to the Apple App Store (and optionally Google Play). The code is ready; what remains is account setup and build commands.
 
 ---
 
@@ -29,7 +29,7 @@ The app currently points to `localhost:3000` during development. For a real prod
    ```
    PORT=3000
    ```
-4. Copy the generated public URL, e.g. `https://proconnect-api.up.railway.app`
+4. Copy the generated public URL, e.g. `https://uficonnect-api.up.railway.app`
 
 ---
 
@@ -55,9 +55,9 @@ This injects `API_URL` into every production build automatically.
 2. Click **+** → **New App**
 3. Fill in:
    - **Platform**: iOS
-   - **Name**: ProConnect
-   - **Bundle ID**: `com.proconnect.app`
-   - **SKU**: `proconnect-001`
+   - **Name**: UFconnect
+   - **Bundle ID**: `com.uficonnect.app`
+   - **SKU**: `uficonnect-001`
 4. Copy the **Apple ID** shown (a numeric ID like `1234567890`) — you'll need it for `eas.json`
 
 ### Step 4 — Fill in eas.json submit config
@@ -113,7 +113,7 @@ After submission, go to App Store Connect and complete:
 
 4. **Description** (suggestion):
    ```
-   ProConnect is your all-in-one professional networking hub.
+   UFconnect is your all-in-one professional networking hub.
    
    • Discover jobs, gigs, grants, hackathons, and open source projects
    • Join interest-based groups and connect with professionals in your field

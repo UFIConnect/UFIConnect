@@ -46,7 +46,7 @@ function ExploreNavigator() {
 function DiscoverNavigator() {
   return (
     <DiscoverStack.Navigator screenOptions={NAV_OPTS}>
-      <DiscoverStack.Screen name="Groups" component={GroupsScreen} options={{ title: 'ProConnect' }} />
+      <DiscoverStack.Screen name="Groups" component={GroupsScreen} options={{ title: 'UFconnect' }} />
       <DiscoverStack.Screen
         name="GroupDetail"
         component={GroupDetailScreen}
@@ -126,7 +126,7 @@ function RootNavigator() {
   if (loading) {
     return (
       <View style={styles.splash}>
-        <Text style={styles.splashLogo}>ProConnect</Text>
+        <Text style={styles.splashLogo}>UFconnect</Text>
         <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} />
       </View>
     );
