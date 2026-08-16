@@ -9883,20 +9883,24 @@ app.post('/groups', authenticate, async (req, res) => {
       createdBy: user.id, isPrivate: Boolean(isPrivate),
     };
     const prevJoinedGroups = user.joinedGroups || [];
+    // Groups have no filestore fallback the way users do — an in-memory-only
+    // group looks real to its creator until the next restart silently drops
+    // it (same failure class as the community-posts/messages bugs fixed
+    // earlier this session), so bail rather than fake a 201.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Creating a group is temporarily unavailable — please try again in a moment.' });
+    }
     try {
-      if (db.isConnected()) {
-        await db.query(`
-          INSERT INTO community_groups
-            (id,name,category,description,member_count,is_external,related_groups,created_by,is_private)
-          VALUES ($1,$2,$3,$4,1,false,'{}',$5,$6)
-        `, [group.id, group.name, group.category, group.description, user.id, group.isPrivate]);
-        if (isDBId(user.id)) {
-          await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [[...prevJoinedGroups, id], user.id]);
-        }
+      await db.query(`
+        INSERT INTO community_groups
+          (id,name,category,description,member_count,is_external,related_groups,created_by,is_private)
+        VALUES ($1,$2,$3,$4,1,false,'{}',$5,$6)
+      `, [group.id, group.name, group.category, group.description, user.id, group.isPrivate]);
+      if (isDBId(user.id)) {
+        await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [[...prevJoinedGroups, id], user.id]);
       }
       groups.push(group);
       user.joinedGroups = [...prevJoinedGroups, id];
-      if (!db.isConnected()) filestore.saveUsers(users);
       res.status(201).json({ group });
     } catch (e) {
       console.error('POST /groups DB:', e.message);
@@ -9953,9 +9957,12 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
     const group = groups.find((g) => g.id === req.params.id);
     if (!user || !group) return res.status(404).json({ message: 'Not found.' });
     if (!user.joinedGroups.includes(group.id)) {
+      if (isDBId(user.id) && !db.isConnected()) {
+        return res.status(503).json({ message: 'Joining is temporarily unavailable — please try again in a moment.' });
+      }
       user.joinedGroups.push(group.id);
       group.members += 1;
-      if (db.isConnected() && isDBId(user.id)) {
+      if (isDBId(user.id)) {
         await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
       }
     }
@@ -9970,9 +9977,12 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
     if (!user || !group) return res.status(404).json({ message: 'Not found.' });
     const idx = user.joinedGroups.indexOf(group.id);
     if (idx > -1) {
+      if (isDBId(user.id) && !db.isConnected()) {
+        return res.status(503).json({ message: 'Leaving is temporarily unavailable — please try again in a moment.' });
+      }
       user.joinedGroups.splice(idx, 1);
       group.members = Math.max(0, group.members - 1);
-      if (db.isConnected() && isDBId(user.id)) {
+      if (isDBId(user.id)) {
         await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
       }
     }
@@ -9989,11 +9999,13 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
     if (!group.createdBy || group.createdBy !== req.user.id) {
       return res.status(403).json({ message: 'Only the group creator can delete it.' });
     }
-    if (db.isConnected()) {
-      await db.query('DELETE FROM community_groups WHERE id=$1', [group.id]);
-    } else {
-      filestore.saveUsers(users);
+    // Without this, a DB blip means the group row survives in Postgres while
+    // the response and in-memory state both claim it's gone — it reappears
+    // for everyone the next time memory is rebuilt from the DB.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Deleting is temporarily unavailable — please try again in a moment.' });
     }
+    await db.query('DELETE FROM community_groups WHERE id=$1', [group.id]);
     groups.splice(groups.indexOf(group), 1);
     users.forEach((u) => {
       const idx = (u.joinedGroups || []).indexOf(group.id);
@@ -12648,18 +12660,19 @@ async function toggleCommunityPostLike(req, res) {
     const post = await getCommunityPostById(req.params.postId);
     if (!post) return res.status(404).json({ message: 'Post not found.' });
     if (!Array.isArray(post.likes)) post.likes = [];
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
+    }
 
     const uid = req.user.id;
     const idx = post.likes.indexOf(uid);
     if (idx > -1) post.likes.splice(idx, 1);
     else if (!post.likes.includes(uid)) post.likes.push(uid);
 
-    if (db.isConnected()) {
-      await db.query(
-        `UPDATE community_posts SET likes=$1 WHERE id=$2`,
-        [post.likes, post.id]
-      );
-    }
+    await db.query(
+      `UPDATE community_posts SET likes=$1 WHERE id=$2`,
+      [post.likes, post.id]
+    );
 
     res.json({
       likedByMe: post.likes.includes(uid),
@@ -12689,6 +12702,9 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
     const content = (req.body.content || '').trim();
     if (!content) return res.status(400).json({ message: 'Comment is required.' });
     if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Commenting is temporarily unavailable — please try again in a moment.' });
+    }
 
     const comment = {
       id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -12700,22 +12716,20 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
     postComments.push(comment);
     post.commentsCount = (post.commentsCount || 0) + 1;
 
-    if (db.isConnected()) {
-      // The comment itself is the part that matters — await it so a DB
-      // failure here actually surfaces as an error instead of a lost
-      // comment reported as posted. The counter is a denormalized cache of
-      // COUNT(*); worth keeping in sync but not worth failing an already-
-      // saved comment over, so it stays best-effort.
-      await db.query(
-        `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
-         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-        [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
-      );
-      db.query(
-        `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
-        [post.id]
-      ).catch(e => console.error('post comment count DB:', e.message));
-    }
+    // The comment itself is the part that matters — await it so a DB
+    // failure here actually surfaces as an error instead of a lost
+    // comment reported as posted. The counter is a denormalized cache of
+    // COUNT(*); worth keeping in sync but not worth failing an already-
+    // saved comment over, so it stays best-effort.
+    await db.query(
+      `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
+       VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+      [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt]
+    );
+    db.query(
+      `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
+      [post.id]
+    ).catch(e => console.error('post comment count DB:', e.message));
 
     res.status(201).json({
       comment: serializePostComment(comment),
@@ -12734,10 +12748,11 @@ app.delete('/posts/:postId', authenticate, async (req, res) => {
     if (post.authorId !== req.user.id) {
       return res.status(403).json({ message: 'You can only delete your own posts.' });
     }
-    if (db.isConnected()) {
-      await db.query('DELETE FROM post_comments WHERE post_id=$1', [post.id]);
-      await db.query('DELETE FROM community_posts WHERE id=$1', [post.id]);
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Deleting is temporarily unavailable — please try again in a moment.' });
     }
+    await db.query('DELETE FROM post_comments WHERE post_id=$1', [post.id]);
+    await db.query('DELETE FROM community_posts WHERE id=$1', [post.id]);
     const idx = posts.findIndex((p) => p.id === post.id);
     if (idx > -1) posts.splice(idx, 1);
     postComments = postComments.filter((c) => c.postId !== post.id);
@@ -12964,9 +12979,10 @@ app.get('/profile/attachments/:id/download', authenticate, async (req, res) => {
 
 app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
   try {
-    if (db.isConnected()) {
-      await db.query(`DELETE FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Deleting is temporarily unavailable — please try again in a moment.' });
     }
+    await db.query(`DELETE FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
     res.json({ deleted: true });
   } catch (e) { console.error('DELETE /profile/attachments/:id:', e.message); res.status(500).json({ message: 'Failed to delete.' }); }
 });
@@ -13233,13 +13249,14 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
     if (followerId === followingId) return res.status(400).json({ message: "Can't follow yourself." });
     if (isBlockedEitherWay(followerId, followingId)) return res.status(403).json({ message: 'Unable to follow this user.' });
     if (!follows.find(f => f.followerId === followerId && f.followingId === followingId)) {
-      follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
-      if (db.isConnected()) {
-        await db.query(
-          `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-          [followerId, followingId]
-        );
+      if (!db.isConnected()) {
+        return res.status(503).json({ message: 'Following is temporarily unavailable — please try again in a moment.' });
       }
+      follows.push({ followerId, followingId, createdAt: new Date().toISOString() });
+      await db.query(
+        `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [followerId, followingId]
+      );
     }
     res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
   } catch (e) { console.error('POST /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
@@ -13250,8 +13267,11 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
     const followingId = req.params.id;
     const followerId  = req.user.id;
     const idx = follows.findIndex(f => f.followerId === followerId && f.followingId === followingId);
-    if (idx >= 0) follows.splice(idx, 1);
-    if (db.isConnected()) {
+    if (idx >= 0) {
+      if (!db.isConnected()) {
+        return res.status(503).json({ message: 'Unfollowing is temporarily unavailable — please try again in a moment.' });
+      }
+      follows.splice(idx, 1);
       await db.query(
         `DELETE FROM follows WHERE follower_id=$1 AND following_id=$2`,
         [followerId, followingId]
@@ -13342,22 +13362,24 @@ app.post('/users/:id/connect', authenticate, async (req, res) => {
     );
 
     if (!existing) {
+      if (!db.isConnected()) {
+        return res.status(503).json({ message: 'Connecting is temporarily unavailable — please try again in a moment.' });
+      }
       const id = `conn${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       connections.push({ id, fromId, toId, status: 'pending', createdAt: new Date().toISOString() });
-      if (db.isConnected()) {
-        await db.query(
-          `INSERT INTO connections (id, from_id, to_id, status) VALUES ($1,$2,$3,'pending') ON CONFLICT (from_id, to_id) DO NOTHING`,
-          [id, fromId, toId]
-        );
-      }
+      await db.query(
+        `INSERT INTO connections (id, from_id, to_id, status) VALUES ($1,$2,$3,'pending') ON CONFLICT (from_id, to_id) DO NOTHING`,
+        [id, fromId, toId]
+      );
       return res.json({ connectionStatus: 'pending_sent' });
     }
 
     if (existing.status === 'pending' && existing.toId === fromId) {
-      existing.status = 'accepted';
-      if (db.isConnected()) {
-        await db.query(`UPDATE connections SET status='accepted' WHERE id=$1`, [existing.id]);
+      if (!db.isConnected()) {
+        return res.status(503).json({ message: 'Accepting is temporarily unavailable — please try again in a moment.' });
       }
+      existing.status = 'accepted';
+      await db.query(`UPDATE connections SET status='accepted' WHERE id=$1`, [existing.id]);
       return res.json({ connectionStatus: 'connected' });
     }
 
@@ -13377,10 +13399,11 @@ app.delete('/users/:id/connect', authenticate, async (req, res) => {
       (c) => (c.fromId === myId && c.toId === otherId) || (c.fromId === otherId && c.toId === myId)
     );
     if (idx === -1) return res.json({ connectionStatus: 'none' });
-    const [removed] = connections.splice(idx, 1);
-    if (db.isConnected()) {
-      await db.query(`DELETE FROM connections WHERE id=$1`, [removed.id]);
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'This is temporarily unavailable — please try again in a moment.' });
     }
+    const [removed] = connections.splice(idx, 1);
+    await db.query(`DELETE FROM connections WHERE id=$1`, [removed.id]);
     res.json({ connectionStatus: 'none' });
   } catch (e) { console.error('DELETE /users/:id/connect:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -13409,16 +13432,21 @@ app.post('/users/:id/block', authenticate, async (req, res) => {
     const blockedId = req.params.id;
     if (blockerId === blockedId) return res.status(400).json({ message: "Can't block yourself." });
     if (!(await getUser(blockedId))) return res.status(404).json({ message: 'User not found.' });
+    // Blocking is safety-relevant — a block that "works" in-memory but isn't
+    // durable would silently lift after the next restart, re-exposing the
+    // blocker to someone they explicitly blocked. Bail before mutating
+    // anything rather than let that happen.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Blocking is temporarily unavailable — please try again in a moment.' });
+    }
 
     if (!blocks.find(b => b.blockerId === blockerId && b.blockedId === blockedId)) {
       const id = `block_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       blocks.push({ id, blockerId, blockedId, createdAt: new Date().toISOString() });
-      if (db.isConnected()) {
-        await db.query(
-          `INSERT INTO blocks (id, blocker_id, blocked_id) VALUES ($1,$2,$3) ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
-          [id, blockerId, blockedId]
-        );
-      }
+      await db.query(
+        `INSERT INTO blocks (id, blocker_id, blocked_id) VALUES ($1,$2,$3) ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+        [id, blockerId, blockedId]
+      );
     }
 
     follows = follows.filter(f =>
@@ -13427,10 +13455,8 @@ app.post('/users/:id/block', authenticate, async (req, res) => {
     const removedConn = connections.find(c =>
       (c.fromId === blockerId && c.toId === blockedId) || (c.fromId === blockedId && c.toId === blockerId));
     connections = connections.filter(c => c !== removedConn);
-    if (db.isConnected()) {
-      await db.query(`DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)`, [blockerId, blockedId]);
-      if (removedConn) await db.query(`DELETE FROM connections WHERE id=$1`, [removedConn.id]);
-    }
+    await db.query(`DELETE FROM follows WHERE (follower_id=$1 AND following_id=$2) OR (follower_id=$2 AND following_id=$1)`, [blockerId, blockedId]);
+    if (removedConn) await db.query(`DELETE FROM connections WHERE id=$1`, [removedConn.id]);
 
     res.json({ ok: true, blocked: true });
   } catch (e) { console.error('POST /users/:id/block:', e); res.status(500).json({ error: 'Internal server error' }); }
@@ -13441,8 +13467,11 @@ app.delete('/users/:id/block', authenticate, async (req, res) => {
     const blockerId = req.user.id;
     const blockedId = req.params.id;
     const idx = blocks.findIndex(b => b.blockerId === blockerId && b.blockedId === blockedId);
-    if (idx >= 0) blocks.splice(idx, 1);
-    if (db.isConnected()) {
+    if (idx >= 0) {
+      if (!db.isConnected()) {
+        return res.status(503).json({ message: 'Unblocking is temporarily unavailable — please try again in a moment.' });
+      }
+      blocks.splice(idx, 1);
       await db.query(`DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2`, [blockerId, blockedId]);
     }
     res.json({ ok: true, blocked: false });
