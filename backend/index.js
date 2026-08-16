@@ -14347,19 +14347,25 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
       createdAt: new Date().toISOString(),
       read: false,
     };
-    // Await before mutating in-memory conv.messages — GET /messages merges
+    // Bail before mutating in-memory conv.messages — GET /messages merges
     // this in-memory array with a summary rebuilt from direct_messages, so a
-    // silently-failed insert here would make the sender see the message
-    // (from memory) while the recipient's DB-derived view never gets it.
-    if (db.isConnected()) {
-      await db.query(
-        `INSERT INTO direct_messages
-         (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,false,$7)
-         ON CONFLICT DO NOTHING`,
-        [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
-      );
+    // silently-skipped insert here would make the sender see the message
+    // (from memory) while the recipient's DB-derived view never gets it, and
+    // the message vanishes for both of them once memory is rebuilt from the
+    // DB. Confirmed live: sent fine, showed in the sender's own thread, then
+    // GET /messages/:userId came back empty for both sides minutes later —
+    // db.isConnected() was false at send time (a redeploy's brief DB
+    // reconnect window) and this route reported success anyway.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Messaging is temporarily unavailable — please try again in a moment.' });
     }
+    await db.query(
+      `INSERT INTO direct_messages
+       (id, conversation_id, sender_id, receiver_id, content, attachment, read, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,false,$7)
+       ON CONFLICT DO NOTHING`,
+      [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
+    );
     conv.messages.push(newMsg);
 
     res.json({
