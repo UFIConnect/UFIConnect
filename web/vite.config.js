@@ -2,8 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-  // On GitHub Pages the app lives at /proconnect/; locally it's at /
-  base: process.env.GH_PAGES === 'true' ? '/proconnect/' : '/',
+  // On GitHub Pages the app lives at /UFConnect/; locally it's at /
+  base: process.env.GH_PAGES === 'true' ? '/UFConnect/' : '/',
   plugins: [react()],
   server: {
     port: 5173,

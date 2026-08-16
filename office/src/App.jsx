@@ -769,7 +769,7 @@ function VersionsView({ versions }) {
     {
       name: 'UFconnect Monorepo',
       desc: 'Backend (Node.js) · Web (React) · Mobile (Expo) · Office (React)',
-      url: 'https://github.com/yosufkaka99-alt/proconnect',
+      url: 'https://github.com/yosufkaka99-alt/UFConnect',
       icon: '📦',
     },
   ];
