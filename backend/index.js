@@ -1386,7 +1386,14 @@ function parseRedditRSSFeed(xml, topicKeyword) {
     const updated   = getTag(/<updated>(.*?)<\/updated>/);
     const author    = getTag(/<name>(.*?)<\/name>/).replace(/^\/?u\//, '');
     const rawContent = getTag(/<content[^>]*>([\s\S]*?)<\/content>/);
-    const content = decodeHTMLEntities(rawContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400));
+    // rawContent is still XML-escaped at this point (Reddit's Atom <content>
+    // wraps its HTML as entity-escaped text, e.g. "&lt;table&gt;"), so tags
+    // must be stripped *after* decoding entities — decoding first then
+    // stripping was backwards, leaving the entity-decoded HTML tags (table/
+    // img/a markup) sitting unstripped in the post content shown on
+    // PostDetail, confirmed live as the raw "<table><tr><td>..." markup
+    // rendering as literal text on the post page.
+    const content = decodeHTMLEntities(rawContent).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
     const idMatch = link.match(/comments\/([a-z0-9]+)/i);
     if (!idMatch || !title) continue;
     const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
