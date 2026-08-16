@@ -13044,14 +13044,21 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     };
     // Confirm the DB write before mutating in-memory state / broadcasting to
     // other users — otherwise a failed write still looks like a live post to
-    // everyone until the next restart quietly drops it.
-    if (db.isConnected()) {
-      await db.query(
-        `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at,media_url,media_type)
-         VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6,$7,$8) ON CONFLICT DO NOTHING`,
-        [id, group.id, user.id, user.name, post.content, post.createdAt, safeMediaUrl, safeMediaType]
-      );
+    // everyone until the next restart (or the next loadPostsFromDB refresh)
+    // quietly drops it. Bailing out (rather than the old "skip the write,
+    // proceed anyway" behavior) is what actually delivers that: confirmed
+    // live as a post surviving in-memory and showing in the composer's own
+    // feed, then silently vanishing after the next deploy, because
+    // db.isConnected() was false at the moment of posting and nothing here
+    // stopped the route from reporting success anyway.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Posting is temporarily unavailable — please try again in a moment.' });
     }
+    await db.query(
+      `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at,media_url,media_type)
+       VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [id, group.id, user.id, user.name, post.content, post.createdAt, safeMediaUrl, safeMediaType]
+    );
     posts.unshift(post);
     const serialized = serializeCommunityPost(post, req.user.id);
     broadcastSSE([serialized]);
