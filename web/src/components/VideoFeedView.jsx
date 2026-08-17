@@ -628,11 +628,11 @@ function CommentsSheet({ post, onClose }) {
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3, flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 700, fontSize: '.8rem', color: '#fff' }}>{c.author}</span>
-                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'rgba(255,255,255,.55)' }}>▲ {c.score.toLocaleString()}</span>}
-                  <span style={{ fontSize: '.68rem', color: 'rgba(255,255,255,.55)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
+                  <span style={{ fontWeight: 700, fontSize: '.8rem', color: '#000' }}>{c.author}</span>
+                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'rgba(0,0,0,.55)' }}>▲ {c.score.toLocaleString()}</span>}
+                  <span style={{ fontSize: '.68rem', color: 'rgba(0,0,0,.55)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
                 </div>
-                <p style={{ fontSize: '.84rem', lineHeight: 1.55, margin: 0, color: 'rgba(255,255,255,.92)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                <p style={{ fontSize: '.84rem', lineHeight: 1.55, margin: 0, color: 'rgba(0,0,0,.92)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
               </div>
             </div>
           ))}
@@ -642,7 +642,7 @@ function CommentsSheet({ post, onClose }) {
               disabled={loadingMore}
               style={{
                 display: 'block', margin: '4px auto 8px', background: 'none', border: 'none',
-                color: '#fff', cursor: loadingMore ? 'default' : 'pointer', fontSize: '.8rem', fontWeight: 700,
+                color: '#000', cursor: loadingMore ? 'default' : 'pointer', fontSize: '.8rem', fontWeight: 700,
                 opacity: 0.85, padding: '6px 10px',
               }}
             >
