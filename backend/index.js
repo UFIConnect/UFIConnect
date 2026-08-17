@@ -8821,7 +8821,7 @@ function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2, maxSharePct = nu
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {} }) {
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -8862,7 +8862,16 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   const contributingCount = allLists.filter(l => l.length > 0).length;
   const maxSharePct = contributingCount > 1 ? Math.min(0.65, (1 / contributingCount) + 0.15) : null;
   const merged = mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
-  const page = merged.slice(0, limit);
+  // The cursor only guarantees no repeat *within* one continuous scroll
+  // session — it says nothing about a reset cursor (page reload, reopening
+  // the tab, a fresh mount), which restarts every source from "now" and, if
+  // little enough is genuinely new since last time, handed back the exact
+  // same "newest" posts again. filterUnseen closes that gap the same way
+  // every other feed path already does, with its usual "fall back to
+  // showing them again rather than an empty page" floor once there's
+  // truly nothing left unseen.
+  const unseen = seenIds?.size ? filterUnseen(merged, seenIds) : merged;
+  const page = unseen.slice(0, limit);
 
   const nextCursor = { ...cursorMap };
   for (const src of allSources) {
@@ -10211,6 +10220,7 @@ async function handleFeedRequest(req, res) {
       limit: feedLimit,
       timeRange: cursorTimeRange,
       extraLists,
+      seenIds,
     });
 
     const result = cursorPosts.map(p => p.isExternal === false ? p : {
@@ -10302,6 +10312,7 @@ async function handleFeedRequest(req, res) {
         limit: feedLimit,
         timeRange: cursorTimeRange,
         extraLists,
+        seenIds,
       });
 
       const result = cursorPosts.map(p => p.isExternal === false ? p : {
@@ -11058,6 +11069,7 @@ async function handleVideoFeedRequest(req, res) {
     // ?bust=1 has no cache to bust anymore (no snapshot) — kept as a no-op
     // accepted param so older clients that still send it don't break.
     const cursorMap = decodeFeedCursor(req.query.cursor);
+    const seenIds = await getUserSeenSet(req.user.id);
 
     const { posts, nextCursor, hasMore } = await getCursorFeedPage({
       sources: cursorSources,
@@ -11065,6 +11077,7 @@ async function handleVideoFeedRequest(req, res) {
       limit: feedLimit,
       mediaType: 'video',
       timeRange: null, // unbounded (up to the DB's own retention ceiling) — no expensive ranked/partitioned query here to protect against, just cheap indexed range scans
+      seenIds,
     });
 
     markPostsSeen(req.user.id, posts);

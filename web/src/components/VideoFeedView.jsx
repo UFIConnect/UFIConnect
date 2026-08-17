@@ -166,16 +166,28 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
   // youtube: the real IFrame Player API — a raw <iframe src="..."> embed has
   // no programmatic control at all, so pause + a scrub tracker need this
   // instead. Only constructed while active; destroyed on scroll-away.
+  //
+  // Cross-origin iframe autoplay-with-sound is far more likely to get
+  // blocked than a same-origin <video> (which is why file/hls above prime
+  // muted/defaultMuted right before play() and retry muted on rejection) —
+  // but the IFrame Player API's play() has no promise to reject in the
+  // first place, so there was never any signal here to catch and fall back
+  // on; a blocked attempt just sat there not playing, silently, forever.
+  // Always starting muted sidesteps the block entirely (browsers reliably
+  // allow muted autoplay), then unMute() right after onReady if the user
+  // actually wants sound — unmuting an already-started player isn't gated
+  // by the same autoplay-with-sound policy, only the initial start is.
   useEffect(() => {
     if (src?.kind !== 'youtube' || !active) return;
     let cancelled = false;
     let pollId;
+    const wantsSound = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
         videoId: src.id,
         playerVars: {
-          autoplay: 1, mute: muted ? 1 : 0, playsinline: 1, loop: 1,
+          autoplay: 1, mute: 1, playsinline: 1, loop: 1,
           controls: 0, modestbranding: 1, rel: 0, playlist: src.id,
         },
         events: {
@@ -183,6 +195,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
             setDuration(e.target.getDuration() || 0);
+            if (wantsSound) e.target.unMute();
           },
           onStateChange: (e) => {
             if (cancelled) return;
