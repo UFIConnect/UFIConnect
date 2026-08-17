@@ -1391,7 +1391,7 @@ function PipelineView({ status }) {
             <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', lineHeight: 1 }}>
               {pageviews?.available === false ? '—' : (pageviews?.today ?? '—')}
             </div>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>page views today</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>views · last 24h</div>
             <a href="https://uficonnect.org" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#4ade80' }}>
               uficonnect.org ↗
             </a>
@@ -1406,7 +1406,206 @@ function PipelineView({ status }) {
         <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#ef4444', marginRight: 5 }} />paused</span>
         <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#64748b', marginRight: 5 }} />starting / gated</span>
       </div>
+
+      {/* ── Detail row: what's actually happening inside each stage ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
+        <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
+        <TransferDetailCard q={q} />
+        <ViewedDetailCard pageviews={pageviews} />
+      </div>
     </>
+  );
+}
+
+function DetailStat({ label, value, color }) {
+  return (
+    <div>
+      <div style={{ fontSize: 17, fontWeight: 800, color: color || '#e2e8f0', lineHeight: 1.2 }}>{value}</div>
+      <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+// What's actually being ranked (real input/output/dropped counts from the
+// last sortFeedBatch run), how — the real algorithm steps, not a
+// simplification — and at what rate, computed from the same lastDurationMs
+// every other panel already shows, just turned into items/sec.
+function SortRankDetailCard({ sortAgent, distrib, composition }) {
+  const input = sortAgent?.lastInput ?? 0;
+  const output = sortAgent?.lastOutput ?? 0;
+  const dropped = sortAgent?.lastDropped ?? 0;
+  const durationS = (sortAgent?.lastDurationMs ?? 0) / 1000;
+  const rate = durationS > 0 ? Math.round(input / durationS) : 0;
+  const avgPerRun = sortAgent?.totalRuns ? Math.round((sortAgent.totalItems || 0) / sortAgent.totalRuns) : 0;
+
+  return (
+    <Card>
+      <Label color="#a78bfa">Sort &amp; Rank — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Every run: dedupe by post id → score (Newest = post time · Popular = engagement leveled per-source, so one
+        viral source can't set the scale for everyone · Ranked = a blended score with the same per-source leveling,
+        ties broken by recency) → optionally cap any one source to keep the mix diversified. Real numbers from the
+        most recent run below, not averages.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(255,255,255,.04)', fontSize: 12, color: '#e2e8f0', fontWeight: 700 }}>
+          {input.toLocaleString()} in
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: dropped > 0 ? 'rgba(239,68,68,.1)' : 'rgba(255,255,255,.04)', fontSize: 12, color: dropped > 0 ? '#f87171' : '#64748b', fontWeight: 700 }}>
+          −{dropped.toLocaleString()} capped
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(74,222,128,.1)', fontSize: 12, color: '#4ade80', fontWeight: 700 }}>
+          {output.toLocaleString()} shown
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="items / sec" value={rate ? rate.toLocaleString() : '—'} color="#a78bfa" />
+        <DetailStat label="last run" value={`${sortAgent?.lastDurationMs ?? 0}ms`} />
+        <DetailStat label="total runs" value={(sortAgent?.totalRuns ?? 0).toLocaleString()} />
+        <DetailStat label="avg items/run" value={avgPerRun.toLocaleString()} />
+      </div>
+
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
+        Triggered by: <span style={{ color: '#94a3b8' }}>{sortAgent?.lastContext || '—'}</span>
+        {sortAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {sortAgent.lastError}</div>}
+      </div>
+
+      {composition.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>What's being ranked, by source</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 160, overflowY: 'auto' }}>
+            {composition.map((c, i) => (
+              <div key={c.source} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length], flexShrink: 0 }} />
+                <span style={{ color: '#94a3b8', flex: 1 }}>{c.source}</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{c.count.toLocaleString()}</span>
+                <span style={{ color: '#475569', width: 42, textAlign: 'right' }}>{c.pct}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {distrib?.lastDiversified != null && (
+        <div style={{ fontSize: 11, color: '#475569', marginTop: 10 }}>
+          Distribution agent last interleaved <span style={{ color: '#94a3b8' }}>{distrib.lastDiversified}</span> posts
+          {distrib.lastRun ? ` · ${fmtAgo(distrib.lastRun)}` : ''}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Real transfer throughput — while a batch is running this is measured
+// against the actual elapsed time (not an assumption), so it settles once
+// a couple of sources have gone through and gets more accurate as it runs.
+function TransferDetailCard({ q }) {
+  const running = !!q?.running;
+  const elapsedS = running && q.lastStarted ? (Date.now() - new Date(q.lastStarted).getTime()) / 1000 : 0;
+  const rate = running && elapsedS > 2 && q.batchDone > 0 ? q.batchDone / elapsedS : null;
+  const remaining = running && q.batchTotal != null ? Math.max(0, q.batchTotal - q.batchDone) : 0;
+  const etaS = rate ? Math.round(remaining / rate) : null;
+  const lastFullRunS = (!running && q?.lastStarted && q?.lastFinished)
+    ? Math.round((new Date(q.lastFinished).getTime() - new Date(q.lastStarted).getTime()) / 1000)
+    : null;
+
+  return (
+    <Card>
+      <Label color="#38bdf8">Transfer — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Queues every source worker, then drains one at a time — paced deliberately so a full refresh can't spike
+        load the way firing every source at once used to.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="status" value={running ? 'Running' : 'Idle'} color={running ? '#38bdf8' : '#64748b'} />
+        <DetailStat label="sources / sec" value={rate ? rate.toFixed(2) : (running ? 'measuring…' : '—')} color="#38bdf8" />
+        <DetailStat label="pending" value={(q?.pending ?? 0).toLocaleString()} />
+        <DetailStat label="ETA" value={etaS != null ? `~${etaS}s` : '—'} />
+      </div>
+
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
+        <div>Total transfer runs: <span style={{ color: '#94a3b8' }}>{(q?.totalRuns ?? 0).toLocaleString()}</span></div>
+        <div>Last full run took: <span style={{ color: '#94a3b8' }}>{lastFullRunS != null ? `${lastFullRunS}s` : '—'}</span></div>
+        <div>Reason: <span style={{ color: '#94a3b8' }}>{q?.lastReason || '—'}</span></div>
+        {q?.lastError && <div style={{ color: '#f87171' }}>⚠ {q.lastError}</div>}
+      </div>
+    </Card>
+  );
+}
+
+// Pageviews, in full — the compact pipeline node above only ever showed a
+// single rolling-24h number labeled "today," which reads like a calendar-day
+// count it isn't; this breaks the same data down by window, by day, and by
+// path so an actual anomaly (a day that's suspiciously flat, one path
+// swallowing everything) is something you can actually see instead of
+// inferring from one number.
+function ViewedDetailCard({ pageviews }) {
+  if (!pageviews) {
+    return <Card><Label color="#4ade80">Viewed — detail</Label><div style={{ fontSize: 12, color: '#475569', marginTop: 10 }}>Loading…</div></Card>;
+  }
+  if (pageviews.available === false) {
+    return <Card><Label color="#4ade80">Viewed — detail</Label><div style={{ fontSize: 12, color: '#f59e0b', marginTop: 10 }}>Database not connected — pageview data unavailable right now.</div></Card>;
+  }
+  const daily = (pageviews.daily || []).slice(-14);
+  const maxViews = Math.max(1, ...daily.map(d => d.views || 0));
+  const topPaths = pageviews.topPaths || [];
+
+  return (
+    <Card>
+      <Label color="#4ade80">Viewed — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        First-party pageview log, one row per route change on the live site — a rolling window, not calendar days
+        (so "last 24h" won't match a GA-style "today" bucket lined up on midnight).
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+        <DetailStat label="last 24h" value={pageviews.today.toLocaleString()} color="#4ade80" />
+        <DetailStat label="last 7d" value={pageviews.last7.toLocaleString()} />
+        <DetailStat label="last 30d" value={pageviews.last30.toLocaleString()} />
+      </div>
+
+      {daily.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Last {daily.length} days</div>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 54 }}>
+            {daily.map((d, i) => {
+              const h = Math.max(2, Math.round((d.views / maxViews) * 54));
+              const isFlat = d.views === 0;
+              return (
+                <div key={i} title={`${new Date(d.day).toLocaleDateString()}: ${d.views} views, ${d.visitors} visitors`} style={{
+                  flex: 1, height: h, borderRadius: '2px 2px 0 0',
+                  background: isFlat ? 'rgba(239,68,68,.5)' : '#4ade80',
+                  opacity: isFlat ? 1 : 0.55 + (0.45 * (d.views / maxViews)),
+                  minWidth: 6,
+                }} />
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: '#334155', marginTop: 4 }}>
+            <span>{new Date(daily[0].day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+            <span>{new Date(daily[daily.length - 1].day).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+          </div>
+        </div>
+      )}
+
+      {topPaths.length > 0 && (
+        <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>Top paths · last 30d</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {topPaths.slice(0, 6).map(p => (
+              <div key={p.path} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, gap: 8 }}>
+                <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.path}</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700, flexShrink: 0 }}>{p.views.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
