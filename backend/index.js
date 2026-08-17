@@ -1894,8 +1894,29 @@ function decodeHTMLEntities(str) {
 // without re-litigating the original strip-before-decode call (needed so a
 // plain-prose "<3" or "5 > 2" isn't misread as a tag before there's even a
 // real one to find).
+// Block-level boundaries (paragraph/line/list/row breaks) need an explicit
+// space once the tag itself is gone, or two adjacent blocks run together as
+// one word ("</p><p>" → nothing between them otherwise). Everything else —
+// inline tags like <a>/<span>/<strong>/<em> — should NOT inject a space:
+// they routinely sit hard against adjacent content with no space in the
+// original. Confirmed live: Mastodon's own hashtag markup is
+// #<span>tagname</span> with zero space between '#' and '<span>' — stripping
+// that span to a space turned every single hashtag into "# tagname".
+const HTML_BLOCK_BOUNDARY_RE = /<\/(p|div|li|tr|h[1-6])>|<br\s*\/?>/gi;
+
+// HN/Lobsters/Mastodon's content is real HTML markup with entities escaped
+// *inside* it (strip the real tags, then decode what's left) — but some of
+// that already-real content also contains literal, user-typed angle-bracket
+// text ("the &lt;iframe&gt; tag") that's *itself* entity-escaped the exact
+// same way, which a strip-then-decode single pass never catches: nothing
+// matches <[^>]+> until after decoding, by which point the tag-strip has
+// already run. A second strip pass after decoding catches exactly that,
+// without re-litigating the original strip-before-decode call (needed so a
+// plain-prose "<3" or "5 > 2" isn't misread as a tag before there's even a
+// real one to find).
 function stripAndDecodeHTML(html) {
-  const firstPass = decodeHTMLEntities(html.replace(/<[^>]+>/g, ' '));
+  const withBoundaries = html.replace(HTML_BLOCK_BOUNDARY_RE, ' ');
+  const firstPass = decodeHTMLEntities(withBoundaries.replace(/<[^>]+>/g, ''));
   // Deliberately narrower than the first pass's <[^>]+> — that one only ever
   // runs against genuinely-real markup, where matching anything in angle
   // brackets is correct. This one runs against text that's already been
@@ -1905,8 +1926,11 @@ function stripAndDecodeHTML(html) {
   // the broad pattern greedily treats everything between them as one tag's
   // contents. Requiring a letter (or '/' for a closing tag) immediately
   // after '<' is what real tags look like and prose comparisons don't:
-  // "<iframe>" matches and gets stripped, "< y and 5 >" doesn't.
-  return firstPass.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  // "<iframe>" matches and gets stripped, "< y and 5 >" doesn't. Empty
+  // string, not a space, for the same reason as the block-boundary comment
+  // above — an inline tag revealed by decoding shouldn't inject a space
+  // any more than a real one should.
+  return firstPass.replace(/<\/?[a-zA-Z][^<>]*>/g, '').replace(/\s+/g, ' ').trim();
 }
 
 // Reddit's Atom <content> is the inverse case from stripAndDecodeHTML above —
@@ -1918,7 +1942,8 @@ function stripAndDecodeHTML(html) {
 // confirmed live that broad version was quietly eating everything between
 // two comparison operators in any post that used them.
 function decodeAndStripHTML(escapedHtml) {
-  return decodeHTMLEntities(escapedHtml).replace(/<\/?[a-zA-Z][^<>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const decoded = decodeHTMLEntities(escapedHtml).replace(HTML_BLOCK_BOUNDARY_RE, ' ');
+  return decoded.replace(/<\/?[a-zA-Z][^<>]*>/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function fetchText(url, extraHeaders = {}) {

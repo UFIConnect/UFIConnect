@@ -97,7 +97,7 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -106,6 +106,13 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
   const ytMountRef = useRef(null);
   const seekingRef = useRef(false);
   const progressBarRef = useRef(null);
+  // Caption starts clamped (see the overlay below) — the video is the point
+  // of this view, a wall of text over it isn't. "more" only shows up when
+  // there's actually more than the clamp already reveals: a long title, or
+  // real content beyond just the title repeated.
+  const [captionExpanded, setCaptionExpanded] = useState(false);
+  const hasExtraCaption = (post.title?.length || 0) > 80
+    || (post.content && post.content.trim() && post.content.trim() !== post.title?.trim());
 
   const [paused, setPaused] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -362,15 +369,39 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
       <div style={{
         position: 'absolute', left: 16, right: 76, bottom: 40, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
+        maxHeight: captionExpanded ? '55dvh' : undefined,
+        overflowY: captionExpanded ? 'auto' : undefined,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '.8rem', fontWeight: 700 }}>
           <span>{meta.icon}</span>
           <span>{post.sourceLabel || meta.label}</span>
         </div>
         {post.title && (
-          <div style={{ fontSize: '.9rem', fontWeight: 600, marginBottom: 4, lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+          <div style={{
+            fontSize: '.9rem', fontWeight: 600, marginBottom: 4, lineHeight: 1.35,
+            display: captionExpanded ? 'block' : '-webkit-box',
+            WebkitLineClamp: captionExpanded ? 'unset' : 3, WebkitBoxOrient: 'vertical',
+            overflow: captionExpanded ? 'visible' : 'hidden', whiteSpace: 'pre-wrap',
+          }}>
             {post.title}
           </div>
+        )}
+        {captionExpanded && post.content && post.content.trim() !== post.title?.trim() && (
+          <div style={{ fontSize: '.82rem', lineHeight: 1.5, marginBottom: 6, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
+            {post.content}
+          </div>
+        )}
+        {hasExtraCaption && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
+            style={{
+              background: 'none', border: 'none', color: '#fff', fontWeight: 700,
+              fontSize: '.78rem', padding: 0, marginBottom: 6, cursor: 'pointer', pointerEvents: 'auto',
+              opacity: 0.9,
+            }}
+          >
+            {captionExpanded ? 'Show less' : 'Read more'}
+          </button>
         )}
         {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85 }}>{post.author.name}</div>}
       </div>
@@ -417,6 +448,16 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
             <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
           </div>
         )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
+          style={{
+            all: 'unset', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
+          }}
+        >
+          <span style={{ fontSize: '1.3rem' }}>💬</span>
+          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
+        </button>
         {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textDecoration: 'none' }}>
@@ -432,9 +473,121 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling }) {
   );
 }
 
+function timeAgo(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60) return 'just now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+// Bottom-sheet popup — GET /feed/:postId/comments already exists (used by
+// Feed.jsx's card view) and returns real, live comments for Reddit/HN/
+// DEV.to/Stack Overflow/Mastodon/Lobsters; every other source honestly
+// comes back with an empty list (live: false) rather than anything
+// fabricated, so that's shown as its own state instead of pretending the
+// section is just loading forever.
+function CommentsSheet({ post, onClose }) {
+  const [comments, setComments] = useState(null);
+  const [live, setLive] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setComments(null);
+    client.get(`/feed/${encodeURIComponent(post.id)}/comments`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setComments(data.comments || []);
+        setLive(!!data.live);
+      })
+      .catch(() => { if (!cancelled) setComments([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [post.id]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.55)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 560, maxHeight: '70dvh', background: 'var(--surface, #16181c)',
+          borderRadius: '18px 18px 0 0', display: 'flex', flexDirection: 'column',
+          animation: 'commentsSheetUp .22s ease-out',
+        }}
+      >
+        <style>{'@keyframes commentsSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }'}</style>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,.1)', flexShrink: 0,
+        }}>
+          <div style={{ color: '#fff', fontWeight: 700, fontSize: '.92rem' }}>
+            Comments {comments?.length > 0 ? `(${comments.length})` : ''}
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close comments"
+            style={{ all: 'unset', color: 'rgba(255,255,255,.7)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
+          >×</button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '10px 16px 20px' }}>
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '24px 0' }}>
+              <span className="spinner spinner-primary" />
+            </div>
+          )}
+          {!loading && comments?.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '20px 8px', color: 'rgba(255,255,255,.6)', fontSize: '.85rem' }}>
+              {live === false && post.sourceUrl
+                ? <>No comments loaded from {post.sourceLabel || post.source} yet.<br />
+                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#fff', fontWeight: 700 }}>
+                      View the original post ↗
+                    </a>
+                  </>
+                : 'No comments yet.'}
+            </div>
+          )}
+          {!loading && comments?.map(c => (
+            <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+              <div style={{
+                width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                background: 'rgba(255,255,255,.12)', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', fontSize: '.75rem', fontWeight: 700, color: '#fff',
+              }}>
+                {(c.author?.replace(/^(?:u\/|@)/, '') || '?')[0]?.toUpperCase()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, fontSize: '.8rem', color: '#fff' }}>{c.author}</span>
+                  {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'rgba(255,255,255,.55)' }}>▲ {c.score.toLocaleString()}</span>}
+                  <span style={{ fontSize: '.68rem', color: 'rgba(255,255,255,.55)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
+                </div>
+                <p style={{ fontSize: '.84rem', lineHeight: 1.55, margin: 0, color: 'rgba(255,255,255,.92)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function VideoFeedView({ onExit }) {
   const [videoPosts, setVideoPosts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  // The post currently showing in the comments popup — lifted up here
+  // (rather than local to each VideoSlide) so it renders once, fixed to the
+  // whole viewport, instead of being scoped/clipped inside one snap-scroll
+  // slide.
+  const [commentsPost, setCommentsPost] = useState(null);
   // Starts unmuted (with sound) rather than TikTok's muted-by-default —
   // browsers only block autoplay *with sound* when there's been no user
   // interaction with the page yet, and reaching this view always requires
@@ -867,11 +1020,13 @@ export default function VideoFeedView({ onExit }) {
               data-idx={idx}
               style={{ height: '100dvh', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
-              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={() => setMuted(m => !m)} isScrolling={isScrolling} />
+              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={() => setMuted(m => !m)} isScrolling={isScrolling} onOpenComments={setCommentsPost} />
             </div>
           ))}
         </div>
       )}
+
+      {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
     </div>
   );
 }
