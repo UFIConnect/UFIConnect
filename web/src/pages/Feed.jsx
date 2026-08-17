@@ -421,6 +421,33 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
 // parseRSSItems' video detection backend-side) so both get the exact same
 // playable behavior instead of one silently trying to <img>-render a
 // youtube.com/watch URL and failing.
+// YouTubeEmbedBlock plays inline at card size but has no way out to
+// ImageLightbox ("max mode") itself — wrapping the whole embed in a button
+// like every other media type would nest an interactive iframe inside a
+// button and fight it for clicks (see the comment where this is used). This
+// sits in its own corner instead, a plain sibling overlay that only opens
+// the lightbox — it never touches the iframe's own click-to-play handling.
+function MaximizeButton({ onClick }) {
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); onClick(); }}
+      aria-label="View fullscreen"
+      style={{
+        position: 'absolute', top: 10, right: 10, zIndex: 2,
+        width: 32, height: 32, borderRadius: '50%',
+        background: 'rgba(0,0,0,.5)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+        border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}
+    >
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+        <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+      </svg>
+    </button>
+  );
+}
+
 function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true }) {
   const [playing, setPlaying] = useState(false);
   const containerRef = useRef(null);
@@ -470,7 +497,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   );
 }
 
-function YouTubeCard({ post, cardRef }) {
+function YouTubeCard({ post, cardRef, onMediaOpen }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
@@ -487,8 +514,9 @@ function YouTubeCard({ post, cardRef }) {
       </div>
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
-        <div style={{ marginBottom: 10 }}>
+        <div style={{ marginBottom: 10, position: 'relative' }}>
           <YouTubeEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} maxHeight={280} />
+          {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl ? (
         <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
@@ -628,7 +656,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} />;
+  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
@@ -822,6 +850,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
           <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
             {src.icon} {src.label}
           </span>
+          <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
       ) : hasVideo && (
         <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
