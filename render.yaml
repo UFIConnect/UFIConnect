@@ -71,6 +71,16 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      # USAJobs (federal government job listings on Opportunities) — free,
+      # self-serve, no review: register at https://developer.usajobs.gov/apirequest
+      # to get an API key by email within minutes. USAJOBS_USER_AGENT must be
+      # set to the exact email address the key was registered with — USAJobs
+      # checks this. Until both are set, this source silently returns no
+      # results (no other functionality depends on it).
+      - key: USAJOBS_API_KEY
+        sync: false
+      - key: USAJOBS_USER_AGENT
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false

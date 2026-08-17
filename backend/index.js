@@ -13922,6 +13922,37 @@ async function fetchRemoteOKOpportunities(role) {
   }
 }
 
+// USAJobs: the official U.S. federal government jobs API — genuinely free,
+// self-serve (developer.usajobs.gov), no-op until USAJOBS_API_KEY and
+// USAJOBS_USER_AGENT are set (see fetchUSAJobsByKeyword above). Federal
+// listings only, not a general-purpose board, but as an official government
+// source it's about as verifiable as a job posting gets.
+async function fetchUSAJobsOpportunities(role) {
+  const query = ROLE_JOB_QUERIES[role] || role || 'analyst';
+  try {
+    const posts = await fetchUSAJobsByKeyword(query);
+    // sourceUrl is `d.PositionURI || 'https://www.usajobs.gov'` upstream —
+    // same generic-homepage-fallback problem fixed for Remotive/Muse above.
+    return posts.filter(p => p.sourceUrl && p.sourceUrl !== 'https://www.usajobs.gov' && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 25).map(p => ({
+      id:        `usajobs_${p.id}`,
+      type:      'job',
+      title:     p.title,
+      org:       p.author?.organization || p.author?.name || 'U.S. Government',
+      location:  p.location || 'United States',
+      pay:       '',
+      tags:      [],
+      source:    'USAJobs',
+      sourceUrl: p.sourceUrl,
+      posted:    p.createdAt || new Date().toISOString(),
+      remote:    false,
+      isLive:    true,
+      logo:      null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // Baseline legitimacy bar every live job listing has to clear regardless of
 // source, on top of each fetcher's own per-source accuracy filtering above
 // (real per-posting URL, not a generic homepage fallback). A listing with no
@@ -13935,8 +13966,10 @@ const JOB_PLACEHOLDER_ORGS = new Set(['unknown', 'company', 'n/a', 'confidential
 // match scoring (see "Platform legitimacy" below) — not a filter, every
 // source here already cleared isLegitimateJobListing. Remotive and The Muse
 // both review submissions before publishing; RemoteOK is a more open,
-// lower-friction marketplace that also carries self-serve/paid listings.
-const JOB_SOURCE_LEGITIMACY = { 'Remotive': 2, 'The Muse': 2, 'Remote OK': 1 };
+// lower-friction marketplace that also carries self-serve/paid listings;
+// USAJobs listings are official U.S. government postings — about as
+// verifiable as a job posting gets.
+const JOB_SOURCE_LEGITIMACY = { 'Remotive': 2, 'The Muse': 2, 'USAJobs': 3, 'Remote OK': 1 };
 function isLegitimateJobListing(j) {
   if (!j.title || j.title.trim().length < 3) return false;
   if (!j.org || JOB_PLACEHOLDER_ORGS.has(j.org.trim().toLowerCase())) return false;
@@ -13947,13 +13980,14 @@ function isLegitimateJobListing(j) {
 async function getLiveJobs(role, experience) {
   const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
   const uniqCats = [...new Set(cats)];
-  const [remotiveResults, museResults, remoteOkResults] = await Promise.all([
+  const [remotiveResults, museResults, remoteOkResults, usaJobsResults] = await Promise.all([
     Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
     fetchMuseJobs(role, experience),
     fetchRemoteOKOpportunities(role),
+    fetchUSAJobsOpportunities(role),
   ]);
   const seen = new Set();
-  return [...remotiveResults, ...museResults, ...remoteOkResults].filter((j) => {
+  return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults].filter((j) => {
     if (!isLegitimateJobListing(j)) return false;
     if (seen.has(j.id)) return false;
     seen.add(j.id);

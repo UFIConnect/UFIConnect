@@ -85,6 +85,7 @@ function SourceBadge({ opp }) {
 export default function Opportunities() {
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
+  const [platformSearchUrls, setPlatformSearchUrls] = useState(null);
   const [filter,    setFilter]    = useState('job');
   const [sort,      setSort]      = useState('match');
   const [remote,    setRemote]    = useState(false);
@@ -128,6 +129,7 @@ export default function Opportunities() {
         if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
         setAllOpps(list);
         setLiveCount(data.liveCount || 0);
+        setPlatformSearchUrls(data.platformSearchUrls || null);
       })
       .catch(err => {
         console.error('Failed to load opportunities:', err);
@@ -269,6 +271,41 @@ export default function Opportunities() {
             <option value="match">⭐ Best match</option>
           </select>
         </div>
+
+        {/* LinkedIn and Indeed don't offer a public jobs API — there's no
+            legitimate way to pull their listings directly the way Remotive/
+            The Muse/RemoteOK/USAJobs are above, and faking that would be
+            exactly the kind of low-legitimacy listing this page is trying
+            to avoid. What's real and accurate instead: a live search on
+            each platform, pre-filled with this user's actual title/role. */}
+        {platformSearchUrls && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
+              Search more platforms
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {Object.entries(PLATFORM_META).map(([key, meta]) => (
+                platformSearchUrls[key] && (
+                  <a
+                    key={key}
+                    href={platformSearchUrls[key]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '6px 12px', borderRadius: 20,
+                      background: meta.bg, color: meta.color,
+                      fontSize: '.8rem', fontWeight: 700, textDecoration: 'none',
+                      border: `1px solid ${meta.color}33`,
+                    }}
+                  >
+                    {meta.icon} {meta.label} ↗
+                  </a>
+                )
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Status messages */}
         {error && (
