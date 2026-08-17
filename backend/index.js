@@ -12902,8 +12902,20 @@ function computeATSScore(text) {
         : `${wordCount} words — consider trimming to keep it focused (most ATS-friendly resumes are 400–900 words).` });
   if (lengthOk) score += 10;
 
+  // Plain lower.includes(k) matched short keywords as substrings of
+  // unrelated words — "go" (Golang) inside "Google", "aws" inside
+  // "draws"/"awesome", "git" inside "digit"/"legitimate" — confirmed live on
+  // a marketing resume that got tagged with "go" purely from "Google
+  // Analytics", which then falsely matched it against Go-programming job
+  // listings in Opportunities. Bounding each keyword so it can't match
+  // immediately inside a longer alphanumeric run fixes this without losing
+  // legitimate matches for keywords that contain punctuation (c++, node.js,
+  // ci/cd), since those are naturally guarded by their own symbols already.
   const lower = text.toLowerCase();
-  const keywords = RESUME_SKILL_KEYWORDS.filter(k => lower.includes(k));
+  const keywords = RESUME_SKILL_KEYWORDS.filter(k => {
+    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i').test(lower);
+  });
 
   return { score: Math.min(100, Math.round(score)), checks, keywords };
 }
