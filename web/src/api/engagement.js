@@ -54,3 +54,14 @@ if (typeof document !== 'undefined') {
     if (document.visibilityState === 'hidden') flushEngaged();
   });
 }
+
+// The magnitude behind reportEngaged's yes/no signal — how long a video was
+// actually watched, how long a post's comments were actually left open, or
+// whether an external source link was clicked. Feeds the feed's own ranking
+// (see personalizeOrder/recordEngagementSignal server-side), not anything
+// this tab needs a response for, so this is genuinely fire-and-forget: no
+// batching, no retry, a dropped ping just doesn't nudge that one signal.
+export function reportEngagementSignal({ postId, source, topic, watchMs, commentsViewMs, linkClick }) {
+  if (!postId || (!watchMs && !commentsViewMs && !linkClick)) return;
+  client.post('/posts/engagement-signal', { source, topic, watchMs, commentsViewMs, linkClick }).catch(() => {});
+}

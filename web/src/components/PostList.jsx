@@ -47,6 +47,8 @@ export default function PostList({
   const [openComments, setOpenComments] = useState({});
   const [commentsByPost, setCommentsByPost] = useState({});
   const [commentsLoading, setCommentsLoading] = useState({});
+  const [commentsHasMoreByPost, setCommentsHasMoreByPost] = useState({});
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentBusy, setCommentBusy] = useState({});
   const [deleteBusy, setDeleteBusy] = useState({});
@@ -103,10 +105,28 @@ export default function PostList({
     try {
       const { data } = await client.get(`/posts/${encodeURIComponent(post.id)}/comments`, { params: { limit: 50 } });
       setCommentsByPost(prev => ({ ...prev, [post.id]: data.comments || [] }));
+      setCommentsHasMoreByPost(prev => ({ ...prev, [post.id]: !!data.hasMore }));
     } catch {
       setCommentsByPost(prev => ({ ...prev, [post.id]: [] }));
     } finally {
       setCommentsLoading(prev => ({ ...prev, [post.id]: false }));
+    }
+  }
+
+  async function loadMoreComments(post) {
+    if (commentsLoadingMore[post.id]) return;
+    const current = commentsByPost[post.id] || [];
+    setCommentsLoadingMore(prev => ({ ...prev, [post.id]: true }));
+    try {
+      const { data } = await client.get(`/posts/${encodeURIComponent(post.id)}/comments`, {
+        params: { limit: 50, offset: current.length },
+      });
+      setCommentsByPost(prev => ({ ...prev, [post.id]: [...current, ...(data.comments || [])] }));
+      setCommentsHasMoreByPost(prev => ({ ...prev, [post.id]: !!data.hasMore }));
+    } catch {
+      // Leave existing comments in place — button stays clickable to retry.
+    } finally {
+      setCommentsLoadingMore(prev => ({ ...prev, [post.id]: false }));
     }
   }
 
@@ -345,6 +365,20 @@ export default function PostList({
                   <p style={{ fontSize: '.82rem', color: 'var(--muted)', margin: '0 0 12px' }}>
                     No comments yet.
                   </p>
+                )}
+
+                {!commentsLoading[post.id] && commentsHasMoreByPost[post.id] && (
+                  <button
+                    onClick={() => loadMoreComments(post)}
+                    disabled={commentsLoadingMore[post.id]}
+                    style={{
+                      display: 'block', margin: '0 0 12px', background: 'none', border: 'none',
+                      color: 'var(--primary)', cursor: commentsLoadingMore[post.id] ? 'default' : 'pointer',
+                      fontSize: '.8rem', fontWeight: 700, padding: 0,
+                    }}
+                  >
+                    {commentsLoadingMore[post.id] ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Load more comments'}
+                  </button>
                 )}
 
                 <form onSubmit={(e) => submitComment(e, post)} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

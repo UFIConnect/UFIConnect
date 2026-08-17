@@ -38,6 +38,8 @@ export default function PostDetail() {
 
   const [comments, setComments] = useState(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentsHasMore, setCommentsHasMore] = useState(false);
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSending, setCommentSending] = useState(false);
 
@@ -60,12 +62,29 @@ export default function PostDetail() {
     try {
       const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`);
       setComments(data.comments || []);
+      setCommentsHasMore(!!data.hasMore);
     } catch {
       setComments([]);
     } finally {
       setCommentsLoading(false);
     }
   }, [id]);
+
+  async function loadMoreComments() {
+    if (commentsLoadingMore || !comments) return;
+    setCommentsLoadingMore(true);
+    try {
+      const { data } = await client.get(`/feed/${encodeURIComponent(id)}/comments`, {
+        params: { offset: comments.length },
+      });
+      setComments(prev => [...(prev || []), ...(data.comments || [])]);
+      setCommentsHasMore(!!data.hasMore);
+    } catch {
+      // Leave existing comments in place — button stays clickable to retry.
+    } finally {
+      setCommentsLoadingMore(false);
+    }
+  }
 
   useEffect(() => { loadPost(); loadComments(); }, [loadPost, loadComments]);
 
@@ -263,6 +282,20 @@ export default function PostDetail() {
               </div>
             </div>
           ))}
+
+          {!commentsLoading && commentsHasMore && (
+            <button
+              onClick={loadMoreComments}
+              disabled={commentsLoadingMore}
+              style={{
+                display: 'block', margin: '0 0 4px', background: 'none', border: 'none',
+                color: src.color, cursor: commentsLoadingMore ? 'default' : 'pointer',
+                fontSize: '.8rem', fontWeight: 700, padding: 0,
+              }}
+            >
+              {commentsLoadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Load more comments'}
+            </button>
+          )}
         </div>
       </div>
     </Layout>

@@ -3,7 +3,7 @@ import client from '../api/client';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { reportEngaged } from '../api/engagement';
+import { reportEngaged, reportEngagementSignal } from '../api/engagement';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
 // see api/engagement.js for the view-vs-seen distinction) once playback
@@ -134,6 +134,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       reportEngaged(post.id);
     }
   }, [active, post?.id, currentTime, duration]);
+
+  // Feeds the feed's own ranking (see recordEngagementSignal server-side),
+  // separate from the yes/no reportEngaged above — wall-clock time this
+  // slide was the one on screen, not just whether a threshold was crossed.
+  // Wall-clock rather than summed currentTime deltas: a paused or scrubbed
+  // video the user is still looking at is still real attention, and this
+  // doesn't need to be more precise than "roughly how long were they here."
+  useEffect(() => {
+    if (!active) return;
+    const startedAt = Date.now();
+    return () => {
+      reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, watchMs: Date.now() - startedAt });
+    };
+  }, [active, post.id, post.source, post.topic]);
 
   // file/hls: play on becoming active, pause + rewind on becoming inactive
   // (leaving a video mid-scrub-progress for the next viewer would be
@@ -459,7 +473,11 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
         </button>
         {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+            }}
             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textDecoration: 'none' }}>
             <div style={{
               width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,.16)',
@@ -492,6 +510,20 @@ function CommentsSheet({ post, onClose }) {
   const [comments, setComments] = useState(null);
   const [live, setLive] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // How long this specific post's comments were actually open — feeds the
+  // feed's own ranking the same way video watch time does (see
+  // recordEngagementSignal server-side). Mount-to-unmount, since this sheet
+  // only ever exists while it's open (see its conditional render in
+  // VideoFeedView).
+  useEffect(() => {
+    const openedAt = Date.now();
+    return () => {
+      reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, commentsViewMs: Date.now() - openedAt });
+    };
+  }, [post.id, post.source, post.topic]);
 
   useEffect(() => {
     let cancelled = false;
@@ -502,11 +534,28 @@ function CommentsSheet({ post, onClose }) {
         if (cancelled) return;
         setComments(data.comments || []);
         setLive(!!data.live);
+        setHasMore(!!data.hasMore);
       })
       .catch(() => { if (!cancelled) setComments([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [post.id]);
+
+  async function loadMore() {
+    if (loadingMore || !comments) return;
+    setLoadingMore(true);
+    try {
+      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
+        params: { offset: comments.length },
+      });
+      setComments(prev => [...(prev || []), ...(data.comments || [])]);
+      setHasMore(!!data.hasMore);
+    } catch {
+      // Leave existing comments in place — button stays clickable to retry.
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <div
@@ -574,6 +623,19 @@ function CommentsSheet({ post, onClose }) {
               </div>
             </div>
           ))}
+          {!loading && hasMore && (
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              style={{
+                display: 'block', margin: '4px auto 8px', background: 'none', border: 'none',
+                color: '#fff', cursor: loadingMore ? 'default' : 'pointer', fontSize: '.8rem', fontWeight: 700,
+                opacity: 0.85, padding: '6px 10px',
+              }}
+            >
+              {loadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Load more comments'}
+            </button>
+          )}
         </div>
       </div>
     </div>

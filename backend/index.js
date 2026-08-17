@@ -5130,6 +5130,82 @@ function markPostsEngaged(userId, postIds) {
   ).catch(e => console.warn('markPostsEngaged:', e.message));
 }
 
+// ─── Behavioral affinity — real time spent, not declared interests ───────────
+// markPostsEngaged above is binary (did they cross the threshold at all);
+// this is the actual duration behind it, accumulated per user per source/
+// topic and used to widen personalizeOrder's boost beyond whatever a user
+// declared once at onboarding (userTopics) to what they've actually
+// demonstrated they spend time on since.
+const userAffinityCache = new Map(); // userId → { source: Map<string, weight>, topic: Map<string, weight> }
+const AFFINITY_CACHE_MAX_USERS = 5000;
+// Both request types this feeds off are naturally noisy (a video left
+// running in a background tab, a comments panel left open while doing
+// something else) — capped per-signal so one long-idle session can't
+// dominate a user's whole affinity profile the way a genuinely-engaged
+// short one should.
+const AFFINITY_MAX_WATCH_SECONDS = 120;
+const AFFINITY_LINK_CLICK_WEIGHT = 20;
+const AFFINITY_MATCH_THRESHOLD   = 30; // ~30s of real attention before a source/topic counts as "matched"
+
+async function getUserAffinity(userId) {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID) return { source: new Map(), topic: new Map() };
+  const cached = userAffinityCache.get(userId);
+  if (cached) return cached;
+  const affinity = { source: new Map(), topic: new Map() };
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT affinity_key, weight FROM user_engagement_affinity WHERE user_id = $1`,
+        [userId]
+      );
+      for (const r of rows) {
+        if (r.affinity_key.startsWith('src:')) affinity.source.set(r.affinity_key.slice(4), r.weight);
+        else if (r.affinity_key.startsWith('topic:')) affinity.topic.set(r.affinity_key.slice(6), r.weight);
+      }
+    } catch (e) { console.warn('getUserAffinity:', e.message); }
+  }
+  userAffinityCache.set(userId, affinity);
+  trimOldestMapEntries(userAffinityCache, AFFINITY_CACHE_MAX_USERS);
+  return affinity;
+}
+
+// Called from POST /posts/engagement-signal — the client already knows
+// which post this is about (source/topic travel with every post object it
+// already has), so there's no server-side lookup needed the way the
+// comments endpoint needs one for a bare postId.
+function recordEngagementSignal(userId, { source, topic, watchMs, commentsViewMs, linkClick }) {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID) return;
+  const watchWeight    = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor((watchMs || 0) / 1000));
+  const commentsWeight = Math.min(AFFINITY_MAX_WATCH_SECONDS, Math.floor((commentsViewMs || 0) / 1000));
+  const weight = watchWeight + commentsWeight + (linkClick ? AFFINITY_LINK_CLICK_WEIGHT : 0);
+  // Below a couple seconds is scroll-past noise, not attention — same
+  // reasoning as VIDEO_ENGAGED_SECONDS client-side, just applied to the
+  // magnitude of the signal here instead of a yes/no threshold.
+  if (weight < 3) return;
+
+  const keys = [];
+  if (source) keys.push(['source', `src:${source}`]);
+  if (topic)  keys.push(['topic', `topic:${topic}`]);
+  if (!keys.length) return;
+
+  const affinity = userAffinityCache.get(userId);
+  for (const [kind, dbKey] of keys) {
+    if (affinity) {
+      const map = affinity[kind];
+      map.set(kind === 'source' ? source : topic, (map.get(kind === 'source' ? source : topic) || 0) + weight);
+    }
+    if (db.isConnected()) {
+      db.query(
+        `INSERT INTO user_engagement_affinity (user_id, affinity_key, weight, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id, affinity_key) DO UPDATE
+           SET weight = user_engagement_affinity.weight + $3, updated_at = NOW()`,
+        [userId, dbKey, weight]
+      ).catch(e => console.warn('recordEngagementSignal:', e.message));
+    }
+  }
+}
+
 function feedWorkerKey(source) {
   return source === 'hackernews' ? 'hn' : source;
 }
@@ -5679,10 +5755,11 @@ function boostJobListings(pool, extraJobPosts, everyN = 8) {
 // snapshot) without breaking pagination — same inputs always produce the
 // same order, so slicing at different offsets across separate requests
 // never duplicates or skips anything.
-function personalizeOrder(posts, userTopics, userCountry = null) {
-  if ((!userTopics?.length && !userCountry) || !posts.length) return posts;
+function personalizeOrder(posts, userTopics, userCountry = null, userAffinity = null) {
+  const hasAffinity = !!(userAffinity && (userAffinity.source.size || userAffinity.topic.size));
+  if ((!userTopics?.length && !userCountry && !hasAffinity) || !posts.length) return posts;
   const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
-  if (!topics.length && !userCountry) return posts;
+  if (!topics.length && !userCountry && !hasAffinity) return posts;
   // Job-listing posts are excluded from the matched/rest reshuffle below and
   // kept at their exact original indices — boostJobListings already spaced
   // them evenly through the pool (~1-in-8), and that spacing is the whole
@@ -5707,8 +5784,18 @@ function personalizeOrder(posts, userTopics, userCountry = null) {
   const rest = [];
   for (const p of nonJobPosts) {
     const postTopic = (p.topic || '').toLowerCase();
-    const topicMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
-    (topicMatch ? matched : rest).push(p);
+    const declaredMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
+    // Behavioral match: real time spent (video watch, comments open, link
+    // clicks — see recordEngagementSignal) on this source or this exact
+    // topic before, past a threshold that filters out a single stray
+    // click. Supplements declaredMatch rather than replacing it — a user
+    // who's never touched onboarding preferences still gets a feed shaped
+    // by what they've actually shown they read.
+    const affinityMatch = hasAffinity && (
+      (userAffinity.source.get(p.source) || 0) >= AFFINITY_MATCH_THRESHOLD ||
+      (p.topic && (userAffinity.topic.get(p.topic) || 0) >= AFFINITY_MATCH_THRESHOLD)
+    );
+    (declaredMatch || affinityMatch ? matched : rest).push(p);
   }
 
   let personalizedNonJob;
@@ -7966,7 +8053,11 @@ function dbPostCommentToMemComment(row) {
   };
 }
 
-async function getCommentsForPost(postId, limit = 50) {
+async function getCommentsForPost(postId, limit = 50, offset = 0) {
+  // Fetches offset+limit rows (not a real SQL OFFSET) since result is a
+  // merge of the DB rows with the in-memory postComments array first, then
+  // deduped/sorted/sliced as one list — a plain OFFSET on the DB query
+  // alone wouldn't account for in-memory-only comments shifting positions.
   let result = postComments.filter((c) => c.postId === postId);
 
   if (db.isConnected()) {
@@ -7976,7 +8067,7 @@ async function getCommentsForPost(postId, limit = 50) {
          WHERE post_id=$1
          ORDER BY created_at ASC
          LIMIT $2`,
-        [postId, limit]
+        [postId, offset + limit]
       );
       result = [...result, ...rows.map(dbPostCommentToMemComment)];
     } catch (e) {
@@ -7985,15 +8076,18 @@ async function getCommentsForPost(postId, limit = 50) {
   }
 
   const seen = new Set();
-  return result
+  const all = result
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
     .filter((comment) => {
       if (seen.has(comment.id)) return false;
       seen.add(comment.id);
       return true;
-    })
-    .slice(0, limit)
-    .map(serializePostComment);
+    });
+  return {
+    comments: all.slice(offset, offset + limit).map(serializePostComment),
+    hasMore: offset + limit < all.length,
+    total: all.length,
+  };
 }
 
 async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, limit = 50 } = {}) {
@@ -8408,6 +8502,25 @@ async function migrateDB() {
     // happen after delivery), so this is strictly additional information
     // about a row that already exists, not a new relationship to track.
     await db.query(`ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS engaged_at TIMESTAMPTZ`);
+
+    // Behavioral affinity — see recordEngagementSignal/getUserAffinity. Not
+    // "did they engage" (seen_posts.engaged_at already covers that), but
+    // "how much time have they actually spent on this kind of content" —
+    // accumulated per user per (source or topic), fed by real watch time on
+    // videos, real time spent with a post's comments open, and external
+    // link clicks, then used to widen personalizeOrder's topic-match boost
+    // beyond just the interests someone declared once at onboarding.
+    // affinity_key is 'src:reddit' or 'topic:AI & Machine Learning' — one
+    // table, two kinds of key, rather than two near-identical tables.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_engagement_affinity (
+        user_id TEXT NOT NULL,
+        affinity_key TEXT NOT NULL,
+        weight INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, affinity_key)
+      )
+    `);
 
     // Posts table — persists across deploys
     await db.query(`
@@ -10250,6 +10363,10 @@ async function handleFeedRequest(req, res) {
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userCountry/userTopics aren't.
   const seenIds = await getUserSeenSet(req.user.id);
+  // Behavioral affinity (real watch/comment/link time — see
+  // recordEngagementSignal) — same "applied fresh per request" treatment as
+  // userTopics/userCountry, feeding personalizeOrder's topic-match boost.
+  const userAffinity = await getUserAffinity(req.user.id);
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
   // for why this is what makes a refresh return substantially different
@@ -10591,7 +10708,7 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry);
+        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -10732,7 +10849,7 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
+      const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       // Only what actually survived the feedLimit slice above (it's
@@ -11071,7 +11188,7 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  const personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
+  const personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
   const responsePosts = [...internal, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -11314,6 +11431,24 @@ app.post('/feed/refresh', authenticate, (req, res) => {
 app.post('/posts/engaged', authenticate, (req, res) => {
   const ids = Array.isArray(req.body?.postIds) ? req.body.postIds.filter(id => typeof id === 'string') : [];
   markPostsEngaged(req.user.id, ids);
+  res.status(204).end();
+});
+
+// The magnitude behind the binary /posts/engaged signal above — real watch
+// time on a video, real time spent with a post's comments open, or an
+// external link click — see recordEngagementSignal for how it's weighted
+// and folded into the user's source/topic affinity. Same fire-and-forget
+// treatment: 204, no retry logic, losing an occasional ping doesn't matter
+// for a signal that accumulates over many posts.
+app.post('/posts/engagement-signal', authenticate, (req, res) => {
+  const { source, topic, watchMs, commentsViewMs, linkClick } = req.body || {};
+  recordEngagementSignal(req.user.id, {
+    source: typeof source === 'string' ? source.slice(0, 40) : null,
+    topic: typeof topic === 'string' ? topic.slice(0, 80) : null,
+    watchMs: Number.isFinite(watchMs) ? watchMs : 0,
+    commentsViewMs: Number.isFinite(commentsViewMs) ? commentsViewMs : 0,
+    linkClick: !!linkClick,
+  });
   res.status(204).end();
 });
 
@@ -11669,14 +11804,34 @@ function findKnownFeedPost(postId) {
   ]).find(p => p?.id === postId) || null;
 }
 
+// Every source below used to fetch once and hard-slice to whatever fit on
+// screen (8-15 comments), with no way to see the rest even though most of
+// these APIs hand back far more in that same single call. Caches the full
+// processed list per post (short TTL — comments don't need to be
+// second-fresh) and paginates off of it, so "load more" is just a slice of
+// what's already fetched instead of a new upstream call every click.
+async function paginateComments(cacheKey, fetchFullList, offset, limit) {
+  let full = getCached(cacheKey);
+  if (!full) {
+    full = await fetchFullList();
+    setCached(cacheKey, full, 10 * 60000);
+  }
+  return {
+    comments: full.slice(offset, offset + limit),
+    hasMore: offset + limit < full.length,
+    total: full.length,
+  };
+}
+
 // ─── Unified comments endpoint — live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters ─
 app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   const { postId } = req.params;
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const limit  = boundedLimit(req.query.limit, 20, 50);
 
   const communityPost = await getCommunityPostById(postId);
   if (communityPost) {
-    const limit = boundedLimit(req.query.limit, 50, 100);
-    const comments = await getCommentsForPost(communityPost.id, limit);
+    const { comments, hasMore, total } = await getCommentsForPost(communityPost.id, limit, offset);
     return res.json({
       comments: comments.map(comment => ({
         id: comment.id,
@@ -11685,7 +11840,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         score: 0,
         created: comment.createdAt || new Date().toISOString(),
       })),
-      commentsCount: comments.length,
+      commentsCount: total,
+      hasMore,
       source: 'uficonnect',
       live: true,
     });
@@ -11695,22 +11851,23 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('reddit_')) {
     const redditId = postId.replace(/^reddit_/, '');
     try {
-      const url  = `https://www.reddit.com/comments/${redditId.replace('t3_','')}.json?limit=20&depth=2`;
-      const data = await fetchJSON(url);
-      const listing = Array.isArray(data) ? data[1]?.data?.children : [];
-      const comments = (listing || [])
-        .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
-        .slice(0, 15)
-        .map(c => ({
-          id:      c.data.id,
-          author:  `u/${c.data.author}`,
-          body:    c.data.body.slice(0, 500),
-          score:   c.data.score,
-          created: normalizeTimestamp(c.data.created_utc),
-        }));
-      return res.json({ comments, source: 'reddit', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_reddit_${redditId}`, async () => {
+        const url  = `https://www.reddit.com/comments/${redditId.replace('t3_','')}.json?limit=100&depth=2`;
+        const data = await fetchJSON(url);
+        const listing = Array.isArray(data) ? data[1]?.data?.children : [];
+        return (listing || [])
+          .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
+          .map(c => ({
+            id:      c.data.id,
+            author:  `u/${c.data.author}`,
+            body:    c.data.body.slice(0, 500),
+            score:   c.data.score,
+            created: normalizeTimestamp(c.data.created_utc),
+          }));
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'reddit', live: true });
     } catch {
-      return res.json({ comments: [], source: 'reddit', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'reddit', live: false });
     }
   }
 
@@ -11718,18 +11875,20 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('hn_')) {
     const hnId = postId.replace(/^hn_/, '');
     try {
-      const data = await fetchJSON(`https://hn.algolia.com/api/v1/items/${hnId}`);
-      const children = (data?.children || []).filter(c => c.type === 'comment' && c.text);
-      const comments = children.slice(0, 12).map(c => ({
-        id:      `${c.id}`,
-        author:  c.author || 'anon',
-        body:    truncateWithEllipsis(stripAndDecodeHTML(c.text || ''), 500),
-        score:   c.points || 0,
-        created: c.created_at,
-      }));
-      return res.json({ comments, source: 'hackernews', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_hn_${hnId}`, async () => {
+        const data = await fetchJSON(`https://hn.algolia.com/api/v1/items/${hnId}`);
+        const children = (data?.children || []).filter(c => c.type === 'comment' && c.text);
+        return children.map(c => ({
+          id:      `${c.id}`,
+          author:  c.author || 'anon',
+          body:    truncateWithEllipsis(stripAndDecodeHTML(c.text || ''), 500),
+          score:   c.points || 0,
+          created: c.created_at,
+        }));
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'hackernews', live: true });
     } catch {
-      return res.json({ comments: [], source: 'hackernews', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'hackernews', live: false });
     }
   }
 
@@ -11737,56 +11896,61 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('devto_')) {
     const articleId = postId.replace(/^devto_/, '');
     try {
-      const data = await fetchJSON(`https://dev.to/api/comments?a_id=${articleId}`);
-      const comments = (Array.isArray(data) ? data : []).slice(0, 12).map(c => ({
-        id:      `${c.id_code}`,
-        author:  c.user?.username || 'anonymous',
-        body:    truncateWithEllipsis(stripAndDecodeHTML(c.body_html || ''), 500),
-        score:   c.positive_reactions_count || 0,
-        created: c.created_at,
-      }));
-      return res.json({ comments, source: 'devto', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_devto_${articleId}`, async () => {
+        const data = await fetchJSON(`https://dev.to/api/comments?a_id=${articleId}`);
+        return (Array.isArray(data) ? data : []).map(c => ({
+          id:      `${c.id_code}`,
+          author:  c.user?.username || 'anonymous',
+          body:    truncateWithEllipsis(stripAndDecodeHTML(c.body_html || ''), 500),
+          score:   c.positive_reactions_count || 0,
+          created: c.created_at,
+        }));
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'devto', live: true });
     } catch {
-      return res.json({ comments: [], source: 'devto', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'devto', live: false });
     }
   }
 
   // ── GitHub: recent commits as discussion ─────────────────────────────────────
   if (postId.startsWith('github_')) {
     try {
-      const post = await findPostById(postId);
-      const repoUrl = post?.sourceUrl || '';
-      const match = repoUrl.match(/github\.com\/([^/]+\/[^/?#]+)/);
-      if (!match) return res.json({ comments: [], source: 'github', live: false });
-      const fullName = match[1].replace(/\.git$/, '');
-      const [commitsData, issuesData] = await Promise.all([
-        fetchJSON(`https://api.github.com/repos/${fullName}/commits?per_page=8`, GITHUB_HEADERS).catch(() => []),
-        fetchJSON(`https://api.github.com/repos/${fullName}/issues?state=open&per_page=5&sort=created&direction=desc`, GITHUB_HEADERS).catch(() => []),
-      ]);
-      const commitComments = (Array.isArray(commitsData) ? commitsData : []).slice(0, 8).map(c => ({
-        id:      c.sha?.slice(0, 8) || `commit_${Date.now()}`,
-        author:  c.commit?.author?.name || c.author?.login || 'unknown',
-        body:    c.commit?.message?.split('\n')[0]?.slice(0, 300) || '',
-        score:   0,
-        created: c.commit?.author?.date || c.commit?.committer?.date,
-        url:     c.html_url,
-        type:    'commit',
-      }));
-      const issueComments = (Array.isArray(issuesData) ? issuesData : [])
-        .filter(i => !i.pull_request)
-        .slice(0, 5)
-        .map(i => ({
-          id:      `issue_${i.number}`,
-          author:  i.user?.login || 'unknown',
-          body:    `#${i.number}: ${i.title}`,
-          score:   i.comments || 0,
-          created: i.created_at,
-          url:     i.html_url,
-          type:    'issue',
+      const { comments, hasMore, total } = await paginateComments(`comments_github_${postId}`, async () => {
+        const post = await findPostById(postId);
+        const repoUrl = post?.sourceUrl || '';
+        const match = repoUrl.match(/github\.com\/([^/]+\/[^/?#]+)/);
+        if (!match) return [];
+        const fullName = match[1].replace(/\.git$/, '');
+        const [commitsData, issuesData] = await Promise.all([
+          fetchJSON(`https://api.github.com/repos/${fullName}/commits?per_page=30`, GITHUB_HEADERS).catch(() => []),
+          fetchJSON(`https://api.github.com/repos/${fullName}/issues?state=open&per_page=20&sort=created&direction=desc`, GITHUB_HEADERS).catch(() => []),
+        ]);
+        const commitComments = (Array.isArray(commitsData) ? commitsData : []).map(c => ({
+          id:      c.sha?.slice(0, 8) || `commit_${Date.now()}`,
+          author:  c.commit?.author?.name || c.author?.login || 'unknown',
+          body:    c.commit?.message?.split('\n')[0]?.slice(0, 300) || '',
+          score:   0,
+          created: c.commit?.author?.date || c.commit?.committer?.date,
+          url:     c.html_url,
+          type:    'commit',
         }));
-      return res.json({ comments: [...commitComments, ...issueComments], source: 'github', live: true });
+        const issueComments = (Array.isArray(issuesData) ? issuesData : [])
+          .filter(i => !i.pull_request)
+          .map(i => ({
+            id:      `issue_${i.number}`,
+            author:  i.user?.login || 'unknown',
+            body:    `#${i.number}: ${i.title}`,
+            score:   i.comments || 0,
+            created: i.created_at,
+            url:     i.html_url,
+            type:    'issue',
+          }));
+        return [...commitComments, ...issueComments];
+      }, offset, limit);
+      if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'github', live: false });
+      return res.json({ comments, hasMore, total, source: 'github', live: true });
     } catch {
-      return res.json({ comments: [], source: 'github', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'github', live: false });
     }
   }
 
@@ -11794,68 +11958,76 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('so_')) {
     const qId = postId.replace(/^so_/, '');
     try {
-      const data = await fetchJSON(
-        `https://api.stackexchange.com/2.3/questions/${qId}/answers?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=8`
-      );
-      const comments = (data?.items || []).slice(0, 8).map(a => ({
-        id:      `${a.answer_id}`,
-        author:  a.owner?.display_name || 'anonymous',
-        body:    truncateWithEllipsis(stripAndDecodeHTML(a.body || ''), 500),
-        score:   a.score || 0,
-        created: normalizeTimestamp(a.creation_date),
-        url:     a.link,
-      }));
-      return res.json({ comments, source: 'stackoverflow', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_so_${qId}`, async () => {
+        const data = await fetchJSON(
+          `https://api.stackexchange.com/2.3/questions/${qId}/answers?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=50`
+        );
+        return (data?.items || []).map(a => ({
+          id:      `${a.answer_id}`,
+          author:  a.owner?.display_name || 'anonymous',
+          body:    truncateWithEllipsis(stripAndDecodeHTML(a.body || ''), 500),
+          score:   a.score || 0,
+          created: normalizeTimestamp(a.creation_date),
+          url:     a.link,
+        }));
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'stackoverflow', live: true });
     } catch {
-      return res.json({ comments: [], source: 'stackoverflow', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'stackoverflow', live: false });
     }
   }
 
   // ── Bluesky: thread replies ──────────────────────────────────────────────────
   if (postId.startsWith('bluesky_')) {
     try {
-      const post = await findPostById(postId);
-      const sourceUrl = post?.sourceUrl || '';
-      // sourceUrl: https://bsky.app/profile/{handle}/post/{rkey}
-      const m = sourceUrl.match(/bsky\.app\/profile\/([^/]+)\/post\/([^/?#]+)/);
-      if (!m) return res.json({ comments: [], source: 'bluesky', live: false });
-      const [, handle, rkey] = m;
-      const uri = `at://${handle}/app.bsky.feed.post/${rkey}`;
-      const data = await fetchJSON(
-        `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=4`
-      );
-      const replies = (data?.thread?.replies || []).flatMap(r => {
-        const top = r.post;
-        if (!top?.record?.text) return [];
-        return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
-      }).slice(0, 12);
-      return res.json({ comments: replies, source: 'bluesky', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_bluesky_${postId}`, async () => {
+        const post = await findPostById(postId);
+        const sourceUrl = post?.sourceUrl || '';
+        // sourceUrl: https://bsky.app/profile/{handle}/post/{rkey}
+        const m = sourceUrl.match(/bsky\.app\/profile\/([^/]+)\/post\/([^/?#]+)/);
+        if (!m) return [];
+        const [, handle, rkey] = m;
+        const uri = `at://${handle}/app.bsky.feed.post/${rkey}`;
+        const data = await fetchJSON(
+          `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=8`
+        );
+        return (data?.thread?.replies || []).flatMap(r => {
+          const top = r.post;
+          if (!top?.record?.text) return [];
+          return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
+        });
+      }, offset, limit);
+      if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
+      return res.json({ comments, hasMore, total, source: 'bluesky', live: true });
     } catch {
-      return res.json({ comments: [], source: 'bluesky', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
     }
   }
 
   // ── Mastodon: status replies ─────────────────────────────────────────────────
   if (postId.startsWith('mastodon_')) {
     try {
-      const post = await findPostById(postId);
-      const sourceUrl = post?.sourceUrl || '';
-      // sourceUrl: https://{instance}/@{user}/{status_id}
-      const m = sourceUrl.match(/^https?:\/\/([^/]+)\/@[^/]+\/(\d+)/);
-      if (!m) return res.json({ comments: [], source: 'mastodon', live: false });
-      const [, instance, statusId] = m;
-      const data = await fetchJSON(`https://${instance}/api/v1/statuses/${statusId}/context`);
-      const comments = (data?.descendants || []).slice(0, 12).map(s => ({
-        id:      s.id,
-        author:  `@${s.account?.acct || 'unknown'}`,
-        body:    truncateWithEllipsis(stripAndDecodeHTML(s.content || ''), 400),
-        score:   s.favourites_count || 0,
-        created: s.created_at,
-        url:     s.url,
-      }));
-      return res.json({ comments, source: 'mastodon', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_mastodon_${postId}`, async () => {
+        const post = await findPostById(postId);
+        const sourceUrl = post?.sourceUrl || '';
+        // sourceUrl: https://{instance}/@{user}/{status_id}
+        const m = sourceUrl.match(/^https?:\/\/([^/]+)\/@[^/]+\/(\d+)/);
+        if (!m) return [];
+        const [, instance, statusId] = m;
+        const data = await fetchJSON(`https://${instance}/api/v1/statuses/${statusId}/context`);
+        return (data?.descendants || []).map(s => ({
+          id:      s.id,
+          author:  `@${s.account?.acct || 'unknown'}`,
+          body:    truncateWithEllipsis(stripAndDecodeHTML(s.content || ''), 400),
+          score:   s.favourites_count || 0,
+          created: s.created_at,
+          url:     s.url,
+        }));
+      }, offset, limit);
+      if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
+      return res.json({ comments, hasMore, total, source: 'mastodon', live: true });
     } catch {
-      return res.json({ comments: [], source: 'mastodon', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
     }
   }
 
@@ -11863,24 +12035,26 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('lobsters_')) {
     const shortId = postId.replace(/^lobsters_/, '');
     try {
-      const data = await fetchJSON(`https://lobste.rs/s/${shortId}.json`);
-      const comments = (data?.comments || []).slice(0, 12).map(c => ({
-        id:      c.short_id || `${Date.now()}`,
-        author:  c.commenting_user || 'anonymous',
-        body:    (c.comment_plain || c.comment || '').slice(0, 500),
-        score:   c.score || 0,
-        created: c.created_at,
-        url:     `https://lobste.rs/s/${shortId}#c_${c.short_id}`,
-      }));
-      return res.json({ comments, source: 'lobsters', live: true });
+      const { comments, hasMore, total } = await paginateComments(`comments_lobsters_${shortId}`, async () => {
+        const data = await fetchJSON(`https://lobste.rs/s/${shortId}.json`);
+        return (data?.comments || []).map(c => ({
+          id:      c.short_id || `${Date.now()}`,
+          author:  c.commenting_user || 'anonymous',
+          body:    (c.comment_plain || c.comment || '').slice(0, 500),
+          score:   c.score || 0,
+          created: c.created_at,
+          url:     `https://lobste.rs/s/${shortId}#c_${c.short_id}`,
+        }));
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'lobsters', live: true });
     } catch {
-      return res.json({ comments: [], source: 'lobsters', live: false });
+      return res.json({ comments: [], hasMore: false, source: 'lobsters', live: false });
     }
   }
 
   // ── All other sources: no comments available ──────────────────────────────────
   const source = _sourceFromPostId(postId);
-  return res.json({ comments: [], source, live: false });
+  return res.json({ comments: [], hasMore: false, source, live: false });
 });
 
 // ─── Office: agent registry ───────────────────────────────────────────────────
@@ -12897,8 +13071,9 @@ app.get('/posts/:postId/comments', authenticate, async (req, res) => {
     const post = await getCommunityPostById(req.params.postId);
     if (!post) return res.status(404).json({ message: 'Post not found.' });
     const limit = boundedLimit(req.query.limit, 50, 100);
-    const comments = await getCommentsForPost(post.id, limit);
-    res.json({ comments, commentsCount: comments.length });
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const { comments, hasMore, total } = await getCommentsForPost(post.id, limit, offset);
+    res.json({ comments, commentsCount: total, hasMore });
   } catch (e) { console.error('GET /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 

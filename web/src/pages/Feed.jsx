@@ -8,6 +8,7 @@ import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, InlineAut
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
+import { reportEngagementSignal } from '../api/engagement';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -598,6 +599,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
   const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
+  const [commentsHasMore, setCommentsHasMore] = useState(false);
   const [commentsError,   setCommentsError]   = useState(false);
   const [commentDraft,    setCommentDraft]    = useState('');
   const [commentSending,  setCommentSending]  = useState(false);
@@ -609,6 +612,16 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   // below passes, which the hook already treats as "nothing to track yet."
   const cardRef = useRef(null);
   useEngagementTracking(cardRef, post?.id);
+  // Real time this card's comments panel was left open — feeds the feed's
+  // own ranking (see recordEngagementSignal server-side), same as video
+  // watch time in VideoFeedView. Set when toggleComments opens the panel,
+  // read (and cleared) when it closes.
+  const commentsOpenedAtRef = useRef(null);
+  useEffect(() => () => {
+    if (commentsOpenedAtRef.current) {
+      reportEngagementSignal({ postId: post?.id, source: post?.source, topic: post?.topic, commentsViewMs: Date.now() - commentsOpenedAtRef.current });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!post || typeof post !== 'object') return null;
 
@@ -643,6 +656,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`);
       setComments(data.comments || []);
       setCommentsLive(!!data.live);
+      setCommentsHasMore(!!data.hasMore);
     } catch {
       setCommentsError(true);
       setComments([]);
@@ -650,9 +664,33 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
     finally { setCommentsLoading(false); }
   }
 
+  async function loadMoreComments() {
+    if (commentsLoadingMore || !comments) return;
+    setCommentsLoadingMore(true);
+    try {
+      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
+        params: { offset: comments.length },
+      });
+      setComments(prev => [...(prev || []), ...(data.comments || [])]);
+      setCommentsHasMore(!!data.hasMore);
+    } catch {
+      // Leave existing comments in place — the button just stays clickable to retry.
+    } finally {
+      setCommentsLoadingMore(false);
+    }
+  }
+
   function toggleComments() {
-    if (showComments) { setShowComments(false); return; }
+    if (showComments) {
+      setShowComments(false);
+      if (commentsOpenedAtRef.current) {
+        reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, commentsViewMs: Date.now() - commentsOpenedAtRef.current });
+        commentsOpenedAtRef.current = null;
+      }
+      return;
+    }
     setShowComments(true);
+    commentsOpenedAtRef.current = Date.now();
     if (comments !== null && !commentsError) return;
     fetchComments();
   }
@@ -846,7 +884,10 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
         )}
         {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-            onClick={e => e.stopPropagation()}
+            onClick={e => {
+              e.stopPropagation();
+              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+            }}
             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 8px', borderRadius: 5 }}>
               {isJob ? 'Apply' : hasVideo ? 'Watch' : 'Open'} on {src.label} ↗
@@ -921,6 +962,20 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
           )}
           {!commentsLoading && !commentsError && comments?.length === 0 && (
             <p style={{ fontSize: '.78rem', color: 'var(--muted)', margin: '0 0 10px' }}>No {sectionLabel.toLowerCase()} found.</p>
+          )}
+
+          {!commentsLoading && commentsHasMore && (
+            <button
+              onClick={loadMoreComments}
+              disabled={commentsLoadingMore}
+              style={{
+                display: 'block', margin: '0 0 12px', background: 'none', border: 'none',
+                color: src.color, cursor: commentsLoadingMore ? 'default' : 'pointer',
+                fontSize: '.78rem', fontWeight: 700, padding: 0,
+              }}
+            >
+              {commentsLoadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : `Load more ${sectionLabel.toLowerCase()}`}
+            </button>
           )}
 
           {/* Read-more link — always shown at bottom */}
