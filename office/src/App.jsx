@@ -1211,6 +1211,205 @@ function FeedManagerView({ status, triggerAgent, triggering }) {
   );
 }
 
+// ─── Pipeline: one animated view of the whole source → sort → transfer →
+// live-site path, all four stages driven by the same real status/composition
+// data the Sources/Feed Manager views already show separately — this just
+// puts them on one live, moving line instead of three panels you have to
+// mentally stitch together yourself.
+const PIPELINE_STATUS_DOT = {
+  starting: '#64748b', healthy: '#22c55e', fallback: '#38bdf8', ready: '#22c55e',
+  degraded: '#f59e0b', paused: '#ef4444', pro: '#f59e0b', gated: '#64748b',
+};
+
+function FlowConnector({ colors, fast }) {
+  const dur = fast ? 1.1 : 2.6;
+  return (
+    <div style={{
+      position: 'relative', height: 4, flex: '0 0 56px', margin: '0 2px',
+      background: 'rgba(255,255,255,.05)', borderRadius: 2, overflow: 'hidden', alignSelf: 'center',
+    }}>
+      {colors.map((c, i) => (
+        <span key={i} style={{
+          position: 'absolute', top: -2, left: 0, width: 8, height: 8, borderRadius: '50%',
+          background: c, boxShadow: `0 0 6px ${c}`,
+          animation: `flowRight ${dur}s linear infinite`,
+          animationDelay: `${(i * dur) / colors.length}s`,
+        }} />
+      ))}
+    </div>
+  );
+}
+
+function PipelineNode({ children, glow, style }) {
+  return (
+    <div style={{
+      background: '#0d0d1a',
+      border: `1px solid ${glow ? `${glow}55` : 'rgba(255,255,255,.08)'}`,
+      borderRadius: 14,
+      boxShadow: glow ? `0 0 22px ${glow}1f` : 'none',
+      padding: 16,
+      display: 'flex', flexDirection: 'column',
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function TransferRing({ pct, active }) {
+  const r = 25, c = 2 * Math.PI * r;
+  return (
+    <svg width={64} height={64} style={{ animation: active ? 'glowPulse 1.6s ease-in-out infinite' : 'none' }}>
+      <circle cx={32} cy={32} r={r} fill="none" stroke="rgba(56,189,248,.15)" strokeWidth={5} />
+      <circle
+        cx={32} cy={32} r={r} fill="none" stroke="#38bdf8" strokeWidth={5} strokeLinecap="round"
+        strokeDasharray={c} strokeDashoffset={active ? c - (pct / 100) * c : c}
+        transform="rotate(-90 32 32)" style={{ transition: 'stroke-dashoffset .5s ease' }}
+      />
+      <text x={32} y={38} textAnchor="middle" fontSize={18} fill="#e2e8f0">⇪</text>
+    </svg>
+  );
+}
+
+function PipelineView({ status }) {
+  const [pageviews, setPageviews] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    officeFetch(`${API}/office/analytics/pageviews`).then(r => r.json())
+      .then(j => { if (!cancelled) setPageviews(j); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const workers = (status?.sources?.workers || []).slice().sort((a, b) => (b.postCount || 0) - (a.postCount || 0));
+  const healthyCount = workers.filter(w => ['healthy', 'ready', 'fallback', 'pro'].includes(w.status)).length;
+  const composition  = status?.feed?.composition || [];
+  const sortAgent    = status?.sortAgent;
+  const q            = status?.refreshQueue;
+  const running      = !!q?.running;
+  const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
+
+  return (
+    <>
+      <h1 style={H1}>Pipeline</h1>
+      <p style={SUBTITLE}>
+        Every platform, live — from fetch through sorting, transfer, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
+      </p>
+
+      <Card style={{ overflowX: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 900 }}>
+          {/* Stage 1 — Sources */}
+          <PipelineNode style={{ flex: '1 1 360px', minWidth: 320 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Label color="#60a5fa">Sources</Label>
+              <span style={{ fontSize: 11, color: '#64748b' }}>{healthyCount}/{workers.length} live</span>
+            </div>
+            {workers.length === 0 ? (
+              <div style={{ fontSize: 12, color: '#475569' }}>Workers starting up…</div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 280, overflowY: 'auto', alignContent: 'flex-start' }}>
+                {workers.map(w => {
+                  const dot = PIPELINE_STATUS_DOT[w.status] || '#64748b';
+                  const recentlyActive = w.lastSuccess && (Date.now() - new Date(w.lastSuccess).getTime()) < 120000;
+                  const isLive = recentlyActive || w.status === 'healthy';
+                  return (
+                    <div
+                      key={w.id}
+                      title={`${(w.name || w.id).replace(' Agent', '')} — ${w.status} — ${(w.postCount || 0).toLocaleString()} posts`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        padding: '4px 9px', borderRadius: 20, fontSize: 11, color: '#94a3b8',
+                        background: isLive ? `${dot}18` : 'rgba(255,255,255,.03)',
+                        border: `1px solid ${isLive ? `${dot}55` : 'rgba(255,255,255,.06)'}`,
+                      }}
+                    >
+                      <span style={{ fontSize: 12, lineHeight: 1 }}>{w.emoji}</span>
+                      <span style={{
+                        display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: dot,
+                        animation: isLive ? 'pulse 1.6s ease-in-out infinite' : 'none',
+                      }} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </PipelineNode>
+
+          <FlowConnector colors={['#60a5fa', '#4ade80', '#38bdf8', '#a78bfa']} />
+
+          {/* Stage 2 — Sort & Rank */}
+          <PipelineNode glow="#a78bfa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#a78bfa">Sort &amp; Rank</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(167,139,250,.28), rgba(167,139,250,.03))',
+              border: '1px solid rgba(167,139,250,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>🧮</div>
+            {composition.length > 0 && (
+              <div style={{ display: 'flex', height: 8, width: '100%', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
+                {composition.slice(0, 14).map((c, i) => (
+                  <div key={c.source} title={`${c.source}: ${c.pct}%`} style={{
+                    width: `${c.pct}%`, minWidth: c.pct > 0 ? 2 : 0,
+                    background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length],
+                  }} />
+                ))}
+              </div>
+            )}
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              {sortAgent?.lastRun ? `Ranked ${fmtAgo(sortAgent.lastRun)}` : 'Not run yet'}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} />
+
+          {/* Stage 3 — Transfer */}
+          <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#38bdf8">Transfer</Label>
+            <div style={{ margin: '14px 0' }}>
+              <TransferRing pct={pct} active={running} />
+            </div>
+            <div style={{ fontSize: 11, color: running ? '#38bdf8' : '#64748b' }}>
+              {running
+                ? `${q.currentId || '…'} · ${q.batchDone}/${q.batchTotal}`
+                : (q?.lastFinished ? `Idle · last ${fmtAgo(q.lastFinished)}` : 'Idle — no transfer run yet')}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#38bdf8', '#4ade80']} />
+
+          {/* Stage 4 — Viewed (live site) */}
+          <PipelineNode glow="#4ade80" style={{ flex: '1 1 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#4ade80">Viewed</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(74,222,128,.24), rgba(74,222,128,.03))',
+              border: '1px solid rgba(74,222,128,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>🌐</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', lineHeight: 1 }}>
+              {pageviews?.available === false ? '—' : (pageviews?.today ?? '—')}
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>page views today</div>
+            <a href="https://uficonnect.org" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#4ade80' }}>
+              uficonnect.org ↗
+            </a>
+          </PipelineNode>
+        </div>
+      </Card>
+
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 14, fontSize: 11, color: '#475569' }}>
+        <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#22c55e', marginRight: 5 }} />healthy / recently fetched</span>
+        <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#38bdf8', marginRight: 5 }} />fallback</span>
+        <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', marginRight: 5 }} />degraded</span>
+        <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#ef4444', marginRight: 5 }} />paused</span>
+        <span><span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#64748b', marginRight: 5 }} />starting / gated</span>
+      </div>
+    </>
+  );
+}
+
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -1323,6 +1522,7 @@ export default function App() {
   const nav = [
     { id: 'overview', label: 'Overview',     icon: '◉' },
     { id: 'sources',  label: 'Live Sources', icon: '🌐' },
+    { id: 'pipeline', label: 'Pipeline',      icon: '⚡' },
     { id: 'agents',   label: 'Agents',        icon: '⬡' },
     { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
     { id: 'analytics',label: 'Analytics',    icon: '📈' },
@@ -1339,6 +1539,8 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        @keyframes flowRight { 0% { transform: translateX(-10px); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateX(62px); opacity: 0; } }
+        @keyframes glowPulse { 0%,100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.06); filter: brightness(1.3); } }
         a { text-decoration: none; }
       `}</style>
 
@@ -1417,6 +1619,7 @@ export default function App() {
         <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'pipeline' && <PipelineView status={status} />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
