@@ -1117,64 +1117,85 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // ─── Per-source freshness config ──────────────────────────────────────────────
-// TTL:   real freshness window — worker busts cache and re-fetches from API after this time
-// DELAY: ms between fetching successive topics in the continuous cycler
-// SOURCE_CONFIG: ttl = real API re-fetch window per topic, delay = ms between successive topic
-// fetches within one shard, shards = parallel topic-shard workers per source.
-// With N shards the 60-topic list is split into N non-overlapping slices; all slices run
-// simultaneously so every topic is covered N× faster without increasing total API calls
-// (the TTL still gates the real network fetch per topic).
+// TTL:    real freshness window — worker busts cache and re-fetches from API after this time
+// DELAY:  ms between fetching successive topics in the continuous cycler, within one shard
+// SHARDS: parallel topic-shard workers per source — with N shards the 69-topic list is split
+// into N non-overlapping slices; all slices run simultaneously so every topic is covered N×
+// faster without raising any single shard's fetch rate (the TTL still gates the real network
+// fetch per topic).
+//   fetches/min          = shards × (60 / delay_seconds)
+//   full cycle (per topic) = ceil(69 / shards) × delay
+//
+// Every source is rated into one of 5 cadence tiers by the NATURE of its content, not tuned
+// per-platform:
+//   [BREAKING]  breaking/trending topics       → every  15–30 sec
+//   [HIGH-VOL]  high-volume accounts/pages     → every   1–2 min
+//   [ACTIVE]    normal active accounts/pages   → every       3 min
+//   [LOW-ACT]   low-activity sources           → every       4 min
+//   [ARCHIVAL]  inactive/archival sources      → every       5 min   (system-wide ceiling)
 const SOURCE_CONFIG = {
-  //               TTL (ms)          DELAY/topic    shards
-  reddit:        { ttl: 15*60000, delay: 15000, shards: 4 },  // high-volume RSS — 4 parallel shards
-  hn:            { ttl: 10*60000, delay: 10000, shards: 4 },  // Algolia — generous
-  github:        { ttl: 45*60000, delay: 60000, shards: 1 },  // 60 req/hr unauthed — slowed further, was crowding out other sources
-  devto:         { ttl: 12*60000, delay: 12000, shards: 3 },  // REST API — generous
-  medium:        { ttl: 12*60000, delay: 15000, shards: 3 },  // CDN RSS
-  youtube:       { ttl: 12*60000, delay: 15000, shards: 3 },  // channel RSS
-  stackoverflow: { ttl: 30*60000, delay: 60000, shards: 1 },  // 300/day — stay conservative
-  mastodon:      { ttl:  8*60000, delay: 10000, shards: 4 },  // public federated timelines
-  lobsters:      { ttl: 12*60000, delay: 20000, shards: 2 },  // small site
-  arxiv:         { ttl: 30*60000, delay: 45000, shards: 1 },  // OAI-PMH 1 req/20s
-  indeed:        { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS job feeds — sped up so real jobs stay in the feed
-  producthunt:   { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — no limit, normalized to the common cadence
-  techcrunch:    { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
-  theverge:      { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
-  indiehackers:  { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — no limit, normalized to the common cadence
-  hashnode:      { ttl:  8*60000, delay: 12000, shards: 3 },  // freeCodeCamp RSS
-  // Was the fastest tier (8min/10s/4 shards — faster than even Reddit),
-  // which combined with its per-fetch limit (already cut 100→25, see
-  // fetchBlueskyByKeyword) made it the single biggest contributor to the
-  // shared cache by far. That's specifically a problem while Twitter/
-  // LinkedIn/Instagram/Facebook (below) are all sitting at 0 posts with no
-  // app-level API token configured — Bluesky was filling that entire gap by
-  // itself instead of the mix reflecting several comparable platforms.
-  // Dropped to the same standard cadence most other working sources use, so
-  // no one ungated source dominates composition until those four are live.
-  bluesky:       { ttl: 12*60000, delay: 12000, shards: 3 },  // public ATP API
-  arstechnica:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
-  wired:         { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
-  theregister:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — enterprise IT/security
-  venturebeat:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — AI/startup
-  smashing:      { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — web dev/design, normalized to the common cadence
-  phoronix:      { ttl: 10*60000, delay: 12000, shards: 3 },  // RSS — Linux/hardware, normalized to the common cadence
-  infoq:         { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — enterprise/cloud, normalized to the common cadence
-  mittr:         { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — deep tech, normalized to the common cadence
-  gitlab:        { ttl: 45*60000, delay: 75000, shards: 1 },  // public project API — slowed, was crowding out other sources
-  remoteok:      { ttl: 12*60000, delay: 12000, shards: 3 },  // remote jobs API — normalized now the dead-RSS bug is fixed
-  yc:            { ttl: 12*60000, delay: 12000, shards: 3 },  // startup/professional RSS — no limit, was arbitrarily slow
-  crunchbase:    { ttl: 12*60000, delay: 12000, shards: 3 },  // business/funding RSS — no limit, was arbitrarily slow
-  behance:       { ttl: 12*60000, delay: 12000, shards: 3 },  // creative portfolios RSS — no limit, was arbitrarily slow
-  designweb:     { ttl: 12*60000, delay: 12000, shards: 3 },  // design/web industry RSS — no limit, was arbitrarily slow
-  usajobs:       { ttl: 30*60000, delay: 60000, shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
-  // No free public API — runs only on a genuine app-level public token
+  //               TTL (ms)           DELAY/topic     shards
+  // ── [BREAKING] 15–30s, 4 shards — live social/news firehose ────────────────
+  reddit:        { ttl:  8*60000, delay: 15000, shards: 4 },  // r/new firehose, many subreddits — 16 fetch/min, ~4.5min full cycle
+  hn:            { ttl:  8*60000, delay: 20000, shards: 4 },  // Algolia — front page churns constantly — 12 fetch/min, ~6min cycle
+  mastodon:      { ttl:  8*60000, delay: 20000, shards: 4 },  // public federated timelines, live chatter — 12 fetch/min, ~6min cycle
+  // Was the fastest tier by itself (8min/10s/4 shards) and, combined with its
+  // per-fetch limit, made it the single biggest contributor to the shared
+  // cache while Twitter/LinkedIn/Instagram/Facebook sat at 0 posts with no
+  // app-level API token configured. Composition dominance is now capped
+  // independently by diversifyBySource's maxSharePct (see addAndBroadcast),
+  // so it's rated with its breaking-news peers, just at the slow end of the tier.
+  bluesky:       { ttl: 10*60000, delay: 30000, shards: 4 },  // public ATP API, live social posts — 8 fetch/min, ~9min cycle
+
+  // ── [HIGH-VOL] 60s, 3 shards — high-frequency, freshness-sensitive ─────────
+  devto:         { ttl: 20*60000, delay: 60000,  shards: 3 },  // dev blogging platform, constant new posts — 3 fetch/min, ~23min cycle
+  indeed:        { ttl: 20*60000, delay: 60000,  shards: 3 },  // job RSS feeds, new listings continuously — 3 fetch/min, ~23min cycle
+  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 3 },  // tech news RSS, several stories/day — 3 fetch/min, ~23min cycle
+  theverge:      { ttl: 20*60000, delay: 60000,  shards: 3 },  // tech news RSS, several stories/day — 3 fetch/min, ~23min cycle
+  // ── [HIGH-VOL] 90s, 3 shards ────────────────────────────────────────────────
+  medium:        { ttl: 25*60000, delay: 90000,  shards: 3 },  // CDN RSS, huge publishing platform — 2 fetch/min, ~34.5min cycle
+  youtube:       { ttl: 25*60000, delay: 90000,  shards: 3 },  // channel RSS across many creators — 2 fetch/min, ~34.5min cycle
+  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 3 },  // freeCodeCamp RSS — 2 fetch/min, ~34.5min cycle
+  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 3 },  // daily launches, steady submission stream — 2 fetch/min, ~34.5min cycle
+  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 3 },  // tech news RSS — 2 fetch/min, ~34.5min cycle
+  wired:         { ttl: 25*60000, delay: 90000,  shards: 3 },  // tech/culture news RSS — 2 fetch/min, ~34.5min cycle
+  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 3 },  // AI/startup news RSS — 2 fetch/min, ~34.5min cycle
+  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 3 },  // Linux/hardware news, multiple posts/day — 2 fetch/min, ~34.5min cycle
+  // ── [HIGH-VOL] 120s, 3 shards ───────────────────────────────────────────────
+  theregister:   { ttl: 30*60000, delay: 120000, shards: 3 },  // enterprise IT/security RSS — 1.5 fetch/min, ~46min cycle
+  remoteok:      { ttl: 30*60000, delay: 120000, shards: 3 },  // remote jobs API — 1.5 fetch/min, ~46min cycle
+  behance:       { ttl: 30*60000, delay: 120000, shards: 3 },  // creative portfolios RSS — 1.5 fetch/min, ~46min cycle
+
+  // ── [ACTIVE] flat 3min, 2 shards — steady content, not minute-by-minute ────
+  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 2 },  // community posts — 0.67 fetch/min, ~1h45min cycle
+  smashing:      { ttl: 45*60000, delay: 180000, shards: 2 },  // web dev/design RSS, long-form articles
+  infoq:         { ttl: 45*60000, delay: 180000, shards: 2 },  // enterprise/cloud RSS, moderate cadence
+  mittr:         { ttl: 45*60000, delay: 180000, shards: 2 },  // deep tech RSS, moderate cadence
+  gitlab:        { ttl: 45*60000, delay: 180000, shards: 2 },  // public project API — was crowding out other sources at a faster cadence
+  yc:            { ttl: 45*60000, delay: 180000, shards: 2 },  // startup/professional RSS
+  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 2 },  // business/funding RSS — deals aren't continuous
+  designweb:     { ttl: 45*60000, delay: 180000, shards: 2 },  // design/web industry RSS aggregator
+
+  // ── [LOW-ACT] flat 4min, 1 shard ────────────────────────────────────────────
+  github:        { ttl: 20*60000, delay: 240000,  shards: 1 },  // 60 req/hr unauthed — 15 fetch/hr worst case, still under the cap
+  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 1 },  // small, low-traffic site — genuinely low activity
+  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires ≥20s between requests — 4min is a wide courtesy margin
+  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
+  // 48 mapped topics × 1 fetch/full-cycle would land ~250/day at the same
+  // 4min the rest of this tier uses — too close to the Stack Exchange
+  // unauthenticated 300/day quota. Held at the tier-5 (5min) ceiling instead,
+  // which keeps it ~200/day with real headroom.
+  stackoverflow: { ttl: 40*60000, delay: 300000,  shards: 1 },  // 300/day API budget — kept at the archival ceiling for quota headroom
+
+  // ── [ARCHIVAL] flat 5min, 1 shard — system-wide ceiling ─────────────────────
+  // No free public API — requires a genuine app-level public token
   // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
   // env vars), never a member's personal connected-account token. Idles at
   // 0 posts, no error, until one is configured.
-  twitter:       { ttl: 45*60000, delay: 60000, shards: 1 },
-  linkedin:      { ttl: 45*60000, delay: 60000, shards: 1 },
-  instagram:     { ttl: 45*60000, delay: 60000, shards: 1 },
-  facebook:      { ttl: 45*60000, delay: 60000, shards: 1 },
+  twitter:       { ttl: 90*60000, delay: 300000, shards: 1 },
+  linkedin:      { ttl: 90*60000, delay: 300000, shards: 1 },
+  instagram:     { ttl: 90*60000, delay: 300000, shards: 1 },
+  facebook:      { ttl: 90*60000, delay: 300000, shards: 1 },
 };
 
 // Cache key prefix per source — used by makeTopicCycler to bust cache when TTL elapses
