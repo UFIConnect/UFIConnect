@@ -11852,22 +11852,40 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
     const redditId = postId.replace(/^reddit_/, '');
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_reddit_${redditId}`, async () => {
-        const url  = `https://www.reddit.com/comments/${redditId.replace('t3_','')}.json?limit=100&depth=2`;
-        // Was a bare fetchJSON(url) with no Reddit-specific headers — Reddit
-        // is notably strict about anonymous/cloud-IP requests without its
-        // recognized UA (see REDDIT_HEADERS' own comment on this), unlike
-        // every other Reddit fetch in this file which already sends it.
-        const data = await fetchJSON(url, REDDIT_HEADERS);
-        const listing = Array.isArray(data) ? data[1]?.data?.children : [];
-        return (listing || [])
-          .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
-          .map(c => ({
-            id:      c.data.id,
-            author:  `u/${c.data.author}`,
-            body:    c.data.body.slice(0, 500),
-            score:   c.data.score,
-            created: normalizeTimestamp(c.data.created_utc),
-          }));
+        const cleanId = redditId.replace('t3_', '');
+        const mapChildren = (data) => {
+          const listing = Array.isArray(data) ? data[1]?.data?.children : [];
+          return (listing || [])
+            .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
+            .map(c => ({
+              id:      c.data.id,
+              author:  `u/${c.data.author}`,
+              body:    c.data.body.slice(0, 500),
+              score:   c.data.score,
+              created: normalizeTimestamp(c.data.created_utc),
+            }));
+        };
+        // OAuth first, same as fetchRedditSub — anonymous requests from a
+        // cloud-host IP are frequently blocked wholesale for extended
+        // periods (see redditAnonOutageUntil's own comment), which is
+        // exactly what confirmed live here: every single Reddit post tried
+        // came back empty via the plain www.reddit.com anonymous path,
+        // regardless of headers.
+        const token = await getRedditToken();
+        if (token) {
+          try {
+            const data = await fetchJSON(
+              `https://oauth.reddit.com/comments/${cleanId}?limit=100&depth=2&raw_json=1`,
+              { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
+            );
+            return mapChildren(data);
+          } catch (e) {
+            console.warn(`[Reddit] OAuth comments failed for ${cleanId}: ${e.message}`);
+          }
+        }
+        if (Date.now() < redditAnonOutageUntil) return [];
+        const data = await fetchJSON(`https://www.reddit.com/comments/${cleanId}.json?limit=100&depth=2`, REDDIT_HEADERS);
+        return mapChildren(data);
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'reddit', live: true });
     } catch (e) {
