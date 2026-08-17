@@ -16,6 +16,19 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+// Card view is a preview, not the full read — long posts (the backend keeps
+// up to ~600 chars per post, see trimPostContent server-side) used to render
+// their entire content inline, every time, which made a handful of long
+// posts balloon the whole feed's scroll height. Cut at the last full word
+// so "Read more" doesn't land mid-word.
+const CONTENT_PREVIEW_LEN = 260;
+function truncateAtWord(text, limit) {
+  if (text.length <= limit) return text;
+  const cut = text.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd();
+}
+
 export default function PostList({
   posts = [],
   loading = false,
@@ -180,7 +193,9 @@ export default function PostList({
                   </div>
                 </Link>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {timeAgo(post.createdAt)}
+                  <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                    {timeAgo(post.createdAt)}
+                  </Link>
                   {currentUserId && post.authorId === currentUserId && (
                     <button
                       type="button"
@@ -200,7 +215,9 @@ export default function PostList({
                   {post.group?.name || 'UFconnect'}
                 </span>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {timeAgo(post.createdAt)}
+                  <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                    {timeAgo(post.createdAt)}
+                  </Link>
                   {currentUserId && post.authorId === currentUserId && (
                     <button
                       type="button"
@@ -218,7 +235,17 @@ export default function PostList({
 
             {post.content && (
               <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
-                {post.content}
+                {post.content.length > CONTENT_PREVIEW_LEN
+                  ? `${truncateAtWord(post.content, CONTENT_PREVIEW_LEN)}… `
+                  : post.content}
+                {post.content.length > CONTENT_PREVIEW_LEN && (
+                  <Link
+                    to={`/p/${encodeURIComponent(post.id)}`}
+                    style={{ fontWeight: 700, color: 'var(--primary)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                  >
+                    Read more
+                  </Link>
+                )}
               </p>
             )}
 

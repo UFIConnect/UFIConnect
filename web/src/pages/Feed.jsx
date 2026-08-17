@@ -480,7 +480,9 @@ function YouTubeCard({ post, cardRef }) {
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
-        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
+        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
+          {timeAgo(post.createdAt)}
+        </Link>
       </div>
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
@@ -685,7 +687,9 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
-        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
+        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
+          {timeAgo(post.createdAt)}
+        </Link>
       </div>
 
       {!isExternal && post.author?.id && (
@@ -725,11 +729,17 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
 
       <PostText text={post.content} />
 
-      {isTruncated && post.sourceUrl && (
-        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
+      {isTruncated && (
+        // In-app first, not straight off-site — lands on PostDetail, which
+        // shows this same post's full stored content plus its attachment
+        // (image/video/YouTube embed, whichever the source carries) in one
+        // place, the same way regardless of platform. Its own "Open on
+        // {source} ↗" link is still there for whoever wants the actual
+        // original article beyond what we keep.
+        <Link to={`/p/${encodeURIComponent(post.id)}`}
           style={{ fontSize: '.78rem', color: src.color, textDecoration: 'none', display: 'inline-block', marginBottom: 8 }}>
-          Read full post ↗
-        </a>
+          Read more
+        </Link>
       )}
 
       {post.mediaUrl && post.mediaType === 'image' && (

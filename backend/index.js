@@ -1423,7 +1423,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
     // img/a markup) sitting unstripped in the post content shown on
     // PostDetail, confirmed live as the raw "<table><tr><td>..." markup
     // rendering as literal text on the post page.
-    const content = decodeHTMLEntities(rawContent).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+    const content = truncateWithEllipsis(decodeAndStripHTML(rawContent), 400);
     const idMatch = link.match(/comments\/([a-z0-9]+)/i);
     if (!idMatch || !title) continue;
     const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
@@ -1499,7 +1499,7 @@ function parseRedditJSON(data, topicKeyword) {
         id:          `reddit_${d.id}`,
         authorId:    `reddit_${d.author}`,
         groupId:     matchedGroup?.id || `ext_${sub.toLowerCase()}`,
-        content:     decodeHTMLEntities(d.selftext || d.title).slice(0, 400),
+        content:     truncateWithEllipsis(decodeHTMLEntities(d.selftext || d.title), 400),
         title:       decodeHTMLEntities(d.title || ''),
         source:      'reddit',
         sourceLabel: `r/${sub}`,
@@ -1665,7 +1665,11 @@ async function fetchHNByKeyword(keyword) {
         id:            `hn_${h.objectID}`,
         authorId:      `hn_${h.author}`,
         groupId:       'ext_hn',
-        content:       h.story_text?.slice(0, 400) || h.title,
+        // story_text is real HTML (HN renders Ask/Show HN text posts with
+        // <p>/<a>/<code> tags, entities escaped inside them) — was rendering
+        // literal "<p>...</p>" markup on PostDetail, same class of bug
+        // already fixed for Reddit's Atom content field.
+        content:       h.story_text ? truncateWithEllipsis(stripAndDecodeHTML(h.story_text), 400) : h.title,
         title:         h.title,
         source:        'hackernews',
         sourceLabel:   'News',
@@ -1849,13 +1853,72 @@ async function fetchGitHubByKeyword(keyword) {
   }
 }
 
+// Marks genuinely-cut content with a trailing ellipsis so the client can
+// detect truncation (see Feed.jsx's isTruncated → "Read full post ↗").
+// Every per-source fetcher below caps its own content length before it ever
+// reaches the shared 600-char trimPostContent gate, so without this, that
+// gate's own ellipsis only ever fired for the generic RSS pool (the one
+// path whose raw content could still exceed 600 chars by the time it got
+// there) — every other source's content was already cut shorter upstream,
+// silently, with no way for the client to tell a genuinely-short post apart
+// from a truncated one. No "Read full post" link ever showed for them.
+function truncateWithEllipsis(text, maxLen) {
+  if (!text) return text;
+  return text.length > maxLen ? text.slice(0, maxLen).trim() + '…' : text;
+}
+
 // ─── Medium: fetch articles by tag via RSS feed ───────────────────────────────
 function decodeHTMLEntities(str) {
   return str
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ');
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    // Named entities beyond the handful above leaked through literally —
+    // "&mdash;", "&rsquo;", "&hellip;" etc. are routine in WordPress/
+    // Substack/Medium-style feeds (smart quotes, em/en dashes, ellipses),
+    // confirmed live in Lobsters descriptions.
+    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–').replace(/&hellip;/g, '…')
+    .replace(/&rsquo;/g, '’').replace(/&lsquo;/g, '‘')
+    .replace(/&rdquo;/g, '”').replace(/&ldquo;/g, '“')
+    .replace(/&copy;/g, '©').replace(/&reg;/g, '®').replace(/&trade;/g, '™');
+}
+
+// HN/Lobsters/Mastodon's content is real HTML markup with entities escaped
+// *inside* it (strip the real tags, then decode what's left) — but some of
+// that already-real content also contains literal, user-typed angle-bracket
+// text ("the &lt;iframe&gt; tag") that's *itself* entity-escaped the exact
+// same way, which a strip-then-decode single pass never catches: nothing
+// matches <[^>]+> until after decoding, by which point the tag-strip has
+// already run. A second strip pass after decoding catches exactly that,
+// without re-litigating the original strip-before-decode call (needed so a
+// plain-prose "<3" or "5 > 2" isn't misread as a tag before there's even a
+// real one to find).
+function stripAndDecodeHTML(html) {
+  const firstPass = decodeHTMLEntities(html.replace(/<[^>]+>/g, ' '));
+  // Deliberately narrower than the first pass's <[^>]+> — that one only ever
+  // runs against genuinely-real markup, where matching anything in angle
+  // brackets is correct. This one runs against text that's already been
+  // through entity-decoding, where the same broad pattern turns "x &lt; y
+  // and 5 &gt; 2" into "x 2" — decoding revealed real '<'/'>' characters
+  // that were never a tag at all, just escaped comparison operators, and
+  // the broad pattern greedily treats everything between them as one tag's
+  // contents. Requiring a letter (or '/' for a closing tag) immediately
+  // after '<' is what real tags look like and prose comparisons don't:
+  // "<iframe>" matches and gets stripped, "< y and 5 >" doesn't.
+  return firstPass.replace(/<\/?[a-zA-Z][^<>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Reddit's Atom <content> is the inverse case from stripAndDecodeHTML above —
+// the *entire* blob is XML-text-escaped, tags and text alike, so decoding
+// has to come first here or nothing matches a tag pattern at all. Same
+// prose-comparison risk applies once decoded though ("x &lt; y and z &gt; w"
+// is genuine text, not markup), so this uses the same tag-shaped-only
+// pattern rather than the broad <[^>]+> the original Reddit fix used —
+// confirmed live that broad version was quietly eating everything between
+// two comparison operators in any post that used them.
+function decodeAndStripHTML(escapedHtml) {
+  return decodeHTMLEntities(escapedHtml).replace(/<\/?[a-zA-Z][^<>]*>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function fetchText(url, extraHeaders = {}) {
@@ -2293,7 +2356,9 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
     const title     = decodeHTMLEntities(get(/<title>([\s\S]*?)<\/title>/));
     const published = get(/<published>(.*?)<\/published>/);
     const updated   = get(/<updated>(.*?)<\/updated>/);
-    const desc      = get(/<media:description>([\s\S]*?)<\/media:description>/).slice(0, 300);
+    // No real tags in a video description, but titles just above already get
+    // entity-decoded and this didn't — an inconsistency, not by design.
+    const desc      = decodeHTMLEntities(get(/<media:description>([\s\S]*?)<\/media:description>/)).slice(0, 300);
     const thumb     = (/<media:thumbnail url="([^"]+)"/.exec(s) || [])[1] || null;
     const author    = get(/<name>(.*?)<\/name>/) || channelName;
     if (!videoId || !title) continue;
@@ -2540,7 +2605,7 @@ function mapMastodonPosts(data, tag) {
   return (data || [])
     .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public')
     .map(t => {
-      const text = decodeHTMLEntities(t.content.replace(/<[^>]+>/g, '')).trim().slice(0, 500);
+      const text = truncateWithEllipsis(stripAndDecodeHTML(t.content), 500);
       return {
         id:          `mastodon_${t.id}`,
         authorId:    `mastodon_${t.account.id}`,
@@ -2648,7 +2713,10 @@ async function fetchLobstersByTag(tag) {
         id:          `lobsters_${s.short_id}`,
         authorId:    `lobsters_${s.submitter_user}`,
         groupId:     'ext_lobsters',
-        content:     s.description || s.title,
+        // Lobsters' API runs description through their own Markdown-to-HTML
+        // renderer server-side — a real <p>/<a> markup string, not plain
+        // text, same as Reddit's Atom content and HN's story_text above.
+        content:     s.description ? truncateWithEllipsis(stripAndDecodeHTML(s.description), 400) : s.title,
         title:       s.title,
         source:      'lobsters',
         sourceLabel: 'Lobsters',
@@ -2719,8 +2787,11 @@ function parseArxivAtom(xml) {
     const s = m[1];
     const get = (re) => (re.exec(s) || [])[1]?.trim() || '';
     const id       = get(/<id>(.*?)<\/id>/).split('/abs/')[1] || '';
-    const title    = get(/<title>([\s\S]*?)<\/title>/).replace(/\s+/g, ' ');
-    const summary  = get(/<summary>([\s\S]*?)<\/summary>/).replace(/\s+/g, ' ').trim().slice(0, 500);
+    // Abstracts routinely carry XML-escaped math ("x &lt; y", "A &amp; B") —
+    // no real tags here (arXiv abstracts are plain text/LaTeX, not HTML), so
+    // just entity-decoding, unlike the strip+decode sources above.
+    const title    = decodeHTMLEntities(get(/<title>([\s\S]*?)<\/title>/)).replace(/\s+/g, ' ').trim();
+    const summary  = truncateWithEllipsis(decodeHTMLEntities(get(/<summary>([\s\S]*?)<\/summary>/)).replace(/\s+/g, ' ').trim(), 500);
     const published = get(/<published>(.*?)<\/published>/);
     const link     = `https://arxiv.org/abs/${id}`;
     const authors  = [...s.matchAll(/<name>(.*?)<\/name>/g)].map(a => a[1]).slice(0, 3).join(', ');
@@ -2797,14 +2868,18 @@ function parseRSSItems(xml) {
       const r = new RegExp(`<${tag}[^>]*>\\s*(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?\\s*</${tag}>`, 'i');
       return blk.match(r)?.[1] || '';
     };
-    // decodeHTMLEntities last, after the tag strip — feeds routinely entity-
-    // escape titles/descriptions (WordPress/RSS is close to universal about
-    // this: &#8217; for ', &amp; for &, &#8220;/&#8221; for curly quotes),
-    // and without this every one of those leaked through to the user
-    // literally — confirmed live across techcrunch, hashnode, theverge,
-    // mittr, venturebeat, infoq, and more simultaneously, since they all
-    // route through this one shared field() helper.
-    const field = (tag) => decodeHTMLEntities(rawField(tag).replace(/<[^>]+>/g, '')).trim();
+    // decodeHTMLEntities after the tag strip — feeds routinely entity-escape
+    // titles/descriptions (WordPress/RSS is close to universal about this:
+    // &#8217; for ', &amp; for &, &#8220;/&#8221; for curly quotes), and
+    // without this every one of those leaked through to the user literally —
+    // confirmed live across techcrunch, hashnode, theverge, mittr,
+    // venturebeat, infoq, and more simultaneously, since they all route
+    // through this one shared field() helper. stripAndDecodeHTML also runs a
+    // second strip pass after decoding, for the rarer case of a real tag
+    // itself being entity-escaped as literal text ("the &lt;iframe&gt; tag")
+    // inside otherwise-genuine markup — invisible to a single strip-then-
+    // decode pass since nothing matches a tag pattern until after decoding.
+    const field = (tag) => stripAndDecodeHTML(rawField(tag));
     // Atom <link href="..."/> vs RSS <link>url</link>
     const link = field('link') || (blk.match(/<link[^>]+href="([^"]+)"/) || [])[1] || '';
     const title = field('title');
@@ -2958,7 +3033,7 @@ async function fetchIndeedJobs(keyword) {
       id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
       authorId:    'indeed_jobs',
       groupId:     'ext_indeed',
-      content:     decodeHTMLEntities((j.description || j.company_name || '').replace(/<[^>]+>/g,' ')).slice(0,400),
+      content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || j.company_name || ''), 400),
       title:       j.title,
       source:      'indeed', sourceLabel: 'Indeed',
       sourceUrl:   j.url,
@@ -3543,7 +3618,7 @@ async function fetchRemoteOKJobs(keyword) {
         id:          `remoteok_${j.id}`,
         authorId:    'remoteok_jobs',
         groupId:     'ext_remoteok',
-        content:     decodeHTMLEntities((j.description || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 400),
+        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), 400),
         title:       j.position,
         source:      'remoteok', sourceLabel: 'Remote OK',
         sourceUrl:   j.url || j.apply_url,
@@ -3614,8 +3689,8 @@ async function fetchUSAJobsByKeyword(keyword) {
           id:          `usajobs_${it.MatchedObjectId}`,
           authorId:    'usajobs_jobs',
           groupId:     'ext_usajobs',
-          content:     (d.UserArea?.Details?.JobSummary || d.QualificationSummary || d.PositionTitle || '')
-                         .replace(/\s+/g, ' ').trim().slice(0, 400),
+          content:     truncateWithEllipsis((d.UserArea?.Details?.JobSummary || d.QualificationSummary || d.PositionTitle || '')
+                         .replace(/\s+/g, ' ').trim(), 400),
           title:       d.PositionTitle,
           source:      'usajobs', sourceLabel: 'USAJobs',
           sourceUrl:   d.PositionURI || 'https://www.usajobs.gov',
@@ -3785,7 +3860,7 @@ async function fetchBlueskyByKeyword(keyword) {
   if (cached) return cached;
   // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFconnect/1.0 which bsky rate-limits)
   const mapPost = (p) => {
-    const text   = (p.record?.text || '').slice(0, 500);
+    const text   = truncateWithEllipsis(p.record?.text || '', 500);
     const handle = p.author?.handle || p.author?.did || 'unknown';
     // Bluesky (AT Protocol) video posts stream via HLS — embed.video#view
     // gives a .m3u8 playlist plus a thumbnail, and they always share the
@@ -10723,15 +10798,19 @@ async function handleFeedRequest(req, res) {
     const dbPosts = dbRows.map(p => mapExternalPost(p, sourceFilter));
     if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
 
-    // Rotate + circular-reslice instead of filterUnseen-then-flat-slice —
-    // see the multi-source/source-tab branches below for why (thin supply
-    // was hard-stopping scroll instead of ever wrapping).
+    // Rotate + circular-reslice, same as the multi-source/source-tab
+    // branches below — plus the same filterUnseen those now also apply
+    // (rotateForUser's offset is otherwise fixed per user+pool+seed, so a
+    // plain re-navigation to this tab with no fresh refreshSeed replayed
+    // the exact same page every time). filterUnseen's own fallback to the
+    // unfiltered pool once everything's seen is what keeps this from
+    // hard-stopping scroll on thin supply, not skipping the filter.
     const pool = sortFeedBatch([...livePosts, ...dbPosts], `connected-social-${sourceFilter}`, {
       limit: Math.max(feedLimit * 3, 500),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
-    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
     const connectedPageRows = sliceCircular(rotated, 0, feedLimit);
     markPostsSeen(req.user.id, connectedPageRows);
     return res.json({
@@ -10755,7 +10834,13 @@ async function handleFeedRequest(req, res) {
     // shut out of the row limit entirely — live-tested a 3-source selection
     // that came back with one source at zero posts and another over 80%).
     const pool = await getFilteredFeedPool(sourcesParam, sortMode, timeRange);
-    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    // rotateForUser's offset is fixed per (userId, pool, seed) — see its own
+    // comment — so without a fresh refreshSeed (only sent on an explicit
+    // refresh, never on a plain re-navigation to this tab) every visit here
+    // read the exact same slice of the exact same rotation: identical posts,
+    // every time, with no per-request variation at all to break it up the
+    // way the default aggregate view's filterUnseen already does.
+    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
     const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, p.source));
     markPostsSeen(req.user.id, multiSourcePageRows);
     return res.json({
@@ -10778,7 +10863,8 @@ async function handleFeedRequest(req, res) {
     // comment for why this is a shared, cached pool rather than a
     // live-rebuilt one.
     const pool = await getFilteredFeedPool(sourceFilter, sortMode, timeRange);
-    const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+    // Same fixed-rotation gap as the multi-source branch above.
+    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
     const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     markPostsSeen(req.user.id, sourceTabPageRows);
 
@@ -11612,7 +11698,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = children.slice(0, 12).map(c => ({
         id:      `${c.id}`,
         author:  c.author || 'anon',
-        body:    decodeHTMLEntities((c.text || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    truncateWithEllipsis(stripAndDecodeHTML(c.text || ''), 500),
         score:   c.points || 0,
         created: c.created_at,
       }));
@@ -11630,7 +11716,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (Array.isArray(data) ? data : []).slice(0, 12).map(c => ({
         id:      `${c.id_code}`,
         author:  c.user?.username || 'anonymous',
-        body:    decodeHTMLEntities((c.body_html || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    truncateWithEllipsis(stripAndDecodeHTML(c.body_html || ''), 500),
         score:   c.positive_reactions_count || 0,
         created: c.created_at,
       }));
@@ -11689,7 +11775,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (data?.items || []).slice(0, 8).map(a => ({
         id:      `${a.answer_id}`,
         author:  a.owner?.display_name || 'anonymous',
-        body:    decodeHTMLEntities((a.body || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 500),
+        body:    truncateWithEllipsis(stripAndDecodeHTML(a.body || ''), 500),
         score:   a.score || 0,
         created: normalizeTimestamp(a.creation_date),
         url:     a.link,
@@ -11716,7 +11802,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const replies = (data?.thread?.replies || []).flatMap(r => {
         const top = r.post;
         if (!top?.record?.text) return [];
-        return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: top.record.text.slice(0, 400), score: top.likeCount || 0, created: top.record.createdAt }];
+        return [{ id: top.cid?.slice(-12) || `r_${Date.now()}`, author: `@${top.author?.handle || 'unknown'}`, body: truncateWithEllipsis(top.record.text, 400), score: top.likeCount || 0, created: top.record.createdAt }];
       }).slice(0, 12);
       return res.json({ comments: replies, source: 'bluesky', live: true });
     } catch {
@@ -11737,7 +11823,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       const comments = (data?.descendants || []).slice(0, 12).map(s => ({
         id:      s.id,
         author:  `@${s.account?.acct || 'unknown'}`,
-        body:    decodeHTMLEntities((s.content || '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 400),
+        body:    truncateWithEllipsis(stripAndDecodeHTML(s.content || ''), 400),
         score:   s.favourites_count || 0,
         created: s.created_at,
         url:     s.url,
