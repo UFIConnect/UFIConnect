@@ -649,6 +649,20 @@ input, textarea, select { font-family: inherit; }
   .sidebar { display: none; }
   .main { padding: 16px 12px; padding-bottom: 76px; }
 
+  /* Mobile browsers (iOS Safari, and Chromium's own mobile emulation) auto-
+     zoom the page when a focused input's font-size is under 16px — .9rem
+     (14.4px) on .form-input/.form-textarea/.form-select was tripping this
+     on every register/login/settings/comment field. That zoom doesn't reset
+     itself after the input blurs or the user navigates away: confirmed live
+     that window.innerWidth/innerHeight stayed inflated by the same ~1.21x
+     factor site-wide afterward, which is exactly what pushed the fixed
+     bottom nav's rect below the real visible viewport and made it
+     unclickable. 16px is the documented minimum that avoids the browser
+     ever triggering the zoom in the first place.  */
+  .form-input, .form-textarea, .form-select, input, textarea, select {
+    font-size: 16px;
+  }
+
   /* Bottom tab bar */
   .bottom-nav {
     display: flex;
