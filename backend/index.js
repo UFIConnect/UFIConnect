@@ -7256,14 +7256,25 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
 ]);
 
-// Feed tabs that gate content behind an OAuth token (pure social APIs with no public fallback)
+// Feed tabs that ALSO support a live, per-user connected-account fetch when
+// selected as a single source filter (see the FEED_SOCIAL_TABS branch
+// further down) — that personal-OAuth path is unrelated to whether these
+// platforms join the general aggregate pool, so this set is kept separate
+// from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
-// Every source with a real public aggregate fetcher (SOURCE_CONFIG), minus
-// the OAuth-gated FEED_SOCIAL_TABS ones — the canonical "everything" list
-// for the unfiltered newest-sort cursor feed (see getCursorFeedPage) and
-// any other caller that needs "every real Feed-tab source" without
-// hand-maintaining a separate copy of SOURCE_CONFIG's key list.
-const AGGREGATE_FEED_SOURCES = Object.keys(SOURCE_CONFIG).filter(k => !FEED_SOCIAL_TABS.has(k));
+// Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
+// canonical "everything" list for the unfiltered newest-sort cursor feed
+// (see getCursorFeedPage) and any other caller that needs "every real
+// Feed-tab source" without hand-maintaining a separate copy of
+// SOURCE_CONFIG's key list. Used to exclude twitter/linkedin/instagram/
+// facebook on the theory they were pure OAuth-only with no public fallback
+// — no longer true (see SOURCE_CONFIG: they're real app-level fetchers now,
+// just idling at 0 posts same as any source with a quiet cycle until an app
+// bearer token is configured), and excluding them meant they'd stay
+// permanently confined to the single-source-tab Following view even once a
+// token WAS set, never joining sort/rank or the composition cap like every
+// other source does.
+const AGGREGATE_FEED_SOURCES = Object.keys(SOURCE_CONFIG);
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
@@ -8868,18 +8879,18 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       `id !~* '^govt_g[0-9]+$'`,
     ];
     const params = [];
-    // This is the one shared query behind every "true mix" surface (the main
-    // Feed's default aggregate view and /feed/videos) — Twitter/LinkedIn/
-    // Instagram/Facebook content belongs exclusively in Following (see
-    // CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts; this used to
-    // live mixed into the main feed as a live per-request block ahead of
-    // everything else, which is exactly what broke true mix for anyone with
-    // a connected account). They currently never reach this table anyway
-    // since no app-level public token is configured (see SOURCE_CONFIG), but
-    // excluding them here explicitly means true mix stays correct even if
-    // one gets added later, instead of relying on that absence by accident.
-    params.push([...FEED_SOCIAL_TABS]);
-    clauses.push(`NOT (source = ANY($${params.length}::text[]))`);
+    // This used to exclude Twitter/LinkedIn/Instagram/Facebook outright,
+    // conflating two different things: a *per-user live* fetch of a
+    // member's own connected account (still correctly confined to Following
+    // only — see CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts,
+    // never persisted here, and mixing that live per-request block into the
+    // main feed was the real historical bug that broke true mix for anyone
+    // with a connected account), versus the *shared, cached* app-level
+    // fetcher these platforms also have now (see SOURCE_CONFIG) — the same
+    // architecture as every other source, gated only by whether an app
+    // bearer token is configured. Any row that actually lands in this table
+    // under source='twitter' etc. can only have come from that second,
+    // legitimate path, so there's no longer a reason to filter it out here.
     if (Array.isArray(source) && source.length) {
       params.push(source);
       clauses.push(`source = ANY($${params.length}::text[])`);
