@@ -13898,8 +13898,11 @@ async function fetchRemoteOKOpportunities(role) {
   try {
     const posts = await fetchRemoteOKJobs(query);
     // sourceUrl is `j.url || j.apply_url` upstream — both can be missing on
-    // a malformed listing, same accuracy bar as Remotive/Muse below.
-    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 20).map(p => ({
+    // a malformed listing, same accuracy bar as Remotive/Muse below. Was
+    // capped at 20 (same ceiling Remotive had before its own bump to 50) —
+    // fetchRemoteOKJobs itself already pulls up to 100 candidates, so this
+    // was throwing away real, already-fetched matches for no reason.
+    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 50).map(p => ({
       id:        `remoteok_${p.id}`,
       type:      'job',
       title:     p.title,
