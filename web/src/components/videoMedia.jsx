@@ -57,7 +57,7 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onMutedFallback, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, style }) {
   const videoRef = useRef(null);
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
@@ -67,6 +67,14 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     if (externalRef) externalRef.current = el;
   };
   const [errored, setErrored] = useState(false);
+  // The mount effect below only re-runs on [src, autoPlay] (re-attaching
+  // hls.js on every mute toggle would be wasteful) — a ref keeps its
+  // eventual play()-then callback reading the *current* desired mute state
+  // instead of whatever `muted` closed over back when the effect fired,
+  // which was stale by the time the lazy-loaded hls.js import actually
+  // resolved.
+  const mutedRef = useRef(muted);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -74,32 +82,25 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     setErrored(false);
     let hls;
     let cancelled = false;
-    // Mobile autoplay policies (iOS Safari and Android Chrome both) check
-    // muted state at the moment play() is actually called — the muted JSX
-    // attribute alone wasn't reliably enough on mobile specifically.
-    // Setting muted/defaultMuted/playsInline imperatively right before every
-    // play() call is the robust fix.
-    function primeForAutoplay() {
-      video.muted = muted;
-      video.defaultMuted = muted;
+    // Always start muted — the one autoplay policy every browser reliably
+    // allows — then reveal sound right after play() actually resolves, if
+    // the caller wants it. Replaces the old "try unmuted, catch the
+    // rejection, fall back to muted" approach: that one silently stayed
+    // muted for the rest of the session once it ever failed once (see
+    // VideoSlide's YouTube player for the same fix, and its comment on why
+    // unmuting an already-started player isn't gated by the same policy).
+    function startMutedThenReveal() {
+      video.muted = true;
+      video.defaultMuted = true;
       video.playsInline = true;
-    }
-    // If the browser blocks autoplay-with-sound, muted autoplay is allowed
-    // almost universally — falls back to that instead of never starting,
-    // and tells the caller so shared mute-button state stays in sync.
-    function playWithMutedFallback() {
-      video.play().catch(() => {
-        if (!video.muted) {
-          video.muted = true;
-          onMutedFallback?.();
-          video.play().catch(() => {});
-        }
-      });
+      video.play().then(() => {
+        if (!cancelled && !mutedRef.current) video.muted = false;
+      }).catch(() => {});
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
       video.src = src;
-      if (autoPlay) { primeForAutoplay(); playWithMutedFallback(); }
+      if (autoPlay) startMutedThenReveal();
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it
       // statically pulled it into every visitor's Feed download (~140KB
@@ -114,8 +115,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
         if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!videoRef.current) return;
-          primeForAutoplay();
-          playWithMutedFallback();
+          startMutedThenReveal();
         });
       }).catch(() => setErrored(true));
     }

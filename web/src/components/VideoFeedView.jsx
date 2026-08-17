@@ -106,6 +106,13 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const ytMountRef = useRef(null);
   const seekingRef = useRef(false);
   const progressBarRef = useRef(null);
+  // Read inside the file/hls play effect's play().then() callback instead
+  // of closing over `muted` directly — that effect deliberately excludes
+  // `muted` from its own deps (see its comment), so a stale closure would
+  // otherwise reveal whatever mute state was true back when the video last
+  // became active, not the current one.
+  const mutedRef = useRef(muted);
+  useEffect(() => { mutedRef.current = muted; }, [muted]);
   // Caption starts clamped (see the overlay below) — the video is the point
   // of this view, a wall of text over it isn't. "more" only shows up when
   // there's actually more than the clamp already reveals: a long title, or
@@ -151,38 +158,45 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
   // file/hls: play on becoming active, pause + rewind on becoming inactive
   // (leaving a video mid-scrub-progress for the next viewer would be
-  // confusing — every slide always starts fresh).
+  // confusing — every slide always starts fresh). Always starts muted, then
+  // reveals sound once play() actually resolves if the shared mute state
+  // wants it — same fix as HlsVideoPlayer's own mount effect and the
+  // YouTube player below, replacing the old try-unmuted-catch-fallback
+  // approach: that one, once blocked on any single video, permanently
+  // flipped the shared mute state for every video afterward, on every
+  // platform, for the rest of the session — confirmed live as why Bluesky
+  // (routed through this same effect via getNativeEl) kept coming up muted
+  // even when the user expected sound. Deliberately excludes `muted` from
+  // this effect's own deps — a manual toggle mid-playback is handled by the
+  // sync effect right below instead, so flipping the button doesn't restart
+  // this whole sequence on an already-playing video.
   useEffect(() => {
     if (src?.kind === 'youtube') return;
     const v = getNativeEl();
     if (!v) return;
     if (active) {
-      // Mobile Safari/Chrome's autoplay policy checks muted state at the
-      // moment play() is called, not just the JSX attribute — confirmed
-      // this was the gap on mobile specifically (desktop tolerates it).
-      // Setting both muted and defaultMuted imperatively right before
-      // play() is the reliable fix; playsInline is already set via JSX but
-      // reasserted here too since iOS is picky about it being present
-      // before playback starts, not just at mount.
-      v.muted = muted;
-      v.defaultMuted = muted;
+      v.muted = true;
+      v.defaultMuted = true;
       v.playsInline = true;
-      v.play().catch(() => {
-        // Browser blocked autoplay-with-sound (no qualifying interaction
-        // yet, or a stricter mobile policy) — muted autoplay is allowed
-        // almost universally, so fall back to that instead of the video
-        // just silently never starting. Syncs the shared mute state too, so
-        // the mute button and every subsequent slide reflect reality.
-        if (!v.muted) {
-          v.muted = true;
-          onToggleMute?.();
-          v.play().catch(() => {});
-        }
-      });
+      v.play().then(() => {
+        if (!mutedRef.current) v.muted = false;
+      }).catch(() => {});
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
     }
-  }, [active, src?.kind, getNativeEl, muted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, src?.kind, getNativeEl]);
+
+  // Keeps an already-active file/hls video's mute state in sync with manual
+  // toggles of the shared mute button — the play effect above already sets
+  // the correct state once play() resolves; this only needs to react to
+  // changes after that point.
+  useEffect(() => {
+    if (src?.kind === 'youtube') return;
+    const v = getNativeEl();
+    if (v && active) v.muted = muted;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muted]);
 
   // youtube: the real IFrame Player API — a raw <iframe src="..."> embed has
   // no programmatic control at all, so pause + a scrub tracker need this
@@ -343,7 +357,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-            onMutedFallback={onToggleMute}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
