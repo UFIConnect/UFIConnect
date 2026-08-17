@@ -492,7 +492,7 @@ export default function Onboarding() {
             )}
             <h1 className="onboarding-title">What topics interest you?</h1>
             <p className="onboarding-sub">
-              {role ? `Recommended topics for a ${role} are highlighted first.` : 'Pick as many as you like — your feed will reflect these.'}
+              {role ? `Recommended topics for ${/^[aeiou]/i.test(role) ? 'an' : 'a'} ${role} are highlighted first.` : 'Pick as many as you like — your feed will reflect these.'}
               {' '}Selecting a topic unlocks related ones below.
             </p>
 

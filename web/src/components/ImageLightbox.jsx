@@ -15,6 +15,10 @@ const OVERLAY_BTN_STYLE = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
 };
 
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
+const DOUBLE_TAP_ZOOM = 2.5;
+
 // Full-screen media viewer with next/prev navigation across every
 // image- OR video-bearing post currently on screen. Photos and videos used
 // to open into two separate, non-scrollable viewers (this one for images
@@ -51,8 +55,67 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
 
+  // Photo zoom/pan — pinch, double-tap, wheel, or the +/− buttons below all
+  // funnel into the same zoom/pan state. Scoped to plain photos only (not
+  // video posters or playable video), since that's what was actually asked
+  // for and videos already have their own play/pause/mute interactions that
+  // pinch-to-zoom would conflict with.
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const pinchRef = useRef(null); // { startDist, startZoom } while a 2-finger gesture is live
+  const panDragRef = useRef(null); // { x, y, panX, panY } while a pan/drag is live
+  const lastTapRef = useRef(0);
+
   const goNext = useCallback(() => setIndex(i => Math.min(items.length - 1, i + 1)), [items.length]);
   const goPrev = useCallback(() => setIndex(i => Math.max(0, i - 1)), []);
+
+  function resetZoom() { setZoom(1); setPan({ x: 0, y: 0 }); }
+
+  // A zoomed-in view of photo N shouldn't carry over to photo N+1.
+  useEffect(() => { resetZoom(); }, [index]);
+
+  function clampPan(z, p) {
+    // Loose heuristic bound (not measured against actual rendered image
+    // size) so a full-zoom drag can't fling the image arbitrarily far off
+    // screen — generous enough not to feel clamped during normal panning.
+    const maxOffset = z > 1 ? (z - 1) * 180 : 0;
+    return { x: Math.max(-maxOffset, Math.min(maxOffset, p.x)), y: Math.max(-maxOffset, Math.min(maxOffset, p.y)) };
+  }
+
+  function zoomBy(delta) {
+    setZoom(z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, +(z + delta).toFixed(2))));
+    setPan({ x: 0, y: 0 });
+  }
+
+  function handleImageTap(e) {
+    // Doubles as both double-click (desktop) and double-tap (mobile) —
+    // the browser fires a synthetic click after a tap either way.
+    const now = Date.now();
+    const isDouble = now - lastTapRef.current < 300;
+    lastTapRef.current = now;
+    if (!isDouble) return;
+    e.stopPropagation();
+    if (zoom > 1) resetZoom(); else { setZoom(DOUBLE_TAP_ZOOM); setPan({ x: 0, y: 0 }); }
+  }
+
+  function handleImageWheel(e) {
+    if (isVideo) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 0.3 : -0.3);
+  }
+
+  function handleImageMouseDown(e) {
+    if (isVideo || zoom <= 1) return;
+    panDragRef.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+  }
+  function handleImageMouseMove(e) {
+    if (!panDragRef.current) return;
+    const { x, y, panX, panY } = panDragRef.current;
+    setPan(clampPan(zoom, { x: panX + (e.clientX - x), y: panY + (e.clientY - y) }));
+  }
+  function handleImageMouseUp() { panDragRef.current = null; }
+
+  function touchDist(t1, t2) { return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY); }
 
   useEffect(() => {
     function handleKey(e) {
@@ -137,8 +200,39 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
 
   if (!item) return null;
 
-  function handleTouchStart(e) { touchStartX.current = e.touches[0].clientX; }
+  function handleTouchStart(e) {
+    if (!isVideo && e.touches.length === 2) {
+      pinchRef.current = { startDist: touchDist(e.touches[0], e.touches[1]), startZoom: zoom };
+      touchStartX.current = null;
+      return;
+    }
+    if (e.touches.length === 1) {
+      if (!isVideo && zoom > 1) {
+        panDragRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, panX: pan.x, panY: pan.y };
+        touchStartX.current = null;
+      } else {
+        touchStartX.current = e.touches[0].clientX;
+      }
+    }
+  }
+  function handleTouchMove(e) {
+    if (pinchRef.current && e.touches.length === 2) {
+      const scale = pinchRef.current.startZoom * (touchDist(e.touches[0], e.touches[1]) / pinchRef.current.startDist);
+      setZoom(Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, scale)));
+      return;
+    }
+    if (panDragRef.current && e.touches.length === 1) {
+      const { x, y, panX, panY } = panDragRef.current;
+      setPan(clampPan(zoom, { x: panX + (e.touches[0].clientX - x), y: panY + (e.touches[0].clientY - y) }));
+    }
+  }
   function handleTouchEnd(e) {
+    if (pinchRef.current) {
+      pinchRef.current = null;
+      if (zoom <= 1.05) resetZoom();
+      return;
+    }
+    if (panDragRef.current) { panDragRef.current = null; return; }
     if (touchStartX.current === null) return;
     const delta = e.changedTouches[0].clientX - touchStartX.current;
     touchStartX.current = null;
@@ -153,6 +247,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
       aria-label={post.title || (isVideo ? 'Video' : 'Photo')}
       onClick={onClose}
       onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       style={{
         position: 'fixed', inset: 0, zIndex: 2500,
@@ -190,6 +285,32 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{ position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE, fontSize: '1.05rem' }}
         >{muted ? '🔇' : '🔊'}</button>
+      )}
+
+      {/* Zoom controls — photos only. Pinch/double-tap/wheel all drive the
+          same zoom state; these buttons just make it discoverable. */}
+      {!isVideo && (
+        <div onClick={e => e.stopPropagation()} style={{ position: 'absolute', top: 16, left: 16, zIndex: 10, display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => zoomBy(-0.5)}
+            aria-label="Zoom out"
+            disabled={zoom <= MIN_ZOOM}
+            style={{ ...OVERLAY_BTN_STYLE, fontSize: '1.2rem', opacity: zoom <= MIN_ZOOM ? 0.4 : 1, cursor: zoom <= MIN_ZOOM ? 'default' : 'pointer' }}
+          >−</button>
+          <button
+            onClick={() => zoomBy(0.5)}
+            aria-label="Zoom in"
+            disabled={zoom >= MAX_ZOOM}
+            style={{ ...OVERLAY_BTN_STYLE, fontSize: '1.2rem', opacity: zoom >= MAX_ZOOM ? 0.4 : 1, cursor: zoom >= MAX_ZOOM ? 'default' : 'pointer' }}
+          >+</button>
+          {zoom > 1 && (
+            <button
+              onClick={resetZoom}
+              aria-label="Reset zoom"
+              style={{ ...OVERLAY_BTN_STYLE, width: 'auto', padding: '0 12px', fontSize: '.72rem', fontWeight: 700 }}
+            >{Math.round(zoom * 100)}%</button>
+          )}
+        </div>
       )}
 
       <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '92vw', maxHeight: '90vh' }}>
@@ -236,12 +357,27 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             </div>
           )
         ) : (
-          <img
-            key={item.url}
-            src={item.url}
-            alt={post.title || ''}
-            style={{ maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', borderRadius: 10, display: 'block' }}
-          />
+          <div style={{ maxWidth: '92vw', maxHeight: '72vh', overflow: 'hidden', borderRadius: 10 }}>
+            <img
+              key={item.url}
+              src={item.url}
+              alt={post.title || ''}
+              draggable={false}
+              onClick={handleImageTap}
+              onWheel={handleImageWheel}
+              onMouseDown={handleImageMouseDown}
+              onMouseMove={handleImageMouseMove}
+              onMouseUp={handleImageMouseUp}
+              onMouseLeave={handleImageMouseUp}
+              style={{
+                maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', display: 'block',
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transition: pinchRef.current || panDragRef.current ? 'none' : 'transform .15s ease',
+                cursor: zoom > 1 ? 'grab' : 'zoom-in',
+                touchAction: zoom > 1 ? 'none' : 'pan-y',
+              }}
+            />
+          </div>
         )}
         <div style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
           {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}>{post.title}</div>}
