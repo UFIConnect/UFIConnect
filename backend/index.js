@@ -3490,10 +3490,24 @@ async function fetchRemoteOKJobs(keyword) {
     // on every single fetch, forever, with no visible error. Their public
     // JSON API is still live and includes real per-job apply URLs.
     const jobs = await fetchJSON('https://remoteok.com/api', { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
-    const kw = keyword.toLowerCase();
+    // Multi-word queries (role fallbacks like "software engineer developer",
+    // "growth marketing manager") were matched as one literal phrase — real
+    // postings almost never contain that exact run of words back to back, so
+    // a properly onboarded user (whose query is always multi-word) matched
+    // *fewer* RemoteOK listings than an account with no role set at all
+    // (whose single-word "developer" fallback matched broadly). Confirmed
+    // live: 0 RemoteOK results for "Engineer / Developer", 12 for the
+    // no-role fallback. Matching on any individual significant word instead
+    // of the whole phrase fixes the inversion — final relevance still comes
+    // from the real scoring pass in /opportunities, this is just the pool.
+    const kwWords = keyword.toLowerCase().split(/\s+/).filter(w => w.length > 2);
     const posts = (Array.isArray(jobs) ? jobs : [])
       .filter(j => j?.id && j.position)
-      .filter(j => !kw || (j.position || '').toLowerCase().includes(kw) || (j.tags || []).some(t => (t || '').toLowerCase().includes(kw)) || (j.description || '').toLowerCase().includes(kw))
+      .filter(j => !kwWords.length || kwWords.some(w =>
+        (j.position || '').toLowerCase().includes(w) ||
+        (j.tags || []).some(t => (t || '').toLowerCase().includes(w)) ||
+        (j.description || '').toLowerCase().includes(w)
+      ))
       .slice(0, 100)
       .map(j => ({
         id:          `remoteok_${j.id}`,
@@ -13779,23 +13793,31 @@ async function fetchRemotiveJobs(category) {
   if (cached && Date.now() - cached.fetchedAt < REMOTIVE_TTL) return cached.jobs;
   try {
     const data = await fetchJSON(
-      `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=20`
+      // Was capped at 20 per category — Remotive's API supports far more per
+      // request, and Engineer/Developer alone spans 2 categories, so this
+      // was one of the tighter ceilings on total supply.
+      `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=50`
     );
-    const jobs = (data?.jobs || []).map((j) => ({
-      id:        `remotive_${j.id}`,
-      type:      'job',
-      title:     j.title,
-      org:       j.company_name || 'Unknown',
-      location:  j.candidate_required_location || 'Remote',
-      pay:       j.salary || '',
-      tags:      (j.tags || []).slice(0, 5),
-      source:    'Remotive',
-      sourceUrl: j.url || 'https://remotive.com',
-      posted:    j.publication_date || new Date().toISOString(),
-      remote:    true,
-      isLive:    true,
-      logo:      j.company_logo || null,
-    }));
+    const jobs = (data?.jobs || [])
+      // A listing with no real per-posting URL used to fall back to the bare
+      // remotive.com homepage — a "View" link that doesn't actually lead to
+      // the job it claims to, which isn't a listing worth showing at all.
+      .filter(j => j.url && /^https?:\/\//i.test(j.url))
+      .map((j) => ({
+        id:        `remotive_${j.id}`,
+        type:      'job',
+        title:     j.title,
+        org:       j.company_name || 'Unknown',
+        location:  j.candidate_required_location || 'Remote',
+        pay:       j.salary || '',
+        tags:      (j.tags || []).slice(0, 5),
+        source:    'Remotive',
+        sourceUrl: j.url,
+        posted:    j.publication_date || new Date().toISOString(),
+        remote:    true,
+        isLive:    true,
+        logo:      j.company_logo || null,
+      }));
     remotiveCache.set(category, { jobs, fetchedAt: Date.now() });
     return jobs;
   } catch (e) {
@@ -13839,21 +13861,27 @@ async function fetchMuseJobs(role, experience) {
   try {
     const url  = `https://www.themuse.com/api/public/jobs?category=${encodeURIComponent(category)}&level=${encodeURIComponent(level)}&page=0&descending=true`;
     const data = await fetchJSON(url);
-    const jobs = (data?.results || []).map((j) => ({
-      id:        `muse_${j.id}`,
-      type:      'job',
-      title:     j.name || 'Open Role',
-      org:       j.company?.name || 'Company',
-      location:  (j.locations || []).map(l => l.name).join(', ') || 'Multiple Locations',
-      pay:       '',
-      tags:      (j.categories || []).map(c => c.name).slice(0, 3),
-      source:    'The Muse',
-      sourceUrl: j.refs?.landing_page || 'https://www.themuse.com/jobs',
-      posted:    j.publication_date || new Date().toISOString(),
-      remote:    (j.locations || []).some(l => l.name.toLowerCase().includes('remote')),
-      isLive:    true,
-      logo:      j.company?.refs?.landing_page ? null : null,
-    }));
+    const jobs = (data?.results || [])
+      // Same reasoning as Remotive: a fallback to the generic /jobs listing
+      // page isn't a link to the posting it's presented alongside, so a
+      // result with no real landing_page is excluded rather than shown with
+      // a link that doesn't actually go where it claims to.
+      .filter(j => j.refs?.landing_page && /^https?:\/\//i.test(j.refs.landing_page))
+      .map((j) => ({
+        id:        `muse_${j.id}`,
+        type:      'job',
+        title:     j.name || 'Open Role',
+        org:       j.company?.name || 'Company',
+        location:  (j.locations || []).map(l => l.name).join(', ') || 'Multiple Locations',
+        pay:       '',
+        tags:      (j.categories || []).map(c => c.name).slice(0, 3),
+        source:    'The Muse',
+        sourceUrl: j.refs.landing_page,
+        posted:    j.publication_date || new Date().toISOString(),
+        remote:    (j.locations || []).some(l => l.name.toLowerCase().includes('remote')),
+        isLive:    true,
+        logo:      j.company?.refs?.landing_page ? null : null,
+      }));
     museCache.set(cacheKey, { jobs, fetchedAt: Date.now() });
     return jobs;
   } catch (e) {
@@ -13869,7 +13897,9 @@ async function fetchRemoteOKOpportunities(role) {
   const query = ROLE_JOB_QUERIES[role] || role || 'developer';
   try {
     const posts = await fetchRemoteOKJobs(query);
-    return posts.slice(0, 20).map(p => ({
+    // sourceUrl is `j.url || j.apply_url` upstream — both can be missing on
+    // a malformed listing, same accuracy bar as Remotive/Muse below.
+    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 20).map(p => ({
       id:        `remoteok_${p.id}`,
       type:      'job',
       title:     p.title,
@@ -13889,6 +13919,28 @@ async function fetchRemoteOKOpportunities(role) {
   }
 }
 
+// Baseline legitimacy bar every live job listing has to clear regardless of
+// source, on top of each fetcher's own per-source accuracy filtering above
+// (real per-posting URL, not a generic homepage fallback). A listing with no
+// real title, no identifiable employer, or a placeholder org name our own
+// fallback logic invented (Remotive's "Unknown", Muse/RemoteOK's "Company")
+// isn't something a user can act on — showing it anyway just erodes trust in
+// every other listing sitting next to it.
+const JOB_PLACEHOLDER_ORGS = new Set(['unknown', 'company', 'n/a', 'confidential']);
+
+// Relative platform trust, used as a small ranking nudge in /opportunities'
+// match scoring (see "Platform legitimacy" below) — not a filter, every
+// source here already cleared isLegitimateJobListing. Remotive and The Muse
+// both review submissions before publishing; RemoteOK is a more open,
+// lower-friction marketplace that also carries self-serve/paid listings.
+const JOB_SOURCE_LEGITIMACY = { 'Remotive': 2, 'The Muse': 2, 'Remote OK': 1 };
+function isLegitimateJobListing(j) {
+  if (!j.title || j.title.trim().length < 3) return false;
+  if (!j.org || JOB_PLACEHOLDER_ORGS.has(j.org.trim().toLowerCase())) return false;
+  if (!j.sourceUrl || !/^https?:\/\//i.test(j.sourceUrl)) return false;
+  return true;
+}
+
 async function getLiveJobs(role, experience) {
   const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
   const uniqCats = [...new Set(cats)];
@@ -13899,6 +13951,7 @@ async function getLiveJobs(role, experience) {
   ]);
   const seen = new Set();
   return [...remotiveResults, ...museResults, ...remoteOkResults].filter((j) => {
+    if (!isLegitimateJobListing(j)) return false;
     if (seen.has(j.id)) return false;
     seen.add(j.id);
     return true;
@@ -14139,6 +14192,15 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // user's Cloudflare-detected country. Never claims a match when a
     // listing has no location info at all.
     if (jobMatchesUserLocation(o.location, userCountry)) { score += 2; reasons.push('Near you'); }
+
+    // 8. Platform legitimacy — every live listing already cleared the hard
+    // bar above (real title, real employer, a genuine per-posting URL), but
+    // the three sources aren't equally curated: Remotive and The Muse vet
+    // submissions before they go live, RemoteOK is a lower-friction open
+    // marketplace that also carries self-serve/paid listings with less
+    // review. A small nudge, not a filter — RemoteOK listings still show,
+    // they just don't out-rank an equally-relevant Remotive/Muse one.
+    score += JOB_SOURCE_LEGITIMACY[o.source] || 0;
 
     return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
   });
