@@ -22,9 +22,19 @@ export default defineConfig({
     chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react':  ['react', 'react-dom'],
-          'vendor-router': ['react-router-dom'],
+        // The array form (name: [package, ...]) silently failed to actually
+        // isolate react/react-dom — confirmed in the built output:
+        // vendor-react-*.js was a 37-byte stub re-exporting vendor-router,
+        // while index.js (255KB) had react's real code (createRoot,
+        // useState, etc.) bundled straight into it. Matching by resolved
+        // module path instead reliably catches every module in each
+        // package's dependency graph (including transitive ones like
+        // scheduler, which react-dom depends on but the array form's exact
+        // package-name matching never accounted for).
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('react-router')) return 'vendor-router';
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'vendor-react';
         },
       },
     },
