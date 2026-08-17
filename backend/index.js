@@ -10624,12 +10624,16 @@ async function handleFeedRequest(req, res) {
       const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry), seenIds);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
-      // Only the internal posts that actually survived the feedLimit slice
-      // above (it's [...internal, ...externalPosts] sliced, so that's
-      // always internal's own first N) — marking more than what was truly
-      // shown would hide posts from a later page they never actually saw.
+      // Only what actually survived the feedLimit slice above (it's
+      // [...internal, ...externalPosts] sliced, so internal keeps its own
+      // first N and externalPosts only keeps whatever budget internal left
+      // behind) — marking more than what was truly shown would hide posts
+      // from a later page they never actually saw. externalPosts itself is
+      // always exactly feedLimit long (sliceCircular), so without this cap
+      // every request here over-marked min(internal.length, feedLimit) real
+      // posts as seen despite them being truncated out of finalPosts.
       markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
-      markPostsSeen(req.user.id, externalPosts);
+      markPostsSeen(req.user.id, externalPosts.slice(0, Math.max(0, feedLimit - internal.length)));
       return res.json({
         posts: finalPosts,
         sort: sortMode,
@@ -11004,9 +11008,13 @@ async function handleFeedRequest(req, res) {
 
   // Same "only what actually survived the feedLimit slice" precision as the
   // snapshot-read branch above — internal is first in the concat that built
-  // responsePosts, so its own first N is exactly what was shown.
+  // responsePosts, so its own first N is exactly what was shown, and
+  // personalizedExternal only keeps whatever budget internal left behind
+  // (plain `.slice(0, feedLimit)` here over-marked min(internal.length,
+  // feedLimit) posts that got truncated out of responsePosts and were never
+  // actually shown).
   markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
-  markPostsSeen(req.user.id, personalizedExternal.slice(0, feedLimit));
+  markPostsSeen(req.user.id, personalizedExternal.slice(0, Math.max(0, feedLimit - internal.length)));
   res.json({
     posts: responsePosts,
     sort: sortMode,
