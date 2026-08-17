@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer } from './videoMedia';
+import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer } from './videoMedia';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
 // refresh/mute) — kept as one consistent control language for every video
@@ -25,10 +25,11 @@ const DOUBLE_TAP_ZOOM = 2.5;
 // only, a single-post VideoModal for videos) — browsing meant closing back
 // out to the list between every photo and every video. Now both media
 // types share one scrollable rail, in the same order they appear in the
-// list. Video source resolution mirrors what VideoModal used: Bluesky's
-// HLS playlist, a direct video file, or (for sources that only ever hand
-// back a thumbnail — no scrapable playable URL) a static poster with a
-// play badge rather than silently rendering nothing.
+// list. Video source resolution mirrors VideoFeedView's resolveVideoSource:
+// YouTube (via the real IFrame Player API, same as the swipe feed), Bluesky's
+// HLS playlist, a direct video file, or (for sources that hand back neither
+// a YouTube ID nor a scrapable playable URL) a static poster with a link out
+// to watch on the original source rather than silently rendering nothing.
 export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEnd }) {
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
   const touchStartX = useRef(null);
@@ -54,6 +55,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const [paused, setPaused] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
+  const ytMountRef = useRef(null);
+  const ytPlayerRef = useRef(null);
 
   // Photo zoom/pan — pinch, double-tap, wheel, or the +/− buttons below all
   // funnel into the same zoom/pan state. Scoped to plain photos only (not
@@ -149,9 +152,16 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const item = items[index];
   const post = item?.post || {};
   const isVideo = item?.type === 'video';
-  const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
-  const directVideoUrl = isVideo && !playlistUrl && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
-  const playableVideo = !!(playlistUrl || directVideoUrl);
+  // Same precedence as VideoFeedView's resolveVideoSource — a dedicated
+  // YouTube post carries embedId (or a recoverable sourceUrl); any other
+  // source's article can embed a real YouTube video too, in which case
+  // mediaUrl itself is the watch URL.
+  const youtubeId = isVideo
+    ? (post.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : extractYouTubeId(post.mediaUrl))
+    : null;
+  const playlistUrl = isVideo && !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
+  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
+  const playableVideo = !!(youtubeId || playlistUrl || directVideoUrl);
 
   const getNativeEl = useCallback(
     () => (playlistUrl ? hlsVideoRef.current : fileVideoRef.current),
@@ -192,7 +202,61 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   // video's state.
   useEffect(() => { setPaused(false); }, [index]);
 
+  // youtube: the real IFrame Player API, same as VideoFeedView's swipe
+  // feed — a raw <iframe src="..."> embed has no programmatic control at
+  // all, so pause needs this instead. Cross-origin iframe autoplay-with-
+  // sound is far more likely to get blocked than a same-origin <video>, and
+  // the IFrame Player API's play() has no promise to reject in the first
+  // place — nothing to catch and fall back on — so this always starts muted
+  // (reliably allowed) and unMutes right after onReady if sound was wanted,
+  // same reasoning as HlsVideoPlayer's startMutedThenReveal above.
+  useEffect(() => {
+    if (!youtubeId) return;
+    let cancelled = false;
+    const wantsSound = !muted;
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !ytMountRef.current) return;
+      const player = new YT.Player(ytMountRef.current, {
+        videoId: youtubeId,
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0 },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
+            if (wantsSound) e.target.unMute();
+          },
+          onStateChange: (e) => {
+            if (cancelled) return;
+            setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
+          },
+        },
+      });
+    });
+    return () => {
+      cancelled = true;
+      try { ytPlayerRef.current?.destroy(); } catch {}
+      ytPlayerRef.current = null;
+    };
+    // Deliberately excludes `muted` — same reasoning as the direct-file
+    // effect above; the mute button toggles the live player via the effect
+    // below instead of re-mounting a fresh embed on every press.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [youtubeId]);
+
+  // Keep an already-mounted YouTube player's mute state in sync with the
+  // mute button — the mount effect above only sets it once, at onReady.
+  useEffect(() => {
+    if (!youtubeId || !ytPlayerRef.current) return;
+    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+  }, [muted, youtubeId]);
+
   function togglePlay() {
+    if (youtubeId) {
+      const p = ytPlayerRef.current;
+      if (!p) return;
+      if (paused) p.playVideo(); else p.pauseVideo();
+      return;
+    }
     const v = getNativeEl();
     if (!v) return;
     if (v.paused) v.play().catch(() => {}); else v.pause();
@@ -337,6 +401,24 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                 onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
                 style={{ maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
+              {paused && (
+                <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
+                  position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
+                  borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
+                }}>▶</button>
+              )}
+            </div>
+          ) : youtubeId ? (
+            <div style={{ position: 'relative', width: 'min(92vw, 640px)', aspectRatio: '16 / 9', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
+              {/* Cross-origin iframe — the parent page can't see clicks that
+                  land inside it, so pointer-events are disabled on the mount
+                  itself and this wrapper's onClick drives play/pause instead
+                  (same technique VideoFeedView's YouTube slide uses). */}
+              <div onClick={e => { e.stopPropagation(); togglePlay(); }} style={{ position: 'absolute', inset: 0 }}>
+                <div key={youtubeId} ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
+              </div>
               {paused && (
                 <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
                   position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
