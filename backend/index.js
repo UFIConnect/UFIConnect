@@ -11853,7 +11853,11 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_reddit_${redditId}`, async () => {
         const url  = `https://www.reddit.com/comments/${redditId.replace('t3_','')}.json?limit=100&depth=2`;
-        const data = await fetchJSON(url);
+        // Was a bare fetchJSON(url) with no Reddit-specific headers — Reddit
+        // is notably strict about anonymous/cloud-IP requests without its
+        // recognized UA (see REDDIT_HEADERS' own comment on this), unlike
+        // every other Reddit fetch in this file which already sends it.
+        const data = await fetchJSON(url, REDDIT_HEADERS);
         const listing = Array.isArray(data) ? data[1]?.data?.children : [];
         return (listing || [])
           .filter(c => c.kind === 't1' && c.data?.body && c.data.body !== '[deleted]')
@@ -11866,7 +11870,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
           }));
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'reddit', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('Reddit comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'reddit', live: false });
     }
   }
@@ -11887,7 +11892,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         }));
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'hackernews', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('HN comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'hackernews', live: false });
     }
   }
@@ -11907,7 +11913,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         }));
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'devto', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('DEV.to comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'devto', live: false });
     }
   }
@@ -11949,7 +11956,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       }, offset, limit);
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'github', live: false });
       return res.json({ comments, hasMore, total, source: 'github', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('GitHub comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'github', live: false });
     }
   }
@@ -11972,7 +11980,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         }));
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'stackoverflow', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('Stack Overflow comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'stackoverflow', live: false });
     }
   }
@@ -11999,7 +12008,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       }, offset, limit);
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
       return res.json({ comments, hasMore, total, source: 'bluesky', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('Bluesky comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'bluesky', live: false });
     }
   }
@@ -12026,7 +12036,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       }, offset, limit);
       if (!total && !comments.length) return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
       return res.json({ comments, hasMore, total, source: 'mastodon', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('Mastodon comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'mastodon', live: false });
     }
   }
@@ -12047,7 +12058,8 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         }));
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'lobsters', live: true });
-    } catch {
+    } catch (e) {
+      console.warn('Lobsters comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'lobsters', live: false });
     }
   }

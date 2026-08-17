@@ -568,7 +568,7 @@ function CommentsSheet({ post, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: '100%', maxWidth: 560, maxHeight: '70dvh', background: 'var(--surface, #16181c)',
+          width: '100%', maxWidth: 560, maxHeight: '70dvh', background: '#fff',
           borderRadius: '18px 18px 0 0', display: 'flex', flexDirection: 'column',
           animation: 'commentsSheetUp .22s ease-out',
         }}
@@ -576,15 +576,15 @@ function CommentsSheet({ post, onClose }) {
         <style>{'@keyframes commentsSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }'}</style>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '14px 16px', borderBottom: '1px solid rgba(255,255,255,.1)', flexShrink: 0,
+          padding: '14px 16px', borderBottom: '1px solid rgba(0,0,0,.1)', flexShrink: 0,
         }}>
-          <div style={{ color: '#fff', fontWeight: 700, fontSize: '.92rem' }}>
+          <div style={{ color: '#000', fontWeight: 700, fontSize: '.92rem' }}>
             Comments {comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
           <button
             onClick={onClose}
             aria-label="Close comments"
-            style={{ all: 'unset', color: 'rgba(255,255,255,.7)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
+            style={{ all: 'unset', color: 'rgba(0,0,0,.55)', fontSize: '1.3rem', cursor: 'pointer', lineHeight: 1, padding: 4 }}
           >×</button>
         </div>
         <div style={{ overflowY: 'auto', padding: '10px 16px 20px' }}>
@@ -594,10 +594,10 @@ function CommentsSheet({ post, onClose }) {
             </div>
           )}
           {!loading && comments?.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '20px 8px', color: 'rgba(255,255,255,.6)', fontSize: '.85rem' }}>
+            <div style={{ textAlign: 'center', padding: '20px 8px', color: 'rgba(0,0,0,.55)', fontSize: '.85rem' }}>
               {live === false && post.sourceUrl
                 ? <>No comments loaded from {post.sourceLabel || post.source} yet.<br />
-                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#fff', fontWeight: 700 }}>
+                    <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#000', fontWeight: 700 }}>
                       View the original post ↗
                     </a>
                   </>
@@ -608,8 +608,8 @@ function CommentsSheet({ post, onClose }) {
             <div key={c.id} style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
               <div style={{
                 width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                background: 'rgba(255,255,255,.12)', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', fontSize: '.75rem', fontWeight: 700, color: '#fff',
+                background: 'rgba(0,0,0,.08)', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', fontSize: '.75rem', fontWeight: 700, color: '#000',
               }}>
                 {(c.author?.replace(/^(?:u\/|@)/, '') || '?')[0]?.toUpperCase()}
               </div>

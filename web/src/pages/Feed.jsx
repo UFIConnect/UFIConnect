@@ -767,17 +767,18 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
 
       <PostText text={post.content} />
 
-      {isTruncated && (
-        // In-app first, not straight off-site — lands on PostDetail, which
-        // shows this same post's full stored content plus its attachment
-        // (image/video/YouTube embed, whichever the source carries) in one
-        // place, the same way regardless of platform. Its own "Open on
-        // {source} ↗" link is still there for whoever wants the actual
-        // original article beyond what we keep.
-        <Link to={`/p/${encodeURIComponent(post.id)}`}
+      {isTruncated && post.sourceUrl && (
+        // External, not in-app — our own copy is already cut down to
+        // ~400-600 chars at ingestion (see trimPostContent/truncateWithEllipsis
+        // server-side), so PostDetail has nothing more to show than what's
+        // already sitting right here in the card; it's the exact same
+        // string. The genuinely complete article only exists on the
+        // original source. Confirmed live: a Phoronix post's card content
+        // really was only about half the real article.
+        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize: '.78rem', color: src.color, textDecoration: 'none', display: 'inline-block', marginBottom: 8 }}>
-          Read more
-        </Link>
+          Read full post ↗
+        </a>
       )}
 
       {post.mediaUrl && post.mediaType === 'image' && (
