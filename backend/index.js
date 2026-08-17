@@ -5247,6 +5247,31 @@ function findPostById(postId) {
   return url ? { id: postId, sourceUrl: url } : null;
 }
 
+// findPostById above is purely in-memory (globalFeedCache/agentSourceCache/
+// postUrlIndex) — all three reset to empty on every deploy/restart, and
+// only get repopulated as the live ingestion pipeline happens to re-fetch
+// the same topics again. A post served from the DB-backed feed pool (the
+// common case — see getFilteredFeedPool/getBalancedFeedPosts) has often
+// never passed through *this* process's own in-memory caches at all, so
+// findPostById alone returns null for it — confirmed live as why GitHub/
+// Bluesky/Mastodon comments (all three resolve sourceUrl via findPostById)
+// were failing outright shortly after a deploy. This adds the same DB
+// fallback GET /feed/:postId already has, for callers that specifically
+// need sourceUrl and can afford the extra round trip.
+async function findPostByIdWithDbFallback(postId) {
+  const memPost = findPostById(postId);
+  if (memPost?.sourceUrl) return memPost;
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query('SELECT * FROM feed_posts_cache WHERE id = $1 LIMIT 1', [postId]);
+      if (rows.length) return dbRowToFeedPost(rows[0]);
+    } catch (e) {
+      console.warn('findPostByIdWithDbFallback:', e.message);
+    }
+  }
+  return memPost;
+}
+
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
 
@@ -11941,7 +11966,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('github_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_github_${postId}`, async () => {
-        const post = await findPostById(postId);
+        const post = await findPostByIdWithDbFallback(postId);
         const repoUrl = post?.sourceUrl || '';
         const match = repoUrl.match(/github\.com\/([^/]+\/[^/?#]+)/);
         if (!match) return [];
@@ -12008,7 +12033,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('bluesky_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_bluesky_${postId}`, async () => {
-        const post = await findPostById(postId);
+        const post = await findPostByIdWithDbFallback(postId);
         const sourceUrl = post?.sourceUrl || '';
         // sourceUrl: https://bsky.app/profile/{handle}/post/{rkey}
         const m = sourceUrl.match(/bsky\.app\/profile\/([^/]+)\/post\/([^/?#]+)/);
@@ -12036,7 +12061,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
   if (postId.startsWith('mastodon_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_mastodon_${postId}`, async () => {
-        const post = await findPostById(postId);
+        const post = await findPostByIdWithDbFallback(postId);
         const sourceUrl = post?.sourceUrl || '';
         // sourceUrl: https://{instance}/@{user}/{status_id}
         const m = sourceUrl.match(/^https?:\/\/([^/]+)\/@[^/]+\/(\d+)/);
