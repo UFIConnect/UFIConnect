@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -84,6 +84,25 @@ export default function PublicProfile() {
   const [modal,    setModal]    = useState(null);
   const [posts,    setPosts]    = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef  = useRef(null);
+  const moreMenuRef = useRef(null);
+
+  // Close the "more options" menu on an outside click — same pattern Feed's
+  // filter panel uses (ref-containment check on both the trigger and the
+  // panel, so a click on the trigger itself toggles rather than immediately
+  // re-closing).
+  useEffect(() => {
+    function handleClick(e) {
+      if (
+        moreOpen &&
+        moreMenuRef.current && !moreMenuRef.current.contains(e.target) &&
+        moreBtnRef.current && !moreBtnRef.current.contains(e.target)
+      ) setMoreOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [moreOpen]);
 
   useEffect(() => {
     setLoading(true);
@@ -173,6 +192,7 @@ export default function PublicProfile() {
   // here, since this page won't be reachable again once blocked.
   async function handleBlock() {
     if (!user) return;
+    setMoreOpen(false);
     if (!window.confirm(`Block ${user.name}? They won't be able to follow, message, or connect with you, and neither of you will be able to view each other's profile. You can unblock from Settings > Privacy at any time.`)) return;
     setBlocking(true);
     try {
@@ -330,17 +350,52 @@ export default function PublicProfile() {
             <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
               💬 Message
             </Link>
-            <button
-              onClick={handleBlock}
-              disabled={blocking}
-              title="Block this user"
-              style={{
-                all: 'unset', cursor: blocking ? 'default' : 'pointer', color: 'var(--muted)',
-                fontSize: '.78rem', padding: '9px 10px', opacity: blocking ? 0.6 : 1,
-              }}
-            >
-              {blocking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🚫 Block'}
-            </button>
+
+            {/* Rare/high-consequence actions (just Block for now) live behind
+                a "more options" menu rather than sitting in the row as a
+                full-weight button next to Follow/Connect/Message — same
+                placement every major social platform uses, so it isn't
+                competing for attention with the actions people actually take
+                most of the time, and can't be tapped by accident. */}
+            <div style={{ position: 'relative' }}>
+              <button
+                ref={moreBtnRef}
+                onClick={() => setMoreOpen(o => !o)}
+                aria-label="More options"
+                aria-expanded={moreOpen}
+                className="btn btn-ghost"
+                style={{ width: 40, padding: 0, fontSize: '1.1rem', fontWeight: 700, letterSpacing: '1px' }}
+              >
+                •••
+              </button>
+              {moreOpen && (
+                <div
+                  ref={moreMenuRef}
+                  role="menu"
+                  style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 20,
+                    minWidth: 180, background: 'var(--card)', border: '1px solid var(--border)',
+                    borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.12)', overflow: 'hidden',
+                    textAlign: 'left',
+                  }}
+                >
+                  <button
+                    role="menuitem"
+                    onClick={handleBlock}
+                    disabled={blocking}
+                    style={{
+                      all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8,
+                      width: '100%', padding: '10px 14px', fontSize: '.85rem', fontWeight: 600,
+                      color: 'var(--danger)', cursor: blocking ? 'default' : 'pointer', opacity: blocking ? 0.6 : 1,
+                    }}
+                    onMouseOver={e => e.currentTarget.style.background = '#FEE2E2'}
+                    onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    {blocking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🚫'} Block {user.name}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
         {isOwn && (
