@@ -1142,7 +1142,16 @@ const SOURCE_CONFIG = {
   theverge:      { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   indiehackers:  { ttl: 12*60000, delay: 12000, shards: 3 },  // RSS — no limit, normalized to the common cadence
   hashnode:      { ttl:  8*60000, delay: 12000, shards: 3 },  // freeCodeCamp RSS
-  bluesky:       { ttl:  8*60000, delay: 10000, shards: 4 },  // public ATP API
+  // Was the fastest tier (8min/10s/4 shards — faster than even Reddit),
+  // which combined with its per-fetch limit (already cut 100→25, see
+  // fetchBlueskyByKeyword) made it the single biggest contributor to the
+  // shared cache by far. That's specifically a problem while Twitter/
+  // LinkedIn/Instagram/Facebook (below) are all sitting at 0 posts with no
+  // app-level API token configured — Bluesky was filling that entire gap by
+  // itself instead of the mix reflecting several comparable platforms.
+  // Dropped to the same standard cadence most other working sources use, so
+  // no one ungated source dominates composition until those four are live.
+  bluesky:       { ttl: 12*60000, delay: 12000, shards: 3 },  // public ATP API
   arstechnica:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   wired:         { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — no limit
   theregister:   { ttl:  8*60000, delay: 12000, shards: 3 },  // RSS — enterprise IT/security
@@ -4365,8 +4374,20 @@ function addAndBroadcast(incoming) {
     .map(p => trimPostContent(normalizeFeedPost(p)));
   if (!fresh.length) return 0;
   fresh.forEach(p => addSeenId(p.id));
+  // This is the one call site building the shared cache itself (every other
+  // diversify/maxSharePct usage — enforceFeedDiversity, the Jobs filter —
+  // only caps what a single *request* sees, downstream of whatever's
+  // already in here). Without a cap here, a source that simply fetches
+  // fresh content more often keeps winning the recency-weighted sort on
+  // every single merge and evicts everything else from the fixed 300-slot
+  // cache — confirmed live at 70% Bluesky, well past the ≤18% any source is
+  // supposed to reach a user with. Capped at 25% so composition reflects
+  // several real platforms while Twitter/LinkedIn/Instagram/Facebook are
+  // still sitting at 0 posts with no app-level API token configured.
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
+    diversify: true,
+    maxSharePct: 0.25,
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
@@ -5951,6 +5972,8 @@ async function refreshGlobalFeedCache() {
     if (all.length > 0) {
       globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
         limit: GLOBAL_FEED_CACHE_LIMIT,
+        diversify: true,
+        maxSharePct: 0.25,
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
@@ -6103,8 +6126,15 @@ function runSortAgentCheck() {
   try {
 
   const beforeGlobal = globalFeedCache.posts.length;
+  // This periodic maintenance pass re-ranks the existing cache on its own
+  // schedule, independent of addAndBroadcast — without the same diversify
+  // cap it would just re-concentrate whichever source has the freshest
+  // timestamps back toward the top on every run, undoing that cap between
+  // fetches instead of maintaining it.
   globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
+    diversify: true,
+    maxSharePct: 0.25,
   });
 
   let sourcePools = 0;
