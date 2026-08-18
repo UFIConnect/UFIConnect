@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, InlineAutoplayVideo } from '../components/videoMedia';
+import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -450,7 +450,15 @@ function MaximizeButton({ onClick }) {
 
 function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true }) {
   const [playing, setPlaying] = useState(false);
+  // Always starts muted regardless of trigger (scroll-into-view or a manual
+  // click on the poster) — a passive scroll shouldn't ever blast sound
+  // unexpectedly, same convention every other inline-feed autoplay
+  // (Twitter, Instagram) follows. The mute button below is what actually
+  // lets someone opt in.
+  const [muted, setMuted] = useState(true);
   const containerRef = useRef(null);
+  const ytMountRef = useRef(null);
+  const ytPlayerRef = useRef(null);
   useEffect(() => {
     if (!autoPlayOnVisible) return;
     const el = containerRef.current;
@@ -462,14 +470,54 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
     observer.observe(el);
     return () => observer.disconnect();
   }, [playing, autoPlayOnVisible]);
+
+  // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
+  // had no programmatic control once mounted at all — every inline video in
+  // the Feed autoplayed permanently muted with nothing in our own UI to
+  // ever turn sound on (only YouTube's own cross-origin control chrome,
+  // inconsistent with — and less reliable than — the mute button every
+  // other video surface in this app already has).
+  useEffect(() => {
+    if (!playing) return;
+    let cancelled = false;
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !ytMountRef.current) return;
+      const player = new YT.Player(ytMountRef.current, {
+        videoId: embedId,
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0 },
+        events: { onReady: (e) => { if (!cancelled) ytPlayerRef.current = e.target; } },
+      });
+    });
+    return () => {
+      cancelled = true;
+      try { ytPlayerRef.current?.destroy(); } catch {}
+      ytPlayerRef.current = null;
+    };
+  }, [playing, embedId]);
+
+  useEffect(() => {
+    if (!ytPlayerRef.current) return;
+    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+  }, [muted]);
+
   if (playing) {
     return (
-      <div ref={containerRef} style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
-        <iframe width="100%" height="100%"
-          src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=1`}
-          title={title} frameBorder="0"
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen style={{ display: 'block' }} />
+      <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
+        <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
+        <button
+          onClick={e => { e.stopPropagation(); setMuted(m => !m); }}
+          aria-label={muted ? 'Unmute' : 'Mute'}
+          style={{
+            // Bottom-left — bottom-right is already the source-label badge
+            // in the "article embeds a YouTube video" call site, and
+            // top-right is the maximize button in both call sites.
+            position: 'absolute', bottom: 10, left: 10, zIndex: 2,
+            width: 32, height: 32, borderRadius: '50%',
+            background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer', fontSize: '.9rem',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}
+        >{muted ? '🔇' : '🔊'}</button>
       </div>
     );
   }
