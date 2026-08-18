@@ -67,14 +67,6 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     if (externalRef) externalRef.current = el;
   };
   const [errored, setErrored] = useState(false);
-  // The mount effect below only re-runs on [src, autoPlay] (re-attaching
-  // hls.js on every mute toggle would be wasteful) — a ref keeps its
-  // eventual play()-then callback reading the *current* desired mute state
-  // instead of whatever `muted` closed over back when the effect fired,
-  // which was stale by the time the lazy-loaded hls.js import actually
-  // resolved.
-  const mutedRef = useRef(muted);
-  useEffect(() => { mutedRef.current = muted; }, [muted]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -82,25 +74,27 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     setErrored(false);
     let hls;
     let cancelled = false;
-    // Always start muted — the one autoplay policy every browser reliably
-    // allows — then reveal sound right after play() actually resolves, if
-    // the caller wants it. Replaces the old "try unmuted, catch the
-    // rejection, fall back to muted" approach: that one silently stayed
-    // muted for the rest of the session once it ever failed once (see
-    // VideoSlide's YouTube player for the same fix, and its comment on why
-    // unmuting an already-started player isn't gated by the same policy).
-    function startMutedThenReveal() {
+    // Always start muted and stay muted — the one autoplay policy every
+    // browser reliably allows. This used to reveal sound right after play()
+    // resolved if the caller wanted it unmuted, but that reveal is a
+    // delayed, asynchronous `.muted = false` write, not the direct,
+    // synchronous result of a user gesture — Safari in particular can
+    // silently accept the property write (so `.muted` correctly reads back
+    // false, and any UI bound to it shows "unmuted") while still refusing
+    // to actually output audio, which is exactly what "shows unmuted but no
+    // voice is playing" looks like from the outside. The caller's own mute
+    // button is what actually unmutes now (see the effect below), since a
+    // direct click handler is a gesture every browser honors.
+    function startMuted() {
       video.muted = true;
       video.defaultMuted = true;
       video.playsInline = true;
-      video.play().then(() => {
-        if (!cancelled && !mutedRef.current) video.muted = false;
-      }).catch(() => {});
+      video.play().catch(() => {});
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
       video.src = src;
-      if (autoPlay) startMutedThenReveal();
+      if (autoPlay) startMuted();
     } else {
       // Lazy-loaded: hls.js is a genuinely large library, and bundling it
       // statically pulled it into every visitor's Feed download (~140KB
@@ -115,12 +109,24 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
         hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
         if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!videoRef.current) return;
-          startMutedThenReveal();
+          startMuted();
         });
       }).catch(() => setErrored(true));
     }
     return () => { cancelled = true; hls?.destroy(); };
   }, [src, autoPlay]);
+
+  // React's `muted` JSX prop on a <video> element doesn't reliably keep the
+  // *live* element's property in sync with prop changes after mount (a
+  // known gap for media elements specifically) — without this, a caller
+  // whose mute button toggles this prop could update their own button icon
+  // with nothing actually changing on the element underneath. Imperative
+  // and unconditional so it's a plain synchronous property set, not an
+  // async one a browser's autoplay policy could second-guess.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video) video.muted = muted;
+  }, [muted]);
 
   if (errored) {
     return (

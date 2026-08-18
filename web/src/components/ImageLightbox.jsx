@@ -34,24 +34,18 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
   const touchStartX = useRef(null);
   const navigate = useNavigate();
-  // Unmuted by default — opening the lightbox is itself a deliberate click,
-  // same reasoning VideoFeedView already uses for the swipe feed, so video
-  // should just play with sound right away instead of requiring an extra
-  // tap to unmute every time. What was actually breaking mute/pause on
-  // mobile/tablet wasn't the unmuted default itself — it was the native
-  // <video controls autoPlay> this used to render having no play()-
-  // rejection handling at all (the HLS path didn't even receive a muted
-  // prop), so desktop's much more lenient autoplay policy let it start fine
-  // while mobile Safari/Chrome — which block autoplay-with-sound far more
-  // aggressively — silently failed to start it with nothing to recover, and
-  // every "next" swap remounted a brand new native player that lost
-  // whatever the user had done to the last one. The effect below (and
-  // HlsVideoPlayer's own internal handling for the HLS path) primes muted
-  // state right before every play() call and falls back to muted — syncing
-  // this state so the button stays truthful — only if the browser actually
-  // blocks it, and the state living here instead of on the transient video
-  // element means it survives across next/prev either way.
-  const [muted, setMuted] = useState(false);
+  // Muted by default, even though opening the lightbox is itself a
+  // deliberate click — a *previous* version of this started unmuted on the
+  // theory that click counted as consent, and revealed sound automatically
+  // once play() resolved. That reveal is a delayed, asynchronous
+  // `.muted = false` write, not the direct synchronous result of a user
+  // gesture, and Safari in particular can silently accept the property
+  // write (so the mute button's icon correctly shows "unmuted") while still
+  // refusing to actually output audio — confirmed live as "shows unmuted
+  // but no voice is playing." The mute button below is what actually
+  // unmutes now, since a direct click handler is a gesture every browser
+  // honors, same fix applied to VideoFeedView's swipe feed.
+  const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
@@ -169,33 +163,30 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   );
 
   // Every new video — including one swapped in via next/prev, a fresh mount
-  // each time since the element below is keyed by item.url — needs its
-  // play() primed with the current muted state right before the call, not
-  // just via the JSX/element attribute: mobile Safari/Chrome check muted
-  // state at the moment play() actually runs (see the note on the `muted`
-  // state above). Direct-file videos need this handled here explicitly;
+  // each time since the element below is keyed by item.url — always starts
+  // genuinely muted (the one autoplay policy every browser reliably
+  // allows). Direct-file videos need this handled here explicitly;
   // HlsVideoPlayer already does the equivalent internally for the HLS path,
   // so this effect skips it there to avoid fighting over the same element.
   useEffect(() => {
     if (!directVideoUrl) return;
     const v = fileVideoRef.current;
     if (!v) return;
-    v.muted = muted;
-    v.defaultMuted = muted;
+    v.muted = true;
+    v.defaultMuted = true;
     v.playsInline = true;
-    v.play().catch(() => {
-      if (!v.muted) {
-        v.muted = true;
-        setMuted(true);
-        v.play().catch(() => {});
-      }
-    });
-    // Deliberately excludes `muted` — this should only re-run when the
-    // video itself changes (new index/src), not every time the mute button
-    // is pressed; the live element's muted state after that point is kept
-    // in sync by the reactive `muted={muted}` prop on the element instead.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    v.play().catch(() => {});
   }, [directVideoUrl]);
+
+  // React's `muted` JSX prop doesn't reliably keep a <video> element's live
+  // property in sync with prop changes after mount (see HlsVideoPlayer's
+  // own version of this same fix) — without this, the mute button could
+  // update its own icon with nothing actually changing on the element.
+  useEffect(() => {
+    if (!directVideoUrl) return;
+    const v = fileVideoRef.current;
+    if (v) v.muted = muted;
+  }, [muted, directVideoUrl]);
 
   // Fresh video each time the index changes — starts playing (see above),
   // so the pause indicator resets instead of carrying over the previous
@@ -204,16 +195,13 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
   // feed — a raw <iframe src="..."> embed has no programmatic control at
-  // all, so pause needs this instead. Cross-origin iframe autoplay-with-
-  // sound is far more likely to get blocked than a same-origin <video>, and
-  // the IFrame Player API's play() has no promise to reject in the first
-  // place — nothing to catch and fall back on — so this always starts muted
-  // (reliably allowed) and unMutes right after onReady if sound was wanted,
-  // same reasoning as HlsVideoPlayer's startMutedThenReveal above.
+  // all, so pause needs this instead. Always starts muted and stays muted;
+  // the mute button (via the sync effect below) is what actually unmutes,
+  // since unlike an automatic reveal after onReady, a direct click is a
+  // gesture every browser honors even for a cross-origin embed.
   useEffect(() => {
     if (!youtubeId) return;
     let cancelled = false;
-    const wantsSound = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -223,7 +211,6 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           onReady: (e) => {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
-            if (wantsSound) e.target.unMute();
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -237,10 +224,6 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
     };
-    // Deliberately excludes `muted` — same reasoning as the direct-file
-    // effect above; the mute button toggles the live player via the effect
-    // below instead of re-mounting a fresh embed on every press.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [youtubeId]);
 
   // Keep an already-mounted YouTube player's mute state in sync with the

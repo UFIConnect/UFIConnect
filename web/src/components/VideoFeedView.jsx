@@ -106,13 +106,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const ytMountRef = useRef(null);
   const seekingRef = useRef(false);
   const progressBarRef = useRef(null);
-  // Read inside the file/hls play effect's play().then() callback instead
-  // of closing over `muted` directly — that effect deliberately excludes
-  // `muted` from its own deps (see its comment), so a stale closure would
-  // otherwise reveal whatever mute state was true back when the video last
-  // became active, not the current one.
-  const mutedRef = useRef(muted);
-  useEffect(() => { mutedRef.current = muted; }, [muted]);
   // Caption starts clamped (see the overlay below) — the video is the point
   // of this view, a wall of text over it isn't. "more" only shows up when
   // there's actually more than the clamp already reveals: a long title, or
@@ -158,18 +151,16 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
   // file/hls: play on becoming active, pause + rewind on becoming inactive
   // (leaving a video mid-scrub-progress for the next viewer would be
-  // confusing — every slide always starts fresh). Always starts muted, then
-  // reveals sound once play() actually resolves if the shared mute state
-  // wants it — same fix as HlsVideoPlayer's own mount effect and the
-  // YouTube player below, replacing the old try-unmuted-catch-fallback
-  // approach: that one, once blocked on any single video, permanently
-  // flipped the shared mute state for every video afterward, on every
-  // platform, for the rest of the session — confirmed live as why Bluesky
-  // (routed through this same effect via getNativeEl) kept coming up muted
-  // even when the user expected sound. Deliberately excludes `muted` from
-  // this effect's own deps — a manual toggle mid-playback is handled by the
-  // sync effect right below instead, so flipping the button doesn't restart
-  // this whole sequence on an already-playing video.
+  // confusing — every slide always starts fresh). Always starts muted and
+  // stays muted — this used to reveal sound right after play() resolved if
+  // the shared mute state wanted it, but that reveal is a delayed,
+  // asynchronous `.muted = false` write, not the direct synchronous result
+  // of a user gesture. Safari in particular can silently accept the
+  // property write (so the mute button's icon correctly shows "unmuted")
+  // while still refusing to actually output audio — confirmed live as
+  // "shows unmuted but no voice is playing." The sync effect right below,
+  // which only ever runs in direct response to the mute button itself, is
+  // what actually unmutes now — a gesture every browser honors.
   useEffect(() => {
     if (src?.kind === 'youtube') return;
     const v = getNativeEl();
@@ -178,9 +169,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       v.muted = true;
       v.defaultMuted = true;
       v.playsInline = true;
-      v.play().then(() => {
-        if (!mutedRef.current) v.muted = false;
-      }).catch(() => {});
+      v.play().catch(() => {});
     } else {
       v.pause(); try { v.currentTime = 0; } catch {} setCurrentTime(0); setPaused(false);
     }
@@ -202,21 +191,19 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // no programmatic control at all, so pause + a scrub tracker need this
   // instead. Only constructed while active; destroyed on scroll-away.
   //
-  // Cross-origin iframe autoplay-with-sound is far more likely to get
-  // blocked than a same-origin <video> (which is why file/hls above prime
-  // muted/defaultMuted right before play() and retry muted on rejection) —
-  // but the IFrame Player API's play() has no promise to reject in the
-  // first place, so there was never any signal here to catch and fall back
-  // on; a blocked attempt just sat there not playing, silently, forever.
-  // Always starting muted sidesteps the block entirely (browsers reliably
-  // allow muted autoplay), then unMute() right after onReady if the user
-  // actually wants sound — unmuting an already-started player isn't gated
-  // by the same autoplay-with-sound policy, only the initial start is.
+  // Always starts muted and stays muted — this used to unMute() right after
+  // onReady if the shared mute state wanted sound, but that's a delayed,
+  // asynchronous command sent across the cross-origin postMessage bridge,
+  // not the direct synchronous result of a user gesture, and the browser's
+  // autoplay-with-sound policy for a third-party embed can silently ignore
+  // it — the command succeeds from our side (the mute button's icon
+  // correctly flips) while the iframe's actual audio output stays blocked.
+  // The sync effect below, which only ever runs in direct response to the
+  // mute button itself, is what actually unmutes now.
   useEffect(() => {
     if (src?.kind !== 'youtube' || !active) return;
     let cancelled = false;
     let pollId;
-    const wantsSound = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -230,7 +217,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             if (cancelled) return;
             ytPlayerRef.current = e.target;
             setDuration(e.target.getDuration() || 0);
-            if (wantsSound) e.target.unMute();
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -663,13 +649,16 @@ export default function VideoFeedView({ onExit }) {
   // whole viewport, instead of being scoped/clipped inside one snap-scroll
   // slide.
   const [commentsPost, setCommentsPost] = useState(null);
-  // Starts unmuted (with sound) rather than TikTok's muted-by-default —
-  // browsers only block autoplay *with sound* when there's been no user
-  // interaction with the page yet, and reaching this view always requires
-  // clicking the Videos nav item first, which counts. play() falls back to
-  // muted automatically (see VideoSlide) if a browser blocks it anyway, so
-  // this never silently fails to play at all.
-  const [muted, setMuted] = useState(false);
+  // Starts muted like every platform's own feed does — this used to start
+  // unmuted on the theory that clicking the Videos nav item first counted
+  // as enough interaction for browsers to allow autoplay-with-sound
+  // directly, but per-embed/per-element autoplay-with-sound is judged more
+  // strictly than that, especially in Safari: the video plays and the mute
+  // button can end up showing "unmuted" while the actual audio output stays
+  // silently blocked (see VideoSlide's play effects for the mechanics).
+  // Tapping the mute button is a direct gesture every browser honors, so
+  // that's the only thing that ever unmutes now.
+  const [muted, setMuted] = useState(true);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
