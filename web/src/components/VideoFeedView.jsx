@@ -13,14 +13,32 @@ import { reportEngaged, reportEngagementSignal } from '../api/engagement';
 const VIDEO_ENGAGED_SECONDS = 3;
 const VIDEO_ENGAGED_FRACTION = 0.5;
 
-// Platforms with no public aggregate fetcher at all (not in SOURCE_CONFIG
-// server-side) — pure Connected-Accounts/Following-only identifiers, never
-// real entries in the shared Feed-mode video pool. Twitter/LinkedIn/
-// Instagram/Facebook do have SOURCE_CONFIG entries, but are still excluded
-// here since the aggregate pool itself excludes them (see FEED_SOCIAL_TABS
-// server-side) — selecting them in Feed mode would be a guaranteed-empty
-// filter either way.
-const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'linkedin', 'twitter', 'instagram', 'facebook', 'tiktok', 'discord', 'dribbble'];
+// Platforms genuinely excluded from the shared Feed-mode video pool.
+// uficonnect is native/Following-only by design (a user's own network, not
+// an aggregated platform). discord and dribbble have no SOURCE_CONFIG entry
+// server-side — no fetcher exists for either, so including them here would
+// just be a permanently-empty filter with no path to fix short of building
+// one, same as TikTok used to be excluded for.
+//
+// Twitter/LinkedIn/Instagram/Facebook/TikTok used to all sit in this list
+// together, but they're no longer the same situation as each other:
+// Twitter/LinkedIn/Instagram/Facebook DO have real SOURCE_CONFIG entries
+// now (see backend/index.js) — a genuine shared, cached, app-level fetcher,
+// architecturally identical to every other source — just idling at 0 posts
+// until an app bearer token is configured, same as any source having a
+// quiet cycle (see the commit that brought them into the aggregate
+// sort/rank pool). TikTok is different: no SOURCE_CONFIG entry and no
+// fetch function exist for it at all, so its filter chip will stay empty
+// regardless of any token — included anyway per product decision, not
+// because it's expected to produce results yet.
+//
+// Either way, this is entirely separate from Following mode's own path for
+// these same platforms (FOLLOWING_VIDEO_SOURCES below) — that one is a
+// per-user live fetch of a member's own connected account
+// (CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts), already works
+// today independent of any app-level token, and was never gated by this
+// exclusion list to begin with.
+const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble'];
 // Feed mode's filter row — every publicly-aggregated source, since any of
 // them can carry a real video (a dedicated video source like YouTube, a
 // direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
