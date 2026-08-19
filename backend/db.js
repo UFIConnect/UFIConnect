@@ -28,7 +28,20 @@ async function initDB() {
           process.env.NODE_ENV === 'production'
             ? { rejectUnauthorized: false }   // AWS RDS / Heroku / Render
             : false,
-        max: 20,                             // Standard plan has ~97 connection headroom; was 10
+        // Confirmed live (2026-08-19) as a real bottleneck, not just headroom
+        // math: getCursorFeedPage (the video feed, and /feed?sort=newest)
+        // fires one query per source via Promise.all, and AGGREGATE_FEED_SOURCES
+        // is 36 sources when no source filter is applied — a single such
+        // request alone needs more connections than a max:20 pool provides,
+        // so the rest queue for a free slot (up to connectionTimeoutMillis
+        // each) before their own query even starts. 40 is still well inside
+        // the ~97 connection headroom on the Standard plan, leaving room for
+        // concurrent background-worker activity on the same pool. The real
+        // fix is switching getCursorFeedPage to the single-query
+        // ROW_NUMBER()-partition-by-source pattern getBalancedFeedPosts
+        // already uses instead of N parallel per-source queries — this is
+        // the immediate relief while that lands.
+        max: 40,                             // was 20, briefly 10 before that
         idleTimeoutMillis: 30_000,
         connectionTimeoutMillis: 30_000,    // Was 15s — background jobs were queuing past that under load
         statement_timeout: 120_000,          // Increased to 2 minutes for slow queries
