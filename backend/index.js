@@ -2100,16 +2100,32 @@ async function fetchMediumByTag(tag) {
 }
 
 // ─── YouTube: official API when key is set, Invidious proxy otherwise ────────
+// Confirmed live (2026-08-19) against api.invidious.io's own health tracker:
+// of the previous 8 entries, 6 were completely unreachable (dead instances —
+// public Invidious instances churn constantly under sustained pressure from
+// both YouTube and scraper abuse; self-hosting is the project's own current
+// recommendation over relying on public ones), one had been repurposed into
+// an unrelated redirect service, and the last 404'd outright. None of these
+// 4 reliably return real search JSON either — most either block (401/403)
+// or, one case, serve an anti-bot HTML challenge page disguised as a 200 —
+// but they at least respond quickly instead of costing a full connection
+// timeout each, and there's no cost to trying. See youtubeInvidiousOutageUntil
+// below for what happens once even that stops being worth attempting.
 const INVIDIOUS_INSTANCES = [
   'https://inv.nadeko.net',
-  'https://invidious.privacyredirect.com',
-  'https://yt.artemislena.eu',
-  'https://invidious.fdn.fr',
-  'https://invidious.lunar.icu',
-  'https://iv.datura.network',
-  'https://inv.tux.pizza',
-  'https://invidious.perennialte.ch',
+  'https://invidious.nerdvpn.de',
+  'https://invidious.tiekoetter.com',
+  'https://yt.chocolatemoo53.com',
 ];
+
+// Same reasoning as redditAnonOutageUntil/blueskyAnonOutageUntil — once the
+// entire Invidious tier is confirmed exhausted for a keyword (every
+// instance in the list failed), stop re-attempting all of them again on
+// every subsequent keyword fetch until this cools down.
+let youtubeInvidiousOutageUntil = 0;
+let youtubeInvidiousConsecutiveFullMisses = 0;
+const YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD = 3;
+const YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS = 20 * 60 * 1000;
 
 // ─── YouTube: channel RSS feeds (no API key needed, served by YouTube directly) ─
 // Organized by topic so each keyword query hits the right channels.
@@ -2158,7 +2174,7 @@ const TOPIC_YT_CHANNELS = {
     { id: 'UCJZv4d5rbIKd4QHMPkcABCw', name: 'Traversy Media' },
   ],
   'Cloud & DevOps':         [
-    { id: 'UCnUYZLuoy1rq1aVMwx4aTzw', name: 'Google Cloud Tech' },
+    { id: 'UCJS9pqu9BzkAMNTmzNMNhvg', name: 'Google Cloud Tech' },
     { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
     { id: 'UCA8twYpSmtpbz5YQKh_LHrg', name: 'Amazon Web Services' },
   ],
@@ -2339,7 +2355,8 @@ const TOPIC_YT_CHANNELS = {
   ],
   'Kubernetes':             [
     { id: 'UC0RhRcoSCGAKN_vGMjZZHKA', name: 'TechWorld with Nana' },
-    { id: 'UCnUYZLuoy1rq1aVMwx4aTzw', name: 'Google Cloud Tech' },
+    { id: 'UCJS9pqu9BzkAMNTmzNMNhvg', name: 'Google Cloud Tech' },
+    { id: 'UCSWj8mqQCcrcBlXPi4ThRDQ', name: 'KodeKloud' },
   ],
   'Data Engineering':       [
     { id: 'UC8butISFwT-Wl7EV0hUK0BQ', name: 'freeCodeCamp' },
@@ -2477,23 +2494,41 @@ async function fetchYouTubeByKeyword(keyword) {
       return result;
     }
 
-    // Backup: Invidious instances
-    for (const instance of INVIDIOUS_INSTANCES) {
-      try {
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
-        const data = await fetchJSON(url);
-        lastError = null; // this instance answered, even if with nothing usable
-        if (!Array.isArray(data) || !data.length) continue;
-        const posts = data.filter(v => v.videoId && v.title).map(v => {
-          const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
-          return mapYouTubePost(
-            v.videoId, v.title, v.description, v.author, v.authorId,
-            v.published,
-            thumb?.url, keyword
-          );
-        });
-        if (posts.length) { setCached(cacheKey, posts); return posts; }
-      } catch (e) { lastError = e; continue; }
+    // Backup: Invidious instances — skip straight past during a known
+    // outage window rather than spending 4 requests already confirmed to
+    // fail (see youtubeInvidiousOutageUntil's own comment above the list).
+    if (Date.now() >= youtubeInvidiousOutageUntil) {
+      let anyInstanceAnswered = false;
+      for (const instance of INVIDIOUS_INSTANCES) {
+        try {
+          const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
+          const data = await fetchJSON(url);
+          lastError = null; // this instance answered, even if with nothing usable
+          anyInstanceAnswered = true;
+          if (!Array.isArray(data) || !data.length) continue;
+          const posts = data.filter(v => v.videoId && v.title).map(v => {
+            const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
+            return mapYouTubePost(
+              v.videoId, v.title, v.description, v.author, v.authorId,
+              v.published,
+              thumb?.url, keyword
+            );
+          });
+          if (posts.length) {
+            youtubeInvidiousConsecutiveFullMisses = 0;
+            setCached(cacheKey, posts);
+            return posts;
+          }
+        } catch (e) { lastError = e; continue; }
+      }
+      if (!anyInstanceAnswered) {
+        youtubeInvidiousConsecutiveFullMisses++;
+        if (youtubeInvidiousConsecutiveFullMisses >= YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD && Date.now() >= youtubeInvidiousOutageUntil) {
+          youtubeInvidiousOutageUntil = Date.now() + YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS;
+          youtubeInvidiousConsecutiveFullMisses = 0;
+          console.warn(`[YouTube] ${YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD} consecutive fully-unreachable Invidious cycles — pausing for ${YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS / 60000}min`);
+        }
+      }
     }
 
     // Only surface to the shared circuit breaker if every tier that ran actually failed.
