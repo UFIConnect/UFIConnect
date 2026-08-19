@@ -8814,6 +8814,19 @@ async function migrateDB() {
     // runs. A compound index lets it jump straight to the source's own
     // slice, already in the right order, and stop after N rows.
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
+    // getCursorFeedPage's video path additionally filters media_type='video'
+    // — not covered by fpc_source_time_idx above, so the planner still has
+    // to heap-fetch and recheck every candidate row it walks per source to
+    // confirm it's actually a video, even once it can jump straight to that
+    // source's time-ordered slice. Video posts are a small fraction of most
+    // sources' total rows (well under 1% for most non-YouTube sources, per
+    // a live true-mix check), so that recheck cost dominates: confirmed live
+    // as the remaining bottleneck even after collapsing the per-source
+    // query loop into one query (25+s under a cold cache, down from
+    // 60-100+s, but still far from fast). This index lets the planner
+    // satisfy source + media_type + the time ordering directly from the
+    // index alone for that specific access pattern.
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
     // Added for location-based job matching — only Indeed/Remote OK's real
     // API responses ever populate this (candidate_required_location /
     // location); never inferred or guessed for sources that don't have it.
