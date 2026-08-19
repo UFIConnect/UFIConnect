@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer } from './videoMedia';
+import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer, userWantsSound, rememberSoundPreference } from './videoMedia';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
 // refresh/mute) — kept as one consistent control language for every video
@@ -45,7 +45,12 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   // but no voice is playing." The mute button below is what actually
   // unmutes now, since a direct click handler is a gesture every browser
   // honors, same fix applied to VideoFeedView's swipe feed.
-  const [muted, setMuted] = useState(true);
+  //
+  // Starting *every* video muted-until-clicked, taken alone, meant a real
+  // click was needed on every single one, forever — see userWantsSound's
+  // own comment. Once the user has directly clicked unmute at all, this
+  // starts already unmuted instead.
+  const [muted, setMuted] = useState(() => !userWantsSound());
   const [paused, setPaused] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
@@ -195,13 +200,20 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
   // feed — a raw <iframe src="..."> embed has no programmatic control at
-  // all, so pause needs this instead. Always starts muted and stays muted;
-  // the mute button (via the sync effect below) is what actually unmutes,
-  // since unlike an automatic reveal after onReady, a direct click is a
-  // gesture every browser honors even for a cross-origin embed.
+  // all, so pause needs this instead. The player always mounts muted
+  // (playerVars.mute stays 1 — the one autoplay policy every browser
+  // reliably allows), but if `muted` was already false when this effect
+  // ran — the user has directly clicked unmute on an earlier video this
+  // session, see userWantsSound — it's unmuted right away in onReady
+  // instead of waiting for a fresh click on this one too. Unlike the
+  // "shows unmuted but no voice is playing" bug this replaced, this isn't
+  // a blind reveal: it's only reached because of real, prior, direct
+  // engagement, which is the same signal browsers themselves use to judge
+  // autoplay-with-sound more leniently.
   useEffect(() => {
     if (!youtubeId) return;
     let cancelled = false;
+    const startUnmuted = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -211,6 +223,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           onReady: (e) => {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
+            if (startUnmuted) e.target.unMute();
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -328,7 +341,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           mute/pause behave differently on mobile and tablet than desktop. */}
       {playableVideo && (
         <button
-          onClick={e => { e.stopPropagation(); setMuted(m => !m); }}
+          onClick={e => { e.stopPropagation(); setMuted(m => { rememberSoundPreference(m); return !m; }); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{ position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE, fontSize: '1.05rem' }}
         >{muted ? '🔇' : '🔊'}</button>

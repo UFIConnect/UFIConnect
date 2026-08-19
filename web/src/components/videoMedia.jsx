@@ -1,5 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
 
+// Every video surface (the Videos swipe feed, the photo/video lightbox, and
+// each inline YouTube card in the Feed) starts muted by default and only
+// ever unmutes in direct response to a click — necessary so the mute
+// button's own state can never lie about whether sound is actually playing
+// (see the fetchBluesky-adjacent fix elsewhere this session for why an
+// automatic reveal can't be trusted). But taken alone, that meant a real
+// click was needed on *every single video*, forever, since each one starts
+// its own fresh, independent muted state with nothing carried over —
+// confirmed as a genuine ongoing annoyance, not just an autoplay-policy
+// nitpick. Once someone has directly clicked unmute at all this browser,
+// that's real, registered engagement (the same signal browsers themselves
+// use to judge autoplay-with-sound more leniently going forward) — worth
+// remembering so every subsequent video can just start that way instead of
+// demanding the same click over and over. Symmetric: explicitly muting
+// again is remembered the same way.
+const SOUND_PREF_KEY = 'ufc_wants_sound';
+export function userWantsSound() {
+  try { return localStorage.getItem(SOUND_PREF_KEY) === '1'; } catch { return false; }
+}
+export function rememberSoundPreference(wantsSound) {
+  try {
+    if (wantsSound) localStorage.setItem(SOUND_PREF_KEY, '1');
+    else localStorage.removeItem(SOUND_PREF_KEY);
+  } catch {}
+}
+
 // embedId (the YouTube video ID used for in-app iframe playback) only ever
 // existed on the live/in-memory post shape — feed_posts_cache has no column
 // for it, so any YouTube post served from the database (the primary path

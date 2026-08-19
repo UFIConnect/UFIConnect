@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi } from './videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
@@ -209,19 +209,21 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // no programmatic control at all, so pause + a scrub tracker need this
   // instead. Only constructed while active; destroyed on scroll-away.
   //
-  // Always starts muted and stays muted — this used to unMute() right after
-  // onReady if the shared mute state wanted sound, but that's a delayed,
-  // asynchronous command sent across the cross-origin postMessage bridge,
-  // not the direct synchronous result of a user gesture, and the browser's
-  // autoplay-with-sound policy for a third-party embed can silently ignore
-  // it — the command succeeds from our side (the mute button's icon
-  // correctly flips) while the iframe's actual audio output stays blocked.
-  // The sync effect below, which only ever runs in direct response to the
-  // mute button itself, is what actually unmutes now.
+  // The player always mounts muted (playerVars.mute stays 1 — the one
+  // autoplay policy every browser reliably allows), but if `muted` was
+  // already false when this effect ran — the user has directly tapped
+  // unmute on an earlier slide this session, see userWantsSound — it's
+  // unmuted right away in onReady instead of demanding a fresh tap on this
+  // slide too. Unlike the "shows unmuted but no voice is playing" bug this
+  // replaced, this isn't a blind reveal after an unrelated autoplay: it's
+  // only reached because of real, prior, direct engagement, which is the
+  // same signal browsers themselves use to judge autoplay-with-sound more
+  // leniently going forward.
   useEffect(() => {
     if (src?.kind !== 'youtube' || !active) return;
     let cancelled = false;
     let pollId;
+    const startUnmuted = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -235,6 +237,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             if (cancelled) return;
             ytPlayerRef.current = e.target;
             setDuration(e.target.getDuration() || 0);
+            if (startUnmuted) e.target.unMute();
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -676,7 +679,12 @@ export default function VideoFeedView({ onExit }) {
   // silently blocked (see VideoSlide's play effects for the mechanics).
   // Tapping the mute button is a direct gesture every browser honors, so
   // that's the only thing that ever unmutes now.
-  const [muted, setMuted] = useState(true);
+  //
+  // Starting *every* video muted-until-tapped, taken alone, meant a real
+  // tap was needed on every single slide scrolled to, forever — see
+  // userWantsSound's own comment. Once the user has directly tapped unmute
+  // at all this browser, slides start already unmuted instead.
+  const [muted, setMuted] = useState(() => !userWantsSound());
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -938,7 +946,7 @@ export default function VideoFeedView({ onExit }) {
         <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
       </button>
       <button
-        onClick={() => setMuted(m => !m)}
+        onClick={() => setMuted(m => { rememberSoundPreference(m); return !m; })}
         aria-label={muted ? 'Unmute' : 'Mute'}
         style={{ position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem' }}
       >{muted ? '🔇' : '🔊'}</button>

@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo } from '../components/videoMedia';
+import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, rememberSoundPreference } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -455,7 +455,15 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // unexpectedly, same convention every other inline-feed autoplay
   // (Twitter, Instagram) follows. The mute button below is what actually
   // lets someone opt in.
-  const [muted, setMuted] = useState(true);
+  //
+  // Every card in the Feed is its own independent instance, though —
+  // without userWantsSound, that meant a real click was needed on every
+  // single video card scrolled to, forever, each one starting fresh with
+  // no memory of the click on the last one. Once the user has directly
+  // clicked unmute at all this browser, new cards start already unmuted
+  // instead (see userWantsSound's own comment for why that's not the same
+  // class of bug as an automatic reveal).
+  const [muted, setMuted] = useState(() => !userWantsSound());
   const containerRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
@@ -480,12 +488,19 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   useEffect(() => {
     if (!playing) return;
     let cancelled = false;
+    const startUnmuted = !muted;
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
         videoId: embedId,
         playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0 },
-        events: { onReady: (e) => { if (!cancelled) ytPlayerRef.current = e.target; } },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
+            if (startUnmuted) e.target.unMute();
+          },
+        },
       });
     });
     return () => {
@@ -505,7 +520,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
       <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
         <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
         <button
-          onClick={e => { e.stopPropagation(); setMuted(m => !m); }}
+          onClick={e => { e.stopPropagation(); setMuted(m => { rememberSoundPreference(m); return !m; }); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{
             // Bottom-left — bottom-right is already the source-label badge
