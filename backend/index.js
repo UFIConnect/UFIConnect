@@ -3878,7 +3878,82 @@ async function fetchDesignWeb(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Bluesky: public AT Protocol search API (no auth required) ───────────────
+// ─── Bluesky: AT Protocol search, authenticated when possible ────────────────
+// Anonymous access to api.bsky.app is blocked wholesale from Render's IP —
+// confirmed live, 100% failure rate across every keyword, not a transient
+// rate-limit blip (same class of issue Reddit hit before switching to
+// OAuth). AT Protocol's equivalent for a script/app authenticating as its
+// own account is an App Password (bsky.app → Settings → App Passwords),
+// exchanged for a session via com.atproto.server.createSession —
+// officially supported for exactly this, not a workaround. Authenticated
+// requests get a much higher rate-limit ceiling and aren't subject to the
+// same anonymous-traffic blocking.
+let _blueskyToken = null;
+let _blueskyTokenExpiry = 0;
+
+// Same reasoning as redditAnonOutageUntil: once anonymous access is
+// confirmed broken, stop spending a request on every single keyword fetch
+// (currently every one of them) and just serve stale/empty for a cooldown
+// instead. Only engages when no BLUESKY_APP_IDENTIFIER/PASSWORD is
+// configured — authenticated requests are always still attempted.
+let blueskyAnonOutageUntil = 0;
+let blueskyConsecutiveFullMisses = 0;
+const BLUESKY_OUTAGE_MISS_THRESHOLD = 3;
+const BLUESKY_OUTAGE_COOLDOWN_MS = 20 * 60 * 1000;
+
+// JWTs aren't verified here (no need to — we trust a token we were just
+// handed by createSession moments ago), just decoded to read the real
+// `exp` claim instead of guessing a fixed session lifetime.
+function decodeJwtExpiryMs(jwt) {
+  try {
+    const payload = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf8'));
+    return payload.exp ? payload.exp * 1000 : null;
+  } catch { return null; }
+}
+
+async function getBlueskyToken() {
+  if (_blueskyToken && Date.now() < _blueskyTokenExpiry - 60_000) return _blueskyToken;
+  const identifier = process.env.BLUESKY_APP_IDENTIFIER;
+  const password = process.env.BLUESKY_APP_PASSWORD;
+  if (!identifier || !password) return null;
+  try {
+    const body = JSON.stringify({ identifier, password });
+    const data = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'bsky.social',
+        path: '/xrpc/com.atproto.server.createSession',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let raw = '';
+        res.on('data', c => raw += c);
+        res.on('end', () => {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            reject(new Error(`HTTP ${res.statusCode}: ${raw.slice(0, 150)}`));
+            return;
+          }
+          try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(new Error('timeout')); });
+      req.write(body);
+      req.end();
+    });
+    if (data?.accessJwt) {
+      _blueskyToken = data.accessJwt;
+      _blueskyTokenExpiry = decodeJwtExpiryMs(data.accessJwt) || (Date.now() + 100 * 60 * 1000);
+      console.log('[Bluesky] Session token obtained');
+      return _blueskyToken;
+    }
+    console.warn('[Bluesky] createSession response missing accessJwt:', JSON.stringify(data).slice(0, 200));
+    return null;
+  } catch (e) {
+    console.warn('[Bluesky] createSession error:', e.message);
+    return null;
+  }
+}
+
 async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
   const cached = getCached(key);
@@ -3917,17 +3992,24 @@ async function fetchBlueskyByKeyword(keyword) {
     };
   };
 
-  const bskyFetch = (q) => new Promise((resolve, reject) => {
-    // limit was 100 — on a 10s/4-shard cadence (the fastest tier) this made
-    // Bluesky the biggest contributor to the shared cache by far, same bug
-    // as GitHub/DevTo just worse given the speed. 25 is still generous.
+  // limit was 100 — on a 10s/4-shard cadence (the fastest tier) this made
+  // Bluesky the biggest contributor to the shared cache by far, same bug
+  // as GitHub/DevTo just worse given the speed. 25 is still generous.
+  const bskyFetch = (q, token) => new Promise((resolve, reject) => {
     const path = `/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(q)}&limit=25&sort=latest`;
+    const headers = {
+      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    };
+    // Authenticated requests are proxied through the account's own PDS
+    // (bsky.social for a standard bsky.app-created account) rather than the
+    // public AppView host — the standard AT Protocol pattern for an
+    // authenticated XRPC call to a lexicon the PDS doesn't implement
+    // directly; it forwards to the AppView server-side.
+    const hostname = token ? 'bsky.social' : 'api.bsky.app';
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     https.get(
-      { hostname: 'api.bsky.app', path,
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        } },
+      { hostname, path, headers },
       (res) => {
         if (res.statusCode >= 300) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
         let d = ''; res.on('data', c => d += c);
@@ -3936,13 +4018,49 @@ async function fetchBlueskyByKeyword(keyword) {
     ).on('error', reject).setTimeout(12000, function() { this.destroy(new Error('timeout')); });
   });
 
+  const NSFW_LABELS = new Set(['porn','sexual','nudity','adult-only','csam','graphic-media']);
+  const toPosts = (data) => (data?.posts || [])
+    .filter(p => p.record?.text && p.author && !(p.labels || []).some(l => NSFW_LABELS.has(l?.val)))
+    .map(mapPost);
+
+  const token = await getBlueskyToken();
+  if (token) {
+    try {
+      const posts = toPosts(await bskyFetch(keyword, token));
+      if (posts.length) { setCached(key, posts); return posts; }
+    } catch (e) {
+      console.warn(`Bluesky auth "${keyword}":`, e.message);
+      // Clear the cached token on auth errors so the next call re-authenticates
+      // instead of retrying the same now-invalid session on every keyword.
+      if (e.message.includes('401') || e.message.includes('403')) {
+        _blueskyToken = null;
+        _blueskyTokenExpiry = 0;
+      }
+      // Falls through to the anonymous attempt below rather than giving up —
+      // a transient auth hiccup shouldn't lose this fetch cycle entirely.
+    }
+  }
+
+  // Anonymous fallback (also the only path at all until BLUESKY_APP_IDENTIFIER/
+  // PASSWORD are configured) — skip straight to stale/empty during a known
+  // outage window rather than spending a request that's already confirmed
+  // to fail.
+  if (Date.now() < blueskyAnonOutageUntil) {
+    return getCached(key) || [];
+  }
+
   try {
-    const data  = await bskyFetch(keyword);
-    const NSFW_LABELS = new Set(['porn','sexual','nudity','adult-only','csam','graphic-media']);
-    const posts = (data?.posts || []).filter(p => p.record?.text && p.author && !(p.labels || []).some(l => NSFW_LABELS.has(l?.val))).map(mapPost);
+    const posts = toPosts(await bskyFetch(keyword, null));
+    blueskyConsecutiveFullMisses = 0;
     if (posts.length) { setCached(key, posts); return posts; }
   } catch (e) {
     console.warn(`Bluesky "${keyword}":`, e.message);
+    blueskyConsecutiveFullMisses++;
+    if (blueskyConsecutiveFullMisses >= BLUESKY_OUTAGE_MISS_THRESHOLD && Date.now() >= blueskyAnonOutageUntil) {
+      blueskyAnonOutageUntil = Date.now() + BLUESKY_OUTAGE_COOLDOWN_MS;
+      blueskyConsecutiveFullMisses = 0;
+      console.warn(`[Bluesky] ${BLUESKY_OUTAGE_MISS_THRESHOLD} consecutive anonymous failures — pausing anon fetches for ${BLUESKY_OUTAGE_COOLDOWN_MS / 60000}min`);
+    }
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -5697,7 +5815,12 @@ const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs'];
 // ISO 3166-1 alpha-2 country code, or absent/'XX' when Cloudflare can't
 // determine one (some bots, some VPNs).
 function getUserCountry(req) {
-  const cc = req.headers['cf-ipcountry'];
+  // Optional chaining: real Express requests always have `headers`, but the
+  // synthetic request warmMainFeedSnapshot builds to proactively warm the
+  // cache doesn't include one at all — confirmed live as an unhandled
+  // "Cannot read properties of undefined (reading 'cf-ipcountry')" on every
+  // warming cycle.
+  const cc = req.headers?.['cf-ipcountry'];
   return cc && cc !== 'XX' && cc !== 'T1' ? cc.toUpperCase() : null;
 }
 
@@ -8236,7 +8359,12 @@ function syncToMemory(memUser) {
 }
 
 async function fetchAndSyncUser(id) {
-  if (!db.isConnected()) return null;
+  // isDBId guard: without it, the synthetic warmup user id
+  // ('__system_warmup__', not a real UUID) reached this query on every
+  // proactive cache-warming cycle and failed with "invalid input syntax for
+  // type uuid" — caught below so it didn't crash anything, but it was a
+  // wasted, always-failing DB round-trip every single cycle.
+  if (!db.isConnected() || !isDBId(id)) return null;
   try {
     const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
     if (!rows[0]) return null;
@@ -11392,7 +11520,11 @@ app.get('/office/feed/videos/following', authenticate, handleFollowingVideoFeedR
 // shared, non-personalized pool this populates is kept; the synthetic
 // response itself is discarded.
 function warmMainFeedSnapshot(sortMode, timeRange) {
-  const req = { query: { sort: sortMode, timeRange: timeRange === 'all' ? undefined : timeRange, limit: `${DEFAULT_FEED_LIMIT}`, mode: 'feed' }, user: { id: '__system_warmup__' } };
+  // headers: {} — a real Express request always has one; anything this
+  // synthetic request flows through that reads req.headers (getUserCountry,
+  // for instance) needs it to exist even though there's obviously no real
+  // Cloudflare-fronted request behind this call.
+  const req = { query: { sort: sortMode, timeRange: timeRange === 'all' ? undefined : timeRange, limit: `${DEFAULT_FEED_LIMIT}`, mode: 'feed' }, headers: {}, user: { id: SYSTEM_WARMUP_USER_ID } };
   const res = { status() { return this; }, json() {}, headersSent: false };
   handleFeedRequest(req, res).catch(e => console.warn('warmMainFeedSnapshot:', e.message));
 }
