@@ -9256,14 +9256,71 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // each source needs real depth; floored at 10 so a request never starves
   // a source that just fetched slightly late.
   const perSourceLimit = Math.max(10, Math.ceil((limit * 2) / sources.length));
-  const bySource = await Promise.all(sources.map(src =>
-    getPostsFromDB([], perSourceLimit, 0, src, {
-      sort: 'newest',
-      before: cursorMap[src] || null,
-      timeRange,
-      mediaType,
-    }).then(rows => rows.map(normalizeFeedPost)).catch(() => [])
-  ));
+  // One query with a per-source cursor join instead of N parallel
+  // getPostsFromDB calls (the same ROW_NUMBER()-partition-by-source pattern
+  // getBalancedFeedPosts already uses, adapted for a per-source "before"
+  // cursor instead of one shared time range). Confirmed live as a severe
+  // bottleneck otherwise: with no source filter this fired one query per
+  // source — up to 36, see AGGREGATE_FEED_SOURCES — each independently
+  // planned and executed against feed_posts_cache. Response times of
+  // 45-100+ seconds under real load; raising the DB pool ceiling alone
+  // didn't fix it, confirming it was query/DB-load-bound, not connection-
+  // queueing-bound. bySource is rebuilt below in the same per-source-array
+  // shape the unchanged code after this block already expects.
+  let bySource = sources.map(() => []);
+  if (sources.length && db.isConnected()) {
+    try {
+      const params = [];
+      const cursorValues = sources.map(src => {
+        params.push(src);
+        const srcParam = params.length;
+        params.push(cursorMap[src] ? new Date(cursorMap[src]).toISOString() : null);
+        const curParam = params.length;
+        return `($${srcParam}, $${curParam}::timestamptz)`;
+      }).join(', ');
+      const clauses = [
+        `fp.id NOT LIKE '%\\_fallback' ESCAPE '\\'`,
+        `fp.id NOT LIKE '%\\_social' ESCAPE '\\'`,
+        `fp.id NOT LIKE 'social\\_%' ESCAPE '\\'`,
+        `fp.id !~* '^indeed_j[0-9]+$'`,
+        `fp.id !~* '^govt_g[0-9]+$'`,
+        `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts)`,
+      ];
+      if (mediaType) {
+        params.push(mediaType);
+        clauses.push(`fp.media_type = $${params.length}`);
+      }
+      const rangeMs = feedTimeRangeMs(timeRange);
+      if (rangeMs > 0) {
+        params.push(new Date(Date.now() - rangeMs).toISOString());
+        clauses.push(`fp.post_created_at >= $${params.length}`);
+      }
+      params.push(perSourceLimit);
+      const limitParam = params.length;
+      const { rows } = await db.query(
+        `WITH c(source, before_ts) AS (VALUES ${cursorValues})
+         SELECT * FROM (
+           SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY fp.post_created_at DESC, fp.fetched_at DESC) AS rn
+           FROM feed_posts_cache fp
+           JOIN c ON c.source = fp.source
+           WHERE ${clauses.join(' AND ')}
+         ) ranked
+         WHERE rn <= $${limitParam}
+         ORDER BY post_created_at DESC, fetched_at DESC`,
+        params
+      );
+      const bySourceIdx = new Map(sources.map((src, i) => [src, i]));
+      for (const r of rows) {
+        const post = dbRowToFeedPost(r);
+        if (isFallbackFeedPost(post)) continue;
+        const idx = bySourceIdx.get(r.source);
+        if (idx != null) bySource[idx].push(normalizeFeedPost(post));
+      }
+    } catch (e) {
+      console.error('[getCursorFeedPage] query failed:', e.message);
+      bySource = sources.map(() => []);
+    }
+  }
   const extraKeys = Object.keys(extraLists);
   const allSources = [...sources, ...extraKeys];
   const allLists = [...bySource, ...extraKeys.map(k => extraLists[k] || [])];
