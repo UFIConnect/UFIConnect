@@ -2497,29 +2497,51 @@ async function fetchYouTubeByKeyword(keyword) {
     // Backup: Invidious instances — skip straight past during a known
     // outage window rather than spending 4 requests already confirmed to
     // fail (see youtubeInvidiousOutageUntil's own comment above the list).
+    //
+    // Fired in parallel with a short per-instance timeout, not the previous
+    // sequential `for` + fetchJSON's own 15s timeout each — confirmed live
+    // as a real production regression: with tier 2 also empty, a request
+    // could burn up to 4×15s = 60s waiting through every dead/slow instance
+    // one at a time before ever reaching the circuit breaker, which was the
+    // actual cause of "the videos feed is not working" (it was working, just
+    // taking up to a minute). Racing them bounds the wait to one short
+    // timeout regardless of how many instances are configured.
     if (Date.now() >= youtubeInvidiousOutageUntil) {
+      const invidiousFetch = (instanceUrl) => new Promise((resolve, reject) => {
+        const url = `${instanceUrl}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
+        https.get(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+          },
+        }, (res) => {
+          if (res.statusCode < 200 || res.statusCode >= 300) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+          let d = ''; res.on('data', c => d += c);
+          res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+        }).on('error', reject).setTimeout(5000, function() { this.destroy(new Error('timeout')); });
+      });
+
+      const results = await Promise.allSettled(INVIDIOUS_INSTANCES.map(invidiousFetch));
       let anyInstanceAnswered = false;
-      for (const instance of INVIDIOUS_INSTANCES) {
-        try {
-          const url = `${instance}/api/v1/search?q=${encodeURIComponent(keyword)}&type=video&sort_by=upload_date`;
-          const data = await fetchJSON(url);
-          lastError = null; // this instance answered, even if with nothing usable
-          anyInstanceAnswered = true;
-          if (!Array.isArray(data) || !data.length) continue;
-          const posts = data.filter(v => v.videoId && v.title).map(v => {
-            const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
-            return mapYouTubePost(
-              v.videoId, v.title, v.description, v.author, v.authorId,
-              v.published,
-              thumb?.url, keyword
-            );
-          });
-          if (posts.length) {
-            youtubeInvidiousConsecutiveFullMisses = 0;
-            setCached(cacheKey, posts);
-            return posts;
-          }
-        } catch (e) { lastError = e; continue; }
+      for (const r of results) {
+        if (r.status === 'rejected') { lastError = r.reason; continue; }
+        anyInstanceAnswered = true;
+        lastError = null; // this instance answered, even if with nothing usable
+        const data = r.value;
+        if (!Array.isArray(data) || !data.length) continue;
+        const posts = data.filter(v => v.videoId && v.title).map(v => {
+          const thumb = (v.videoThumbnails || []).find(t => t.quality === 'high') || (v.videoThumbnails || [])[0];
+          return mapYouTubePost(
+            v.videoId, v.title, v.description, v.author, v.authorId,
+            v.published,
+            thumb?.url, keyword
+          );
+        });
+        if (posts.length) {
+          youtubeInvidiousConsecutiveFullMisses = 0;
+          setCached(cacheKey, posts);
+          return posts;
+        }
       }
       if (!anyInstanceAnswered) {
         youtubeInvidiousConsecutiveFullMisses++;
