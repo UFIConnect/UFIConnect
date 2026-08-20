@@ -1,28 +1,9 @@
-// No analytics of any kind was installed on this site — no way to tell
-// whether it was getting any traffic, separate from search-engine indexing.
 // Two independent, best-effort trackers: a first-party log (own DB, visible
-// in the office dashboard, no external account needed) and GA4 (only loads
-// if VITE_GA_MEASUREMENT_ID is set in the deploy environment — safe no-op
-// otherwise, so this ships without requiring a Measurement ID up front).
-
-const GA_ID = import.meta.env.VITE_GA_MEASUREMENT_ID;
-
-let gaLoaded = false;
-function loadGA() {
-  if (gaLoaded || !GA_ID) return;
-  gaLoaded = true;
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`;
-  document.head.appendChild(script);
-  window.dataLayer = window.dataLayer || [];
-  window.gtag = function gtag() { window.dataLayer.push(arguments); };
-  window.gtag('js', new Date());
-  // send_page_view:false — gtag's default page_view only fires once on
-  // initial script load, which would miss every subsequent SPA navigation.
-  // trackPageview() below sends it manually on every route change instead.
-  window.gtag('config', GA_ID, { send_page_view: false });
-}
+// in the office dashboard, no external account needed) and GA4. The gtag.js
+// snippet itself is embedded directly in index.html (Measurement ID
+// G-43NFBSC7CL), not loaded from here — trackPageview() below just fires the
+// page_view event on every SPA route change, since gtag's own automatic
+// page_view only fires once, on initial script load.
 
 function getVisitorId() {
   try {
@@ -38,7 +19,6 @@ function getVisitorId() {
 }
 
 export function trackPageview(path) {
-  loadGA();
   if (window.gtag) {
     window.gtag('event', 'page_view', { page_path: path });
   }

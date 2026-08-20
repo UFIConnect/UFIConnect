@@ -631,7 +631,7 @@ function AnalyticsView() {
   return (
     <>
       <h1 style={H1}>Analytics</h1>
-      <p style={SUBTITLE}>First-party pageview counts, logged straight from the site — no external account required. See also GA4 if VITE_GA_MEASUREMENT_ID is configured.</p>
+      <p style={SUBTITLE}>First-party pageview counts, logged straight from the site — no external account required. See also GA4 at analytics.google.com.</p>
 
       {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
 
