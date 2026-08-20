@@ -118,7 +118,7 @@ export default function PrivacyPolicy() {
             'To deliver communities, messaging, and opportunities relevant to you',
             'To fetch posts from connected social platforms on your behalf (using your OAuth token)',
             'To send transactional emails (password reset, account notifications) — no marketing without consent',
-            'To monitor platform health, prevent abuse, and enforce our Terms of Service',
+            <>To monitor platform health, prevent abuse, and enforce our <Link to="/terms" style={{ color: 'var(--primary)' }}>Terms of Service</Link></>,
             'To improve and develop new features',
           ]} />
           <P>We do not sell your personal data. We do not use your data for advertising.</P>
@@ -248,6 +248,7 @@ export default function PrivacyPolicy() {
           fontSize: '.82rem', color: '#94A3B8',
         }}>
           <Link to="/"         style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
+          <Link to="/terms"    style={{ color: '#64748B', textDecoration: 'none' }}>Terms of Service</Link>
           <Link to="/login"    style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
           <Link to="/register" style={{ color: '#64748B', textDecoration: 'none' }}>Register</Link>
           <span>© {new Date().getFullYear()} {APP_NAME}</span>

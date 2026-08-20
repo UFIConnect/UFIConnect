@@ -57,6 +57,7 @@ const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
+const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const Sources        = lazy(() => import('./pages/Sources'));
 
 function RequireAuth({ children }) {
@@ -172,6 +173,7 @@ export default function App() {
 
       {/* Legal */}
       <Route path="/privacy" element={<PrivacyPolicy />} />
+      <Route path="/terms" element={<TermsOfService />} />
 
       {/* Fallback */}
       <Route path="*" element={<Navigate to="/" replace />} />
