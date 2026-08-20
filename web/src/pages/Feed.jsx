@@ -669,6 +669,110 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   );
 }
 
+// Unlike YouTubeEmbedBlock, a plain <iframe> here is entirely React-owned —
+// TikTok's embed player doesn't reach in and replace its mount node the way
+// YouTube's IFrame API does (see YouTubeEmbedBlock's own comment for the
+// real crash that caused), so there's no risk in just conditionally
+// rendering/unmounting the iframe itself on scroll visibility, same as
+// InlineAutoplayVideo already does for HLS/direct-file video. TikTok's
+// player supplies its own native mute/follow/like controls as part of the
+// embed (unlike YouTube's, which needed controls:0 + a custom button to get
+// a minimal UI), so there's no separate mute button built here.
+function TikTokEmbedBlock({ embedId, poster, title, forcePause = false }) {
+  const [inView, setInView] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { threshold: 0.4 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // forcePause: this exact post's media is open in ImageLightbox — same
+  // "don't play two copies of the same thing at once" reasoning as
+  // YouTubeEmbedBlock's own forcePause, simpler to honor here since
+  // unmounting this iframe is always safe.
+  const playing = inView && !forcePause;
+
+  return (
+    <div ref={containerRef} style={{
+      position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
+      aspectRatio: '9/16', maxHeight: 520, margin: '0 auto',
+    }}>
+      {playing ? (
+        <iframe
+          src={`https://www.tiktok.com/embed/v2/${embedId}`}
+          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          allow="autoplay; encrypted-media; fullscreen"
+          title={title}
+        />
+      ) : poster ? (
+        <img src={poster} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      ) : (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
+          🎵 TikTok video
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TikTokCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
+  const src = SOURCE_META.tiktok;
+  const c   = catStyle(post.group?.category);
+  const embedId = post.embedId;
+  return (
+    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
+        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>TikTok</span>
+        {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
+        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
+        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
+          {timeAgo(post.createdAt)}
+        </Link>
+      </div>
+      <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
+      {embedId ? (
+        <div style={{ marginBottom: 10, position: 'relative' }}>
+          <TikTokEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} forcePause={isMediaOpen} />
+          {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
+        </div>
+      ) : post.mediaUrl ? (
+        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
+          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
+            onError={e => {
+              e.currentTarget.style.display = 'none';
+              const fallback = e.currentTarget.parentElement.querySelector('[data-tiktok-img-fallback]');
+              if (fallback) fallback.style.display = 'flex';
+            }} />
+          <div data-tiktok-img-fallback style={{
+            display: 'none', alignItems: 'center', justifyContent: 'center',
+            height: 200, color: 'var(--muted)', fontSize: '.85rem',
+          }}>
+            📷 Image unavailable
+          </div>
+        </div>
+      ) : null}
+      {post.content && <PostText text={post.content} />}
+      {post.sourceUrl && (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
+            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
+            <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>▶️ Watch ↗</span>
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Sources that have an inline comment/review section
 const COMMENT_SOURCES = new Set([
   'uficonnect',
@@ -778,6 +882,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
   if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
+  if (post.source === 'tiktok') return <TikTokCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);

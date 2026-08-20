@@ -4535,6 +4535,11 @@ async function fetchTikTokUserVideos(token) {
       title:       v.title || v.video_description || 'TikTok video',
       source:      'tiktok', sourceLabel: 'TikTok',
       sourceUrl:   v.share_url || v.embed_link || 'https://www.tiktok.com',
+      // TikTok's own video ID — the frontend's embed player (a direct
+      // https://www.tiktok.com/embed/v2/{id} iframe, same "give the client
+      // the bare ID" convention as embedId on YouTube posts) needs this
+      // directly rather than having to parse it back out of share_url.
+      embedId:     String(v.id),
       topic:       null,
       author:      { name: 'TikTok', title: 'Video' },
       likes: [], likesCount: 0, commentsCount: 0,
@@ -8382,6 +8387,49 @@ const FOLLOWING_SOURCE_FETCHERS = {
   tiktok: fetchTikTokUserVideos, // the connected member's own uploads — see its own comment for why this isn't a "who I follow" timeline
 };
 
+// Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
+// rate SOURCE_CONFIG uses for the app-level continuous workers. There's no
+// app-level equivalent for these — TikTok in particular has no public
+// discovery/search API a bearer token could pull from at all, only a
+// video.list endpoint scoped to whichever individual member authorised the
+// app (see fetchTikTokUserVideos's own comment) — so "pulling on the same
+// 5-minute rate" here means each connected member's own content is kept
+// fresh in the background on that cadence, not that new content gets
+// discovered across the platform the way Reddit/GitHub/etc. do. Without
+// this, getFollowingFeedPosts called the fetcher live on every single
+// request, meaning a member's TikTok videos were only ever as fresh as
+// whenever they last happened to load their Following tab.
+const followingSourceCache = new Map(); // "userId::source" → { posts, fetchedAt }
+const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
+const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS * 2; // stale past 2 missed cycles — getFollowingFeedPosts falls back to a live call rather than serve something this old
+
+async function refreshFollowingSourceCaches() {
+  if (!Object.keys(FOLLOWING_SOURCE_FETCHERS).length) return;
+  for (const user of users) {
+    const tokens = user?.socialTokens;
+    if (!tokens) continue;
+    for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
+      const token = tokens[source];
+      if (!token) continue;
+      try {
+        const raw = await fetcher(token);
+        followingSourceCache.set(`${user.id}::${source}`, {
+          posts: realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })),
+          fetchedAt: Date.now(),
+        });
+      } catch (e) {
+        console.warn(`following source refresh ${source} (user ${user.id}):`, e.message);
+      }
+      // Paced per-fetch, not just per-user — a member could have several of
+      // these connected at once. Modest since each fetcher already caches
+      // its own result internally (see fetchTikTokUserVideos's getCached),
+      // this loop's own concern is spreading requests out, not the primary
+      // rate-limit guard.
+      await waitMs(300);
+    }
+  }
+}
+
 // Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
 // available to third-party apps at all (see the block comment above) — the
 // closest thing UFconnect can actually offer once one of these is
@@ -8429,9 +8477,21 @@ async function getFollowingFeedPosts(userId, sourceFilter = null) {
       if (!wantsSource(source)) continue;
       const token = user?.socialTokens?.[source];
       if (!token) continue;
+      // Prefer the background-refreshed cache (see refreshFollowingSourceCaches,
+      // same 5-minute rate as the app-level continuous workers) over a live
+      // call on every single request — falls back to fetching live only when
+      // the cache hasn't been warmed yet (e.g. right after connecting, before
+      // the next refresh cycle) or has gone stale past two missed cycles.
+      const cached = followingSourceCache.get(`${userId}::${source}`);
+      if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS) {
+        externalPosts.push(...cached.posts);
+        continue;
+      }
       try {
         const raw = await fetcher(token);
-        externalPosts.push(...realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })));
+        const fresh = realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }));
+        followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
+        externalPosts.push(...fresh);
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
       }
@@ -13525,6 +13585,13 @@ const AUTO_TRANSFER_INTERVAL_MS = 10 * 60 * 1000;
 setInterval(() => {
   enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'automatic 10-minute transfer');
 }, AUTO_TRANSFER_INTERVAL_MS);
+
+// See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
+// per-user-connected-account equivalent of the app-level transfer just
+// above, on the same 5-minute rate the rest of the sources use.
+setInterval(() => {
+  refreshFollowingSourceCaches().catch(e => console.warn('refreshFollowingSourceCaches:', e.message));
+}, FOLLOWING_SOURCE_REFRESH_MS);
 
 // Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
 function requestRenderDeploy(options, body = null) {

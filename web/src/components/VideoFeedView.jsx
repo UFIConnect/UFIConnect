@@ -75,6 +75,16 @@ function resolveVideoSource(post) {
     ? (post.embedId || extractYouTubeId(post.sourceUrl))
     : extractYouTubeId(post.mediaUrl);
   if (ytId) return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` };
+  // TikTok: embedId is the numeric video id fetchTikTokUserVideos maps
+  // server-side (Following mode only — TikTok has no app-level discovery
+  // fetcher, see FOLLOWING_SOURCE_FETCHERS backend-side), rendered the same
+  // simple mount/unmount iframe way as Feed.jsx's TikTokEmbedBlock rather
+  // than plugged into the scrub bar below, which only understands a native
+  // <video> element or YouTube's IFrame Player API — TikTok's embed exposes
+  // neither.
+  if (post.source === 'tiktok') {
+    return post.embedId ? { kind: 'tiktok', id: post.embedId, poster: post.mediaUrl } : null;
+  }
   if (post.source === 'bluesky') {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaUrl } : null;
@@ -356,6 +366,19 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           </div>
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+        )
+      ) : src.kind === 'tiktok' ? (
+        active ? (
+          <iframe
+            src={`https://www.tiktok.com/embed/v2/${src.id}`}
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            allow="autoplay; encrypted-media; fullscreen"
+            title={post.title}
+          />
+        ) : src.poster ? (
+          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+        ) : (
+          <div style={{ color: '#888', fontSize: '.85rem' }}>🎵 TikTok video</div>
         )
       ) : src.kind === 'hls' ? (
         active ? (
