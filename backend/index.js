@@ -10819,10 +10819,17 @@ async function handleFeedRequest(req, res) {
   // on every request. dbFeedOrder() wraps post_created_at in COALESCE() for
   // BOTH 'ranked' and 'newest' — so the ORDER BY can't use the plain index
   // either way; the WHERE-clause row count is the only real lever. Applies
-  // regardless of sort mode, and tight (2 days, not 7/30) because rows carry
-  // wide TEXT columns (content up to 2000 chars) that make even a "modest"
-  // multi-thousand-row sort spill to disk on a constrained instance.
-  const dbTimeRange = timeRange === 'all' ? '2d' : timeRange;
+  // regardless of sort mode, and tight because rows carry wide TEXT columns
+  // (content up to 2000 chars) that make even a "modest" multi-thousand-row
+  // sort spill to disk on a constrained instance. Was '2d' — measured live
+  // against production on 2026-08-20 that even 2 days still routinely
+  // exceeded the 120s statement_timeout and came back empty (the getCursorFeedPage
+  // window-function query, same cost profile as the 'ranked' one this
+  // comment describes). Timed the same unfiltered newest-sort request at
+  // three window sizes back to back: 1h → 6.5s (full page, hasMore:true),
+  // 6h → 28.3s, 2d → 120s+/empty. Source volume across the 36-source pool
+  // is high enough that 1h alone already comfortably fills a page.
+  const dbTimeRange = timeRange === 'all' ? '1h' : timeRange;
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
