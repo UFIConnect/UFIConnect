@@ -233,6 +233,18 @@
       }(window.location));
     </script>
 
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-43NFBSC7CL"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      // send_page_view:false — gtag's automatic page_view only fires once on
+      // initial load, which would miss every in-app route change on this SPA.
+      // src/analytics.js sends page_view manually on every route change instead.
+      gtag('config', 'G-43NFBSC7CL', { send_page_view: false });
+    </script>
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
