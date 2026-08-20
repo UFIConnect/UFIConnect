@@ -10828,7 +10828,18 @@ async function handleFeedRequest(req, res) {
     const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
     const cursorMap = decodeFeedCursor(req.query.cursor);
-    const cursorTimeRange = timeRange === 'all' ? null : timeRange;
+    // Was null (fully unbounded) for 'all' — getCursorFeedPage's query is a
+    // PARTITION BY window function, same cost profile as getBalancedFeedPosts
+    // above (see its own dbTimeRange comment), so leaving 'all' unbounded here
+    // meant every unfiltered newest-sort request (the main Feed's default
+    // view) sorted the entire feed_posts_cache table with no time floor.
+    // Confirmed live: with AGGREGATE_FEED_SOURCES now covering 36 sources,
+    // this took over two minutes under real concurrent load, hit Postgres's
+    // statement_timeout, and was silently swallowed by the catch block below
+    // into an empty feed. Reusing dbTimeRange (already computed above for
+    // this exact reason) instead of a separate null-for-'all' rule brings
+    // this path in line with every other sort mode.
+    const cursorTimeRange = dbTimeRange;
 
     let extraLists = {};
     if (isUnfiltered) {
