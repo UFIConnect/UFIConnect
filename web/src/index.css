@@ -644,6 +644,13 @@ input, textarea, select { font-family: inherit; }
   display: none;
 }
 
+/* Settings/Log out fallback on Profile — see the comment at its JSX for
+   why this exists; only shown once .sidebar (which normally holds these)
+   is hidden below. */
+.profile-mobile-account-actions {
+  display: none;
+}
+
 @media (max-width: 768px) {
   /* Hide sidebar, show bottom nav */
   .sidebar { display: none; }
@@ -739,6 +746,15 @@ input, textarea, select { font-family: inherit; }
 
   /* Profile page — Connected Accounts buttons smaller */
   .platform-item { flex-wrap: wrap; gap: 10px; }
+
+  /* Settings/Log out fallback — see JSX comment */
+  .profile-mobile-account-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin-top: 10px;
+  }
+  .profile-mobile-logout { color: var(--danger); }
 }
 
 /* ── PWA / App optimisations ──────────────────────────────── */

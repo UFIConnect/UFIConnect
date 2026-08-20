@@ -27,9 +27,14 @@ const TABS = ['Overview', 'Connected Accounts', 'Sources', 'Posts', 'Skills', 'A
 const NAV_TABS = { 'Connected Accounts': '/connected-accounts', 'Sources': '/sources' };
 
 export default function Profile() {
-  const { profile, updateProfileLocally } = useAuth();
+  const { profile, updateProfileLocally, logout } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
+
+  function handleLogout() {
+    logout();
+    navigate('/login');
+  }
   const [tab,         setTab]         = useState('Overview');
   const [editing,     setEditing]     = useState(false);
   const [form,        setForm]        = useState(null);
@@ -322,6 +327,17 @@ export default function Profile() {
           <Link to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">
             <button className="btn btn-ghost btn-sm">👁 Preview as public</button>
           </Link>
+        </div>
+
+        {/* Settings/Log out live in the desktop sidebar, which is hidden on
+            mobile with nothing replacing it there — Profile is the one
+            bottom-nav destination every mobile user can already reach, so
+            it's the fallback entry point for both on small screens. */}
+        <div className="profile-mobile-account-actions">
+          <Link to="/settings">
+            <button className="btn btn-ghost btn-sm">⚙️ Settings</button>
+          </Link>
+          <button className="btn btn-ghost btn-sm profile-mobile-logout" onClick={handleLogout}>⎋ Log out</button>
         </div>
       </div>
 
