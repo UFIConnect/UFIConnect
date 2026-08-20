@@ -10944,7 +10944,15 @@ async function handleFeedRequest(req, res) {
     if (sortMode === 'newest' && !searchQuery) {
       const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
       const cursorMap = decodeFeedCursor(req.query.cursor);
-      const cursorTimeRange = timeRange === 'all' ? null : timeRange;
+      // Was null (fully unbounded) for 'all' — same bug as the main Feed's
+      // cursor branch above had (see its own comment: an unfiltered,
+      // unbounded PARTITION BY query timed out under real load and came
+      // back empty). getBalancedFeedPosts already bounds archive's OTHER
+      // sort modes to 24h by default for the identical reason (see its own
+      // dbTimeRange usage) — reusing dbTimeRange here brings this branch in
+      // line with that existing precedent instead of staying the one
+      // unbounded path left in feedMode==='archive'.
+      const cursorTimeRange = dbTimeRange;
       const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
 
       let extraLists = {};
