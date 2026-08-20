@@ -448,7 +448,7 @@ function MaximizeButton({ onClick }) {
   );
 }
 
-function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true }) {
+function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
   const [playing, setPlaying] = useState(false);
   // Always starts muted regardless of trigger (scroll-into-view or a manual
   // click on the poster) — a passive scroll shouldn't ever blast sound
@@ -467,17 +467,34 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   const containerRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
+  // Toggles both ways with real scroll position — was one-directional
+  // (isIntersecting=true set playing, nothing ever set it back false), so a
+  // video that autoplayed into view kept playing, decoding, and (if
+  // unmuted) audible indefinitely after being scrolled past. Mirrors
+  // InlineAutoplayVideo's inView pattern for the other video type.
   useEffect(() => {
     if (!autoPlayOnVisible) return;
     const el = containerRef.current;
-    if (!el || playing) return;
+    if (!el) return;
     const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setPlaying(true); },
+      ([entry]) => setPlaying(entry.isIntersecting),
       { threshold: 0.4 }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [playing, autoPlayOnVisible]);
+  }, [autoPlayOnVisible]);
+
+  // forcePause is for when this exact post's media is open in ImageLightbox
+  // (maximized) — the lightbox starts its own player for the same video,
+  // and this card never actually scrolls out of the viewport when the
+  // lightbox opens over it (IntersectionObserver tracks geometric
+  // intersection only, not z-index occlusion), so `playing` alone would
+  // leave this copy running behind it — two players decoding, and audibly
+  // doubled if the user has sound on. Destroying this one while forced-
+  // paused, then letting it resume automatically once the lightbox closes
+  // (playing itself never changed), is what actually collapses that back to
+  // a single player.
+  const effectivelyPlaying = playing && !forcePause;
 
   // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
   // had no programmatic control once mounted at all — every inline video in
@@ -486,7 +503,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // inconsistent with — and less reliable than — the mute button every
   // other video surface in this app already has).
   useEffect(() => {
-    if (!playing) return;
+    if (!effectivelyPlaying) return;
     let cancelled = false;
     const startUnmuted = !muted;
     loadYouTubeIframeApi().then((YT) => {
@@ -508,14 +525,14 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
     };
-  }, [playing, embedId]);
+  }, [effectivelyPlaying, embedId]);
 
   useEffect(() => {
     if (!ytPlayerRef.current) return;
     if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
   }, [muted]);
 
-  if (playing) {
+  if (effectivelyPlaying) {
     return (
       <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
         <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
@@ -560,7 +577,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   );
 }
 
-function YouTubeCard({ post, cardRef, onMediaOpen }) {
+function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
@@ -578,7 +595,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen }) {
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
-          <YouTubeEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} maxHeight={280} />
+          <YouTubeEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl ? (
@@ -684,7 +701,7 @@ function commentUrl(post) {
   }
 }
 
-const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
+const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
   const { profile } = useAuth();
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
@@ -719,7 +736,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
   const c   = catStyle(post.group?.category);
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
-  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} />;
+  if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
@@ -909,6 +926,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
             poster={`https://i.ytimg.com/vi/${videoYouTubeId}/hqdefault.jpg`}
             title={post.title}
             maxHeight={360}
+            forcePause={isMediaOpen}
           />
           <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
             {src.icon} {src.label}
@@ -929,6 +947,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated }) {
                 src={videoPlaylistUrl || post.mediaUrl}
                 poster={videoPlaylistUrl ? post.mediaUrl : undefined}
                 style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
+                forcePause={isMediaOpen}
               />
             ) : (
               <>
@@ -2224,6 +2243,7 @@ export default function Feed() {
                 post={post}
                 onMediaOpen={p => setMediaLightboxPostId(p.id)}
                 onPostUpdated={updateFeedPost}
+                isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
               />
             ))}
           </div>

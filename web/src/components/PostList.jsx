@@ -282,7 +282,8 @@ export default function PostList({
                         photos: this button still opens ImageLightbox for
                         sound, seeking, and next/prev. */}
                     <InlineAutoplayVideo kind="file" src={post.mediaUrl}
-                      style={{ width: '100%', maxHeight: 420, display: 'block' }} />
+                      style={{ width: '100%', maxHeight: 420, display: 'block' }}
+                      forcePause={mediaLightboxPostId === post.id} />
                   </button>
                 ) : (
                   <button

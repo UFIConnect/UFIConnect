@@ -178,7 +178,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
 // once — matches the "only the active slide actually plays" behavior
 // VideoFeedView already uses, just triggered by real scroll position
 // instead of a swipe-snap container.
-export function InlineAutoplayVideo({ kind, src, poster, style }) {
+export function InlineAutoplayVideo({ kind, src, poster, style, forcePause = false }) {
   const containerRef = useRef(null);
   const fileRef = useRef(null);
   const [inView, setInView] = useState(false);
@@ -194,6 +194,16 @@ export function InlineAutoplayVideo({ kind, src, poster, style }) {
     return () => observer.disconnect();
   }, []);
 
+  // forcePause is for a card whose media is currently open in ImageLightbox
+  // (maximized) — the lightbox starts its own playback of the same file, and
+  // this card never actually leaves the viewport when the lightbox opens
+  // over it (IntersectionObserver only tracks geometric intersection, not
+  // z-index occlusion), so inView alone would keep this copy playing too —
+  // audibly doubled if the user has sound on. Kept separate from inView
+  // itself so scroll-based visibility and "something else is showing this
+  // right now" stay independent, composable signals.
+  const shouldPlay = inView && !forcePause;
+
   // Direct-file case drives its own <video> element here; the HLS case
   // (below, in the render) hands autoplay off to HlsVideoPlayer instead,
   // which already primes muted state right before play() and falls back
@@ -203,7 +213,7 @@ export function InlineAutoplayVideo({ kind, src, poster, style }) {
     if (kind !== 'file') return;
     const v = fileRef.current;
     if (!v) return;
-    if (inView) {
+    if (shouldPlay) {
       v.muted = true;
       v.defaultMuted = true;
       v.playsInline = true;
@@ -211,12 +221,12 @@ export function InlineAutoplayVideo({ kind, src, poster, style }) {
     } else {
       v.pause();
     }
-  }, [inView, kind]);
+  }, [shouldPlay, kind]);
 
   return (
     <div ref={containerRef}>
       {kind === 'hls' ? (
-        inView ? (
+        shouldPlay ? (
           <HlsVideoPlayer src={src} poster={poster} autoPlay muted loop style={style} />
         ) : (
           <img src={poster} alt="" style={style} />
