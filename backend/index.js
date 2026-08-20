@@ -666,7 +666,10 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
     clientId:     () => process.env.TIKTOK_CLIENT_KEY,
     clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
-    scope: 'user.info.basic',
+    // video.list is what fetchTikTokUserVideos actually calls — was missing
+    // here, so a token issued before this fix has no permission to list the
+    // owner's videos regardless of what the fetcher requests.
+    scope: 'user.info.basic video.list',
     pkce: true,
     clientIdParam: 'client_key',
   },
@@ -4463,6 +4466,71 @@ async function fetchFacebook(keyword, userToken = null) {
   }
 }
 
+// ─── TikTok: a connected member's own uploaded videos (Display API v2) ───────
+// Unlike Twitter/Instagram/Facebook above, TikTok's public API has no
+// keyword/hashtag search at all for third-party apps — video.list (the scope
+// SOCIAL_CFG.tiktok now requests alongside user.info.basic) only returns the
+// token owner's OWN public uploads. So this is honestly a "your own TikTok
+// videos, on UFconnect" feature, not a discovery feed — same FOLLOWING_SOURCE_FETCHERS
+// slot Bluesky/Mastodon's real home-timeline fetchers are meant for once
+// their own OAuth lands, just backed by a different kind of "my own content"
+// API instead of a following-timeline one.
+async function fetchTikTokUserVideos(token) {
+  if (!token) return [];
+  const key = `tiktok_own_${token.slice(-12)}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const fields = 'id,title,video_description,duration,cover_image_url,embed_link,share_url,create_time';
+    const raw = await new Promise((resolve, reject) => {
+      const body = JSON.stringify({ max_count: 20 });
+      const req = https.request(
+        `https://open.tiktokapis.com/v2/video/list/?fields=${fields}`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json; charset=UTF-8',
+            'Content-Length': Buffer.byteLength(body),
+          },
+        },
+        res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
+      );
+      req.on('error', reject);
+      req.setTimeout(9000, () => req.destroy(new Error('timeout')));
+      req.write(body);
+      req.end();
+    });
+    const parsed = JSON.parse(raw);
+    if (parsed?.error && parsed.error.code !== 'ok') throw new Error(`TikTok API ${parsed.error.code}: ${parsed.error.message || ''}`);
+    const videos = parsed?.data?.videos || [];
+    const posts = videos.map(v => ({
+      id:          `tiktok_${v.id}`,
+      authorId:    `tiktok_owner_${token.slice(-8)}`,
+      groupId:     'ext_tiktok',
+      content:     v.video_description || v.title || '',
+      title:       v.title || v.video_description || 'TikTok video',
+      source:      'tiktok', sourceLabel: 'TikTok',
+      sourceUrl:   v.share_url || v.embed_link || 'https://www.tiktok.com',
+      topic:       null,
+      author:      { name: 'TikTok', title: 'Video' },
+      likes: [], likesCount: 0, commentsCount: 0,
+      createdAt:   v.create_time ? new Date(v.create_time * 1000).toISOString() : normalizeTimestamp(null),
+      isExternal:  true,
+      mediaType:   'video',
+      mediaUrl:    v.cover_image_url || null,
+      group:       { id: 'ext_tiktok', name: 'TikTok', category: 'Marketing' },
+    }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('TikTok own-videos fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    return []; // per-user fetch failing (expired token, no videos, etc.) shouldn't break the rest of Following
+  }
+}
+
 // Continuous-agent wrappers for the office source pipeline (single-arg
 // fetchFn(keyword) signature makeTopicCycler expects). Deliberately do NOT
 // pass a connected member's personal OAuth token here — that would mean one
@@ -5347,13 +5415,23 @@ function sliceCircular(pool, lo, count) {
   return result;
 }
 
-// Per-user "already shown" tracking, so infinite scroll and the video feed
-// don't resurface the same external post to the same user twice — including
-// via sliceCircular's wraparound once a user has paged past the pool's real
-// depth, which otherwise guarantees repeats for anyone who scrolls that far.
-// In-memory Set per user for fast filtering on every request (one DB round
-// trip per user per server lifetime to warm it), backed by the seen_posts
-// table so it survives restarts/deploys and carries across devices.
+// Per-user "already shown" tracking, so infinite scroll within one surface
+// doesn't resurface the same external post to the same user twice —
+// including via sliceCircular's wraparound once a user has paged past the
+// pool's real depth, which otherwise guarantees repeats for anyone who
+// scrolls that far. In-memory Set per user+context for fast filtering on
+// every request (one DB round trip per user+context per server lifetime to
+// warm it), backed by the seen_posts table so it survives restarts/deploys
+// and carries across devices.
+//
+// context ('feed' default, 'videos' for handleVideoFeedRequest) keeps the
+// main Feed and the dedicated Videos tab as genuinely independent surfaces
+// — this used to be one shared pool across both on purpose (a video seen in
+// either place would never resurface in the other), but that meant
+// scrolling past a video in the Feed silently emptied it out of Videos too,
+// which read as the two feeds being merged rather than two separate views
+// into the same content. Each surface now tracks its own "already shown"
+// state; a post can appear once in each.
 //
 // This is VIEW tracking, not engagement — despite the table/function names
 // (kept as-is; renaming a table + ~15 call sites for a label change alone
@@ -5362,26 +5440,27 @@ function sliceCircular(pool, lo, count) {
 // actually looked at it. markPostsEngaged/engaged_at below is the real
 // "did they watch/read this" signal — a separate, later write against the
 // same row once a genuine engagement threshold is crossed client-side.
-const userSeenCache = new Map(); // userId → Set<postId>
-const USER_SEEN_CACHE_MAX_USERS  = 5000; // distinct users tracked in memory at once
-const USER_SEEN_IDS_MAX_PER_USER = 4000; // ids per user kept in memory — DB has the full history
+const userSeenCache = new Map(); // "userId::context" → Set<postId>
+const USER_SEEN_CACHE_MAX_USERS  = 5000; // distinct user+context entries tracked in memory at once
+const USER_SEEN_IDS_MAX_PER_USER = 4000; // ids per user+context kept in memory — DB has the full history
 const SYSTEM_WARMUP_USER_ID = '__system_warmup__'; // see warmMainFeedSnapshot — not a real viewer
 
-async function getUserSeenSet(userId) {
+async function getUserSeenSet(userId, context = 'feed') {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID) return new Set();
-  const cached = userSeenCache.get(userId);
+  const cacheKey = `${userId}::${context}`;
+  const cached = userSeenCache.get(cacheKey);
   if (cached) return cached;
   const ids = new Set();
   if (db.isConnected()) {
     try {
       const { rows } = await db.query(
-        'SELECT post_id FROM seen_posts WHERE user_id = $1 ORDER BY seen_at DESC LIMIT $2',
-        [userId, USER_SEEN_IDS_MAX_PER_USER]
+        'SELECT post_id FROM seen_posts WHERE user_id = $1 AND context = $2 ORDER BY seen_at DESC LIMIT $3',
+        [userId, context, USER_SEEN_IDS_MAX_PER_USER]
       );
       rows.forEach(r => ids.add(r.post_id));
     } catch (e) { console.warn('getUserSeenSet:', e.message); }
   }
-  userSeenCache.set(userId, ids);
+  userSeenCache.set(cacheKey, ids);
   trimOldestMapEntries(userSeenCache, USER_SEEN_CACHE_MAX_USERS);
   return ids;
 }
@@ -5396,20 +5475,20 @@ function filterUnseen(posts, seenIds) {
   return unseen.length ? unseen : posts;
 }
 
-function markPostsSeen(userId, posts) {
+function markPostsSeen(userId, posts, context = 'feed') {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID || !posts?.length) return;
   const ids = [...new Set(posts.map(p => p?.id).filter(Boolean))];
   if (!ids.length) return;
-  const seenIds = userSeenCache.get(userId);
+  const seenIds = userSeenCache.get(`${userId}::${context}`);
   if (seenIds) {
     ids.forEach(id => seenIds.add(id));
     trimOldestSetEntries(seenIds, USER_SEEN_IDS_MAX_PER_USER);
   }
   if (db.isConnected()) {
-    const values = ids.map((_, i) => `($1, $${i + 2})`).join(', ');
+    const values = ids.map((_, i) => `($1, $${i + 2}, $${ids.length + 2})`).join(', ');
     db.query(
-      `INSERT INTO seen_posts (user_id, post_id) VALUES ${values} ON CONFLICT (user_id, post_id) DO NOTHING`,
-      [userId, ...ids]
+      `INSERT INTO seen_posts (user_id, post_id, context) VALUES ${values} ON CONFLICT (user_id, post_id, context) DO NOTHING`,
+      [userId, ...ids, context]
     ).catch(e => console.warn('markPostsSeen:', e.message));
   }
 }
@@ -8236,6 +8315,7 @@ function serializeCommunityPost(post, viewerId = null) {
 const FOLLOWING_SOURCE_FETCHERS = {
   // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
+  tiktok: fetchTikTokUserVideos, // the connected member's own uploads — see its own comment for why this isn't a "who I follow" timeline
 };
 
 // Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
@@ -8872,6 +8952,27 @@ async function migrateDB() {
     // order. A dedicated index gets the ORDER BY for free from the index
     // itself, same reasoning as fpc_source_time_idx just above.
     await db.query(`CREATE INDEX IF NOT EXISTS seen_posts_user_time_idx ON seen_posts(user_id, seen_at DESC)`);
+    // Splits "already shown" tracking by surface (see getUserSeenSet/
+    // markPostsSeen's own comment) — the main Feed and the dedicated Videos
+    // tab used to share one seen_posts row per (user_id, post_id), so
+    // scrolling past a video in the Feed marked it seen everywhere,
+    // silently emptying it out of Videos too. Existing rows default to
+    // 'feed' (their only real context until now); the primary key widens to
+    // include it so a 'videos' row for the same post_id can coexist
+    // alongside a 'feed' one instead of colliding on INSERT.
+    await db.query(`ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS context TEXT NOT NULL DEFAULT 'feed'`);
+    await db.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.key_column_usage
+          WHERE table_name = 'seen_posts' AND column_name = 'context' AND constraint_name = 'seen_posts_pkey'
+        ) THEN
+          ALTER TABLE seen_posts DROP CONSTRAINT IF EXISTS seen_posts_pkey;
+          ALTER TABLE seen_posts ADD PRIMARY KEY (user_id, post_id, context);
+        END IF;
+      END $$;
+    `);
     // engaged_at: see markPostsEngaged/POST /posts/engaged — a genuine
     // "the user actually watched/read this" signal, distinct from
     // seen_posts' existing row (written the moment a post is merely
@@ -11823,10 +11924,26 @@ async function handleVideoFeedRequest(req, res) {
     // querying sources with zero video posts was pure overhead. An explicit
     // filter always wins regardless, same as before.
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : (await getVideoCapableSources()) || AGGREGATE_FEED_SOURCES;
-    // ?bust=1 has no cache to bust anymore (no snapshot) — kept as a no-op
-    // accepted param so older clients that still send it don't break.
+    // Manual refresh (see VideoFeedView's handleRefresh, which sets both
+    // reset:true and bust:true) — same stale-while-revalidate shape as the
+    // main Feed's own bust handling: serve the current cursor page now, and
+    // ask the workers to go fetch fresh content in the background so a
+    // refresh tap actually pulls new material instead of just re-reading
+    // whatever was already cached (which is all this did before — genuinely
+    // a no-op against the DB itself, just re-querying the same table).
+    // Scoped to cursorSources, not the full 36-source list — a Videos
+    // refresh has no reason to also burst-refresh sources that don't carry
+    // video content.
+    if (req.query.bust === '1') {
+      const agentKeys = cursorSources.map(feedWorkerKey);
+      setImmediate(() => enqueueSourceRefresh(agentKeys, 'video feed bust'));
+    }
     const cursorMap = decodeFeedCursor(req.query.cursor);
-    const seenIds = await getUserSeenSet(req.user.id);
+    // 'videos' context — kept independent of the main Feed's own "already
+    // shown" tracking (default 'feed' context) so scrolling past a video in
+    // one surface doesn't silently remove it from the other. See
+    // getUserSeenSet/markPostsSeen's own comment for why this split exists.
+    const seenIds = await getUserSeenSet(req.user.id, 'videos');
 
     const { posts, nextCursor, hasMore } = await getCursorFeedPage({
       sources: cursorSources,
@@ -11837,7 +11954,7 @@ async function handleVideoFeedRequest(req, res) {
       seenIds,
     });
 
-    markPostsSeen(req.user.id, posts);
+    markPostsSeen(req.user.id, posts, 'videos');
     res.json({ posts, cursor: nextCursor, hasMore });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
@@ -12748,8 +12865,8 @@ const AGENT_DEFS = {
     description: 'Aggregates public design, UX, CSS, and product craft feeds from Designboom, Awwwards, CSS-Tricks, and Fast Company.',
   },
   tiktok: {
-    name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'curated',
-    description: 'Serves curated short-form creator and professional posts while public TikTok APIs require approved platform access.',
+    name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'per-connect',
+    description: 'Fetches a connected member\'s own uploaded videos via TikTok\'s Display API (video.list) — public/hashtag discovery still requires approved partner access TikTok doesn\'t grant third-party apps.',
   },
   usajobs: {
     name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8',
