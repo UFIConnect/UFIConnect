@@ -70,6 +70,15 @@
     <meta name="google-site-verification" content="b2389e02302caba3" />
     <!-- Add Bing Webmaster Tools verification once the real token is issued. -->
 
+    <!-- TikTok's DNS TXT record (tiktok-developers-site-verification=...) covers
+         domain-level verification; this meta tag is the per-URL check their
+         "Manage properties" screen (Privacy Policy / Terms / Website URL) runs
+         against the page itself. Present on every route since it's in index.html,
+         so it covers /, /privacy, and /terms without a per-page tag each. Same
+         code as the DNS record — TikTok issues one signature per domain, just
+         two accepted delivery methods for it. -->
+    <meta name="tiktok-developers-site-verification" content="pMv5qfAYpDrxNFz1R0ovk9hCocYVxCOU" />
+
     <!-- JSON-LD: WebSite with SearchAction -->
     <script type="application/ld+json">
     {
