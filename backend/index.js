@@ -7689,6 +7689,39 @@ const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook'
 // other source does.
 const AGGREGATE_FEED_SOURCES = Object.keys(SOURCE_CONFIG);
 
+// The unfiltered video feed used to hand every one of AGGREGATE_FEED_SOURCES
+// (36) to getCursorFeedPage on every single request, even though only a
+// handful of sources have ever actually contributed video content —
+// confirmed live via a true-mix sample (youtube/mastodon/devto/bluesky/
+// reddit/theverge/designweb, out of 36 configured). Most of those 36
+// per-source partitions in the underlying query were guaranteed-empty work
+// regardless of indexing. Queried fresh periodically rather than
+// hardcoded — a hardcoded snapshot list of "video sources" already went
+// stale once this session (see the FEED_VIDEO_SOURCES revert on the
+// frontend) — so this self-corrects as the real mix shifts, e.g. once an
+// app bearer token gets configured for a source that's currently idle and
+// it starts contributing video for real.
+let _videoCapableSources = null;
+let _videoCapableSourcesExpiry = 0;
+const VIDEO_CAPABLE_SOURCES_TTL = 15 * 60 * 1000;
+async function getVideoCapableSources() {
+  if (_videoCapableSources && Date.now() < _videoCapableSourcesExpiry) return _videoCapableSources;
+  if (!db.isConnected()) return null; // caller falls back to the full source list
+  try {
+    const { rows } = await db.query(
+      `SELECT DISTINCT source FROM feed_posts_cache WHERE media_type = 'video' AND post_created_at > NOW() - INTERVAL '7 days'`
+    );
+    const sources = rows.map(r => r.source).filter(Boolean);
+    if (!sources.length) return null; // don't cache an empty result — likely a transient blip, not "no source has video"
+    _videoCapableSources = sources;
+    _videoCapableSourcesExpiry = Date.now() + VIDEO_CAPABLE_SOURCES_TTL;
+    return sources;
+  } catch (e) {
+    console.warn('[getVideoCapableSources] query failed:', e.message);
+    return null;
+  }
+}
+
 // ─── Per-post deep link generator for curated social posts ───────────────────
 function getSocialPostUrl(platform, post) {
   const author = post.author || '';
@@ -11573,7 +11606,11 @@ async function handleVideoFeedRequest(req, res) {
       ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
       : [];
     const sourceFilter = req.query.source || null;
-    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
+    // Unfiltered: only the sources actually known to carry video content
+    // (see getVideoCapableSources), not the full 36-source aggregate list —
+    // querying sources with zero video posts was pure overhead. An explicit
+    // filter always wins regardless, same as before.
+    const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : (await getVideoCapableSources()) || AGGREGATE_FEED_SOURCES;
     // ?bust=1 has no cache to bust anymore (no snapshot) — kept as a no-op
     // accepted param so older clients that still send it don't break.
     const cursorMap = decodeFeedCursor(req.query.cursor);
@@ -15276,6 +15313,10 @@ db.initDB().then(async () => {
     await preloadUsersFromDB();
     await seedAndLoadGroups();
     await loadPostsFromDB();
+    // Warm the video-capable-sources list (needs the DB, and migrateDB's
+    // new covering index, to already be ready) so the first real video
+    // feed request doesn't fall back to the full 36-source list.
+    getVideoCapableSources().catch(e => console.warn('[getVideoCapableSources] Startup warm failed:', e.message));
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
     globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
