@@ -102,12 +102,57 @@ export default function Settings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
     if (['account', 'security', 'privacy', 'notifications', 'preferences'].includes(tab)) setActiveTab(tab);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stripe redirects back here with ?upgrade=success|cancelled after
+  // checkout. Success needs a real refetch (not updateProfileLocally with
+  // stale data) — the webhook is what actually flips plan to 'pro' server-
+  // side, on Stripe's own timing, not this redirect.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const upgrade = params.get('upgrade');
+    if (!upgrade) return;
+    window.history.replaceState({}, '', window.location.pathname + (window.location.search.includes('tab=') ? '?tab=account' : ''));
+    if (upgrade === 'success') {
+      client.get('/profile')
+        .then(({ data }) => {
+          updateProfileLocally(data);
+          showToast(data.plan === 'pro' ? "You're on Pro — thanks!" : "Payment received — this can take a few seconds to finish activating.", 'success');
+        })
+        .catch(() => showToast("Payment received — refresh in a moment if Pro doesn't show up yet.", 'success'));
+    } else if (upgrade === 'cancelled') {
+      showToast('Checkout cancelled — no charge was made.', 'info');
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleUpgrade() {
+    setUpgrading(true);
+    try {
+      const { data } = await client.post('/billing/create-checkout-session');
+      window.location.href = data.url;
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
+      setUpgrading(false);
+    }
+  }
+
+  async function handleManageBilling() {
+    setPortalLoading(true);
+    try {
+      const { data } = await client.post('/billing/create-portal-session');
+      window.location.href = data.url;
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not open billing portal. Please try again.', 'error');
+      setPortalLoading(false);
+    }
+  }
 
   // ── Account / role-specific settings state ────────────────────────────────
   const [form, setForm] = useState({
@@ -491,6 +536,34 @@ export default function Settings() {
             <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
               Profile photo and cover image are managed from your <Link to="/profile">profile page</Link>.
             </div>
+          </div>
+
+          {/* Plan / billing */}
+          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', flexWrap: 'wrap' }}>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+              background: profile.plan === 'pro' ? '#EDE4FF' : 'var(--bg-secondary)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
+            }}>{profile.plan === 'pro' ? '⭐' : '🆓'}</div>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
+                {profile.plan === 'pro' ? 'Pro plan' : 'Free plan'}
+              </div>
+              <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
+                {profile.plan === 'pro'
+                  ? 'Thanks for supporting UFconnect — manage your subscription anytime.'
+                  : 'Support UFconnect with a Pro subscription.'}
+              </div>
+            </div>
+            {profile.plan === 'pro' ? (
+              <button type="button" onClick={handleManageBilling} disabled={portalLoading} className="btn btn-ghost btn-sm">
+                {portalLoading ? 'Opening…' : 'Manage billing'}
+              </button>
+            ) : (
+              <button type="button" onClick={handleUpgrade} disabled={upgrading} className="btn btn-primary btn-sm">
+                {upgrading ? 'Redirecting…' : 'Upgrade to Pro'}
+              </button>
+            )}
           </div>
 
           {/* Role badge */}

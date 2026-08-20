@@ -16,6 +16,13 @@ const filestore  = require('./filestore');
 
 dotenv.config();
 
+// Same "idle until configured, never crash" pattern as every other
+// credential-gated integration in this file (USAJobs, Reddit OAuth,
+// Bluesky) — stripe(null) would throw on construction, so this stays null
+// (billing routes respond with a clear "not configured" instead) until a
+// real STRIPE_SECRET_KEY is set.
+const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
+
 // Prevent crashes from unhandled exceptions
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err.message);
@@ -31,6 +38,65 @@ const app = express();
 
 // Health-check endpoint FIRST - before any middleware
 app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
+
+// Stripe webhook — registered before express.json() below, with its own raw
+// body parser instead: Stripe's signature verification hashes the exact raw
+// request bytes, and once express.json() has parsed+re-serialized a body
+// it's no longer byte-identical to what Stripe signed, so this has to see
+// the untouched body. The handler itself can still reference functions
+// defined later in this file (getUser, syncToMemory, etc.) — it only runs
+// per-request, by which point the whole module has already finished
+// loading top to bottom.
+app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return res.status(503).send('Billing not configured');
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (e) {
+    console.warn('[Stripe webhook] signature verification failed:', e.message);
+    return res.status(400).send(`Webhook signature verification failed`);
+  }
+  try {
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const userId = session.client_reference_id;
+      if (userId && db.isConnected() && isDBId(userId)) {
+        await db.query(
+          `UPDATE users SET plan='pro', stripe_customer_id=$1, stripe_subscription_id=$2 WHERE id=$3`,
+          [session.customer, session.subscription, userId]
+        );
+        const mem = users.find(u => u.id === userId);
+        if (mem) { mem.plan = 'pro'; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
+        console.log(`[Stripe webhook] user ${userId} upgraded to pro`);
+      }
+    } else if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
+      const sub = event.data.object;
+      // updated: only downgrade on a state that actually means "not paying"
+      // (past_due/unpaid/canceled/incomplete_expired) — an active or
+      // trialing subscription mid-update (e.g. a plan change) shouldn't
+      // knock someone back to free.
+      const inactiveStatuses = new Set(['canceled', 'unpaid', 'past_due', 'incomplete_expired']);
+      if (event.type === 'customer.subscription.updated' && !inactiveStatuses.has(sub.status)) {
+        return res.json({ received: true });
+      }
+      if (db.isConnected()) {
+        const { rows } = await db.query(`SELECT id FROM users WHERE stripe_subscription_id = $1`, [sub.id]);
+        if (rows[0]) {
+          await db.query(`UPDATE users SET plan='free', stripe_subscription_id=NULL WHERE id=$1`, [rows[0].id]);
+          const mem = users.find(u => u.id === rows[0].id);
+          if (mem) { mem.plan = 'free'; mem.stripeSubscriptionId = null; }
+          console.log(`[Stripe webhook] user ${rows[0].id} downgraded to free (${sub.status})`);
+        }
+      }
+    }
+    res.json({ received: true });
+  } catch (e) {
+    console.error('[Stripe webhook] handler error:', e.message);
+    // 500 so Stripe retries — this branch means the DB write itself failed,
+    // not "nothing to do," and a retry is the correct recovery here.
+    res.status(500).send('Webhook handler error');
+  }
+});
 
 app.use(helmet());
 
@@ -8438,6 +8504,8 @@ function dbRowToMemUser(row) {
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
     plan: row.plan || 'free',
+    stripeCustomerId: row.stripe_customer_id || null,
+    stripeSubscriptionId: row.stripe_subscription_id || null,
     createdAt: row.created_at || null,
   };
 }
@@ -8625,6 +8693,12 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT ''`);
+    // Stripe billing — see createCheckoutSession/handleStripeWebhook. Customer
+    // id is created lazily on first checkout attempt; subscription id is set
+    // once the webhook confirms an active subscription, cleared on cancel.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
 
     // Groups table — persists across deploys
@@ -10293,22 +10367,52 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   }
 });
 
-// ─── Plan upgrade (stub — wire real payment before going live) ───────────────────
-app.post('/user/plan/upgrade', authenticate, async (req, res) => {
+// ─── Billing: Stripe Checkout + Customer Portal ───────────────────────────────
+// Replaces the old stub that granted 'pro' to any authenticated user who
+// POSTed here — no payment involved at all. plan is now only ever set to
+// 'pro' by the webhook above, after Stripe actually confirms a completed
+// checkout, never by a route a client can call directly.
+app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
+  if (!stripe || !process.env.STRIPE_PRICE_ID) {
+    return res.status(503).json({ message: 'Billing is not configured yet.' });
+  }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
+  if (user.plan === 'pro') return res.status(400).json({ message: 'Already on the Pro plan.' });
   try {
-    if (db.isConnected() && isDBId(user.id)) {
-      await db.query('UPDATE users SET plan=$1 WHERE id=$2', ['pro', user.id]);
-    } else {
-      user.plan = 'pro';
-      filestore.saveUsers(users);
-    }
-    user.plan = 'pro';
-    res.json({ plan: 'pro', isPro: true });
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      // Reuse an existing Stripe customer if this user has one (e.g. a past
+      // canceled subscription) instead of creating a duplicate each time.
+      customer: user.stripeCustomerId || undefined,
+      customer_email: user.stripeCustomerId ? undefined : user.email,
+      client_reference_id: user.id,
+      success_url: `${FRONTEND_BASE}/settings?upgrade=success`,
+      cancel_url: `${FRONTEND_BASE}/settings?upgrade=cancelled`,
+    });
+    res.json({ url: session.url });
   } catch (e) {
-    console.error('upgrade plan:', e.message);
-    res.status(500).json({ message: 'Could not complete the upgrade. Please try again.' });
+    console.error('[Stripe] create checkout session:', e.message);
+    res.status(500).json({ message: 'Could not start checkout. Please try again.' });
+  }
+});
+
+// Lets an existing subscriber manage payment method / cancel via Stripe's
+// own hosted portal instead of this app needing to build that UI itself.
+app.post('/billing/create-portal-session', authenticate, async (req, res) => {
+  if (!stripe) return res.status(503).json({ message: 'Billing is not configured yet.' });
+  const user = await getUser(req.user.id);
+  if (!user?.stripeCustomerId) return res.status(400).json({ message: 'No billing account found.' });
+  try {
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: `${FRONTEND_BASE}/settings`,
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[Stripe] create portal session:', e.message);
+    res.status(500).json({ message: 'Could not open billing portal. Please try again.' });
   }
 });
 
