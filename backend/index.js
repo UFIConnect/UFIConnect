@@ -37,7 +37,12 @@ process.on('unhandledRejection', (reason, promise) => {
 const app = express();
 
 // Health-check endpoint FIRST - before any middleware
-app.get('/health', (_req, res) => res.json({ status: 'ok', db: db.isConnected() }));
+app.get('/health', (_req, res) => res.json({
+  status: 'ok',
+  db: db.isConnected(),
+  dbBackup: db.isBackupConnected(),
+  dbReadFailoverActive: db.isReadFailoverActive(),
+}));
 
 // Stripe webhook — registered before express.json() below, with its own raw
 // body parser instead: Stripe's signature verification hashes the exact raw
@@ -9417,7 +9422,12 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       }
       params.push(perSourceLimit);
       const limitParam = params.length;
-      const { rows } = await db.query(
+      // readQuery, not query — this exact call is what timed out and
+      // silently returned an empty feed under real load on 2026-08-20 (see
+      // the timeRange fix above). Failing over to a backup DB for just this
+      // read means an overloaded primary degrades to slightly-stale content
+      // instead of an empty page. See db.js's readQuery/initBackupDB.
+      const { rows } = await db.readQuery(
         `WITH c(source, before_ts) AS (VALUES ${cursorValues})
          SELECT * FROM (
            SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY fp.post_created_at DESC, fp.fetched_at DESC) AS rn
@@ -9550,7 +9560,11 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     const loParam = params.length;
     params.push(rnLo + perSourcePageSize);
     const hiParam = params.length;
-    const { rows } = await db.query(
+    // readQuery, not query — same PARTITION BY cost profile as
+    // getCursorFeedPage above; failing over to backup here means an
+    // overloaded primary degrades Ranked/Popular/Balanced sort to
+    // slightly-stale content too, not just Newest. See db.js.
+    const { rows } = await db.readQuery(
       `SELECT * FROM (
          SELECT *, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS rn
          FROM feed_posts_cache
@@ -15432,6 +15446,11 @@ db.initDB().then(async () => {
     // new covering index, to already be ready) so the first real video
     // feed request doesn't fall back to the full 36-source list.
     getVideoCapableSources().catch(e => console.warn('[getVideoCapableSources] Startup warm failed:', e.message));
+    // Optional read-failover DB — see db.js. No-ops entirely if
+    // DATABASE_URL_BACKUP isn't set. Only starts the sync loop once the
+    // backup itself is confirmed reachable and indexed.
+    await db.initBackupDB();
+    db.startBackupSync();
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
     globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));

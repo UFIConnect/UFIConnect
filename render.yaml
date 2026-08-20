@@ -25,6 +25,13 @@ services:
         fromDatabase:
           name: uficonnect-db
           property: connectionString
+      # Optional read-failover target for when the primary DB above is
+      # overloaded or unreachable (see backend/db.js: readQuery/
+      # initBackupDB) — only the hot feed queries fail over to it, and only
+      # after the primary times out or errors repeatedly. Omit to run with
+      # no failover, same as before this existed.
+      - key: DATABASE_URL_BACKUP
+        sync: false
       - key: ALLOWED_ORIGINS
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
       - key: API_BASE_URL
