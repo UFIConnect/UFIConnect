@@ -121,6 +121,11 @@ services:
         sync: false
       - key: YOUTUBE_CLIENT_SECRET
         sync: false
+      # Separate from the OAuth pair above — a free Data API v3 key (see
+      # backend/.env.example). Powers keyword search + Shorts detection;
+      # falls back to RSS/Invidious (working, but no search or Shorts) if unset.
+      - key: YOUTUBE_API_KEY
+        sync: false
       - key: REDDIT_CLIENT_ID
         sync: false
       - key: REDDIT_CLIENT_SECRET

@@ -2520,6 +2520,56 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
   };
 }
 
+// "PT1M30S" -> 90. The Data API's only duration signal (search.list results
+// don't include it at all — a separate videos.list?part=contentDetails call
+// is the standard, quota-cheap (1 unit per 50 IDs) way third-party apps
+// classify Shorts, since there's no official type=short search filter).
+function parseISO8601DurationSeconds(iso) {
+  const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso || '');
+  if (!m) return null;
+  const [, h, min, s] = m;
+  return (parseInt(h || '0', 10) * 3600) + (parseInt(min || '0', 10) * 60) + parseInt(s || '0', 10);
+}
+// YouTube's own current Shorts ceiling (raised from the original 60s in
+// their 2024 policy update) — used as the duration cutoff below rather than
+// the older, now-inaccurate 60s figure.
+const YOUTUBE_SHORTS_MAX_SECONDS = 183;
+
+// Reels/Shorts content for a topic — searches with the same "#shorts"-
+// biasing convention every third-party YouTube tool uses (there's no
+// official Shorts search filter in the public API), then confirms each
+// result is actually short via a batched contentDetails lookup rather than
+// trusting the query bias alone (a channel can title a regular video
+// "... #shorts" without it being one). Requires YOUTUBE_API_KEY — the RSS/
+// Invidious fallbacks below have no duration field to filter on at all, so
+// this tier simply contributes nothing (not an error) when no key is set.
+async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
+  try {
+    const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword + ' #shorts')}&type=video&videoDuration=short&maxResults=25&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
+    const searchData = await fetchJSON(searchUrl);
+    const candidates = (searchData?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
+    if (!candidates.length) return [];
+
+    const ids = candidates.map(v => v.id.videoId).join(',');
+    const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(apiKey)}`;
+    const detailsData = await fetchJSON(detailsUrl);
+    const durationById = new Map((detailsData?.items || []).map(v => [v.id, parseISO8601DurationSeconds(v.contentDetails?.duration)]));
+
+    return candidates
+      .filter(v => {
+        const secs = durationById.get(v.id.videoId);
+        return secs != null && secs > 0 && secs <= YOUTUBE_SHORTS_MAX_SECONDS;
+      })
+      .map(v => mapYouTubePost(
+        v.id.videoId, v.snippet.title, v.snippet.description,
+        v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
+        v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
+      ));
+  } catch {
+    return []; // best-effort supplement to the main fetch below — never worth failing that over
+  }
+}
+
 async function fetchYouTubeByKeyword(keyword) {
   const cacheKey = `youtube_kw_${keyword}`;
   const cached = getCached(cacheKey);
@@ -2531,14 +2581,21 @@ async function fetchYouTubeByKeyword(keyword) {
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (apiKey) {
       const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=50&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
-      const data = await fetchJSON(url);
-      const posts = (data?.items || [])
-        .filter(v => v.id?.videoId && v.snippet?.title)
-        .map(v => mapYouTubePost(
-          v.id.videoId, v.snippet.title, v.snippet.description,
-          v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-          v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
-        ));
+      const [data, shortsPosts] = await Promise.all([
+        fetchJSON(url),
+        fetchYouTubeShortsByKeyword(keyword, apiKey),
+      ]);
+      const seenIds = new Set();
+      const posts = [
+        ...(data?.items || [])
+          .filter(v => v.id?.videoId && v.snippet?.title)
+          .map(v => mapYouTubePost(
+            v.id.videoId, v.snippet.title, v.snippet.description,
+            v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
+            v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
+          )),
+        ...shortsPosts,
+      ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
       if (posts.length) { setCached(cacheKey, posts); return posts; }
     }
 
@@ -10829,7 +10886,18 @@ async function handleFeedRequest(req, res) {
   // three window sizes back to back: 1h → 6.5s (full page, hasMore:true),
   // 6h → 28.3s, 2d → 120s+/empty. Source volume across the 36-source pool
   // is high enough that 1h alone already comfortably fills a page.
-  const dbTimeRange = timeRange === 'all' ? '1h' : timeRange;
+  //
+  // That 1h tightness is specific to the full, unfiltered aggregate case —
+  // what actually made the query expensive was the WHERE clause matching
+  // essentially the whole table across all 36 sources (see the getCursorFeedPage
+  // EXPLAIN in that fix), not the time window in isolation. A single- or
+  // few-source filter is a far more selective WHERE clause on its own, so it
+  // can afford a much wider window — and for a lower-volume source it
+  // actually needs one: confirmed live that filtering to YouTube alone came
+  // back "your feed is empty" under the 1h default despite a week's worth
+  // of real YouTube posts sitting one filter-tab click away.
+  const isSourceFiltered = !!sourceFilter || sourcesParam.length > 0;
+  const dbTimeRange = timeRange !== 'all' ? timeRange : (isSourceFiltered ? '7d' : '1h');
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
