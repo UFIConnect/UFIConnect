@@ -7545,8 +7545,12 @@ function logAgentHeartbeat(id) {
   }
 
   if (['tiktok'].includes(id)) {
+    // Same shape as the OAuth-on-demand platforms above now — video.list
+    // (see fetchTikTokUserVideos) genuinely fetches once a member connects,
+    // unlike the old "no fetcher exists at all" state this message used to
+    // describe.
     logAgentAction(id, def.emoji,
-      'Active - live source gated; no generated fallback posts served', def.color);
+      'Active on demand - OAuth connector ready; own videos load after account connection', def.color);
     return true;
   }
 
@@ -13127,19 +13131,10 @@ function getRuntimeHealthForAgent(id) {
       lastCount: activityAgentState.lastCount,
     };
   }
-  if (['twitter', 'linkedin', 'instagram', 'facebook'].includes(id)) {
+  if (['twitter', 'linkedin', 'instagram', 'facebook', 'tiktok'].includes(id)) {
     return {
       status: 'ready',
       mode: 'oauth-on-demand',
-      fetchCount: 0,
-      totalErrors: 0,
-      lastSuccess: lastLogForAgent(id)?.ts || null,
-    };
-  }
-  if (['tiktok'].includes(id)) {
-    return {
-      status: 'gated',
-      mode: 'live-required',
       fetchCount: 0,
       totalErrors: 0,
       lastSuccess: lastLogForAgent(id)?.ts || null,
@@ -13200,16 +13195,6 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       } : null,
     };
   });
-  // Append gated platform agents that are feed sources but not continuous workers.
-  for (const id of ['tiktok']) {
-    const def = AGENT_DEFS[id];
-    if (def) sourceHealthArr.push({
-      id, emoji: def.emoji, color: def.color, name: def.name,
-      status: 'gated', consecutiveErrors: 0, totalErrors: 0,
-      fetchCount: 0, lastSuccess: null, paused: false,
-      postCount: 0, fallbackCount: 0,
-    });
-  }
   // Append connected-account social agents (per-user OAuth, not continuous cyclers).
   // Guarded against SOURCE_CONFIG: these 4 ids are now ALSO continuous
   // app-level workers (see SOURCE_CONFIG above — they idle at 0 posts with
@@ -13220,7 +13205,11 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // real "healthy" worker entry), which duplicated their id in
   // sources.workers, inflated total/healthy counts, and rendered two
   // conflicting cards for the same platform in the office Sources view.
-  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
+  // tiktok included here too — it has no app-level continuous fetcher (no
+  // SOURCE_CONFIG entry, so the guard below never skips it), only the
+  // per-user one (see fetchTikTokUserVideos/FOLLOWING_SOURCE_FETCHERS), the
+  // same shape as these 4 before their own app-level tokens existed.
+  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook', 'tiktok']) {
     if (SOURCE_CONFIG[id]) continue;
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({
