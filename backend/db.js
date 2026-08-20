@@ -269,15 +269,33 @@ async function readQuery(text, params) {
         console.warn(`[db readQuery] primary read circuit OPEN for ${READ_OUTAGE_COOLDOWN_MS / 1000}s — routing to backup`);
       }
       if (backupPool && _backupConnected) {
-        return withTimeout(backupPool.query(text, params), BACKUP_STATEMENT_TIMEOUT_MS, 'backup readQuery');
+        try {
+          return await withTimeout(backupPool.query(text, params), BACKUP_STATEMENT_TIMEOUT_MS, 'backup readQuery');
+        } catch (backupErr) {
+          console.warn(`[db readQuery] backup also failed: ${backupErr.message}`);
+        }
       }
+      // No backup configured (or it also failed) — DATABASE_URL_BACKUP is
+      // opt-in, so this is the common case until it's set. Falling through
+      // to the slow, full-timeout primary pool instead of throwing here
+      // means a legitimately slow-but-working query (the 20-49s the fixed
+      // timeRange bound still took under real load, well past this
+      // function's own 8s fast-path budget) still eventually succeeds
+      // exactly like it did via plain query() before readQuery existed,
+      // instead of readQuery's fast-fail turning "slow" into "empty."
+      if (pool && _connected) return pool.query(text, params);
       throw err;
     }
   }
   // Breaker open, or no dedicated read pool yet (primary never connected) —
-  // go straight to backup if one exists, otherwise behave like query().
+  // try backup first if one exists, but still fall back to the slow
+  // primary pool rather than serving nothing if backup is unset or fails.
   if (backupPool && _backupConnected) {
-    return withTimeout(backupPool.query(text, params), BACKUP_STATEMENT_TIMEOUT_MS, 'backup readQuery');
+    try {
+      return await withTimeout(backupPool.query(text, params), BACKUP_STATEMENT_TIMEOUT_MS, 'backup readQuery');
+    } catch (backupErr) {
+      console.warn(`[db readQuery] backup failed while breaker open: ${backupErr.message}`);
+    }
   }
   if (!pool || !_connected) throw new Error('DB not available');
   return pool.query(text, params);
