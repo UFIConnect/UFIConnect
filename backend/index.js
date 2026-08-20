@@ -11924,6 +11924,18 @@ async function handleVideoFeedRequest(req, res) {
     // querying sources with zero video posts was pure overhead. An explicit
     // filter always wins regardless, same as before.
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : (await getVideoCapableSources()) || AGGREGATE_FEED_SOURCES;
+    const isUnfilteredVideo = sourcesParam.length <= 1 && !sourceFilter;
+    // Was fully unbounded (timeRange: null) on the theory that filtering to
+    // media_type='video' alone was already selective enough — true while
+    // the table was smaller, not anymore: confirmed live that this exact
+    // unfiltered, all-video-capable-sources call now hangs past 60s with no
+    // response at all, while the identical query scoped to one source (e.g.
+    // ?source=youtube) returns in ~1s. Same growth-over-time story as the
+    // main Feed's own dbTimeRange fix — a narrow filter's WHERE clause is
+    // selective enough on its own to stay unbounded; the many-source
+    // unfiltered case needs the same kind of floor that fix already
+    // established elsewhere.
+    const videoTimeRange = isUnfilteredVideo ? '24h' : null;
     // Manual refresh (see VideoFeedView's handleRefresh, which sets both
     // reset:true and bust:true) — same stale-while-revalidate shape as the
     // main Feed's own bust handling: serve the current cursor page now, and
@@ -11950,7 +11962,7 @@ async function handleVideoFeedRequest(req, res) {
       cursorMap,
       limit: feedLimit,
       mediaType: 'video',
-      timeRange: null, // unbounded (up to the DB's own retention ceiling) — no expensive ranked/partitioned query here to protect against, just cheap indexed range scans
+      timeRange: videoTimeRange,
       seenIds,
     });
 
