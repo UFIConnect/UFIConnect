@@ -450,6 +450,11 @@ function MaximizeButton({ onClick }) {
 
 function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
   const [playing, setPlaying] = useState(false);
+  // Whether the real YT.Player has actually been constructed yet — separate
+  // from `playing`/`effectivelyPlaying` (see below) because construction
+  // happens at most once per embedId and is never redone just because
+  // visibility toggled off and back on.
+  const [playerReady, setPlayerReady] = useState(false);
   // Always starts muted regardless of trigger (scroll-into-view or a manual
   // click on the poster) — a passive scroll shouldn't ever blast sound
   // unexpectedly, same convention every other inline-feed autoplay
@@ -490,10 +495,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // lightbox opens over it (IntersectionObserver tracks geometric
   // intersection only, not z-index occlusion), so `playing` alone would
   // leave this copy running behind it — two players decoding, and audibly
-  // doubled if the user has sound on. Destroying this one while forced-
-  // paused, then letting it resume automatically once the lightbox closes
-  // (playing itself never changed), is what actually collapses that back to
-  // a single player.
+  // doubled if the user has sound on.
   const effectivelyPlaying = playing && !forcePause;
 
   // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
@@ -502,12 +504,25 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // ever turn sound on (only YouTube's own cross-origin control chrome,
   // inconsistent with — and less reliable than — the mute button every
   // other video surface in this app already has).
+  //
+  // Constructs the player at most ONCE per embedId, the first time it's
+  // supposed to play — never torn down and rebuilt on every later
+  // scroll-driven pause/resume (see the play/pause effect below for that
+  // instead). YT.Player physically replaces its mount <div> with its own
+  // <iframe>, entirely outside React's knowledge; having React itself
+  // unmount/remount that div on every visibility change used to race with
+  // that replacement and crash the whole Feed ("Failed to execute
+  // removeChild: the node to be removed is not a child of this node" —
+  // React trying to remove a node YouTube had already swapped out from
+  // under it). Confirmed live: never happened before because playing only
+  // ever went false→true once and stayed there; started happening the
+  // moment scroll-based pause began actually firing repeatedly.
   useEffect(() => {
-    if (!effectivelyPlaying) return;
+    if (!effectivelyPlaying || ytPlayerRef.current) return;
     let cancelled = false;
     const startUnmuted = !muted;
     loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current) return;
+      if (cancelled || !ytMountRef.current || ytPlayerRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
         videoId: embedId,
         playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0 },
@@ -516,26 +531,74 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
             if (cancelled) return;
             ytPlayerRef.current = e.target;
             if (startUnmuted) e.target.unMute();
+            setPlayerReady(true);
           },
         },
       });
     });
+    return () => { cancelled = true; };
+  }, [effectivelyPlaying, embedId]);
+
+  // The only real teardown — this exact video changing, or the card
+  // leaving the DOM entirely (e.g. scrolled out of the feed's own render
+  // window, not just out of the viewport).
+  useEffect(() => {
     return () => {
-      cancelled = true;
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
     };
-  }, [effectivelyPlaying, embedId]);
+  }, [embedId]);
+
+  // Every subsequent visibility change plays/pauses the already-constructed
+  // player in place instead of recreating it.
+  useEffect(() => {
+    if (!ytPlayerRef.current) return;
+    try {
+      if (effectivelyPlaying) ytPlayerRef.current.playVideo();
+      else ytPlayerRef.current.pauseVideo();
+    } catch {}
+  }, [effectivelyPlaying]);
 
   useEffect(() => {
     if (!ytPlayerRef.current) return;
     if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
   }, [muted]);
 
-  if (effectivelyPlaying) {
-    return (
-      <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9' }}>
-        <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
+  const showPoster = !playerReady;
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: 'var(--border)', cursor: showPoster ? 'pointer' : 'default' }}
+      onClick={showPoster ? () => setPlaying(true) : undefined}
+    >
+      {/* Always in the DOM once rendered — never conditionally removed by
+          React, since YouTube's own script takes ownership of this exact
+          node the moment the player is constructed (see the effect above). */}
+      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: showPoster ? 'none' : 'block' }} />
+      {showPoster && (
+        <>
+          {poster && <img src={poster} alt={title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight }}
+            onError={e => {
+              e.currentTarget.style.display = 'none';
+              const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
+              if (fallback) fallback.style.display = 'flex';
+            }} />}
+          <div data-youtube-fallback style={{
+            display: poster ? 'none' : 'flex', position: 'absolute', inset: 0,
+            alignItems: 'center', justifyContent: 'center',
+            background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
+          }}>
+            🎥 Thumbnail unavailable
+          </div>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
+              <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
+            </div>
+          </div>
+        </>
+      )}
+      {!showPoster && (
         <button
           onClick={e => { e.stopPropagation(); setMuted(m => { rememberSoundPreference(m); return !m; }); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
@@ -550,29 +613,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
         >{muted ? '🔇' : '🔊'}</button>
-      </div>
-    );
-  }
-  return (
-    <div ref={containerRef} style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', cursor: 'pointer', background: 'var(--border)' }} onClick={() => setPlaying(true)}>
-      {poster && <img src={poster} alt={title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight }}
-        onError={e => {
-          e.currentTarget.style.display = 'none';
-          const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
-          if (fallback) fallback.style.display = 'flex';
-        }} />}
-      <div data-youtube-fallback style={{
-        display: poster ? 'none' : 'flex', position: 'absolute', inset: 0,
-        alignItems: 'center', justifyContent: 'center',
-        background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
-      }}>
-        🎥 Thumbnail unavailable
-      </div>
-      <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-        <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
-          <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
