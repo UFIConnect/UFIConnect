@@ -387,7 +387,18 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Video unavailable</div>
       ) : src.kind === 'youtube' ? (
         active ? (
-          <div style={{ position: 'absolute', inset: 0 }} onClick={togglePlay}>
+          // Deliberately NOT inset:0/full-bleed like the other kinds: the
+          // YouTube IFrame API sizes its iframe off this div's own
+          // dimensions (no width/height passed to YT.Player — see the
+          // constructor below), and a cross-origin iframe stretched to
+          // fill a portrait box paints its own opaque black letterbox
+          // internally for regular 16:9 uploads — solid pixels, not empty
+          // space, so the blurred backdrop above can never show through
+          // it. Constraining this div to the video's real aspect ratio
+          // instead means the iframe itself comes out 16:9-shaped with no
+          // internal letterboxing, and the backdrop fills the now-real
+          // gap around it (centered by the root's flex layout).
+          <div style={{ width: '100%', aspectRatio: '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
             <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
           </div>
         ) : (
