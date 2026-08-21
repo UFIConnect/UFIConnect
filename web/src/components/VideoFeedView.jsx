@@ -357,6 +357,32 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden' }}>
+      {/* Blurred poster backdrop — most video here is landscape (regular
+          YouTube uploads, arbitrary hls/file clips), while this view's box
+          is portrait. A cross-origin YouTube iframe can't be cropped with
+          objectFit (that only affects the iframe's own box, not what's
+          inside it) so YouTube's player letterboxes it instead, same as
+          hls/file content that just isn't natively 9:16 — real black bars
+          top and bottom otherwise. Filling that space with the same
+          poster, blurred and scaled past the edge so the blur radius
+          doesn't reveal a hard border, reads as an intentional frame
+          rather than empty space. z-index -1, not just DOM order: the
+          foreground below is a mix of positioned (youtube's active
+          wrapper) and unpositioned (poster <img>, hls/file <video>,
+          tiktok <iframe>) elements, and per CSS painting order any
+          positioned element with z-index:auto paints above unpositioned
+          siblings regardless of DOM order — without a negative z-index
+          here this backdrop would cover the plain-element cases instead
+          of sitting behind them. Harmless no-op for kinds with no poster
+          (file) or that already fill the box natively (tiktok). */}
+      {src?.poster && (
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: -1,
+          backgroundImage: `url(${src.poster})`,
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
+        }} />
+      )}
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Video unavailable</div>
       ) : src.kind === 'youtube' ? (
