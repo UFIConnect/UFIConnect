@@ -15289,6 +15289,13 @@ const GOAL_TYPE_BOOST = {
 app.get('/opportunities', authenticate, async (req, res) => {
   if (req.query.bust === '1') { remotiveCache.clear(); museCache.clear(); }
   const { type, remote, search } = req.query;
+  // Comma-separated, same convention as the main feed's ?sources= (see
+  // handleFeedRequest) — multi-select platform filter, same idea as
+  // Feed's source chips, applied after type/remote/search narrow things
+  // down so "available sources" always reflects what's actually possible
+  // to pick from for the current type, not last request's selection.
+  const sourcesParam = (req.query.sources || '').split(',').map(s => s.trim()).filter(Boolean);
+  const sourceSet = sourcesParam.length ? new Set(sourcesParam) : null;
   const userCountry = getUserCountry(req);
   const user       = await getUser(req.user.id);
   const role       = user?.preferences?.role || '';
@@ -15366,6 +15373,12 @@ app.get('/opportunities', authenticate, async (req, res) => {
       (o.tags || []).some((t) => t.toLowerCase().includes(q))
     );
   }
+
+  // Snapshot of what's actually pickable before narrowing by source itself —
+  // same reasoning as above, so switching sources back and forth within the
+  // current type/remote/search never shrinks the picker's own options.
+  const availableSources = [...new Set(results.map(o => o.source).filter(Boolean))].sort();
+  if (sourceSet) results = results.filter((o) => sourceSet.has(o.source));
 
   results = results.map((o) => {
     let score = 0;
@@ -15461,6 +15474,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userTitle: userTitle || null,
     sort: sortMode,
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle) : null,
+    availableSources,
   });
 });
 

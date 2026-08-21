@@ -90,6 +90,15 @@ export default function Opportunities() {
   const [sort,      setSort]      = useState('match');
   const [remote,    setRemote]    = useState(false);
   const [liveOnly,  setLiveOnly]  = useState(false);
+  // Multi-select, same idea as Feed's source chips — which platforms are
+  // actually pickable changes with `filter` (Job's sources are Remotive/The
+  // Muse/Remote OK/USAJobs; other types pull from a much longer curated
+  // list), so this comes from the API's own availableSources rather than a
+  // fixed list here, and resets whenever the type filter changes underneath
+  // it (a source picked for Jobs has no meaning once you're looking at
+  // Grants).
+  const [availableSources, setAvailableSources] = useState([]);
+  const [sourceFilter, setSourceFilter] = useState([]);
   const [searchInput, setSearchInput] = useState('');
   const [search,    setSearch]    = useState('');
   const [loading,   setLoading]   = useState(true);
@@ -110,12 +119,19 @@ export default function Opportunities() {
     []
   );
 
+  // Type filter changing invalidates whatever sources were picked (a
+  // source chip is scoped to what's poll-able within the current type — see
+  // availableSources below), so a stale source picked under Jobs shouldn't
+  // silently keep filtering once you switch to Grants.
+  useEffect(() => { setSourceFilter([]); }, [filter]);
+
   // Fetch opportunities with current filters
   useEffect(() => {
     const params = { sort };
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
+    if (sourceFilter.length) params.sources = sourceFilter.join(',');
 
     // Only show the full loading state on a real filter/search change —
     // refreshTick-driven refetches (scroll-to-refresh) should refill quietly
@@ -130,6 +146,7 @@ export default function Opportunities() {
         setAllOpps(list);
         setLiveCount(data.liveCount || 0);
         setPlatformSearchUrls(data.platformSearchUrls || null);
+        setAvailableSources(data.availableSources || []);
       })
       .catch(err => {
         console.error('Failed to load opportunities:', err);
@@ -137,7 +154,7 @@ export default function Opportunities() {
         setAllOpps([]);
       })
       .finally(() => setLoading(false));
-  }, [filter, sort, remote, liveOnly, search, refreshTick]);
+  }, [filter, sort, remote, liveOnly, search, sourceFilter, refreshTick]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
@@ -254,6 +271,52 @@ export default function Opportunities() {
             🔴 Live only
           </button>
         </div>
+
+        {/* Source filter — multi-select, mirrors Feed's own source chips.
+            Scoped to whatever's actually pickable for the current type
+            filter (availableSources, from the API) rather than a fixed
+            list, since Job's real sources (Remotive/The Muse/Remote OK/
+            USAJobs) are a completely different set from Grant's or
+            Event's curated ones. Hidden entirely when there's nothing
+            meaningful to narrow (0 or 1 source). */}
+        {availableSources.length > 1 && (
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4, scrollbarWidth: 'none', alignItems: 'center' }}>
+            <span style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)', flexShrink: 0 }}>Source</span>
+            {availableSources.map((src) => {
+              const active = sourceFilter.includes(src);
+              return (
+                <button
+                  key={src}
+                  onClick={() => {
+                    setSourceFilter(cur => cur.includes(src) ? cur.filter(s => s !== src) : [...cur, src]);
+                    setPage(1);
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+                    padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
+                    border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                    background: active ? 'var(--primary)' : 'var(--surface)',
+                    color: active ? '#fff' : 'var(--text)',
+                    fontWeight: active ? 700 : 500, fontSize: '.78rem', cursor: 'pointer',
+                  }}
+                >
+                  {src}
+                </button>
+              );
+            })}
+            {sourceFilter.length > 0 && (
+              <button
+                onClick={() => { setSourceFilter([]); setPage(1); }}
+                style={{
+                  flexShrink: 0, padding: '6px 10px', border: 'none', background: 'none',
+                  color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline',
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Sort */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
