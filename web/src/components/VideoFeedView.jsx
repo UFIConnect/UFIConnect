@@ -429,6 +429,14 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
       ) : (
+        // cover, not contain: 'file' is the catch-all for an arbitrary
+        // direct-linked video URL (see isDirectVideoUrl) with no metadata
+        // and — unlike every other kind here — no poster at all
+        // (resolveVideoSource sets poster: null for it), so there's no
+        // image to build a blurred backdrop from for the letterboxed-gap
+        // trick used above. Cropping to fill trades occasional edge
+        // framing loss for a guaranteed full-bleed frame, same tradeoff
+        // every poster <img> in this file already makes with cover.
         <video
           ref={fileVideoRef}
           src={src.src}
@@ -440,7 +448,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
-          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
       )}
 
