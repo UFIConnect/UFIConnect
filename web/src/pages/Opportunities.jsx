@@ -340,13 +340,19 @@ export default function Opportunities() {
             The Muse/RemoteOK/USAJobs are above, and faking that would be
             exactly the kind of low-legitimacy listing this page is trying
             to avoid. What's real and accurate instead: a live search on
-            each platform, pre-filled with this user's actual title/role. */}
+            each platform, pre-filled with this user's actual title/role.
+            Styled to match the Source filter chips above (same pill shape/
+            size/border-radius) per product decision, even though behavior
+            is unchanged — still an external link, not an in-app filter —
+            so the ↗ and "Search" label stay to keep that honest rather
+            than implying these are real aggregated listings like the tabs
+            next to them. */}
         {platformSearchUrls && (
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
               Search more platforms
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {Object.entries(PLATFORM_META).map(([key, meta]) => (
                 platformSearchUrls[key] && (
                   <a
@@ -355,14 +361,14 @@ export default function Opportunities() {
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 6,
-                      padding: '6px 12px', borderRadius: 20,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
                       background: meta.bg, color: meta.color,
-                      fontSize: '.8rem', fontWeight: 700, textDecoration: 'none',
-                      border: `1px solid ${meta.color}33`,
+                      fontSize: '.78rem', fontWeight: 700, textDecoration: 'none',
+                      border: `1.5px solid ${meta.color}55`,
                     }}
                   >
-                    {meta.icon} {meta.label} ↗
+                    {meta.icon} Search {meta.label} ↗
                   </a>
                 )
               ))}

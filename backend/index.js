@@ -6125,6 +6125,52 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
   return diversifyBySource(cappedPosts, feedLimit, 1);
 }
 
+// "Reconstruct true mix so all sources are actually visible" — used only
+// when building the shared default-aggregate-view snapshot (see its call
+// site), the "when users login" moment: every source's own slice of
+// `posts` (already ranked/sorted by sortFeedBatch above) gets exactly
+// evenCount taken from it — whichever is smaller, the thinnest source's
+// real supply or a round budget sized off totalLimit so one equal pass
+// can't itself exceed the whole pool — round-robin interleaved. Unlike
+// equalizeThenRecencyMerge (the video/Newest-sort equivalent), this
+// doesn't re-sort the result back into any particular order afterward:
+// Ranked/Popular/Balanced were never chronological to begin with (each
+// source's own list is pre-sorted by rank score, not timestamp), so
+// round-robin position here is exactly as correct an order as recency
+// would be for a Newest-sort page. Whatever's left of each source's
+// supply past that equalized window is NOT thrown away — a permanent
+// full equalize is exactly what crushed a 140-video/7-source pool to 14
+// usable videos (see getBalancedFeedPosts's equalize:false comment) —
+// it's run through the existing proportional cap (enforceFeedDiversity)
+// and appended, so scrolling past the equalized window naturally shifts
+// toward whichever sources are actually pulling more content, real
+// supply intact either way.
+function buildEqualizedFeedPool(posts, totalLimit, sortMode) {
+  const bySource = new Map();
+  for (const p of posts) {
+    const src = p?.source || 'unknown';
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(p);
+  }
+  if (!bySource.size) return [];
+
+  const sourceLists = [...bySource.values()];
+  const roundCap = Math.max(1, Math.ceil(totalLimit / sourceLists.length));
+  const evenCount = Math.min(Math.min(...sourceLists.map(arr => arr.length)), roundCap);
+
+  const prefix = [];
+  for (let round = 0; round < evenCount; round++) {
+    for (const arr of sourceLists) {
+      if (arr[round]) prefix.push(arr[round]);
+    }
+  }
+
+  const remainder = sourceLists.flatMap(arr => arr.slice(evenCount));
+  const remainderCapped = enforceFeedDiversity(remainder, Math.max(0, totalLimit - prefix.length), sortMode);
+
+  return [...prefix, ...remainderCapped];
+}
+
 // Job listings only ever got the same equal-per-source share as every other
 // source in the mix (~1/N for N sources in the pool) — with 30+ sources
 // that reads as "job postings basically never show up." Real supply is thin
@@ -9715,6 +9761,43 @@ function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2, maxSharePct = nu
   }
   return result;
 }
+// "Reconstruct true mix so all sources are actually visible" — reserved
+// for a fresh session's very first page (see its call site: an empty
+// cursorMap means nothing's been scrolled yet). Every source's own list
+// is already sorted newest-first; this takes exactly evenCount from each
+// (whichever is smaller: the thinnest source's real supply, or a
+// per-source round budget sized off the page limit so one round-robin
+// pass can't itself blow past it) and re-sorts that equal-per-source
+// slice back into real chronological order — equal REPRESENTATION, not
+// equal ORDER, so a thin source's 3-day-old post doesn't outrank a rich
+// source's 1-hour-old one just because of round-robin position.
+// Whatever's left of each source's supply past that window is NOT thrown
+// away — that's what crushed a 140-video/7-source pool to 14 usable
+// videos under a permanent full equalize (see getBalancedFeedPosts's
+// equalize:false comment) — it's merged by the existing recency+share-cap
+// logic and appended, so a user who scrolls past what full equality can
+// sustain naturally starts seeing more from whichever sources are
+// actually pulling more content, without any real supply being discarded.
+function equalizeThenRecencyMerge(lists, limit, maxConsecutive, maxSharePct) {
+  const nonEmpty = lists.filter(l => l.length > 0);
+  if (!nonEmpty.length) return [];
+
+  const roundCap = Math.max(1, Math.ceil(limit / nonEmpty.length));
+  const evenCount = Math.min(Math.min(...nonEmpty.map(l => l.length)), roundCap);
+
+  const prefix = [];
+  for (let round = 0; round < evenCount; round++) {
+    for (const list of nonEmpty) {
+      if (list[round]) prefix.push(list[round]);
+    }
+  }
+  prefix.sort((a, b) => postTimestamp(b) - postTimestamp(a));
+
+  const remainderLists = nonEmpty.map(l => l.slice(evenCount));
+  const remainder = mergeByRecencyWithStreakCap(remainderLists, maxConsecutive, maxSharePct);
+
+  return [...prefix, ...remainder];
+}
 // extraLists: pre-fetched { [sourceKey]: post[] } for content that isn't in
 // feed_posts_cache and needs its own fetch path (e.g. native UFconnect
 // community posts — see the unfiltered branch in handleFeedRequest) but
@@ -9824,7 +9907,16 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // hold to instead of constantly falling back past it.
   const contributingCount = allLists.filter(l => l.length > 0).length;
   const maxSharePct = contributingCount > 1 ? Math.min(0.65, (1 / contributingCount) + 0.15) : null;
-  const merged = mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
+  // A truly fresh session (no cursorMap yet — nothing scrolled) gets a
+  // genuinely equal-per-source prefix first, real supply preserved past it
+  // — see equalizeThenRecencyMerge's own comment. Every later page already
+  // has a real cursorMap (each source's own position from the page
+  // before), so this only ever fires once per session, exactly where "when
+  // users login they're prompted with the full equalize" means it should.
+  const isFirstPage = Object.keys(cursorMap).length === 0;
+  const merged = isFirstPage
+    ? equalizeThenRecencyMerge(allLists, limit, 2, maxSharePct)
+    : mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
   // The cursor only guarantees no repeat *within* one continuous scroll
   // session — it says nothing about a reset cursor (page reload, reopening
   // the tab, a fresh mount), which restarts every source from "now" and, if
@@ -12007,7 +12099,16 @@ async function handleFeedRequest(req, res) {
   // snapshot — otherwise the stored pool is only ever exactly one page
   // long, which is what forced page 2+ onto its own separately-windowed
   // (and misaligned) query in the first place.
-  let externalDiversified = enforceFeedDiversity(liveSorted, isDefaultAggregateView ? MAIN_FEED_SNAPSHOT_POOL_SIZE : feedLimit, sortMode);
+  // The default aggregate view — the "when users login" case — gets the
+  // equalized-prefix-then-real-supply construction (see
+  // buildEqualizedFeedPool's own comment); anything narrower (a specific
+  // source/time-range combo that still routes through this same builder)
+  // keeps the plain proportional cap, since "equalize across sources"
+  // isn't a meaningful idea once the candidate pool is already narrow by
+  // the user's own choice.
+  let externalDiversified = isDefaultAggregateView
+    ? buildEqualizedFeedPool(liveSorted, MAIN_FEED_SNAPSHOT_POOL_SIZE, sortMode)
+    : enforceFeedDiversity(liveSorted, feedLimit, sortMode);
   if (isDefaultAggregateView) {
     // Not dbTimeRange (2 days) — confirmed live that bounding job listings
     // to the same tight recency window as the rest of the feed left almost
