@@ -38,6 +38,16 @@ export function extractYouTubeId(url) {
   return m ? m[1] : null;
 }
 
+// Same idea as extractYouTubeId, for RSS articles that embed a Vimeo player
+// instead (see parseRSSItems' vimeo detection backend-side) — a plain
+// numeric ID, recoverable from either the canonical vimeo.com/{id} watch URL
+// mediaUrl is normalized to, or a raw player.vimeo.com/video/{id} embed URL.
+export function extractVimeoId(url) {
+  if (!url) return null;
+  const m = String(url).match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  return m ? m[1] : null;
+}
+
 // Bluesky video posts store the HLS playlist URL and its thumbnail at the
 // same path, differing only in filename (.../thumbnail.jpg vs
 // .../playlist.m3u8) — mediaUrl only ever holds the thumbnail (the DB

@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, rememberSoundPreference } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, rememberSoundPreference } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -691,6 +691,55 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
 // player supplies its own native mute/follow/like controls as part of the
 // embed (unlike YouTube's, which needed controls:0 + a custom button to get
 // a minimal UI), so there's no separate mute button built here.
+// Same "plain iframe, entirely React-owned" reasoning as TikTokEmbedBlock —
+// Vimeo's player doesn't reach in and replace its mount node either, so
+// conditionally mounting/unmounting on scroll visibility is safe. Unlike
+// TikTok (always 9/16), Vimeo content is typically landscape, matching
+// YouTube's own aspect ratio — and unlike TikTok, Vimeo's embed keeps its
+// own native play/pause/volume controls by default (no controls=0 the way
+// YouTubeEmbedBlock needs, since that one built a custom minimal UI on top
+// via the real IFrame Player API instead), so there's no separate mute
+// button needed here either.
+function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
+  const [inView, setInView] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { threshold: 0.4 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const playing = inView && !forcePause;
+
+  return (
+    <div ref={containerRef} style={{
+      position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
+      aspectRatio: '16/9', margin: '0 auto',
+    }}>
+      {playing ? (
+        <iframe
+          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
+          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          allow="autoplay; fullscreen; picture-in-picture"
+          title={title}
+        />
+      ) : poster ? (
+        <img src={poster} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      ) : (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
+          🎬 Vimeo video
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TikTokEmbedBlock({ embedId, poster, title, forcePause = false }) {
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
@@ -906,8 +955,11 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   // URL in that case, same as a dedicated YouTube post's). Checked before
   // isDirectVideoUrl since a watch URL is never a direct file.
   const videoYouTubeId = hasVideo ? extractYouTubeId(post.mediaUrl) : null;
-  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && isDirectVideoUrl(post.mediaUrl);
-  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId);
+  // Same idea, for RSS articles embedding a Vimeo player instead (see
+  // parseRSSItems' vimeo detection backend-side).
+  const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(post.mediaUrl) : null;
+  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(post.mediaUrl);
+  const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
   const commUrl        = commentUrl(post);
@@ -1085,6 +1137,23 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             poster={`https://i.ytimg.com/vi/${videoYouTubeId}/hqdefault.jpg`}
             title={post.title}
             maxHeight={360}
+            forcePause={isMediaOpen}
+          />
+          <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
+            {src.icon} {src.label}
+          </span>
+          <MaximizeButton onClick={() => onMediaOpen?.(post)} />
+        </div>
+      ) : hasVideo && videoVimeoId ? (
+        // Same click-to-play/iframe-swap shape as the YouTube branch above,
+        // except Vimeo has no public thumbnail CDN pattern to borrow like
+        // i.ytimg.com — VimeoEmbedBlock falls back to a plain placeholder
+        // instead of a poster frame when not yet playing.
+        <div style={{ marginTop: 12, position: 'relative' }}>
+          <VimeoEmbedBlock
+            embedId={videoVimeoId}
+            poster={null}
+            title={post.title}
             forcePause={isMediaOpen}
           />
           <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>

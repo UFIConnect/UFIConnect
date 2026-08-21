@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
@@ -75,6 +75,14 @@ function resolveVideoSource(post) {
     ? (post.embedId || extractYouTubeId(post.sourceUrl))
     : extractYouTubeId(post.mediaUrl);
   if (ytId) return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` };
+  // Same idea for an article embedding a Vimeo player instead (see
+  // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
+  // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
+  // like YouTube's i.ytimg.com, so poster stays null — same
+  // placeholder-when-inactive treatment TikTok gets below when it also has
+  // no poster.
+  const vimeoId = extractVimeoId(post.mediaUrl);
+  if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
   // TikTok: embedId is the numeric video id fetchTikTokUserVideos maps
   // server-side (Following mode only — TikTok has no app-level discovery
   // fetcher, see FOLLOWING_SOURCE_FETCHERS backend-side), rendered the same
@@ -416,6 +424,22 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         ) : (
           <div style={{ color: '#888', fontSize: '.85rem' }}>🎵 TikTok video</div>
+        )
+      ) : src.kind === 'vimeo' ? (
+        // Same plain mount/unmount iframe treatment as TikTok above — a raw
+        // Vimeo iframe embed exposes no programmatic control either, so
+        // there's nothing for the scrub bar below to attach to.
+        active ? (
+          <iframe
+            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            allow="autoplay; fullscreen; picture-in-picture"
+            title={post.title}
+          />
+        ) : src.poster ? (
+          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+        ) : (
+          <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Vimeo video</div>
         )
       ) : src.kind === 'hls' ? (
         active ? (

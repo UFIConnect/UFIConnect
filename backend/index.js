@@ -3181,19 +3181,30 @@ function parseRSSItems(xml) {
       const yt = iframeSrc?.match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
       if (yt) video = `https://www.youtube.com/watch?v=${yt[1]}`;
     }
+    // Same idea, for a Vimeo player embed instead — design/creative-focused
+    // feeds (Behance-adjacent sources in particular) reach for Vimeo far
+    // more than YouTube. Vimeo now has its own dedicated frontend player
+    // (VimeoEmbedBlock/resolveVideoSource's 'vimeo' kind, same simple
+    // plain-iframe pattern TikTok already uses — no DOM-hijack risk, so no
+    // player-lifecycle dance needed), which is what makes this safe to
+    // detect at all: tagging a post 'video' with nothing able to actually
+    // play it is exactly the dead-tile "false promise" the enclosure/
+    // iframe checks in this function already exist to avoid. Normalized to
+    // a plain vimeo.com/{id} watch URL, same convention as the YouTube
+    // case above, recoverable via extractVimeoId client-side.
+    if (!video) {
+      const vimeoSrc = rawBody().match(/<iframe[^>]+src=["']([^"']*player\.vimeo\.com\/video\/[^"']*)["']/i)?.[1];
+      const vid = vimeoSrc?.match(/player\.vimeo\.com\/video\/(\d+)/i);
+      if (vid) video = `https://vimeo.com/${vid[1]}`;
+    }
     // Falls back to a native <video> embedded directly in the article body
     // (either a src="..." attribute on <video> itself, or a nested
     // <source src="...">, which is the more common HTML5 pattern) — same
-    // idea as the YouTube-iframe fallback above, for a site that self-hosts
-    // its own file instead of embedding YouTube. Deliberately NOT extended
-    // to other embed players (Vimeo, etc.) the way YouTube is: those need
-    // their own dedicated player the way TikTok/YouTube each got here, and
-    // tagging a post 'video' with a URL nothing can actually play is
-    // exactly the "false promise" dead tile the enclosure/iframe checks
-    // above were already built to avoid. A <video>/<source> src, unlike a
-    // Vimeo URL, is already a direct file — the exact same isDirectVideoUrl
-    // path Reddit/Mastodon's own direct-file posts already play through,
-    // so this needs no new frontend work to actually be playable.
+    // idea as the YouTube/Vimeo iframe fallbacks above, for a site that
+    // self-hosts its own file instead of embedding a player. A <video>/
+    // <source> src is already a direct file — the exact same
+    // isDirectVideoUrl path Reddit/Mastodon's own direct-file posts already
+    // play through, so this needed no new frontend work either.
     if (!video) {
       const directSrc = rawBody().match(/<(?:video|source)[^>]+src=["']([^"']+\.(?:mp4|webm|mov|m4v)[^"']*)["']/i)?.[1];
       if (directSrc) video = directSrc;
