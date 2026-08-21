@@ -5868,6 +5868,7 @@ const mixOptimizerState = {
   lastCheckedPools: 0,
   lastTotalPosts: 0,
   lastIssues: [],
+  lastVideoAudit: null,
   lastRun: null,
   lastError: null,
 };
@@ -7035,18 +7036,39 @@ async function runMixOptimizerCheck() {
       }
     }
 
+    // Video never populates mainFeedSnapshots (see handleVideoFeedRequest's
+    // header — deliberately no shared pool), so the loop above never sees
+    // it. Sampled separately here so a drifting video-capable-sources list
+    // gets the same proactive check every other surface already gets,
+    // instead of this agent's own name/description implying broader
+    // coverage than the loop above actually gave it.
+    const videoAudit = await auditVideoFeedMix().catch(e => {
+      console.warn('[mix_optimizer] video audit failed:', e.message);
+      return null;
+    });
+    if (videoAudit && (videoAudit.dominated || videoAudit.thin)) {
+      const reasons = [];
+      if (videoAudit.dominated) reasons.push(`${videoAudit.topSource} dominates ${(videoAudit.topShare * 100).toFixed(0)}%`);
+      if (videoAudit.thin) reasons.push(`only ${videoAudit.sampleSize} in sample`);
+      issues.push(`video(${reasons.join(', ')})`);
+    }
+
     mixOptimizerState.totalRuns += 1;
     mixOptimizerState.lastCheckedPools = checkedPools;
     mixOptimizerState.lastTotalPosts = totalPosts;
     mixOptimizerState.lastIssues = issues;
+    mixOptimizerState.lastVideoAudit = videoAudit;
     mixOptimizerState.lastRun = now;
     mixOptimizerState.lastError = null;
 
     if (issues.length > 0) {
       logAgentAction('mix_optimizer', '🎛️', `Rebalanced ${issues.length} pool(s): ${issues.join(' · ')}`, '#22D3EE');
     } else {
+      const videoNote = videoAudit
+        ? ` + video (${videoAudit.sourceCount} sources, top ${(videoAudit.topShare * 100).toFixed(0)}%)`
+        : '';
       logAgentAction('mix_optimizer', '✅',
-        `${checkedPools} mix pool(s) balanced — ${totalPosts.toLocaleString()} posts, source spread + job cadence healthy`, '#22D3EE');
+        `${checkedPools} mix pool(s) balanced${videoNote} — ${totalPosts.toLocaleString()} posts, source spread + job cadence healthy`, '#22D3EE');
     }
   } catch (e) {
     mixOptimizerState.lastError = e.message;
@@ -7996,6 +8018,44 @@ async function getVideoCapableSources() {
     console.warn('[getVideoCapableSources] query failed:', e.message);
     return null;
   }
+}
+
+// The video feed has no shared snapshot the way mainFeedSnapshots gives the
+// main feed (see handleVideoFeedRequest's own header — a cached/equalized
+// pool once crushed a 140-video/7-source pool down to 14 usable videos, see
+// getBalancedFeedPosts's equalize:true comment) — every request re-queries
+// fresh via getCursorFeedPage + mergeByRecencyWithStreakCap, whose dynamic
+// cap self-corrects based on however many sources actually came back. That
+// self-correction is only as good as getVideoCapableSources()'s list,
+// though: a source that quietly stopped posting video but is still counted
+// as "contributing" shrinks the calculated cap for no reason, and a source
+// that just started can sit uncounted for up to its full 15-minute TTL.
+// Nothing was checking that list stayed accurate — this draws one real
+// sample the same shape a real request gets and, if it looks skewed or
+// thin, force-expires the cached list so the very next real request
+// re-queries instead of waiting out the rest of the TTL. That's the one
+// meaningful corrective action available here — there's no output pool to
+// rebuild the way warmMainFeedSnapshot rebuilds a main-feed pool, only the
+// input list feeding the self-correction.
+async function auditVideoFeedMix() {
+  const sources = await getVideoCapableSources();
+  if (!sources || !db.isConnected()) return null;
+  const sample = await getCursorFeedPage({
+    sources, cursorMap: {}, limit: 60, mediaType: 'video', timeRange: '7d',
+  });
+  const pool = sample?.posts || [];
+  if (!pool.length) return { dominated: false, thin: true, sampleSize: 0, sourceCount: 0 };
+
+  const bySource = new Map();
+  for (const p of pool) bySource.set(p.source, (bySource.get(p.source) || 0) + 1);
+  const [topSourceName, topSourceCount] = [...bySource.entries()].sort((a, b) => b[1] - a[1])[0];
+  const topShare = topSourceCount / pool.length;
+  const dominated = topShare > 0.4 && bySource.size > 1;
+  const thin = pool.length < 30;
+
+  if (dominated || thin) _videoCapableSourcesExpiry = 0;
+
+  return { dominated, thin, topSource: topSourceName, topShare, sampleSize: pool.length, sourceCount: bySource.size };
 }
 
 // ─── Per-post deep link generator for curated social posts ───────────────────
@@ -11416,11 +11476,28 @@ async function handleFeedRequest(req, res) {
         })).filter(p => !isFallbackFeedPost(p));
       } catch {}
     }
-    const merged = filterUnseen(sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
-      limit: feedLimit + 1,
+    // enforceFeedDiversity's own header calls it "the single place that
+    // enforces true mix... for EVERY surface a user can reach" — archive
+    // mode and page 2+ infinite scroll were both fixed to route through it,
+    // but search never was. sortFeedBatch's diversify:true alone only gives
+    // a streak cap (maxSharePct defaults to null — see diversifyBySource's
+    // own comment: that knob is deliberately reserved for a small explicit
+    // source selection like the Jobs filter, not search, which can match
+    // any of the 36 sources), so a query where one source just happens to
+    // have far more matches could legally return that source almost
+    // exclusively — spread out so no run is longer than 2, but no better
+    // than that overall (the exact "42/18 RemoteOK/Indeed... badly lopsided
+    // overall" case enforceFeedDiversity's own comment documents). Ranking
+    // widely first (matching the main snapshot's own feedLimit*4-ish
+    // headroom) so the real proportional cap below has genuine alternates
+    // to pick from, rather than capping an already-narrow feedLimit+1 list
+    // down to almost nothing.
+    const searchRanked = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
+      limit: feedLimit * 3,
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    }), seenIds);
+    });
+    const merged = enforceFeedDiversity(filterUnseen(searchRanked, seenIds), feedLimit + 1, sortMode);
     const searchPageRows = merged.slice(0, feedLimit);
     markPostsSeen(req.user.id, searchPageRows);
     return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
