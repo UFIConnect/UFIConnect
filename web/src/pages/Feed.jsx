@@ -572,13 +572,26 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
       style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: 'var(--border)', cursor: showPoster ? 'pointer' : 'default' }}
       onClick={showPoster ? () => setPlaying(true) : undefined}
     >
-      {/* Always in the DOM once rendered — never conditionally removed by
-          React, since YouTube's own script takes ownership of this exact
-          node the moment the player is constructed (see the effect above). */}
-      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: showPoster ? 'none' : 'block' }} />
+      {/* Always in the DOM once rendered, and — critically — always
+          display:'block' from the very first render, never toggled by
+          showPoster. YouTube's script physically replaces this exact node
+          with its own <iframe> the moment the player is constructed (see
+          the effect above), copying over whatever inline style the div
+          had at that instant. If this div were still display:'none' at
+          that point (true before playerReady flips), the *replacement*
+          iframe inherits display:'none' too — and since ytMountRef now
+          points at a detached node no longer in the document, React's
+          later re-render (once playerReady goes true) writes the
+          'display: block' update to that orphaned div, not the live
+          iframe, permanently freezing the real player invisible. Keeping
+          this constant sidesteps the trap entirely; the poster below
+          covers it as a plain absolutely-positioned overlay instead,
+          which — being a normal React-owned element nothing external ever
+          takes ownership of — is always safe to conditionally render. */}
+      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight }} />
       {showPoster && (
-        <>
-          {poster && <img src={poster} alt={title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight }}
+        <div style={{ position: 'absolute', inset: 0 }}>
+          {poster && <img src={poster} alt={title} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
             onError={e => {
               e.currentTarget.style.display = 'none';
               const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
@@ -596,7 +609,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
               <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
             </div>
           </div>
-        </>
+        </div>
       )}
       {!showPoster && (
         <button
