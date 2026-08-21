@@ -6125,27 +6125,27 @@ function enforceFeedDiversity(posts, feedLimit, sortMode) {
   return diversifyBySource(cappedPosts, feedLimit, 1);
 }
 
-// "Reconstruct true mix so all sources are actually visible" — used only
-// when building the shared default-aggregate-view snapshot (see its call
-// site), the "when users login" moment: every source's own slice of
-// `posts` (already ranked/sorted by sortFeedBatch above) gets exactly
-// evenCount taken from it — whichever is smaller, the thinnest source's
-// real supply or a round budget sized off totalLimit so one equal pass
-// can't itself exceed the whole pool — round-robin interleaved. Unlike
-// equalizeThenRecencyMerge (the video/Newest-sort equivalent), this
-// doesn't re-sort the result back into any particular order afterward:
-// Ranked/Popular/Balanced were never chronological to begin with (each
-// source's own list is pre-sorted by rank score, not timestamp), so
-// round-robin position here is exactly as correct an order as recency
-// would be for a Newest-sort page. Whatever's left of each source's
-// supply past that equalized window is NOT thrown away — a permanent
-// full equalize is exactly what crushed a 140-video/7-source pool to 14
-// usable videos (see getBalancedFeedPosts's equalize:false comment) —
-// it's run through the existing proportional cap (enforceFeedDiversity)
-// and appended, so scrolling past the equalized window naturally shifts
-// toward whichever sources are actually pulling more content, real
-// supply intact either way.
-function buildEqualizedFeedPool(posts, totalLimit, sortMode) {
+// "Reconstruct true mix so all sources are actually visible, no time
+// factor — repeat that style until there's truly nothing else" — used
+// only when building the shared default-aggregate-view snapshot (see its
+// call site), the "when users login" moment. Every source's own slice of
+// `posts` (already ranked/sorted by sortFeedBatch above) becomes its own
+// queue; roundRobinMerge (see its own comment) takes one from every queue
+// still holding content, once per round, in order, until every one of
+// them is genuinely drained — no artificial round ceiling, so a source
+// only ever stops contributing because it ran out, not because of a
+// budget. This is also why nothing is thrown away the way a permanent
+// full equalize was: that's exactly what crushed a 140-video/7-source
+// pool to 14 usable videos (see getBalancedFeedPosts's equalize:false
+// comment) by discarding everything past the thinnest source's count;
+// here a richer source just keeps contributing every round long after
+// thinner ones have dropped out, so real supply stays intact and
+// naturally keeps flowing as rounds continue. Ranked/Popular/Balanced
+// were never chronological to begin with (each source's own list is
+// pre-sorted by rank score, not timestamp), so round-robin position is
+// exactly as correct an order here as it would be anywhere else in this
+// pipeline.
+function buildEqualizedFeedPool(posts, totalLimit) {
   const bySource = new Map();
   for (const p of posts) {
     const src = p?.source || 'unknown';
@@ -6153,34 +6153,104 @@ function buildEqualizedFeedPool(posts, totalLimit, sortMode) {
     bySource.get(src).push(p);
   }
   if (!bySource.size) return [];
-
-  const sourceLists = [...bySource.values()];
-  const roundCap = Math.max(1, Math.ceil(totalLimit / sourceLists.length));
-  const evenCount = Math.min(Math.min(...sourceLists.map(arr => arr.length)), roundCap);
-
-  const prefix = [];
-  for (let round = 0; round < evenCount; round++) {
-    for (const arr of sourceLists) {
-      if (arr[round]) prefix.push(arr[round]);
-    }
-  }
-
-  const remainder = sourceLists.flatMap(arr => arr.slice(evenCount));
-  const remainderCapped = enforceFeedDiversity(remainder, Math.max(0, totalLimit - prefix.length), sortMode);
-
-  return [...prefix, ...remainderCapped];
+  return roundRobinMerge([...bySource.values()]).slice(0, totalLimit);
 }
 
-// Job listings only ever got the same equal-per-source share as every other
-// source in the mix (~1/N for N sources in the pool) — with 30+ sources
-// that reads as "job postings basically never show up." Real supply is thin
-// (confirmed live: ~20 Indeed + ~31 Remote OK posts total exist right now),
-// so a "top up with extra posts" approach does almost nothing once most of
-// that thin supply already made it into the pool via the regular equal-
-// share mix — there's nothing left to add. Instead: pull every job post
-// already scattered through the pool PLUS whatever the top-up fetch found,
-// combine and dedupe, then reinsert the whole set at a fixed cadence — this
-// guarantees the cadence regardless of how much overlap there was.
+// ─── Resume-matched job substitution for the feed ──────────────────────────
+// The shared feed pool can't know which specific job posts to show — same
+// invariant as everywhere else in this pipeline, it must never bake in one
+// user's data since every other user reads the same cached snapshot. Jobs
+// still get a genuine round-robin slot from the shared pool (see
+// buildEqualizedFeedPool's call site), just generically ordered same as any
+// other source; this runs per-request, per-user, afterward, and only ever
+// *swaps which post* occupies an already-decided job slot for a better
+// resume match — it never changes the mix's shape.
+//
+// The job-candidate pool itself is cached (5 real listings' worth of
+// keyword-scoring is cheap; the DB query behind it isn't something every
+// single request should re-pay for) on the same short TTL the rest of the
+// feed's shared state uses. Per-user resume keywords are a single indexed
+// lookup by user_id — cheap enough to run fresh every request, unlike the
+// PARTITION BY-per-source queries that caused real load problems earlier.
+const JOB_CANDIDATE_POOL_TTL = 5 * 60 * 1000;
+let _jobCandidatePool = null;
+let _jobCandidatePoolExpiry = 0;
+async function getJobCandidatePool() {
+  if (_jobCandidatePool && Date.now() < _jobCandidatePoolExpiry) return _jobCandidatePool;
+  if (!db.isConnected()) return _jobCandidatePool || [];
+  try {
+    const rows = await getPostsFromDB([], 90, 0, JOB_LISTING_SOURCES, { timeRange: '30d' });
+    const pool = realFeedPosts(rows).map(p => mapExternalPost(p, p.source));
+    _jobCandidatePool = pool;
+    _jobCandidatePoolExpiry = Date.now() + JOB_CANDIDATE_POOL_TTL;
+    return pool;
+  } catch (e) {
+    console.warn('[getJobCandidatePool] query failed:', e.message);
+    return _jobCandidatePool || [];
+  }
+}
+
+// Same source/query Opportunities' own resume-match scoring reads from
+// (see the /opportunities handler's resumeKeywords) — "matches your
+// resume" should mean the same thing in both places, not two independently
+// tuned heuristics.
+async function getUserResumeKeywords(userId) {
+  if (!db.isConnected()) return new Set();
+  try {
+    const { rows } = await db.query(
+      `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (rows.length && Array.isArray(rows[0].keywords)) {
+      return new Set(rows[0].keywords.map(k => String(k).toLowerCase()));
+    }
+  } catch (e) { /* resume matching is a bonus signal, never block the feed over it */ }
+  return new Set();
+}
+
+function scoreJobResumeMatch(post, resumeKeywords) {
+  if (!resumeKeywords.size) return 0;
+  const tagTokens = asArray(post.tags).map(t => String(t || '').toLowerCase());
+  const text = `${post.title || ''} ${post.content || ''}`.toLowerCase();
+  let score = 0;
+  for (const kw of resumeKeywords) {
+    if (tagTokens.includes(kw)) score += 2;
+    else if (text.includes(kw)) score += 1;
+  }
+  return score;
+}
+
+// Walks the response for whichever positions the shared pool already
+// allocated to a job-listing source and, wherever a genuinely better
+// resume match exists in the live candidate pool, swaps it in — same slot,
+// same round-robin shape, just the more relevant listing. Never invents a
+// job slot that wasn't already there, and falls back to the pool's
+// original (generic) pick wherever nothing scores above zero or the user
+// has no resume on file.
+function applyResumeMatchedJobs(posts, resumeKeywords, jobPool) {
+  if (!resumeKeywords.size || !jobPool.length) return posts;
+  const jobPositions = [];
+  posts.forEach((p, i) => { if (JOB_LISTING_SOURCES.includes(p?.source)) jobPositions.push(i); });
+  if (!jobPositions.length) return posts;
+
+  const scored = jobPool
+    .map(post => ({ post, score: scoreJobResumeMatch(post, resumeKeywords) }))
+    .filter(c => c.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return posts;
+
+  const result = posts.slice();
+  const used = new Set();
+  let ci = 0;
+  for (const pos of jobPositions) {
+    while (ci < scored.length && used.has(scored[ci].post.id)) ci++;
+    if (ci >= scored.length) break;
+    result[pos] = scored[ci].post;
+    used.add(scored[ci].post.id);
+    ci++;
+  }
+  return result;
+}
 const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs'];
 
 // ─── Location-based matching ────────────────────────────────────────────────
@@ -6240,36 +6310,6 @@ function jobMatchesUserLocation(locationStr, countryCode) {
   const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
   return !!keywords && keywords.some(k => loc.includes(k));
 }
-function boostJobListings(pool, extraJobPosts, everyN = 8) {
-  const existingJobs = pool.filter(p => JOB_LISTING_SOURCES.includes(p.source));
-  const nonJobPool = pool.filter(p => !JOB_LISTING_SOURCES.includes(p.source));
-  const seenIds = new Set(existingJobs.map(p => p.id));
-  const combinedJobsAll = [...existingJobs, ...extraJobPosts.filter(p => p?.id && !seenIds.has(p.id))];
-  if (!combinedJobsAll.length) return pool;
-  // Cap at exactly as many job posts as there are 1-in-everyN interleave
-  // slots in nonJobPool — the wide 30-day supplemental fetch (needed since
-  // day-to-day job supply is thin) plus whatever's already organically in
-  // the pool could together add up to far more job posts than an evenly-
-  // spaced mix has room for. The interleave loop below only has
-  // floor(nonJobPool.length / everyN) trigger points; anything past that
-  // used to fall through to a trailing while-loop that dumped every
-  // leftover job post in one contiguous block at the end — confirmed live
-  // as 16+ consecutive job listings in a row, not a mix. Capping here
-  // means that overflow path can no longer trigger at all: every included
-  // job post is guaranteed an interleave slot, so job share stays near the
-  // intended ~1-in-8 (~12.5%) instead of drifting up toward 25-30%.
-  const targetJobCount = Math.max(1, Math.floor(nonJobPool.length / everyN));
-  const combinedJobs = combinedJobsAll.slice(0, targetJobCount);
-  const result = [];
-  let ji = 0;
-  for (let i = 0; i < nonJobPool.length; i++) {
-    result.push(nonJobPool[i]);
-    if ((i + 1) % everyN === 0 && ji < combinedJobs.length) result.push(combinedJobs[ji++]);
-  }
-  while (ji < combinedJobs.length) result.push(combinedJobs[ji++]);
-  return result;
-}
-
 // Soft per-user personalization: boost posts matching the viewer's
 // interests/skills to appear more often near the top, without hard-
 // filtering everything else out — a strict filter was tried earlier and
@@ -9705,98 +9745,23 @@ function decodeFeedCursor(str) {
     return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
   } catch { return {}; }
 }
-// Proper k-way merge by actual timestamp (not roundRobinMerge's plain
-// position-based interleave) — "always based on time, newest on top" means
-// the genuinely most-recent candidate across every source should come next,
-// not whichever source's "turn" it is. Two concessions to mix on top of
-// pure recency: a max-consecutive streak cap (no source appears 3+ times in
-// a row), and a maxSharePct overall-proportion cap. The streak cap alone
-// turned out not to be enough — live-tested the unfiltered feed (~30
-// candidate sources) and got only 5 of them ever appearing across 200
-// posts, because two sources (Bluesky, Mastodon) simply post at a far
-// higher real cadence than the other ~28 combined, so they were "the
-// genuinely most recent candidate" often enough to win almost every pick
-// even with no run longer than 2. The share cap makes a source ineligible
-// once it's already over its allotted proportion, the same overShare
-// mechanism diversifyBySource uses — recency still decides *within* the
-// eligible set, so this doesn't reintroduce the "sources shown in
-// artificial round-robin order regardless of actual age" problem
-// roundRobinMerge had; it only stops a specific source from ever
-// exceeding its share, not from winning on merit within it.
-function mergeByRecencyWithStreakCap(lists, maxConsecutive = 2, maxSharePct = null) {
-  const idx = lists.map(() => 0);
-  const result = [];
-  const sourceCounts = new Map();
-  let lastSource = null;
-  let streak = 0;
-  function overShare(src) {
-    if (!maxSharePct || result.length < 6) return false;
-    const count = sourceCounts.get(src) || 0;
-    return (count + 1) / (result.length + 1) > maxSharePct;
-  }
-  for (;;) {
-    let bestI = -1, bestTs = -Infinity;
-    let fallbackI = -1, fallbackTs = -Infinity;
-    for (let i = 0; i < lists.length; i++) {
-      if (idx[i] >= lists[i].length) continue;
-      const item = lists[i][idx[i]];
-      const ts = postTimestamp(item);
-      const src = item.source || 'unknown';
-      if (ts > fallbackTs) { fallbackTs = ts; fallbackI = i; }
-      const wouldExceedStreak = src === lastSource && streak >= maxConsecutive;
-      if (!wouldExceedStreak && !overShare(src) && ts > bestTs) { bestTs = ts; bestI = i; }
-    }
-    // Nothing satisfies the caps this round (every remaining candidate is
-    // either over-streaked or over-share) — same graceful-degradation
-    // reasoning as diversifyBySource's own fallback: drain the real
-    // next-most-recent item anyway rather than stalling.
-    const pickI = bestI >= 0 ? bestI : fallbackI;
-    if (pickI < 0) break;
-    const item = lists[pickI][idx[pickI]];
-    idx[pickI]++;
-    result.push(item);
-    const src = item.source || 'unknown';
-    sourceCounts.set(src, (sourceCounts.get(src) || 0) + 1);
-    if (src === lastSource) streak++; else { lastSource = src; streak = 1; }
-  }
-  return result;
-}
-// "Reconstruct true mix so all sources are actually visible" — reserved
-// for a fresh session's very first page (see its call site: an empty
-// cursorMap means nothing's been scrolled yet). Every source's own list
-// is already sorted newest-first; this takes exactly evenCount from each
-// (whichever is smaller: the thinnest source's real supply, or a
-// per-source round budget sized off the page limit so one round-robin
-// pass can't itself blow past it) and re-sorts that equal-per-source
-// slice back into real chronological order — equal REPRESENTATION, not
-// equal ORDER, so a thin source's 3-day-old post doesn't outrank a rich
-// source's 1-hour-old one just because of round-robin position.
-// Whatever's left of each source's supply past that window is NOT thrown
-// away — that's what crushed a 140-video/7-source pool to 14 usable
-// videos under a permanent full equalize (see getBalancedFeedPosts's
-// equalize:false comment) — it's merged by the existing recency+share-cap
-// logic and appended, so a user who scrolls past what full equality can
-// sustain naturally starts seeing more from whichever sources are
-// actually pulling more content, without any real supply being discarded.
-function equalizeThenRecencyMerge(lists, limit, maxConsecutive, maxSharePct) {
-  const nonEmpty = lists.filter(l => l.length > 0);
-  if (!nonEmpty.length) return [];
-
-  const roundCap = Math.max(1, Math.ceil(limit / nonEmpty.length));
-  const evenCount = Math.min(Math.min(...nonEmpty.map(l => l.length)), roundCap);
-
-  const prefix = [];
-  for (let round = 0; round < evenCount; round++) {
-    for (const list of nonEmpty) {
-      if (list[round]) prefix.push(list[round]);
-    }
-  }
-  prefix.sort((a, b) => postTimestamp(b) - postTimestamp(a));
-
-  const remainderLists = nonEmpty.map(l => l.slice(evenCount));
-  const remainder = mergeByRecencyWithStreakCap(remainderLists, maxConsecutive, maxSharePct);
-
-  return [...prefix, ...remainder];
+// "Reconstruct true mix so all sources are actually visible, no time
+// factor — repeat that style until there's truly nothing else, then let
+// recency take over" — this is roundRobinMerge (see its own comment: every
+// active source's queue contributes one item per round, in order,
+// dropping out only once it's genuinely out of content, no probabilistic
+// cap involved), just reused here for the full merge instead of only a
+// small explicit source selection. No evenCount ceiling, no re-sort back
+// into timestamp order — a source only ever stops contributing because it
+// ran out, not because of an artificial round budget, and the round-robin
+// position itself is the intended order (recency was the whole thing
+// asked to be set aside). "Then mix it based on time" past that point
+// isn't a separate code path here: once real content is this thin, the
+// active-source cycling below and a plain recency ordering converge to
+// the same thing anyway — there's nothing left for a proportional cap to
+// meaningfully choose between.
+function equalizeThenRecencyMerge(lists, limit) {
+  return roundRobinMerge(lists).slice(0, limit);
 }
 // extraLists: pre-fetched { [sourceKey]: post[] } for content that isn't in
 // feed_posts_cache and needs its own fetch path (e.g. native UFconnect
@@ -9828,6 +9793,19 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // didn't fix it, confirming it was query/DB-load-bound, not connection-
   // queueing-bound. bySource is rebuilt below in the same per-source-array
   // shape the unchanged code after this block already expects.
+  // "Repeat that style until there truly isn't any old posts the user
+  // hasn't seen, then start showing newly posted posts based on the
+  // latest, still with a true mix" — __liveSince is a reserved cursor key
+  // (not a real source name — sources are DB values, this is a client-
+  // opaque cursor field only this function reads) marking that the normal
+  // backward paging below already ran the user out of old unseen supply.
+  // Once set, every subsequent page flips the query direction: instead of
+  // "older than where I left off per source," it's "newer than the instant
+  // I went live," still one query with a per-source join, still merged
+  // through the exact same no-time-factor round-robin — "true mix" doesn't
+  // stop applying just because the content is now fresh instead of
+  // backlog.
+  const isLiveMode = !!cursorMap.__liveSince;
   let bySource = sources.map(() => []);
   if (sources.length && db.isConnected()) {
     try {
@@ -9835,7 +9813,7 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       const cursorValues = sources.map(src => {
         params.push(src);
         const srcParam = params.length;
-        params.push(cursorMap[src] ? new Date(cursorMap[src]).toISOString() : null);
+        params.push(!isLiveMode && cursorMap[src] ? new Date(cursorMap[src]).toISOString() : null);
         const curParam = params.length;
         return `($${srcParam}, $${curParam}::timestamptz)`;
       }).join(', ');
@@ -9845,7 +9823,9 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
         `fp.id NOT LIKE 'social\\_%' ESCAPE '\\'`,
         `fp.id !~* '^indeed_j[0-9]+$'`,
         `fp.id !~* '^govt_g[0-9]+$'`,
-        `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts)`,
+        isLiveMode
+          ? `fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`
+          : `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts)`,
       ];
       if (mediaType) {
         params.push(mediaType);
@@ -9858,6 +9838,7 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       }
       params.push(perSourceLimit);
       const limitParam = params.length;
+      const order = isLiveMode ? 'post_created_at ASC, fetched_at ASC' : 'post_created_at DESC, fetched_at DESC';
       // readQuery, not query — this exact call is what timed out and
       // silently returned an empty feed under real load on 2026-08-20 (see
       // the timeRange fix above). Failing over to a backup DB for just this
@@ -9866,13 +9847,13 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       const { rows } = await db.readQuery(
         `WITH c(source, before_ts) AS (VALUES ${cursorValues})
          SELECT * FROM (
-           SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY fp.post_created_at DESC, fp.fetched_at DESC) AS rn
+           SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY ${order}) AS rn
            FROM feed_posts_cache fp
            JOIN c ON c.source = fp.source
            WHERE ${clauses.join(' AND ')}
          ) ranked
          WHERE rn <= $${limitParam}
-         ORDER BY post_created_at DESC, fetched_at DESC`,
+         ORDER BY ${order}`,
         params
       );
       const bySourceIdx = new Map(sources.map((src, i) => [src, i]));
@@ -9890,59 +9871,58 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   const extraKeys = Object.keys(extraLists);
   const allSources = [...sources, ...extraKeys];
   const allLists = [...bySource, ...extraKeys.map(k => extraLists[k] || [])];
-  // Same scaling formula used everywhere else in this codebase for a
-  // proportional "true mix" cap (see the Jobs filter's maxSharePct
-  // comment): tighter with more candidate sources (~18% once there are
-  // 30+, matching enforceFeedDiversity's own ceiling for the full
-  // aggregate pool), looser for a narrow explicit selection so a 2-source
-  // filter isn't forced into an artificial 50/50 split. Scaled off how many
-  // sources actually came back with at least one post, not the requested
-  // source count — video specifically asks across ~30 sources but only a
-  // handful genuinely carry video content, so sizing the cap off the full
-  // request list made it far tighter than real diversity could satisfy,
-  // which just meant the "nothing eligible" fallback (drain the real
-  // next-most-recent regardless of cap) kept kicking in and a source ended
-  // up over-cap anyway — confirmed live at 36.7% for a cap nominally set to
-  // 18%. A cap sized to real contributors is one the merge can actually
-  // hold to instead of constantly falling back past it.
-  const contributingCount = allLists.filter(l => l.length > 0).length;
-  const maxSharePct = contributingCount > 1 ? Math.min(0.65, (1 / contributingCount) + 0.15) : null;
-  // A truly fresh session (no cursorMap yet — nothing scrolled) gets a
-  // genuinely equal-per-source prefix first, real supply preserved past it
-  // — see equalizeThenRecencyMerge's own comment. Every later page already
-  // has a real cursorMap (each source's own position from the page
-  // before), so this only ever fires once per session, exactly where "when
-  // users login they're prompted with the full equalize" means it should.
-  const isFirstPage = Object.keys(cursorMap).length === 0;
-  const merged = isFirstPage
-    ? equalizeThenRecencyMerge(allLists, limit, 2, maxSharePct)
-    : mergeByRecencyWithStreakCap(allLists, 2, maxSharePct);
-  // The cursor only guarantees no repeat *within* one continuous scroll
-  // session — it says nothing about a reset cursor (page reload, reopening
-  // the tab, a fresh mount), which restarts every source from "now" and, if
-  // little enough is genuinely new since last time, handed back the exact
-  // same "newest" posts again. filterUnseen closes that gap the same way
-  // every other feed path already does, with its usual "fall back to
-  // showing them again rather than an empty page" floor once there's
-  // truly nothing left unseen.
-  const unseen = seenIds?.size ? filterUnseen(merged, seenIds) : merged;
-  const page = unseen.slice(0, limit);
+  // Every page — not just the first — gets the same no-time-factor,
+  // round-robin-across-every-active-source merge (see
+  // equalizeThenRecencyMerge's own comment): each source's own cursor
+  // keeps advancing page to page, so this naturally keeps repeating "one
+  // from every source still contributing" for as long as any of them
+  // genuinely have more, tapering itself as thin sources' cursors catch up
+  // to their real supply.
+  const merged = equalizeThenRecencyMerge(allLists, limit);
+  // Own check, not just filterUnseen's return value — filterUnseen falls
+  // back to re-showing already-seen posts rather than an empty page (the
+  // right behavior for a normal request), but that fallback is exactly the
+  // signal this function needs to detect real exhaustion: merged found
+  // real posts, seenIds is genuinely populated, and every single one of
+  // them was already seen. That's "truly isn't any old posts the user
+  // hasn't seen" — not literally zero rows in the DB, just zero unseen
+  // ones for this user among everything the backward cursor can still
+  // reach.
+  const trulyUnseen = seenIds?.size ? merged.filter(p => !p?.id || !seenIds.has(p.id)) : merged;
+  const exhausted = !isLiveMode && !!seenIds?.size && merged.length > 0 && trulyUnseen.length === 0;
+  const page = (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
 
   const nextCursor = { ...cursorMap };
-  for (const src of allSources) {
-    const shown = page.filter(p => p.source === src);
-    if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
-    const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
-    nextCursor[src] = new Date(postTimestamp(oldest)).toISOString();
+  if (isLiveMode) {
+    // Advance the single live watermark to the newest thing just shown —
+    // not per-source, since live mode already means "whatever's freshest
+    // across every active source," the same idea SOURCE_CONFIG's own
+    // 0-5-minute worker cadence already refreshes feed_posts_cache on.
+    // Next request only sees what's arrived since this exact instant.
+    const newest = page.reduce((max, p) => Math.max(max, postTimestamp(p)), 0);
+    if (newest > 0) nextCursor.__liveSince = new Date(newest).toISOString();
+  } else {
+    for (const src of allSources) {
+      const shown = page.filter(p => p.source === src);
+      if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
+      const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
+      nextCursor[src] = new Date(postTimestamp(oldest)).toISOString();
+    }
+    if (exhausted) nextCursor.__liveSince = new Date().toISOString();
   }
 
   return {
     posts: page,
     nextCursor: encodeFeedCursor(nextCursor),
-    // Honest signal: only false once every single selected source came back
-    // with zero rows before its own cursor — i.e., truly nothing left
-    // anywhere, not just "this page happened to be thin."
-    hasMore: allLists.some(arr => arr.length > 0),
+    // Honest signal, not just "more exists conceptually": in normal mode,
+    // only false once every single selected source came back with zero
+    // rows before its own cursor. In live mode, there's always more
+    // *eventually* (new content keeps arriving on the 0-5-minute worker
+    // cadence), but not necessarily *right now* — a fast scroller catching
+    // up to real-time can genuinely hit an empty page, and hasMore:true
+    // against an empty page would just have the client hammer this
+    // endpoint for content that doesn't exist yet.
+    hasMore: isLiveMode ? page.length > 0 : allLists.some(arr => arr.length > 0),
   };
 }
 
@@ -11638,7 +11618,12 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        const personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity);
+        let personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity);
+        // See applyResumeMatchedJobs's own comment — swaps whichever posts
+        // already landed in a job-source slot for a better resume match,
+        // same slot, same mix shape.
+        const [resumeKeywordsP2, jobPoolP2] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
+        personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP2, jobPoolP2);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -11779,7 +11764,9 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      const personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+      let personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+      const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
+      personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       // Only what actually survived the feedLimit slice above (it's
@@ -12106,20 +12093,31 @@ async function handleFeedRequest(req, res) {
   // keeps the plain proportional cap, since "equalize across sources"
   // isn't a meaningful idea once the candidate pool is already narrow by
   // the user's own choice.
-  let externalDiversified = isDefaultAggregateView
-    ? buildEqualizedFeedPool(liveSorted, MAIN_FEED_SNAPSHOT_POOL_SIZE, sortMode)
-    : enforceFeedDiversity(liveSorted, feedLimit, sortMode);
+  let feedPoolInput = liveSorted;
   if (isDefaultAggregateView) {
-    // Not dbTimeRange (2 days) — confirmed live that bounding job listings
-    // to the same tight recency window as the rest of the feed left almost
-    // nothing to boost with (indeed/remoteok don't post frequently enough
-    // for much of their already-thin ~50-post total supply to fall inside
-    // 2 days). A job posting is still perfectly relevant a couple weeks in,
-    // unlike a 2-day-old social post, so this pulls from a much wider window.
-    const jobRows = await getPostsFromDB([], 60, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: '30d' }).catch(() => []);
-    const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source));
-    externalDiversified = boostJobListings(externalDiversified, extraJobPosts);
+    // Job listings ride the same round-robin as every other source now
+    // (see buildEqualizedFeedPool) instead of a separate fixed-cadence
+    // insertion — but their real per-source queue needs to be built from a
+    // much wider window than the rest of the feed first, same reasoning as
+    // before: confirmed live that bounding job listings to the same tight
+    // recency window as the rest of the feed left almost nothing to mix
+    // with (indeed/remoteok/usajobs don't post frequently enough for much
+    // of their already-thin supply to fall inside a day or two). Fetched
+    // and merged in before buildEqualizedFeedPool runs — not after, the
+    // way the old boostJobListings step did — so job posts get grouped
+    // into their own real queue like any other source, rather than being
+    // exempt from (and layered on top of) the round-robin entirely. Merged
+    // pre-truncation too: sortFeedBatch's own rank-based limit above could
+    // otherwise cut job posts before this ever sees them, the same risk
+    // the old separate fetch was built to sidestep.
+    const jobRows = await getPostsFromDB([], 90, 0, JOB_LISTING_SOURCES, { sort: sortMode, timeRange: '30d' }).catch(() => []);
+    const seenJobIds = new Set(liveSorted.filter(p => JOB_LISTING_SOURCES.includes(p.source)).map(p => p.id));
+    const extraJobPosts = jobRows.map(p => mapExternalPost(p, p.source)).filter(p => p?.id && !seenJobIds.has(p.id));
+    feedPoolInput = [...liveSorted, ...extraJobPosts];
   }
+  const externalDiversified = isDefaultAggregateView
+    ? buildEqualizedFeedPool(feedPoolInput, MAIN_FEED_SNAPSHOT_POOL_SIZE)
+    : enforceFeedDiversity(feedPoolInput, feedLimit, sortMode);
   // externalDiversified itself stays unrotated/unpersonalized — it's what
   // gets cached as the shared snapshot below and read by every other user,
   // so it can't bake in *this* request's rotation or interests. Rotation +
@@ -12127,7 +12125,13 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  const personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+  let personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+  if (isDefaultAggregateView) {
+    // Reuses the wide-window job fetch already done above (extraJobPosts)
+    // instead of a second, separate query for the same data.
+    const resumeKeywords = await getUserResumeKeywords(req.user.id);
+    personalizedExternal = applyResumeMatchedJobs(personalizedExternal, resumeKeywords, feedPoolInput.filter(p => JOB_LISTING_SOURCES.includes(p.source)));
+  }
   const responsePosts = [...internal, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
