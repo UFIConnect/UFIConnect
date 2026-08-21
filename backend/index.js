@@ -3181,6 +3181,23 @@ function parseRSSItems(xml) {
       const yt = iframeSrc?.match(/(?:youtube(?:-nocookie)?\.com\/embed\/|youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})/i);
       if (yt) video = `https://www.youtube.com/watch?v=${yt[1]}`;
     }
+    // Falls back to a native <video> embedded directly in the article body
+    // (either a src="..." attribute on <video> itself, or a nested
+    // <source src="...">, which is the more common HTML5 pattern) — same
+    // idea as the YouTube-iframe fallback above, for a site that self-hosts
+    // its own file instead of embedding YouTube. Deliberately NOT extended
+    // to other embed players (Vimeo, etc.) the way YouTube is: those need
+    // their own dedicated player the way TikTok/YouTube each got here, and
+    // tagging a post 'video' with a URL nothing can actually play is
+    // exactly the "false promise" dead tile the enclosure/iframe checks
+    // above were already built to avoid. A <video>/<source> src, unlike a
+    // Vimeo URL, is already a direct file — the exact same isDirectVideoUrl
+    // path Reddit/Mastodon's own direct-file posts already play through,
+    // so this needs no new frontend work to actually be playable.
+    if (!video) {
+      const directSrc = rawBody().match(/<(?:video|source)[^>]+src=["']([^"']+\.(?:mp4|webm|mov|m4v)[^"']*)["']/i)?.[1];
+      if (directSrc) video = directSrc;
+    }
     // Falls back to the first <img> actually embedded in the article body —
     // plenty of feeds (The Verge, Medium, MIT Tech Review confirmed live)
     // never use a dedicated media tag at all, they just put a real <img> in
