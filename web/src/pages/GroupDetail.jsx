@@ -28,6 +28,15 @@ export default function GroupDetail() {
   const [postError,     setPostError]     = useState('');
   const textareaRef = useRef(null);
 
+  // Only the group's own creator gets this at all — external/seeded groups
+  // (subreddit-backed, etc.) have no createdBy, so this naturally never
+  // shows for those regardless of who's viewing. Same "type DELETE to
+  // confirm" pattern Settings.jsx already uses for account deletion.
+  const [deleteModal,   setDeleteModal]   = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deleting,      setDeleting]      = useState(false);
+  const [deleteError,   setDeleteError]   = useState('');
+
   useEffect(() => {
     Promise.all([
       client.get('/groups'),
@@ -70,6 +79,19 @@ export default function GroupDetail() {
       }
     } catch (err) { console.error(err); }
     finally { setJoining(false); }
+  }
+
+  async function handleDeleteGroup() {
+    if (deleting || deleteConfirm !== 'DELETE') return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await client.delete(`/groups/${id}`);
+      navigate('/groups');
+    } catch (err) {
+      setDeleteError(err.response?.data?.message || 'Failed to delete group. Please try again.');
+      setDeleting(false);
+    }
   }
 
   function openCompose() {
@@ -121,6 +143,47 @@ export default function GroupDetail() {
           </button>
         </div>
       </div>
+
+      {/* Danger zone — only the group's own creator ever sees this */}
+      {group.createdBy && group.createdBy === profile?.id && (
+        <div className="card" style={{ marginBottom: 16, borderColor: '#FCA5A5' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete group</div>
+              <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
+                Permanently remove {group.name} for everyone. This cannot be undone.
+              </div>
+            </div>
+            <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteModal(true)}>Delete group</button>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
+            <div style={{ fontSize: '2rem', marginBottom: 12, textAlign: 'center' }}>⚠️</div>
+            <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete {group.name}?</h3>
+            <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
+              This will permanently delete the group and remove it from every member's joined groups. This action <strong>cannot be undone</strong>.
+            </p>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label">Type <strong>DELETE</strong> to confirm</label>
+              <input className="form-input" value={deleteConfirm} onChange={e => setDeleteConfirm(e.target.value)} placeholder="Type DELETE here" autoFocus />
+            </div>
+            {deleteError && <div className="auth-error" style={{ marginBottom: 12 }}>{deleteError}</div>}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setDeleteModal(false); setDeleteConfirm(''); setDeleteError(''); }} disabled={deleting}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" style={{ flex: 1 }} disabled={deleteConfirm !== 'DELETE' || deleting} onClick={handleDeleteGroup}>
+                {deleting ? <span className="spinner" /> : 'Permanently delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Post composer — only for joined members */}
       {joined && (
