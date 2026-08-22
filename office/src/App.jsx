@@ -1283,6 +1283,7 @@ function PipelineView({ status }) {
   const workers = (status?.sources?.workers || []).slice().sort((a, b) => (b.postCount || 0) - (a.postCount || 0));
   const healthyCount = workers.filter(w => ['healthy', 'ready', 'fallback', 'pro'].includes(w.status)).length;
   const composition  = status?.feed?.composition || [];
+  const filterAgent  = status?.filterAgent;
   const sortAgent    = status?.sortAgent;
   const q            = status?.refreshQueue;
   const running      = !!q?.running;
@@ -1292,11 +1293,11 @@ function PipelineView({ status }) {
     <>
       <h1 style={H1}>Pipeline</h1>
       <p style={SUBTITLE}>
-        Every platform, live — from fetch through sorting, transfer, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
+        Every platform, live — from fetch through filtering, sorting, transfer, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
       </p>
 
       <Card style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 900 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 1140 }}>
           {/* Stage 1 — Sources */}
           <PipelineNode style={{ flex: '1 1 360px', minWidth: 320 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1334,9 +1335,35 @@ function PipelineView({ status }) {
             )}
           </PipelineNode>
 
-          <FlowConnector colors={['#60a5fa', '#4ade80', '#38bdf8', '#a78bfa']} />
+          <FlowConnector colors={['#60a5fa', '#fbbf24']} />
 
-          {/* Stage 2 — Sort & Rank */}
+          {/* Stage 2 — Filter: every fetched post's first checkpoint, before
+              it's even eligible for sorting — see filterAgentState/
+              addAndBroadcast server-side. Two independent drops happen
+              here: invalid (no id, or a fallback/placeholder post) and
+              duplicate (already broadcast by this or another source, within
+              the rolling seenPostIds window). */}
+          <PipelineNode glow="#fbbf24" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#fbbf24">Filter</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(251,191,36,.28), rgba(251,191,36,.03))',
+              border: '1px solid rgba(251,191,36,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>🧹</div>
+            <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 8, fontWeight: 700 }}>
+              <span style={{ color: '#f87171' }}>−{((filterAgent?.lastDroppedInvalid ?? 0) + (filterAgent?.lastDroppedDuplicate ?? 0)).toLocaleString()}</span>
+              <span style={{ color: '#4ade80' }}>+{(filterAgent?.lastOutput ?? 0).toLocaleString()}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              {filterAgent?.lastRun ? `Filtered ${fmtAgo(filterAgent.lastRun)}` : 'Not run yet'}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#fbbf24', '#a78bfa']} />
+
+          {/* Stage 3 — Sort & Rank */}
           <PipelineNode glow="#a78bfa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
             <Label color="#a78bfa">Sort &amp; Rank</Label>
             <div style={{
@@ -1363,7 +1390,7 @@ function PipelineView({ status }) {
 
           <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} />
 
-          {/* Stage 3 — Transfer */}
+          {/* Stage 4 — Transfer */}
           <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
             <Label color="#38bdf8">Transfer</Label>
             <div style={{ margin: '14px 0' }}>
@@ -1378,7 +1405,7 @@ function PipelineView({ status }) {
 
           <FlowConnector colors={['#38bdf8', '#4ade80']} />
 
-          {/* Stage 4 — Viewed (live site) */}
+          {/* Stage 5 — Viewed (live site) */}
           <PipelineNode glow="#4ade80" style={{ flex: '1 1 200px', textAlign: 'center', alignItems: 'center' }}>
             <Label color="#4ade80">Viewed</Label>
             <div style={{
@@ -1409,6 +1436,7 @@ function PipelineView({ status }) {
 
       {/* ── Detail row: what's actually happening inside each stage ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
+        <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} />
         <ViewedDetailCard pageviews={pageviews} />
@@ -1423,6 +1451,88 @@ function DetailStat({ label, value, color }) {
       <div style={{ fontSize: 17, fontWeight: 800, color: color || '#e2e8f0', lineHeight: 1.2 }}>{value}</div>
       <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{label}</div>
     </div>
+  );
+}
+
+// What every fetched post passes through before it's even eligible for
+// sorting (see filterAgentState/addAndBroadcast server-side) — two
+// independent checks, not one: invalid (no id, or a fallback/placeholder
+// post that was never real content) and duplicate (already broadcast by
+// this or another source, inside the rolling seenPostIds window — the same
+// story can genuinely surface from two different platforms). bySource is a
+// running total for the life of the process, not just the last call, so a
+// platform that fetches rarely still shows real numbers instead of
+// whatever happened to run most recently.
+function FilterDetailCard({ filterAgent }) {
+  const input = filterAgent?.lastInput ?? 0;
+  const output = filterAgent?.lastOutput ?? 0;
+  const droppedInvalid = filterAgent?.lastDroppedInvalid ?? 0;
+  const droppedDuplicate = filterAgent?.lastDroppedDuplicate ?? 0;
+  const durationS = (filterAgent?.lastDurationMs ?? 0) / 1000;
+  const rate = durationS > 0 ? Math.round(input / durationS) : 0;
+  const avgPerRun = filterAgent?.totalRuns ? Math.round((filterAgent.totalInput || 0) / filterAgent.totalRuns) : 0;
+  const bySource = filterAgent?.bySource || [];
+
+  return (
+    <Card>
+      <Label color="#fbbf24">Filter — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Every fetch, before anything is sorted or ranked: drop invalid posts (no id, or a fallback/placeholder that
+        was never real content) → drop duplicates (already broadcast by this or another source, within the rolling
+        window). What's left is what Sort &amp; Rank ever sees. Real numbers from the most recent fetch below, not averages.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(255,255,255,.04)', fontSize: 12, color: '#e2e8f0', fontWeight: 700 }}>
+          {input.toLocaleString()} in
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: droppedInvalid > 0 ? 'rgba(239,68,68,.1)' : 'rgba(255,255,255,.04)', fontSize: 12, color: droppedInvalid > 0 ? '#f87171' : '#64748b', fontWeight: 700 }}>
+          −{droppedInvalid.toLocaleString()} invalid
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: droppedDuplicate > 0 ? 'rgba(239,68,68,.1)' : 'rgba(255,255,255,.04)', fontSize: 12, color: droppedDuplicate > 0 ? '#f87171' : '#64748b', fontWeight: 700 }}>
+          −{droppedDuplicate.toLocaleString()} duplicate
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(74,222,128,.1)', fontSize: 12, color: '#4ade80', fontWeight: 700 }}>
+          {output.toLocaleString()} kept
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="items / sec" value={rate ? rate.toLocaleString() : '—'} color="#fbbf24" />
+        <DetailStat label="last run" value={`${filterAgent?.lastDurationMs ?? 0}ms`} />
+        <DetailStat label="total runs" value={(filterAgent?.totalRuns ?? 0).toLocaleString()} />
+        <DetailStat label="avg items/run" value={avgPerRun.toLocaleString()} />
+      </div>
+
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
+        Last source in: <span style={{ color: '#94a3b8' }}>{filterAgent?.lastContext || '—'}</span>
+        {filterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {filterAgent.lastError}</div>}
+      </div>
+
+      {bySource.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>What's being filtered, by platform</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 160, overflowY: 'auto' }}>
+            {bySource.map((s, i) => {
+              const dropped = s.droppedInvalid + s.droppedDuplicate;
+              const keptPct = s.input ? Math.round((s.output / s.input) * 100) : 0;
+              return (
+                <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length], flexShrink: 0 }} />
+                  <span style={{ color: '#94a3b8', flex: 1 }}>{s.source}</span>
+                  <span style={{ color: '#4ade80', fontWeight: 700 }}>{s.output.toLocaleString()} kept</span>
+                  <span style={{ color: dropped > 0 ? '#f87171' : '#475569' }}>−{dropped.toLocaleString()}</span>
+                  <span style={{ color: '#475569', width: 38, textAlign: 'right' }}>{keptPct}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

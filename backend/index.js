@@ -4928,9 +4928,31 @@ function broadcastSSE(posts) {
 
 // Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE
 function addAndBroadcast(incoming) {
-  const fresh = realFeedPosts(incoming)
-    .filter(p => !seenPostIds.has(p.id))
-    .map(p => trimPostContent(normalizeFeedPost(p)));
+  const started = Date.now();
+  const passed = [];
+  let droppedInvalid = 0, droppedDuplicate = 0;
+  for (const p of incoming) {
+    const src = p?.source || 'unknown';
+    const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0 });
+    bucket.input++;
+    if (!p?.id || isFallbackFeedPost(p)) { bucket.droppedInvalid++; droppedInvalid++; continue; }
+    if (seenPostIds.has(p.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    bucket.output++;
+    passed.push(p);
+  }
+  const fresh = passed.map(p => trimPostContent(normalizeFeedPost(p)));
+
+  filterAgentState.totalRuns += 1;
+  filterAgentState.totalInput += incoming.length;
+  filterAgentState.totalOutput += fresh.length;
+  filterAgentState.lastContext = incoming[0]?.source || null;
+  filterAgentState.lastInput = incoming.length;
+  filterAgentState.lastOutput = fresh.length;
+  filterAgentState.lastDroppedInvalid = droppedInvalid;
+  filterAgentState.lastDroppedDuplicate = droppedDuplicate;
+  filterAgentState.lastDurationMs = Date.now() - started;
+  filterAgentState.lastRun = Date.now();
+
   if (!fresh.length) return 0;
   fresh.forEach(p => addSeenId(p.id));
   // This is the one call site building the shared cache itself (every other
@@ -5884,6 +5906,34 @@ const sortAgentState = {
   lastDurationMs: 0,
   lastRun: null,
   lastError: null,
+};
+
+// Tracks addAndBroadcast — the real filter stage every fetched post passes
+// through before it's eligible for sortFeedBatch at all: dropped either as
+// invalid (no id, or a fallback/placeholder post — see isFallbackFeedPost)
+// or as a duplicate of something already broadcast (seenPostIds, a
+// cross-source, rolling-window check — a post re-fetched by the same
+// source on its next cycle, or independently surfaced by two different
+// sources, both land here). Distinct from sortAgentState: that one tracks
+// per-source-share capping at merge/rank time, this one tracks what never
+// even reaches that stage. bySource accumulates for the life of the
+// process (bounded by the real number of distinct source ids, same as
+// workerHealth) so the office can show which platforms are actually
+// getting filtered, not just the single most recent call.
+const filterAgentState = {
+  status: 'idle',
+  totalRuns: 0,
+  totalInput: 0,
+  totalOutput: 0,
+  lastContext: null,
+  lastInput: 0,
+  lastOutput: 0,
+  lastDroppedInvalid: 0,
+  lastDroppedDuplicate: 0,
+  lastDurationMs: 0,
+  lastRun: null,
+  lastError: null,
+  bySource: {},
 };
 
 const activityAgentState = {
@@ -13635,6 +13685,26 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       currentId: sourceRefreshQueue.currentId,
       batchTotal: sourceRefreshQueue.batchTotal,
       batchDone: sourceRefreshQueue.batchDone,
+    },
+    filterAgent: {
+      status: filterAgentState.lastError ? 'degraded' : filterAgentState.status,
+      totalRuns: filterAgentState.totalRuns,
+      totalInput: filterAgentState.totalInput,
+      totalOutput: filterAgentState.totalOutput,
+      lastContext: filterAgentState.lastContext,
+      lastInput: filterAgentState.lastInput,
+      lastOutput: filterAgentState.lastOutput,
+      lastDroppedInvalid: filterAgentState.lastDroppedInvalid,
+      lastDroppedDuplicate: filterAgentState.lastDroppedDuplicate,
+      lastDurationMs: filterAgentState.lastDurationMs,
+      lastRun: filterAgentState.lastRun,
+      lastError: filterAgentState.lastError,
+      // Per-platform breakdown, accumulated for the life of the process —
+      // sorted by input volume so the office can show which sources are
+      // actually flowing through, not an alphabetical list.
+      bySource: Object.entries(filterAgentState.bySource)
+        .map(([source, s]) => ({ source, ...s }))
+        .sort((a, b) => b.input - a.input),
     },
     sortAgent: {
       status: sortAgentState.status,
