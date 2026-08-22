@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
 const OFFICE_TOKEN_KEY = 'ufi_office_token';
@@ -1818,6 +1818,101 @@ function ViewedDetailCard({ pageviews }) {
   );
 }
 
+// Every one of the 69 FEED_TOPICS, live from the database (see GET
+// /office/topics server-side) — not the capped 300-post in-memory global
+// cache, so this always reflects true, complete volume regardless of what
+// the shared cache is holding at this instant. Each bar's overall length is
+// that topic's share of the single largest topic (so relative scale reads
+// at a glance); the color segments within it are that topic's own real
+// source breakdown. Source colors are assigned once across the whole
+// dataset (first-seen order), not per-bar, so e.g. reddit is always the
+// same color in every topic's bar and the shared legend above means the
+// same thing everywhere.
+function TopicsView() {
+  const [data, setData] = useState(null);
+  const [grown, setGrown] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    officeFetch(`${API}/office/topics`).then(r => r.json())
+      .then(j => { if (!cancelled) setData(j); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Bars start at 0 width and grow in once data actually arrives — a next
+  // tick, not the same render, so the browser has something to transition
+  // *from*.
+  useEffect(() => {
+    if (!data) return;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setGrown(true)));
+    return () => cancelAnimationFrame(id);
+  }, [data]);
+
+  const topics = data?.topics || [];
+  const maxTotal = Math.max(1, ...topics.map(t => t.total));
+
+  const sourceColor = useMemo(() => {
+    const seen = [];
+    for (const t of topics) for (const s of t.sources) if (!seen.includes(s.source)) seen.push(s.source);
+    const map = new Map();
+    seen.forEach((s, i) => map.set(s, COMPOSITION_COLORS[i % COMPOSITION_COLORS.length]));
+    return map;
+  }, [topics]);
+
+  if (!data) {
+    return (<><h1 style={H1}>Topics</h1><p style={SUBTITLE}>Loading…</p></>);
+  }
+  if (data.available === false) {
+    return (<><h1 style={H1}>Topics</h1><p style={SUBTITLE}>Database not connected — topic breakdown unavailable right now.</p></>);
+  }
+
+  return (
+    <>
+      <h1 style={H1}>Topics</h1>
+      <p style={SUBTITLE}>
+        All {topics.length} topics UFconnect fetches for, live from the database — how many posts each actually
+        has, and exactly which platforms filled it. Real totals, not the capped in-memory pool.
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+        {[...sourceColor.entries()].map(([source, color]) => (
+          <span key={source} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#94a3b8' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+            {source}
+          </span>
+        ))}
+      </div>
+
+      <Card>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+          {topics.map((t, i) => (
+            <div key={t.topic}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, gap: 12 }}>
+                <span style={{ fontSize: 12.5, color: '#e2e8f0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</span>
+                <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0 }}>{t.total.toLocaleString()} posts</span>
+              </div>
+              <div style={{
+                display: 'flex', height: 14, borderRadius: 4, overflow: 'hidden',
+                background: 'rgba(255,255,255,.04)',
+                width: grown ? `${Math.max(t.total > 0 ? 1.5 : 0, (t.total / maxTotal) * 100)}%` : '0%',
+                transition: `width .7s cubic-bezier(.16,1,.3,1) ${Math.min(i * 12, 500)}ms`,
+              }}>
+                {t.sources.map(s => (
+                  <div
+                    key={s.source}
+                    title={`${s.source}: ${s.count.toLocaleString()}`}
+                    style={{ width: `${(s.count / t.total) * 100}%`, minWidth: 1, background: sourceColor.get(s.source) || '#475569' }}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </>
+  );
+}
+
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -1931,6 +2026,7 @@ export default function App() {
     { id: 'overview', label: 'Overview',     icon: '◉' },
     { id: 'sources',  label: 'Live Sources', icon: '🌐' },
     { id: 'pipeline', label: 'Pipeline',      icon: '⚡' },
+    { id: 'topics',   label: 'Topics',        icon: '🏷️' },
     { id: 'agents',   label: 'Agents',        icon: '⬡' },
     { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
     { id: 'analytics',label: 'Analytics',    icon: '📈' },
@@ -2028,6 +2124,7 @@ export default function App() {
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'pipeline' && <PipelineView status={status} />}
+          {view === 'topics'   && <TopicsView />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}

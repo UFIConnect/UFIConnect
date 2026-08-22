@@ -10451,6 +10451,50 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
   }
 });
 
+// Real per-topic volume, straight from the DB rather than the capped
+// 300-post in-memory global cache (feed_posts_cache holds far more, and is
+// already indexed on both topic and source — see fpc_topic_idx). Every one
+// of the 69 FEED_TOPICS is always present in the response, even at 0 posts,
+// so the office can show genuinely all of them, not just whichever happen
+// to have fetched anything recently. Same fallback/social-id exclusion
+// getPostsFromDB already applies, so a topic's count here matches what a
+// real feed request would actually be able to serve for it.
+app.get('/office/topics', requireOfficeToken, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.json({ available: false });
+    const { rows } = await db.query(`
+      SELECT topic, source, COUNT(*) AS count
+      FROM feed_posts_cache
+      WHERE topic IS NOT NULL
+        AND id NOT LIKE '%\\_fallback' ESCAPE '\\'
+        AND id NOT LIKE '%\\_social' ESCAPE '\\'
+        AND id NOT LIKE 'social\\_%' ESCAPE '\\'
+        AND id !~* '^indeed_j[0-9]+$'
+        AND id !~* '^govt_g[0-9]+$'
+      GROUP BY topic, source
+    `);
+    const byTopic = new Map(FEED_TOPICS.map(t => [t, { topic: t, total: 0, sources: [] }]));
+    for (const r of rows) {
+      // A handful of topic keywords in the DB predate the current
+      // FEED_TOPICS list (renamed/retired categories) — kept as their own
+      // entries rather than silently dropped, so total volume here always
+      // reconciles with a straight COUNT(*) over the table.
+      if (!byTopic.has(r.topic)) byTopic.set(r.topic, { topic: r.topic, total: 0, sources: [] });
+      const entry = byTopic.get(r.topic);
+      const count = Number(r.count);
+      entry.total += count;
+      entry.sources.push({ source: r.source, count });
+    }
+    const topics = [...byTopic.values()];
+    topics.forEach(t => t.sources.sort((a, b) => b.count - a.count));
+    topics.sort((a, b) => b.total - a.total);
+    res.json({ available: true, topics });
+  } catch (e) {
+    console.error('GET /office/topics:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Registered-user visibility ────────────────────────────────────────────
 // The office dashboard had pageview traffic (anonymous, no-login-required —
 // see /analytics/pageview above) but nothing at all showing how many of
