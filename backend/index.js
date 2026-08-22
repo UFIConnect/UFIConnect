@@ -5092,29 +5092,20 @@ function addAndBroadcast(incoming) {
   // only caps what a single *request* sees, downstream of whatever's
   // already in here).
   //
-  // The 25% per-source share cap was removed for a while on the theory that
-  // GLOBAL_FEED_CACHE_LIMIT's much bigger size (100k, not the old fixed 300)
-  // gave a fast-fetching source room to occupy without evicting everything
-  // else. In practice that only bounds absolute eviction, not relative
-  // share — a source that simply fetches faster than the rest still grows
-  // to dominate an arbitrarily large pool the same way it dominated the old
-  // small one, just slower. Confirmed live (uneven platform composition in
-  // the office Sort & Rank view) — back to a real 25% cap.
-  //
-  // strict:true — a non-strict cap here still let hackernews reach 83.8% of
-  // the live cache: once every other source's supply ran dry, diversifyBySource's
-  // own "can't honor the cap without stalling forever" fallback drained all
-  // of hackernews's held-back excess back in anyway, since GLOBAL_FEED_CACHE_LIMIT
-  // (100k) is far bigger than real total supply, so that fallback fired on
-  // nearly every batch. strict genuinely excludes the excess instead of
-  // deferring it — correct for the cache itself (nobody's looking at a
-  // shorter pool directly, unlike a page response, which is why every other
-  // diversifyBySource caller stays non-strict).
+  // No per-source share cap here — tried a strict 25% cap (genuinely
+  // excluding a dominant source's excess, not just reordering it) after a
+  // real skew incident, but a strict exclusion cap on the shared cache
+  // itself means whatever it excludes is gone for every user, not just
+  // reordered further down a page — confirmed live as real content going
+  // unseen that should've been reachable. GLOBAL_FEED_CACHE_LIMIT's own
+  // large size (100k) already means one fast source can't out-and-out evict
+  // everything else the way it did at the old fixed 300; per-request
+  // diversity (enforceFeedDiversity, ≤18%/≤10% — see SRC_CAP in
+  // handleFeedRequest) is still what actually caps what any one user sees,
+  // same as before this was ever added.
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
-    maxSharePct: 0.25,
-    strict: true,
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
@@ -7225,8 +7216,6 @@ async function refreshGlobalFeedCache() {
       globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
         limit: GLOBAL_FEED_CACHE_LIMIT,
         diversify: true,
-        maxSharePct: 0.25,
-        strict: true, // see addAndBroadcast's own comment on strict
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
@@ -7379,18 +7368,13 @@ function runSortAgentCheck() {
   try {
 
   const beforeGlobal = globalFeedCache.posts.length;
-  // This periodic maintenance pass re-ranks the existing cache on its own
-  // schedule, independent of addAndBroadcast — without the same diversify
-  // cap it would just re-concentrate whichever source has the freshest
-  // timestamps back toward the top on every run, undoing that cap between
-  // fetches instead of maintaining it.
+  // This periodic maintenance pass just re-ranks the existing cache on its
+  // own schedule — no per-source cap here, see addAndBroadcast's own
+  // comment on why that was reverted (a strict cap meant real content
+  // going permanently unseen, not just reordered).
   globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
-    maxSharePct: 0.25,
-    strict: true, // see addAndBroadcast's own comment on strict — this
-    // periodic re-sort is exactly the pass that was draining the excess
-    // back in every few minutes even when addAndBroadcast's own cap held.
   });
 
   let sourcePools = 0;
