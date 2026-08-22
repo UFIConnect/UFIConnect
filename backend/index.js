@@ -10421,7 +10421,7 @@ function equalizeThenRecencyMerge(lists, limit) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _isRetry = false }) {
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -10551,7 +10551,7 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // content (or a genuinely empty "nothing new yet" page) instead of a
   // replay. Normal infinite-scroll calls keep the old reshow fallback — see
   // its own comment above — that's still the right behavior there.
-  if (exhausted && freshOnly && !_isRetry) {
+  if (exhausted && freshOnly && !_freshRetried) {
     const liveCursor = { ...cursorMap };
     for (const src of allSources) {
       const shown = merged.filter(p => p.source === src);
@@ -10560,7 +10560,14 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       liveCursor[src] = new Date(postTimestamp(oldest)).toISOString();
     }
     liveCursor.__liveSince = new Date().toISOString();
-    return getCursorFeedPage({ sources, cursorMap: liveCursor, limit, mediaType, timeRange, extraLists, seenIds, freshOnly, _isRetry: true });
+    // _wrapRetried is deliberately NOT set here — this is a separate retry
+    // budget from the wraparound one below. Without that separation, a
+    // refresh landing here (freshOnly+exhausted) that then found live mode
+    // genuinely empty (see genuinelyExhausted below) had already spent its
+    // one retry on this branch and had nothing left to fall back on,
+    // returning zero posts outright — confirmed live as "every refresh
+    // makes the video feed disappear."
+    return getCursorFeedPage({ sources, cursorMap: liveCursor, limit, mediaType, timeRange, extraLists, seenIds, freshOnly, _freshRetried: true, _wrapRetried });
   }
   const page = (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
 
@@ -10576,8 +10583,13 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // dead-end; seenIds is dropped on the wrapped call since admitting
   // repeats is the whole point once genuinely fresh content is gone.
   const genuinelyExhausted = isLiveMode ? page.length === 0 : !allLists.some(arr => arr.length > 0);
-  if (genuinelyExhausted && !_isRetry) {
-    return getCursorFeedPage({ sources, cursorMap: {}, limit, mediaType, timeRange, extraLists, seenIds: null, freshOnly, _isRetry: true });
+  if (genuinelyExhausted && !_wrapRetried) {
+    // freshOnly not passed through here on purpose: this pass already has
+    // seenIds:null (repeats allowed), so there's nothing left for a further
+    // freshOnly live-mode detour to usefully do — it would just immediately
+    // hit this same genuinelyExhausted branch again with _wrapRetried now
+    // true, adding a wasted round trip before landing here anyway.
+    return getCursorFeedPage({ sources, cursorMap: {}, limit, mediaType, timeRange, extraLists, seenIds: null, _freshRetried: true, _wrapRetried: true });
   }
 
   const nextCursor = { ...cursorMap };
