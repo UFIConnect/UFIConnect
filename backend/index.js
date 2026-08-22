@@ -4958,17 +4958,22 @@ function addAndBroadcast(incoming) {
   // This is the one call site building the shared cache itself (every other
   // diversify/maxSharePct usage — enforceFeedDiversity, the Jobs filter —
   // only caps what a single *request* sees, downstream of whatever's
-  // already in here). Without a cap here, a source that simply fetches
-  // fresh content more often keeps winning the recency-weighted sort on
-  // every single merge and evicts everything else from the fixed 300-slot
-  // cache — confirmed live at 70% Bluesky, well past the ≤18% any source is
-  // supposed to reach a user with. Capped at 25% so composition reflects
-  // several real platforms while Twitter/LinkedIn/Instagram/Facebook are
-  // still sitting at 0 posts with no app-level API token configured.
+  // already in here).
+  //
+  // The 25% per-source share cap that used to sit here (added after a real
+  // incident — Bluesky hit 70% of the shared cache) is gone now that
+  // GLOBAL_FEED_CACHE_LIMIT is sized in the tens of thousands rather than a
+  // fixed 300 slots: with that much more room, a fast-fetching source no
+  // longer has to evict everything else to keep winning the recency sort,
+  // it just occupies more of a much bigger pool. diversify:true is still
+  // on, so streak-limiting (no more than 2-in-a-row from the same source,
+  // see diversifyBySource's maxConsecutive) still keeps the cache itself
+  // interleaved — the per-user round-robin-then-time-based mix this
+  // actually serves (getCursorFeedPage/roundRobinMerge) is unaffected
+  // either way, since that logic never read maxSharePct in the first place.
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
-    maxSharePct: 0.25,
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
@@ -5343,7 +5348,12 @@ function startContinuousWorkers() {
 }
 
 // ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
-const GLOBAL_FEED_CACHE_LIMIT = 300;   // cap tighter to fit 512MB container
+// Was 300, deliberately tight to fit the API's old 512MB container — the
+// service has since been upgraded to 4GB, so this is no longer a real
+// practical ceiling (at a rough ~2-3KB/post object footprint, even the full
+// 100k would only be ~200-300MB), just a finite safety backstop against
+// truly unbounded growth rather than a number meant to actually be hit.
+const GLOBAL_FEED_CACHE_LIMIT = 100000;
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
@@ -6910,7 +6920,6 @@ async function refreshGlobalFeedCache() {
       globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
         limit: GLOBAL_FEED_CACHE_LIMIT,
         diversify: true,
-        maxSharePct: 0.25,
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
@@ -7071,7 +7080,6 @@ function runSortAgentCheck() {
   globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
-    maxSharePct: 0.25,
   });
 
   let sourcePools = 0;
