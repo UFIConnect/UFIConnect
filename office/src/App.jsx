@@ -1134,10 +1134,35 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
       }}>
         {running ? (
           <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
-              <span style={{ color: '#e2e8f0' }}>
-                Transferring <strong>{q.currentIds?.length ? q.currentIds.join(', ') : '…'}</strong>
-              </span>
+            {/* One lane per parallel worker (TRANSFER_WORKER_COUNT server-
+                side) — a fixed slot each, not a list that reshuffles every
+                time a worker starts or finishes a source, so it actually
+                reads as "4 independent workers" rather than a jittering
+                queue dump. Pulses while that slot holds a real source,
+                goes flat/dim the instant it's back between tasks. */}
+            <div style={{ display: 'flex', gap: 7, marginBottom: 10, flexWrap: 'wrap' }}>
+              {(q.currentIds || []).map((id, slot) => {
+                const w = id ? workers.find(x => x.id === id) : null;
+                return (
+                  <div key={slot} style={{
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    padding: '5px 10px', borderRadius: 20, fontSize: 11.5, fontWeight: 600,
+                    background: id ? 'rgba(56,189,248,.14)' : 'rgba(255,255,255,.03)',
+                    border: `1px solid ${id ? 'rgba(56,189,248,.4)' : 'rgba(255,255,255,.07)'}`,
+                    color: id ? '#e2e8f0' : '#475569',
+                    transition: 'background .25s, border-color .25s, color .25s',
+                  }}>
+                    <span style={{
+                      display: 'inline-block', width: 7, height: 7, borderRadius: '50%',
+                      background: id ? '#38bdf8' : '#334155',
+                      animation: id ? 'pulse 1.1s ease-in-out infinite' : 'none',
+                    }} />
+                    {id ? <>{w?.emoji || '⚙️'} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', fontSize: 12, marginBottom: 8 }}>
               <span style={{ color: '#60a5fa' }}>{q.batchDone}/{q.batchTotal} done · {q.pending} queued</span>
             </div>
             <div style={{ height: 6, borderRadius: 4, background: 'rgba(255,255,255,.06)', overflow: 'hidden' }}>
@@ -1468,7 +1493,7 @@ function PipelineView({ status }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
         <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
-        <TransferDetailCard q={q} />
+        <TransferDetailCard q={q} workers={workers} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <TransferByTopicCard topicComposition={topicComposition} />
         <ViewedDetailCard pageviews={pageviews} />
@@ -1644,7 +1669,7 @@ function SortRankDetailCard({ sortAgent, distrib, composition }) {
 // Real transfer throughput — while a batch is running this is measured
 // against the actual elapsed time (not an assumption), so it settles once
 // a couple of sources have gone through and gets more accurate as it runs.
-function TransferDetailCard({ q }) {
+function TransferDetailCard({ q, workers = [] }) {
   const running = !!q?.running;
   const elapsedS = running && q.lastStarted ? (Date.now() - new Date(q.lastStarted).getTime()) / 1000 : 0;
   const rate = running && elapsedS > 2 && q.batchDone > 0 ? q.batchDone / elapsedS : null;
@@ -1658,9 +1683,34 @@ function TransferDetailCard({ q }) {
     <Card>
       <Label color="#38bdf8">Transfer — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Queues every source worker, then drains one at a time — paced deliberately so a full refresh can't spike
-        load the way firing every source at once used to.
+        Queues every source worker, then drains 4 at a time in parallel — paced deliberately so a full refresh
+        can't spike load the way firing every source at once used to.
       </p>
+
+      {running && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          {(q.currentIds || []).map((id, slot) => {
+            const w = id ? workers.find(x => x.id === id) : null;
+            return (
+              <div key={slot} style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '4px 9px', borderRadius: 18, fontSize: 11, fontWeight: 600,
+                background: id ? 'rgba(56,189,248,.14)' : 'rgba(255,255,255,.03)',
+                border: `1px solid ${id ? 'rgba(56,189,248,.4)' : 'rgba(255,255,255,.07)'}`,
+                color: id ? '#e2e8f0' : '#475569',
+                transition: 'background .25s, border-color .25s, color .25s',
+              }}>
+                <span style={{
+                  display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+                  background: id ? '#38bdf8' : '#334155',
+                  animation: id ? 'pulse 1.1s ease-in-out infinite' : 'none',
+                }} />
+                {id ? <>{w?.emoji || '⚙️'} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="status" value={running ? 'Running' : 'Idle'} color={running ? '#38bdf8' : '#64748b'} />

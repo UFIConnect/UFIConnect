@@ -7036,7 +7036,13 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
 // a synchronous check-then-delete with no `await` in between, so it's safe
 // against JS's single-threaded execution model the same way the old
 // single-loop version was — no two workers can ever grab the same id.
-async function transferWorker(stats) {
+//
+// slot is a stable index (0..TRANSFER_WORKER_COUNT-1), fixed for this
+// worker's entire lifetime — currentIds is written by index, not
+// push/splice, specifically so the office can render 4 fixed, independently
+// -animated lanes ("worker 1 is doing X, worker 2 is doing Y...") instead
+// of a list that reshuffles every time any worker starts or finishes.
+async function transferWorker(slot, stats) {
   while (sourceRefreshQueue.pendingIds.size > 0) {
     if (isStabilityCritical()) {
       refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
@@ -7047,7 +7053,7 @@ async function transferWorker(stats) {
     const id = sourceRefreshQueue.pendingIds.values().next().value;
     if (id === undefined) break; // another worker already emptied it
     sourceRefreshQueue.pendingIds.delete(id);
-    sourceRefreshQueue.currentIds.push(id);
+    sourceRefreshQueue.currentIds[slot] = id;
     const fetcher = SOURCE_FETCHERS[id];
     if (typeof fetcher === 'function') {
       try {
@@ -7062,8 +7068,7 @@ async function transferWorker(stats) {
         }
       }
     }
-    const idx = sourceRefreshQueue.currentIds.indexOf(id);
-    if (idx !== -1) sourceRefreshQueue.currentIds.splice(idx, 1);
+    sourceRefreshQueue.currentIds[slot] = null;
     sourceRefreshQueue.batchDone += 1;
 
     await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
@@ -7076,14 +7081,14 @@ async function drainSourceRefreshQueue() {
   sourceRefreshQueue.totalRuns += 1;
   sourceRefreshQueue.lastStarted = Date.now();
   sourceRefreshQueue.lastError = null;
-  sourceRefreshQueue.currentIds = [];
+  sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
 
   const stats = { processed: 0 };
   try {
-    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, () => transferWorker(stats)));
+    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, (_, slot) => transferWorker(slot, stats)));
   } finally {
     sourceRefreshQueue.running = false;
-    sourceRefreshQueue.currentIds = [];
+    sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
     sourceRefreshQueue.lastFinished = Date.now();
     logAgentAction('refresh_queue', '✅',
       `Refresh queue complete - ${stats.processed} source(s) processed`, '#4ADE80');
