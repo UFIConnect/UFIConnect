@@ -14290,26 +14290,35 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
   res.json({ ok: true, triggered: req.params.id });
 });
 
-// "Transfer content to website" (queue every source worker to refetch, see
-// the office Transfer Helper panel above) used to require someone to click
-// the button by hand. Runs the exact same enqueueSourceRefresh call
-// automatically instead — enqueueSourceRefresh already no-ops during a
-// stability-critical window, so this can't pile on top of an already-
-// struggling instance.
+// This used to queue every source worker for a full external refetch on
+// this same timer (the "Transfer content to website" office button's own
+// enqueueSourceRefresh call, run automatically instead of requiring a
+// manual click) — real, but genuinely redundant work: the continuous
+// background workers (see makeTopicCycler/startContinuousWorkers) already
+// refetch every source independently, forever, on each source's own
+// SOURCE_CONFIG ttl/shard schedule, and most of the highest-volume sources
+// (reddit/hn/mastodon/bluesky) already cycle faster than every 8 minutes —
+// well inside this 15-minute window on their own. A second, blind full
+// external re-fetch of all 203 topics × 36 sources every 15 minutes wasn't
+// buying meaningfully fresher content, just doubling real API load for no
+// benefit (and was the entire reason this interval and TRANSFER_WORKER_COUNT
+// needed tuning in the first place — see their own history above/on
+// TRANSFER_WORKER_COUNT).
 //
-// Was 10 minutes — safe when FEED_TOPICS had 69 entries (full sweep ≈5.8
-// min), but this session's topic expansion (69→203, see the onboarding-
-// coverage work) pushed a real full cycle to ≈10.1 min: at or past the old
-// interval itself. With the queue rarely finishing before the next trigger
-// re-added the same source ids, "every 10 minutes" stopped being an
-// accurate description of what was actually happening — bumped to 15 for
-// real headroom (≈67% of interval spent draining, not ≈101%) rather than
-// shrinking per-topic request pacing (RATE_LIMITED_MANUAL_SWEEP/the 60ms
-// normal-mode wait), which exists to avoid hammering external APIs, not to
-// hit a specific interval.
+// Runs runSortAgentCheck instead: cheap, in-memory, re-sorts/re-ranks
+// whatever the continuous workers have already fetched into
+// globalFeedCache — no external calls, nothing to rate-limit. It already
+// runs on its own independent 3-minute SORT_AGENT_INTERVAL_MS timer; this
+// is a second, harmless nudge on the slot the office Pipeline still shows
+// as "Transfer," so that stage keeps doing *something* real on its own
+// schedule instead of just going quiet. The manual "Transfer content to
+// website" button (see the office Transfer Helper panel) still runs the
+// full parallel source-refetch sweep — genuinely useful as an explicit,
+// on-demand action (e.g. right after adding new topics/sources), just not
+// something that should keep happening blindly in the background.
 const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
 setInterval(() => {
-  enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'automatic 15-minute transfer');
+  runSortAgentCheck();
 }, AUTO_TRANSFER_INTERVAL_MS);
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
