@@ -1831,13 +1831,30 @@ function ViewedDetailCard({ pageviews }) {
 function TopicsView() {
   const [data, setData] = useState(null);
   const [grown, setGrown] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastLoaded, setLastLoaded] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    officeFetch(`${API}/office/topics`).then(r => r.json())
-      .then(j => { if (!cancelled) setData(j); }).catch(() => {});
-    return () => { cancelled = true; };
+  const load = useCallback(async () => {
+    try {
+      const r = await officeFetch(`${API}/office/topics`);
+      const j = await r.json();
+      setData(j);
+      setLastLoaded(Date.now());
+    } catch {}
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    // Re-run the grow-in animation on every manual refresh too, not just the
+    // first load — a static bar that silently changed width wouldn't make
+    // it obvious new counts actually came in, which is the whole point of
+    // this button existing.
+    setGrown(false);
+    await load();
+    setRefreshing(false);
+  };
 
   // Bars start at 0 width and grow in once data actually arrives — a next
   // tick, not the same render, so the browser has something to transition
@@ -1868,13 +1885,37 @@ function TopicsView() {
 
   return (
     <>
-      <h1 style={H1}>Topics</h1>
-      <p style={SUBTITLE}>
-        All {topics.length} topics UFconnect fetches for, live from the database — how many posts each actually
-        has, and exactly which platforms filled it. Real totals, not the capped in-memory pool.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <h1 style={H1}>Topics</h1>
+          <p style={SUBTITLE}>
+            All {topics.length} topics UFconnect fetches for, live from the database — how many posts each actually
+            has, and exactly which platforms filled it. Real totals, not the capped in-memory pool.
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          {lastLoaded && (
+            <span style={{ fontSize: 11, color: '#64748b' }}>
+              {refreshing ? 'Refreshing…' : `Loaded ${fmtAgo(lastLoaded)}`}
+            </span>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+              background: 'rgba(96,165,250,.12)', border: '1px solid rgba(96,165,250,.35)',
+              color: '#60a5fa', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+            }}
+          >
+            <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
+            Refresh
+          </button>
+        </div>
+      </div>
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18, marginTop: 18 }}>
         {[...sourceColor.entries()].map(([source, color]) => (
           <span key={source} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#94a3b8' }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
@@ -2045,6 +2086,7 @@ export default function App() {
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
         @keyframes flowRight { 0% { transform: translateX(-10px); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateX(62px); opacity: 0; } }
         @keyframes glowPulse { 0%,100% { transform: scale(1); filter: brightness(1); } 50% { transform: scale(1.06); filter: brightness(1.3); } }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         a { text-decoration: none; }
       `}</style>
 

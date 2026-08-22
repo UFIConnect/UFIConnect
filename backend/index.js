@@ -1438,6 +1438,142 @@ const TOPIC_SUBREDDITS = {
   'Travel':                 ['travel', 'solotravel', 'backpacking'],
   'Movies & Shows':         ['movies', 'television', 'Filmmakers'],
   'Books':                  ['books', 'suggestmeabook', 'literature'],
+
+  // ── Everything below backs the FEED_TOPICS expansion above — real subreddits
+  // for each topic that was already selectable at signup but had no fetch
+  // behind it. Hand-picked from real subreddit knowledge, not exhaustively
+  // live-verified (Reddit's anonymous endpoints rate-limit scripted checks
+  // wholesale — see redditAnonOutageUntil's own comment for why that's a
+  // known, pre-existing constraint, not something new here). A wrong name in
+  // this list degrades gracefully: fetchRedditSub just gets nothing back for
+  // that one subreddit, same as any subreddit going private/banned, while
+  // the topic's other 2-3 subreddits and the many keyword-matched RSS
+  // sources (TechCrunch, Wired, Medium, HN, etc., which don't depend on this
+  // map at all) keep the topic from actually being empty.
+  'Blockchain':                         ['CryptoCurrency', 'ethereum', 'defi'],
+  'Hardware / IoT':                     ['IOT', 'arduino', 'esp32'],
+  'AR / VR':                            ['augmentedreality', 'virtualreality', 'OculusQuest'],
+  'B2B / Enterprise':                   ['Entrepreneur', 'sales', 'smallbusiness'],
+  'Marketplaces':                       ['Entrepreneur', 'ecommerce', 'FulfillmentByAmazon'],
+  'D2C / Consumer Apps':                ['Entrepreneur', 'ecommerce', 'marketing'],
+  'Bootstrapping':                      ['Entrepreneur', 'smallbusiness', 'SaaS'],
+  'Angel Investing':                    ['AngelInvestors', 'startups', 'venturecapital'],
+  'Fundraising':                        ['startups', 'venturecapital', 'Entrepreneur'],
+  'Product-Led Growth':                 ['SaaS', 'ProductManagement', 'growthhacking'],
+  'Sales & Revenue':                    ['sales', 'SaaS', 'Entrepreneur'],
+  'Partnerships':                       ['Entrepreneur', 'sales', 'smallbusiness'],
+  'Brand Identity':                     ['branding', 'graphic_design', 'Design'],
+  'Motion Design':                      ['motiondesign', 'AfterEffects', 'animation'],
+  '3D & CGI':                           ['3Dmodeling', 'blender', 'vfx'],
+  'Visual Storytelling':                ['graphic_design', 'Filmmakers', 'photography'],
+  'Brand Strategy':                     ['marketing', 'branding', 'Entrepreneur'],
+  'Real Estate':                        ['realestate', 'RealEstateInvesting', 'CommercialRealEstate'],
+  'Supply Chain':                       ['supplychain', 'logistics', 'procurement'],
+  'Customer Experience':                ['CustomerSuccess', 'sales', 'Entrepreneur'],
+  'Operations Excellence':              ['Entrepreneur', 'ProductManagement', 'MBA'],
+  'Business Strategy':                  ['Entrepreneur', 'MBA', 'startups'],
+  'BioTech':                            ['biotech', 'bioinformatics', 'biology'],
+  'LegalTech':                          ['legaltech', 'law', 'Entrepreneur'],
+  'GovTech':                            ['PoliticalScience', 'publicpolicy', 'technology'],
+  'AgriTech':                           ['farming', 'agriculture', 'sustainability'],
+  'SpaceTech':                          ['space', 'spacex', 'AerospaceEngineering'],
+  'PropTech':                           ['realestate', 'CommercialRealEstate', 'Entrepreneur'],
+  'RetailTech':                         ['retail', 'ecommerce', 'Entrepreneur'],
+  'FoodTech':                           ['foodscience', 'Entrepreneur', 'food'],
+  'SportsTech':                         ['sports', 'Entrepreneur', 'sportsanalytics'],
+  'Nonprofit Impact':                   ['nonprofit', 'socialentrepreneurship', 'fundraising'],
+  'Sustainability':                     ['sustainability', 'ZeroWaste', 'environment'],
+  'Wellness':                           ['selfimprovement', 'Mindfulness', 'getdisciplined'],
+  'Hospitality':                        ['hospitality', 'TalesFromTheFrontDesk', 'restaurateur'],
+  'Future of Work':                     ['Futurology', 'remotework', 'digitalnomad'],
+  'Recruiting & Hiring':                ['recruiting', 'humanresources', 'jobs'],
+  'Diversity & Inclusion':              ['humanresources', 'careerguidance', 'Leadership'],
+  'People Ops':                         ['humanresources', 'HRPro', 'Leadership'],
+  'YouTube & Video':                    ['NewTubers', 'youtubers', 'VideoEditing'],
+  'Social Media':                       ['socialmedia', 'InstagramMarketing', 'marketing'],
+  'Dropshipping':                       ['dropship', 'Entrepreneur', 'ecommerce'],
+  'Amazon FBA':                         ['FulfillmentByAmazon', 'AmazonSeller', 'ecommerce'],
+  'Subscription Businesses':            ['SaaS', 'Entrepreneur', 'ecommerce'],
+  'Social Impact':                      ['socialentrepreneurship', 'nonprofit', 'sustainability'],
+  'Yoga & Meditation':                  ['yoga', 'Meditation', 'Mindfulness'],
+  'Running & Cycling':                  ['running', 'cycling', 'bicycling'],
+  'Nutrition & Diet':                   ['nutrition', 'EatCheapAndHealthy', 'intermittentfasting'],
+  'Sports & Athletics':                 ['sports', 'Fitness', 'running'],
+  'Live Events & Concerts':             ['concerts', 'livemusic', 'festivals'],
+  'Songwriting':                        ['Songwriting', 'WeAreTheMusicMakers', 'musictheory'],
+  'Football & Soccer':                  ['soccer', 'football', 'MLS'],
+  'Basketball':                         ['nba', 'basketball', 'CollegeBasketball'],
+  'Tennis & Golf':                      ['tennis', 'golf'],
+  'Combat Sports':                      ['MMA', 'Boxing', 'ufc'],
+  'Esports & Competitive Gaming':       ['esports', 'leagueoflegends', 'GlobalOffensive'],
+  'Art & Painting':                     ['painting', 'Art', 'ArtFundamentals'],
+  'Theatre & Performing Arts':          ['theatre', 'Broadway', 'acting'],
+  'Museums & Galleries':                ['ArtHistory', 'Art', 'Museum'],
+  'Cultural Events':                    ['festivals', 'travel', 'Art'],
+  'Restaurant Culture':                 ['KitchenConfidential', 'restaurateur', 'food'],
+  'Wine & Spirits':                     ['wine', 'cocktails', 'whiskey'],
+  'Coffee Culture':                     ['Coffee', 'espresso', 'barista'],
+  'Baking & Pastry':                    ['Baking', 'AskBaking', 'Breadit'],
+  'Solo Travel':                        ['solotravel', 'travel', 'backpacking'],
+  'Cultural Tourism':                   ['travel', 'backpacking', 'digitalnomad'],
+  'Budget Travel':                      ['shoestring', 'travel', 'backpacking'],
+  'Fashion & Style':                    ['malefashionadvice', 'femalefashionadvice', 'streetwear'],
+  'Streetwear':                         ['streetwear', 'Sneakers', 'malefashionadvice'],
+  'Sustainable Fashion':                ['ZeroWaste', 'femalefashionadvice', 'streetwear'],
+  'Beauty & Skincare':                  ['SkincareAddiction', 'MakeupAddiction', 'beauty'],
+  'Reading & Book Clubs':               ['books', 'bookclub', 'suggestmeabook'],
+  'Fiction & Storytelling':             ['writing', 'Fantasy', 'books'],
+  'Non-Fiction & Learning':             ['books', 'todayilearned', 'IWantToLearn'],
+  'Poetry & Creative Writing':          ['poetry', 'OCPoetry', 'writing'],
+  'Video Games':                        ['gaming', 'Games', 'patientgamers'],
+  'Game Streaming & Content':           ['Twitch', 'NewTubers', 'gaming'],
+  'Tabletop & Board Games':             ['boardgames', 'tabletopgaming', 'DnD'],
+  'Interior Design & Decor':            ['InteriorDesign', 'malelivingspace', 'DesignMyRoom'],
+  'Home Improvement':                   ['HomeImprovement', 'DIY', 'HomeMaintenance'],
+  'Gardening & Plants':                 ['gardening', 'houseplants', 'landscaping'],
+  'Pet Ownership':                      ['pets', 'dogs', 'cats'],
+  'Mindfulness & Meditation':           ['Mindfulness', 'Meditation', 'selfimprovement'],
+  'Philosophy & Ethics':                ['philosophy', 'askphilosophy', 'Stoicism'],
+  'Spirituality':                       ['spirituality', 'Buddhism', 'Meditation'],
+  'Parenting & Family':                 ['Parenting', 'daddit', 'Mommit'],
+  'Environmental Activism':             ['environment', 'climate', 'ZeroWaste'],
+  'Zero Waste Living':                  ['ZeroWaste', 'sustainability', 'minimalism'],
+  'Medicine & Clinical Practice':       ['medicine', 'Residency', 'medicalschool'],
+  'Law & Legal Practice':               ['law', 'Lawyertalk', 'LawSchool'],
+  'Architecture & Urban Design':        ['architecture', 'urbanplanning', 'AskEngineers'],
+  'Mechanical Engineering':             ['MechanicalEngineering', 'AskEngineers', 'engineering'],
+  'Civil Engineering':                  ['civilengineering', 'AskEngineers', 'engineering'],
+  'Electrical Engineering':             ['ElectricalEngineering', 'AskElectronics', 'engineering'],
+  'Aviation & Aerospace':               ['aviation', 'flying', 'AerospaceEngineering'],
+  'Military & Defense':                 ['military', 'army', 'veterans'],
+  'Policy & Government':                ['PoliticalScience', 'publicpolicy', 'geopolitics'],
+  'Accounting & Tax':                   ['Accounting', 'tax', 'personalfinance'],
+  'Insurance & Risk':                   ['Insurance', 'personalfinance', 'business'],
+  'Agriculture & Farming':              ['farming', 'agriculture', 'homestead'],
+  'Pharmaceutical & Drug Development':  ['pharmacy', 'medicine', 'biotech'],
+  'Public Health':                      ['publichealth', 'medicine', 'epidemiology'],
+  'Psychology & Behavioral Science':    ['psychology', 'AskPsychology', 'cogsci'],
+  'Construction & Skilled Trades':      ['Construction', 'electricians', 'HVAC'],
+  'Manufacturing & Industry':           ['manufacturing', 'engineering', 'AskEngineers'],
+  'Energy & Utilities':                 ['energy', 'RenewableEnergy', 'solar'],
+  'Logistics & Supply Chain':           ['logistics', 'supplychain', 'procurement'],
+  'Veterinary Science':                 ['AskVet', 'veterinaryprofession', 'vetmedicine'],
+  'Environmental Science':              ['environmental_science', 'climate', 'ecology'],
+  'Ocean & Marine Sciences':            ['oceanography', 'marinebiology', 'ocean'],
+  'Materials Science':                  ['MaterialsScience', 'engineering', 'chemistry'],
+  'Nonprofit Management':               ['nonprofit', 'socialentrepreneurship', 'fundraising'],
+  'Journalism & Media':                 ['Journalism', 'media', 'TrueReddit'],
+  'Screenwriting & Film':               ['Screenwriting', 'movies', 'Filmmakers'],
+  'Music Industry':                     ['WeAreTheMusicMakers', 'Music', 'musicindustry'],
+  'Sports Analytics':                   ['sportsanalytics', 'nba', 'sports'],
+  'Culinary Arts':                      ['Cooking', 'KitchenConfidential', 'foodscience'],
+  'Hospitality & Tourism':              ['hospitality', 'travel', 'TalesFromTheFrontDesk'],
+  'Chemical Engineering':               ['ChemicalEngineering', 'AskEngineers', 'chemistry'],
+  'Biomedical Engineering':             ['BME', 'AskEngineers', 'biotech'],
+  'International Relations':            ['IRstudies', 'geopolitics', 'PoliticalScience'],
+  'Film & Video':                       ['Filmmakers', 'VideoEditing', 'editors'],
+  'Corporate Finance':                  ['financialcareers', 'CFA', 'FP_and_A'],
+  'Mobile Gaming':                      ['gaming', 'AndroidGaming', 'iosgaming'],
 };
 
 // Reddit's Atom RSS feed never exposes the JSON API's real
@@ -5004,6 +5140,75 @@ const FEED_TOPICS = [
   // not a work-only stream.
   'Gaming', 'Sports', 'Fashion', 'Film & TV', 'Movies & Shows', 'Pets & Animals',
   'Home & Garden', 'Food & Drink', 'Travel', 'Books',
+  // ── Everything below was already selectable at signup (see ALL_INTERESTS/
+  // EXTRA_INTERESTS in web/src/pages/Onboarding.jsx and roles.js) but had no
+  // real fetch behind it — with filterByUserTopics now hard-excluding
+  // non-matching posts, an onboarding-selectable topic with nothing fetched
+  // for it meant a user's feed silently fell back to unfiltered every time.
+  // Added here so every topic offered at signup is actually backed by real
+  // content, matching the "unified platform, huge wide variety" the topic
+  // picker already promises.
+  // ── Extended tech ──
+  'Blockchain', 'Hardware / IoT', 'AR / VR',
+  // ── Extended business & startups ──
+  'B2B / Enterprise', 'Marketplaces', 'D2C / Consumer Apps', 'Bootstrapping',
+  'Angel Investing', 'Fundraising', 'Product-Led Growth', 'Sales & Revenue',
+  'Partnerships', 'Startups', 'CRM', 'Marketing',
+  // ── Design & creative ──
+  'Brand Identity', 'Motion Design', '3D & CGI', 'Photography',
+  'Film & Video', 'Music Production', 'Visual Storytelling', 'Brand Strategy',
+  // ── Finance & industries ──
+  'Corporate Finance', 'Real Estate', 'Supply Chain', 'Customer Experience',
+  'Operations Excellence', 'Business Strategy', 'BioTech', 'LegalTech',
+  'GovTech', 'AgriTech', 'SpaceTech', 'PropTech',
+  'RetailTech', 'FoodTech', 'SportsTech',
+  // ── People & work ──
+  'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
+  'Future of Work', 'Recruiting & Hiring', 'Diversity & Inclusion', 'Mental Health & Wellness',
+  'People Ops',
+  // ── Content & media ──
+  'Podcasting', 'YouTube & Video', 'Social Media',
+  // ── E-commerce & career ──
+  'Dropshipping', 'Amazon FBA', 'Subscription Businesses', 'Public Speaking',
+  'Social Impact',
+  // ── Health & fitness ──
+  'Yoga & Meditation', 'Running & Cycling', 'Nutrition & Diet', 'Sports & Athletics',
+  // ── Music & audio ──
+  'Live Events & Concerts', 'Songwriting', 'DJing & Remixing',
+  // ── Sports ──
+  'Football & Soccer', 'Basketball', 'Tennis & Golf', 'Combat Sports',
+  'Esports & Competitive Gaming',
+  // ── Arts & culture ──
+  'Art & Painting', 'Theatre & Performing Arts', 'Museums & Galleries', 'Cultural Events',
+  // ── Food & cooking ──
+  'Restaurant Culture', 'Wine & Spirits', 'Coffee Culture', 'Baking & Pastry',
+  // ── Travel ──
+  'Solo Travel', 'Cultural Tourism', 'Budget Travel',
+  // ── Fashion & style ──
+  'Fashion & Style', 'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
+  // ── Books & literature ──
+  'Reading & Book Clubs', 'Fiction & Storytelling', 'Non-Fiction & Learning', 'Poetry & Creative Writing',
+  // ── Gaming ──
+  'Video Games', 'Mobile Gaming', 'Game Streaming & Content', 'Tabletop & Board Games',
+  // ── Home & lifestyle ──
+  'Interior Design & Decor', 'Home Improvement', 'Gardening & Plants', 'Pet Ownership',
+  // ── Mindfulness & philosophy ──
+  'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
+  // ── Family & community ──
+  'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
+  // ── Professional & industry (medicine, law, engineering, science) ──
+  'Medicine & Clinical Practice', 'Law & Legal Practice', 'Architecture & Urban Design', 'Mechanical Engineering',
+  'Civil Engineering', 'Electrical Engineering', 'Chemical Engineering', 'Biomedical Engineering',
+  'Aviation & Aerospace', 'Military & Defense', 'Policy & Government', 'International Relations',
+  'Accounting & Tax', 'Insurance & Risk', 'Agriculture & Farming', 'Pharmaceutical & Drug Development',
+  'Public Health', 'Psychology & Behavioral Science', 'Construction & Skilled Trades', 'Manufacturing & Industry',
+  'Energy & Utilities', 'Logistics & Supply Chain', 'Veterinary Science', 'Environmental Science',
+  'Ocean & Marine Sciences', 'Materials Science', 'Nonprofit Management', 'Journalism & Media',
+  'Screenwriting & Film', 'Music Industry', 'Sports Analytics', 'Culinary Arts',
+  'Hospitality & Tourism',
+  // ── Already-mapped (reuse existing TOPIC_SUBREDDITS entry) ──
+  'Robotics', 'Quantum Computing', 'Machine Learning', 'MLOps',
+  'Privacy', 'AI Ethics', 'Digital Nomad', 'Networking',
 ];
 
 // Each source agent continuously cycles through FEED_TOPICS one at a time.
