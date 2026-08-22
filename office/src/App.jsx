@@ -1286,6 +1286,7 @@ function PipelineView({ status }) {
   const filterAgent  = status?.filterAgent;
   const sortAgent    = status?.sortAgent;
   const topicFilterAgent = status?.topicFilterAgent;
+  const twoPhaseMixAgent = status?.twoPhaseMixAgent;
   const q            = status?.refreshQueue;
   const running      = !!q?.running;
   const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
@@ -1469,6 +1470,7 @@ function PipelineView({ status }) {
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
+        <TransferByTopicCard twoPhaseMixAgent={twoPhaseMixAgent} />
         <ViewedDetailCard pageviews={pageviews} />
       </div>
     </>
@@ -1741,6 +1743,66 @@ function TopicFilterDetailCard({ topicFilterAgent }) {
             ))}
           </div>
         </div>
+      )}
+    </Card>
+  );
+}
+
+// The real transfer, animated: exactly how many posts of each topic have
+// actually landed in a genuine viewer's feed or Videos (buildTwoPhaseMix's
+// phase 2 — see twoPhaseMixAgent's own comment server-side), not just how
+// big the candidate pool was before filtering (that's TopicFilterDetailCard
+// above). One growing bar per topic, same grow-in-on-load treatment as the
+// Topics view, so it's visibly obvious this is live data landing in real
+// feeds and not a static table.
+function TransferByTopicCard({ twoPhaseMixAgent }) {
+  const [grown, setGrown] = useState(false);
+  const byTopic = twoPhaseMixAgent?.byTopic || [];
+
+  useEffect(() => {
+    if (!byTopic.length) return;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setGrown(true)));
+    return () => cancelAnimationFrame(id);
+  }, [byTopic.length]);
+
+  const maxPosts = Math.max(1, ...byTopic.map(t => t.posts));
+
+  return (
+    <Card>
+      <Label color="#a78bfa">Transfer — by topic</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Every post that survives Sort &amp; Rank and the Topic Filter still has to actually land somewhere — this is
+        that landing, counted per topic, straight from real feed/Videos responses. Not a sample: every run updates
+        every bar below.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="total runs" value={(twoPhaseMixAgent?.totalRuns ?? 0).toLocaleString()} color="#a78bfa" />
+        <DetailStat label="last intro size" value={(twoPhaseMixAgent?.lastIntroCount ?? 0).toLocaleString()} />
+        <DetailStat label="topics seen" value={byTopic.length.toLocaleString()} />
+        <DetailStat label="last run" value={twoPhaseMixAgent?.lastRun ? fmtAgo(twoPhaseMixAgent.lastRun) : '—'} />
+      </div>
+
+      {byTopic.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 4 }}>
+          {byTopic.map((t, i) => (
+            <div key={t.topic}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3, gap: 10 }}>
+                <span style={{ fontSize: 11.5, color: '#e2e8f0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</span>
+                <span style={{ fontSize: 10.5, color: '#64748b', flexShrink: 0 }}>{t.posts.toLocaleString()} posts · {t.runs.toLocaleString()} runs</span>
+              </div>
+              <div style={{
+                height: 8, borderRadius: 3, background: 'rgba(255,255,255,.04)', overflow: 'hidden',
+                width: grown ? `${Math.max(1.5, (t.posts / maxPosts) * 100)}%` : '0%',
+                transition: `width .6s cubic-bezier(.16,1,.3,1) ${Math.min(i * 15, 400)}ms`,
+              }}>
+                <div style={{ width: '100%', height: '100%', background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length] }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: '#475569' }}>No transfers recorded yet — waits for a real logged-in viewer to load their feed.</div>
       )}
     </Card>
   );

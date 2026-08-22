@@ -6158,16 +6158,15 @@ const filterAgentState = {
   bySource: {},
 };
 
-// Tracks filterByUserTopics — a genuinely per-user, per-request stage (see
-// its own comment near personalizeOrder), unlike filterAgentState above
-// which is one shared, global pass every post goes through exactly once.
-// "Last run" here means the most recent request from *any* user, same
-// convention sortAgentState already uses for its own per-request calls —
-// not a global aggregate, just live motion for the office Pipeline.
-// byTopic accumulates for the life of the process, bounded by the real
-// number of distinct topic keywords (see FEED_TOPICS/interestKeyword), so
-// it's safe to keep as a plain growing object the same way filterAgentState's
-// bySource is.
+// Tracks filterByUserTopics — a genuinely per-user, per-request stage,
+// unlike filterAgentState above which is one shared, global pass every
+// post goes through exactly once. "Last run" here means the most recent
+// request from *any* user, same convention sortAgentState already uses for
+// its own per-request calls — not a global aggregate, just live motion for
+// the office Pipeline. byTopic accumulates for the life of the process,
+// bounded by the real number of distinct topic keywords (see
+// FEED_TOPICS/interestKeyword), so it's safe to keep as a plain growing
+// object the same way filterAgentState's bySource is.
 const topicFilterAgentState = {
   totalRuns: 0,
   totalInput: 0,
@@ -6179,6 +6178,22 @@ const topicFilterAgentState = {
   lastDurationMs: 0,
   lastRun: null,
   lastError: null,
+  byTopic: {},
+};
+
+// Tracks buildTwoPhaseMix — the actual transfer of ranked/sorted posts into
+// each viewer's own topic buckets (phase 2 of the default feed/Videos —
+// see its own comment). Where topicFilterAgentState above tracks the
+// filter step (how big the candidate pool was per request), this tracks
+// what genuinely landed in a real feed afterward: exact per-topic post
+// counts out of the equalizer's real output, not just candidate-pool size.
+// byTopic accumulates for the life of the process, same bounded-growth
+// reasoning as topicFilterAgentState's own byTopic.
+const twoPhaseMixState = {
+  totalRuns: 0,
+  lastIntroCount: 0,
+  lastTopicCounts: {},
+  lastRun: null,
   byTopic: {},
 };
 
@@ -6750,6 +6765,19 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
     .sort((a, b) => (topicAffinity?.get(b[0]) || 0) - (topicAffinity?.get(a[0]) || 0))
     .map(([, srcMap]) => roundRobinMerge([...srcMap.values()]));
   const topicMixed = roundRobinMerge(topicGroups);
+
+  twoPhaseMixState.totalRuns += 1;
+  twoPhaseMixState.lastIntroCount = intro.length;
+  twoPhaseMixState.lastRun = Date.now();
+  const lastCounts = {};
+  for (const p of topicMixed) {
+    const t = p?.topic || 'unknown';
+    lastCounts[t] = (lastCounts[t] || 0) + 1;
+    const bucket = twoPhaseMixState.byTopic[t] || (twoPhaseMixState.byTopic[t] = { posts: 0, runs: 0 });
+    bucket.posts += 1;
+  }
+  for (const t of Object.keys(lastCounts)) twoPhaseMixState.byTopic[t].runs += 1;
+  twoPhaseMixState.lastTopicCounts = lastCounts;
 
   return [...intro, ...topicMixed];
 }
@@ -14086,6 +14114,19 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       byTopic: Object.entries(topicFilterAgentState.byTopic)
         .map(([topic, t]) => ({ topic, ...t }))
         .sort((a, b) => b.requests - a.requests),
+    },
+    // The real transfer: exactly how many posts of each topic landed in a
+    // genuine feed/Videos response (phase 2 of buildTwoPhaseMix), not just
+    // how big the filtered candidate pool was — see twoPhaseMixState's own
+    // comment for the distinction from topicFilterAgent above.
+    twoPhaseMixAgent: {
+      totalRuns: twoPhaseMixState.totalRuns,
+      lastIntroCount: twoPhaseMixState.lastIntroCount,
+      lastTopicCounts: twoPhaseMixState.lastTopicCounts,
+      lastRun: twoPhaseMixState.lastRun,
+      byTopic: Object.entries(twoPhaseMixState.byTopic)
+        .map(([topic, t]) => ({ topic, ...t }))
+        .sort((a, b) => b.posts - a.posts),
     },
     sortDistributionAgent: {
       status: sortDistribState.lastError ? 'degraded' : 'healthy',
