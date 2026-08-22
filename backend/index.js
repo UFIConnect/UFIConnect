@@ -1222,66 +1222,88 @@ setInterval(() => {
 // separate RATE_LIMITED_MANUAL_SWEEP cap so a manual/auto full-sweep
 // trigger can't blow through that same budget in a single burst either
 // (see that constant's own comment for the incident this fixes).
+// Every tier below is sized for a ≤5-minute full cycle through all of
+// FEED_TOPICS (203 entries as of this pass) — cycle = ceil(203/shards) ×
+// delay. The comments this replaced were computed back when FEED_TOPICS
+// had 69 entries and were never revisited as the list grew (69→210→203
+// over this session) — e.g. reddit's old "16 fetch/min, ~4.3min cycle"
+// comment was true at 69 topics; at 203 it was actually running a genuine
+// ~12.7min cycle with the shard count left unchanged. Delay (the pacing
+// between successive requests within one shard — the actual politeness
+// signal to the external API) is left as-is everywhere in this pass;
+// shards (how many of those paced streams run concurrently) is what's
+// increased to hit 5 minutes, same lever this file's own history already
+// used for exactly this problem (see the git history on this block).
 const SOURCE_CONFIG = {
   //               TTL (ms)           DELAY/topic     shards
   // ── [BREAKING] 15–30s — live social/news firehose ───────────────────────────
-  reddit:        { ttl:  8*60000, delay: 15000, shards: 4 },  // r/new firehose, many subreddits — 16 fetch/min, ~4.3min full cycle
-  hn:            { ttl:  8*60000, delay: 20000, shards: 5 },  // Algolia — front page churns constantly — 20 fetch/min, ~4.7min cycle (was 4 shards/~6min)
-  mastodon:      { ttl:  8*60000, delay: 20000, shards: 5 },  // public federated timelines, live chatter — 20 fetch/min, ~4.7min cycle (was 4 shards/~6min)
+  reddit:        { ttl:  8*60000, delay: 15000, shards: 11 },  // r/new firehose, many subreddits — 5min cycle
+  hn:            { ttl:  8*60000, delay: 20000, shards: 14 },  // Algolia — front page churns constantly — 5min cycle
+  mastodon:      { ttl:  8*60000, delay: 20000, shards: 14 },  // public federated timelines, live chatter — 5min cycle
   // Was the fastest tier by itself (8min/10s/4 shards) and, combined with its
   // per-fetch limit, made it the single biggest contributor to the shared
   // cache while Twitter/LinkedIn/Instagram/Facebook sat at 0 posts with no
   // app-level API token configured. Composition dominance is now capped
   // independently by diversifyBySource's maxSharePct (see addAndBroadcast),
   // so it's rated with its breaking-news peers, just at the slow end of the tier.
-  bluesky:       { ttl: 10*60000, delay: 30000, shards: 6 },  // public ATP API, live social posts — 12 fetch/min, ~6min cycle (was 4 shards/~9min)
+  bluesky:       { ttl: 10*60000, delay: 30000, shards: 21 },  // public ATP API, live social posts — 5min cycle
 
   // ── [HIGH-VOL] 60s — high-frequency, freshness-sensitive ────────────────────
-  devto:         { ttl: 20*60000, delay: 60000,  shards: 6 },  // dev blogging platform, constant new posts — 6 fetch/min, ~11.5min cycle (was 3 shards/~23min)
-  indeed:        { ttl: 20*60000, delay: 60000,  shards: 6 },  // job RSS feeds, new listings continuously — 6 fetch/min, ~11.5min cycle (was 3/~23min)
-  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day — 6 fetch/min, ~11.5min cycle (was 3/~23min)
-  theverge:      { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day — 6 fetch/min, ~11.5min cycle (was 3/~23min)
+  devto:         { ttl: 20*60000, delay: 60000,  shards: 41 },  // dev blogging platform, constant new posts — 5min cycle
+  indeed:        { ttl: 20*60000, delay: 60000,  shards: 41 },  // job RSS feeds, new listings continuously — 5min cycle
+  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 41 },  // tech news RSS, several stories/day — 5min cycle
+  theverge:      { ttl: 20*60000, delay: 60000,  shards: 41 },  // tech news RSS, several stories/day — 5min cycle
   // ── [HIGH-VOL] 90s ───────────────────────────────────────────────────────────
-  medium:        { ttl: 25*60000, delay: 90000,  shards: 7 },  // CDN RSS, huge publishing platform — 4.7 fetch/min, ~15min cycle (was 3 shards/~34.5min)
-  youtube:       { ttl: 25*60000, delay: 90000,  shards: 7 },  // channel RSS across many creators — ~15min cycle (was 3/~34.5min)
-  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // freeCodeCamp RSS — ~15min cycle (was 3/~34.5min)
-  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // daily launches, steady submission stream — ~15min cycle (was 3/~34.5min)
-  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech news RSS — ~15min cycle (was 3/~34.5min)
-  wired:         { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech/culture news RSS — ~15min cycle (was 3/~34.5min)
-  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // AI/startup news RSS — ~15min cycle (was 3/~34.5min)
-  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // Linux/hardware news, multiple posts/day — ~15min cycle (was 3/~34.5min)
+  medium:        { ttl: 25*60000, delay: 90000,  shards: 61 },  // CDN RSS, huge publishing platform — 5min cycle
+  youtube:       { ttl: 25*60000, delay: 90000,  shards: 61 },  // channel RSS across many creators — 5min cycle
+  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 61 },  // freeCodeCamp RSS — 5min cycle
+  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // daily launches, steady submission stream — 5min cycle
+  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // tech news RSS — 5min cycle
+  wired:         { ttl: 25*60000, delay: 90000,  shards: 61 },  // tech/culture news RSS — 5min cycle
+  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // AI/startup news RSS — 5min cycle
+  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 61 },  // Linux/hardware news, multiple posts/day — 5min cycle
   // ── [HIGH-VOL] 120s ──────────────────────────────────────────────────────────
-  theregister:   { ttl: 30*60000, delay: 120000, shards: 9 },  // enterprise IT/security RSS — ~15.3min cycle (was 3 shards/~46min)
-  remoteok:      { ttl: 30*60000, delay: 120000, shards: 9 },  // remote jobs API — ~15.3min cycle (was 3/~46min)
-  behance:       { ttl: 30*60000, delay: 120000, shards: 9 },  // creative portfolios RSS — ~15.3min cycle (was 3/~46min)
+  theregister:   { ttl: 30*60000, delay: 120000, shards: 82 },  // enterprise IT/security RSS — 5min cycle
+  remoteok:      { ttl: 30*60000, delay: 120000, shards: 82 },  // remote jobs API — 5min cycle
+  behance:       { ttl: 30*60000, delay: 120000, shards: 82 },  // creative portfolios RSS — 5min cycle
 
   // ── [ACTIVE] flat 3min — steady content, not minute-by-minute ──────────────
-  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 10 }, // community posts — ~21min cycle (was 2 shards/~1h45min)
-  smashing:      { ttl: 45*60000, delay: 180000, shards: 10 }, // web dev/design RSS, long-form articles — ~21min cycle (was 2/~1h45min)
-  infoq:         { ttl: 45*60000, delay: 180000, shards: 10 }, // enterprise/cloud RSS, moderate cadence — ~21min cycle (was 2/~1h45min)
-  mittr:         { ttl: 45*60000, delay: 180000, shards: 10 }, // deep tech RSS, moderate cadence — ~21min cycle (was 2/~1h45min)
-  gitlab:        { ttl: 45*60000, delay: 180000, shards: 10 }, // public project API — was crowding out other sources at a faster cadence
-  yc:            { ttl: 45*60000, delay: 180000, shards: 10 }, // startup/professional RSS — ~21min cycle (was 2/~1h45min)
-  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 10 }, // business/funding RSS — deals aren't continuous
-  designweb:     { ttl: 45*60000, delay: 180000, shards: 10 }, // design/web industry RSS aggregator — ~21min cycle (was 2/~1h45min)
+  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 122 }, // community posts — 5min cycle
+  smashing:      { ttl: 45*60000, delay: 180000, shards: 122 }, // web dev/design RSS, long-form articles — 5min cycle
+  infoq:         { ttl: 45*60000, delay: 180000, shards: 122 }, // enterprise/cloud RSS, moderate cadence — 5min cycle
+  mittr:         { ttl: 45*60000, delay: 180000, shards: 122 }, // deep tech RSS, moderate cadence — 5min cycle
+  gitlab:        { ttl: 45*60000, delay: 180000, shards: 122 }, // public project API
+  yc:            { ttl: 45*60000, delay: 180000, shards: 122 }, // startup/professional RSS — 5min cycle
+  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 122 }, // business/funding RSS — deals aren't continuous
+  designweb:     { ttl: 45*60000, delay: 180000, shards: 122 }, // design/web industry RSS aggregator — 5min cycle
 
-  // ── [LOW-ACT] no hard external limit — sharded up like the tiers above ─────
-  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 8 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either — ~34.5min cycle (was 1 shard/~4.6h)
+  // ── [LOW-ACT] no hard external limit — pushed to 5min like every other tier
+  // per explicit direction: small/low-traffic sites get the same target as
+  // the rest rather than being held back out of caution with no documented
+  // limit to actually justify it.
+  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 163 },  // small, low-traffic site — 5min cycle
 
-  // ── [LOW-ACT] flat 4min, 1 shard — real external ceiling, left as-is ───────
-  // These four keep both their original 1-shard cadence AND get capped in
-  // RATE_LIMITED_MANUAL_SWEEP — see that constant's comment. Shrinking their
-  // cycle time the way the tiers above were widened would mean
-  // proportionally more requests against a fixed hourly/daily budget, not
-  // just faster coverage.
-  github:        { ttl: 20*60000, delay: 240000,  shards: 1 },  // 60 req/hr unauthed — 15 fetch/hr worst case, still under the cap
-  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires ≥20s between requests — 4min is a wide courtesy margin
-  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
-  // 48 mapped topics × 1 fetch/full-cycle would land ~250/day at the same
-  // 4min the rest of this tier uses — too close to the Stack Exchange
-  // unauthenticated 300/day quota. Held at the tier-5 (5min) ceiling instead,
-  // which keeps it ~200/day with real headroom.
-  stackoverflow: { ttl: 40*60000, delay: 300000,  shards: 1 },  // 300/day API budget — kept at the archival ceiling for quota headroom
+  // ── Real external ceilings — pushed to each one's own actual safe maximum
+  // instead of the 5min target, which none of these three can structurally
+  // reach without a higher-tier API key: github/stackoverflow are bound by a
+  // fixed hourly/daily request budget (more shards doesn't help — total
+  // throughput is the constraint, not concurrency), and arxiv's OAI-PMH
+  // endpoint requires ≥20s between *any* two requests globally, which rules
+  // out ever running more than 1 shard against it.
+  // Both of these also get topped up by RATE_LIMITED_MANUAL_SWEEP's own
+  // independent, uncoordinated pacing (self-healing events, not a fixed
+  // schedule) — the delay below leaves real headroom for that second path
+  // firing around the same time, not just for the continuous worker alone.
+  github:        { ttl: 20*60000, delay: 80000,   shards: 1 },  // 60 req/hr unauthed hard cap — 45/hr on its own, leaving ~15/hr of headroom for an occasional manual-sweep top-up (was 4min/15 req-hr, far more margin than actually needed)
+  arxiv:         { ttl: 40*60000, delay: 25000,   shards: 1 },  // OAI-PMH's real requirement is ≥20s between *any* two requests, globally — 25s (not the bare 20s floor) leaves a buffer against RATE_LIMITED_MANUAL_SWEEP's own separately-paced 20s stream interleaving closer than 20s apart if both fire around the same time; still ~9x faster than the old 4min (was a 12x wider margin than required)
+  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, no documented hard limit found; left conservative as a courtesy rather than guessed at
+  // 300/day Stack Exchange unauthenticated quota is a fixed total-per-day
+  // budget — splitting it across more shards doesn't shorten the cycle
+  // (same total requests, same daily ceiling either way), so 1 shard at the
+  // slowest safe delay that still uses the full budget is genuinely optimal
+  // here, not just cautious. 288s (300/day exactly, 203 topics/cycle) is the
+  // real safe maximum; was 300s (~288/day, already nearly this).
+  stackoverflow: { ttl: 40*60000, delay: 288000,  shards: 1 },  // 300/day API budget, fully used — ~16.2hr cycle is this endpoint's real floor
 
   // ── [ARCHIVAL] flat 5min, 1 shard — system-wide ceiling ─────────────────────
   // No free public API — requires a genuine app-level public token
@@ -5217,9 +5239,11 @@ const FEED_TOPICS = [
 const CIRCUIT_EMPTY_CYCLES = 5;  // empty full-cycles before pausing (increased from 2 — Reddit/GitHub often fail transiently)
 const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto-recover faster)
 
-// SOURCE_FETCHERS[agentId]() (the full-sweep path — triggered by the
-// automatic transfer (see AUTO_TRANSFER_INTERVAL_MS), any bust=1 request,
-// and a manual office refresh) used to pace every source at a flat 60ms/150ms regardless of
+// SOURCE_FETCHERS[agentId]() (the full-sweep path — triggered by a self-
+// healing event (sort-distrib refill, optimizer healing), a bust=1 request,
+// or a manual office refresh — no longer a fixed schedule, see
+// AUTO_TRANSFER_INTERVAL_MS's own comment on why the automatic full sweep
+// was removed) used to pace every source at a flat 60ms/150ms regardless of
 // which API it was hitting, completely bypassing the per-source delay
 // tiers SOURCE_CONFIG above carefully documents. For a source with a real
 // external quota that's a genuine problem, not just a missed optimization:
@@ -5229,16 +5253,14 @@ const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto
 // github's unauthenticated 60/hr cap and stackoverflow's 300/day quota
 // were similarly getting blown through in a few seconds. Capping the topic
 // count AND using each source's own real minimum spacing for exactly these
-// four keeps a full sweep fast for everything else while keeping these
-// four inside the budget their continuous worker already respects — sized
-// so (continuous worker's own hourly rate) + (this cap × sweeps/hour at
-// the current AUTO_TRANSFER_INTERVAL_MS) stays under each source's real
-// ceiling with real headroom, not right up against it. AUTO_TRANSFER_
-// INTERVAL_MS moved from 10 to 15 minutes (4 sweeps/hour, not 6) after the
-// topic-count expansion — same absolute topicCap now sweeps less often,
-// so this has *more* headroom than the numbers below describe, not less.
+// four keeps a full sweep fast for everything else while keeping these four
+// inside budget even if a sweep happens to fire around the same time as the
+// continuous worker — github/arxiv's own SOURCE_CONFIG delay already
+// reserves headroom for that overlap (see their comments there); this sweep
+// path isn't on a predictable schedule anymore, so treat these caps as a
+// ceiling on the damage one sweep could do, not a precisely-budgeted addend.
 const RATE_LIMITED_MANUAL_SWEEP = {
-  github:        { topicCap: 7,  delayMs: 4000 },  // 60/hr unauth; continuous worker alone already uses ~15/hr — 7×4 sweeps/hr keeps the combined total near 43/hr
+  github:        { topicCap: 7,  delayMs: 4000 },  // 60/hr unauth hard cap — one sweep tops out at 7 requests, well inside the ~15/hr headroom SOURCE_CONFIG's continuous rate already reserves
   arxiv:         { topicCap: 5,  delayMs: 20000 }, // OAI-PMH hard requirement — 20s is the floor, not a courtesy margin, for every request this makes
   stackoverflow: { topicCap: 10, delayMs: 4000 },  // 300/day quota — a full topic sweep alone would still be a meaningful chunk of the day's budget
   usajobs:       { topicCap: 10, delayMs: 4000 },  // free self-serve key — stay conservative per the source's own existing comment
