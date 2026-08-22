@@ -274,6 +274,22 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             ytPlayerRef.current = e.target;
             setDuration(e.target.getDuration() || 0);
             if (startUnmuted) e.target.unMute();
+            // playerVars.autoplay:1 alone reliably started playback on a
+            // slide's first-ever activation, but not on re-activation
+            // (scroll away and back to the same video) — confirmed live:
+            // the reconstructed player's iframe carried autoplay=1 in its
+            // src the same as the first time, yet getCurrentTime() stayed
+            // frozen at its starting value for 12+ seconds with nothing
+            // ever calling playVideo(). The separate isScrolling-driven
+            // pause/resume effect below only re-fires when isScrolling
+            // itself changes — if scrolling had already settled to false
+            // before this async ready callback landed (the common case for
+            // a quick scroll-and-release), nothing was left to actually
+            // start it. Calling playVideo() explicitly here removes the
+            // dependency on implicit autoplay working across every
+            // re-construction — a harmless no-op on the runs where it was
+            // already playing.
+            e.target.playVideo();
           },
           onStateChange: (e) => {
             if (cancelled) return;

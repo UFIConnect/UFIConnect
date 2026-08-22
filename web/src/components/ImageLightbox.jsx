@@ -224,6 +224,12 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             if (cancelled) return;
             ytPlayerRef.current = e.target;
             if (startUnmuted) e.target.unMute();
+            // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
+            // alone isn't reliable on every re-construction (confirmed live
+            // there — a re-activated player's iframe carried autoplay=1 the
+            // same as its first activation, yet never actually started).
+            // Explicit call removes the dependency on implicit autoplay.
+            e.target.playVideo();
           },
           onStateChange: (e) => {
             if (cancelled) return;
