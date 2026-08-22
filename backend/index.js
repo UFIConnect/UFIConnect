@@ -5876,7 +5876,6 @@ const AFFINITY_CACHE_MAX_USERS = 5000;
 // short one should.
 const AFFINITY_MAX_WATCH_SECONDS = 120;
 const AFFINITY_LINK_CLICK_WEIGHT = 20;
-const AFFINITY_MATCH_THRESHOLD   = 30; // ~30s of real attention before a source/topic counts as "matched"
 
 async function getUserAffinity(userId) {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID) return { source: new Map(), topic: new Map() };
@@ -6646,16 +6645,13 @@ function jobMatchesUserLocation(locationStr, countryCode) {
   const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
   return !!keywords && keywords.some(k => loc.includes(k));
 }
-// Hard per-user topic filter — deliberately the opposite of
-// personalizeOrder just below (which soft-boosts instead of excluding).
-// Runs first, ahead of personalizeOrder, so only posts matching one of the
-// viewer's own onboarding-selected topics/skills (the same userTopics
-// personalizeOrder itself reads — see its definition in handleFeedRequest)
-// are even in the pool personalizeOrder then reorders by country/affinity.
-// Job listings are exempt for the same reason personalizeOrder carves them
-// out of its own matched/rest split: they're not "about" a content topic
-// the way an article is, and excluding them here would undo the even
-// job-listing spacing built elsewhere in the pipeline.
+// Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
+// only posts matching one of the viewer's own onboarding-selected
+// topics/skills (userTopics — see its definition in handleFeedRequest)
+// ever reach the topic-grouped equalizer that builds phase 2 of the feed.
+// Job listings are exempt: they're not "about" a content topic the way an
+// article is, and excluding them here would undo the even job-listing
+// spacing built elsewhere in the pipeline.
 //
 // Falls back to the unfiltered pool if the user has no declared topics yet
 // (fresh account mid-onboarding) or if the hard filter would leave nothing
@@ -6691,105 +6687,71 @@ function filterByUserTopics(posts, userTopics) {
   return kept.length ? kept : posts;
 }
 
-// Soft per-user personalization: boost posts matching the viewer's
-// interests/skills to appear more often near the top, without hard-
-// filtering everything else out — a strict filter was tried earlier and
-// made the feed read like a narrow job board instead of something to
-// browse. Pure function of (posts, userTopics), so it can be re-run
-// identically for every page of a shared, cached pool (see the main-feed
-// snapshot) without breaking pagination — same inputs always produce the
-// same order, so slicing at different offsets across separate requests
-// never duplicates or skips anything.
+// The actual shape of the default landing feed (and Videos' first page —
+// see handleVideoFeedRequest): two phases, both built from the same
+// roundRobinMerge primitive the rest of this pipeline already uses.
 //
-// NOTE: filterByUserTopics above now runs ahead of this at every call site
-// in handleFeedRequest, hard-excluding non-matching posts before this ever
-// sees them — this function's own topic-based matched/rest split still
-// runs but is now close to a no-op for topics specifically (nearly
-// everything left already matches by construction); its country/affinity
-// reordering is still the meaningful part happening here.
-function personalizeOrder(posts, userTopics, userCountry = null, userAffinity = null) {
-  const hasAffinity = !!(userAffinity && (userAffinity.source.size || userAffinity.topic.size));
-  if ((!userTopics?.length && !userCountry && !hasAffinity) || !posts.length) return posts;
-  const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
-  if (!topics.length && !userCountry && !hasAffinity) return posts;
-  // Job-listing posts are excluded from the matched/rest reshuffle below and
-  // kept at their exact original indices — boostJobListings already spaced
-  // them evenly through the pool (~1-in-8), and that spacing is the whole
-  // point of a mixed feed rather than a wall of job posts. This function
-  // used to also treat a job whose location matched the user's country as
-  // "matched" — but most listings say "Remote", which jobMatchesUserLocation
-  // correctly treats as a match for every country, so nearly every job
-  // listing was landing in the front-loaded matched bucket together.
-  // Confirmed live: jobs clustering near the top of the feed instead of
-  // staying spread through it, undoing boostJobListings' spacing on every
-  // single request (this runs fresh per request, unlike boostJobListings
-  // which only runs once when the shared snapshot pool is built). Only the
-  // non-job posts around them get reordered by topic now.
-  const jobSlots = [];
-  const nonJobPosts = [];
-  posts.forEach((p, i) => {
-    if (JOB_LISTING_SOURCES.includes(p.source)) jobSlots.push({ index: i, post: p });
-    else nonJobPosts.push(p);
-  });
+// Phase 1 ("platform intro") — one post per source, in round-robin order,
+// straight from the pool as given (unfiltered by topic on purpose — its
+// whole job is showing the viewer how many platforms are actually feeding
+// this, not their own interests specifically). Just the *first* round of
+// roundRobinMerge rather than letting it continue, which is exactly "one
+// from each, then stop."
+//
+// Phase 2 ("topic mix") — everything else, hard-filtered to the viewer's
+// own onboarding-selected topics (filterByUserTopics), grouped by topic,
+// true-mixed by source *within* each topic (roundRobinMerge again, just
+// scoped per-topic instead of globally), then the topic groups themselves
+// round-robin together. This is the full equalizer: roundRobinMerge gives
+// every active topic (and, one level down, every active source within a
+// topic) an equal turn every round, by construction — nothing is
+// artificially capped, and a topic only ever gets fewer turns than another
+// once its own real supply is actually exhausted, at which point the
+// remaining topics keep flowing rather than being held back to match it.
+// Nothing in the candidate pool is silently dropped by this step; only
+// filterByUserTopics upstream ever excludes a post, and only for genuinely
+// not matching any selected topic.
+//
+// Ranked by feedback: topic groups are ordered by the viewer's real
+// engagement with that topic (getUserAffinity, built from
+// recordEngagementSignal — actual watch/comment/click time, not a
+// declared preference) before being merged, highest-affinity first. This
+// doesn't change how many turns a topic gets (the equalizer above already
+// guarantees that part) — it only decides which topic's post lands first
+// within each round, so a topic the viewer actually engages with more
+// tends to surface earlier without breaking equal representation.
+function buildTwoPhaseMix(pool, userTopics, userAffinity) {
+  if (!pool.length) return pool;
 
-  const matched = [];
-  const rest = [];
-  for (const p of nonJobPosts) {
-    const postTopic = (p.topic || '').toLowerCase();
-    const declaredMatch = postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic));
-    // Behavioral match: real time spent (video watch, comments open, link
-    // clicks — see recordEngagementSignal) on this source or this exact
-    // topic before, past a threshold that filters out a single stray
-    // click. Supplements declaredMatch rather than replacing it — a user
-    // who's never touched onboarding preferences still gets a feed shaped
-    // by what they've actually shown they read.
-    const affinityMatch = hasAffinity && (
-      (userAffinity.source.get(p.source) || 0) >= AFFINITY_MATCH_THRESHOLD ||
-      (p.topic && (userAffinity.topic.get(p.topic) || 0) >= AFFINITY_MATCH_THRESHOLD)
-    );
-    (declaredMatch || affinityMatch ? matched : rest).push(p);
+  const bySource = new Map();
+  for (const p of pool) {
+    const src = p?.source || 'unknown';
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(p);
   }
+  const sourceLists = [...bySource.values()];
+  const intro = roundRobinMerge(sourceLists).slice(0, sourceLists.length);
+  const introIds = new Set(intro.map(p => p?.id));
 
-  let personalizedNonJob;
-  if (!matched.length) {
-    personalizedNonJob = nonJobPosts;
-  } else {
-    // Topic tags correlate with source more than you'd want here — e.g. a
-    // "Web Development"/"Open Source" interest genuinely matches GitHub repo
-    // topics far more often than most other platforms', so the matched
-    // bucket alone can end up disproportionately one source. Diversifying
-    // each bucket independently (order-preserving within a source's own
-    // queue — see diversifyBySource) before interleaving keeps the
-    // "matched content surfaces more often" boost this function exists
-    // for, without reintroducing the same-source clustering the rest of
-    // this pass already eliminates further upstream.
-    const matchedDiverse = diversifyBySource(matched, matched.length, 1);
-    const restDiverse = diversifyBySource(rest, rest.length, 1);
-    // Roughly 2 matched posts for every 1 non-matched near the front — a
-    // real, noticeable boost, but the mix never fully disappears the way a
-    // hard filter would once matched posts run out.
-    const result = [];
-    let mi = 0, ri = 0;
-    while (mi < matchedDiverse.length || ri < restDiverse.length) {
-      if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
-      if (mi < matchedDiverse.length) result.push(matchedDiverse[mi++]);
-      if (ri < restDiverse.length) result.push(restDiverse[ri++]);
-    }
-    personalizedNonJob = result;
+  const rest = pool.filter(p => !introIds.has(p?.id));
+  const topicFiltered = filterByUserTopics(rest, userTopics);
+  const topicAffinity = userAffinity?.topic;
+
+  const byTopic = new Map();
+  for (const p of topicFiltered) {
+    const t = p?.topic || 'unknown';
+    if (!byTopic.has(t)) byTopic.set(t, new Map());
+    const srcMap = byTopic.get(t);
+    const src = p?.source || 'unknown';
+    if (!srcMap.has(src)) srcMap.set(src, []);
+    srcMap.get(src).push(p);
   }
+  const topicGroups = [...byTopic.entries()]
+    .sort((a, b) => (topicAffinity?.get(b[0]) || 0) - (topicAffinity?.get(a[0]) || 0))
+    .map(([, srcMap]) => roundRobinMerge([...srcMap.values()]));
+  const topicMixed = roundRobinMerge(topicGroups);
 
-  if (!jobSlots.length) return personalizedNonJob;
-
-  // Reinsert jobs at their original absolute positions — same spacing
-  // boostJobListings set up — filling every other slot in order from the
-  // freshly personalized non-job list.
-  const final = new Array(posts.length);
-  jobSlots.forEach(({ index, post }) => { final[index] = post; });
-  let ni = 0;
-  for (let i = 0; i < final.length; i++) {
-    if (final[i] === undefined) final[i] = personalizedNonJob[ni++];
-  }
-  return final;
+  return [...intro, ...topicMixed];
 }
 
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
@@ -11633,7 +11595,7 @@ async function handleFeedRequest(req, res) {
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
-  // Drives the personalized re-ordering below (personalizeOrder) as well as
+  // Drives filterByUserTopics/buildTwoPhaseMix below, as well as
   // connected-social keyword search further down — moved up here (used to
   // live right before the balanced-query call) so it's available to every
   // branch that reads the shared snapshot, not just the one that builds it.
@@ -11641,17 +11603,13 @@ async function handleFeedRequest(req, res) {
     ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
     ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
   ];
-  // Cloudflare-detected country (see getUserCountry) — drives the location
-  // boost inside personalizeOrder, same "applied fresh per request, never
-  // baked into the shared snapshot" treatment as userTopics.
-  const userCountry = getUserCountry(req);
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
-  // a shared snapshot for the same reason userCountry/userTopics aren't.
+  // a shared snapshot for the same reason userTopics isn't.
   const seenIds = await getUserSeenSet(req.user.id);
   // Behavioral affinity (real watch/comment/link time — see
   // recordEngagementSignal) — same "applied fresh per request" treatment as
-  // userTopics/userCountry, feeding personalizeOrder's topic-match boost.
+  // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
   const userAffinity = await getUserAffinity(req.user.id);
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -12048,7 +12006,7 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        let personalized = personalizeOrder(filterByUserTopics(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity);
+        let personalized = buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity);
         // See applyResumeMatchedJobs's own comment — swaps whichever posts
         // already landed in a job-source slot for a better resume match,
         // same slot, same mix shape.
@@ -12194,7 +12152,7 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      let personalized = filterUnseen(personalizeOrder(filterByUserTopics(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity), seenIds);
+      let personalized = filterUnseen(buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
       const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
@@ -12551,11 +12509,11 @@ async function handleFeedRequest(req, res) {
   // externalDiversified itself stays unrotated/unpersonalized — it's what
   // gets cached as the shared snapshot below and read by every other user,
   // so it can't bake in *this* request's rotation or interests. Rotation +
-  // personalizeOrder only reorder (same length, same members), applied
-  // fresh per response instead — same treatment as the cached-snapshot read
-  // paths above, so this request's user sees a consistent rotation whether
+  // buildTwoPhaseMix are applied fresh per response instead — same
+  // treatment as the cached-snapshot read paths above, so this request's
+  // user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  let personalizedExternal = filterUnseen(personalizeOrder(filterByUserTopics(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity), seenIds);
+  let personalizedExternal = filterUnseen(buildTwoPhaseMix(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
   if (isDefaultAggregateView) {
     // Reuses the wide-window job fetch already done above (extraJobPosts)
     // instead of a second, separate query for the same data.
@@ -12704,15 +12662,66 @@ async function handleVideoFeedRequest(req, res) {
     // getUserSeenSet/markPostsSeen's own comment for why this split exists.
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
 
-    const { posts, nextCursor, hasMore } = await getCursorFeedPage({
-      sources: cursorSources,
-      cursorMap,
-      limit: feedLimit,
-      mediaType: 'video',
-      timeRange: videoTimeRange,
-      seenIds,
-    });
+    // Same two-phase shape as the main Feed's buildTwoPhaseMix, only applied
+    // when nothing's explicitly filtered by source — an explicit platform
+    // filter already tells you which platforms you're looking at, so the
+    // "one per platform" intro has nothing to add there.
+    if (!isUnfilteredVideo) {
+      const { posts, nextCursor, hasMore } = await getCursorFeedPage({
+        sources: cursorSources, cursorMap, limit: feedLimit,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+      });
+      markPostsSeen(req.user.id, posts, 'videos');
+      return res.json({ posts, cursor: nextCursor, hasMore });
+    }
 
+    const user = await getUser(req.user.id);
+    const prefs = user?.preferences || {};
+    const userTopics = [
+      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
+      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+    ];
+
+    // Phase 1 ("platform intro") — only on a genuinely fresh session (no
+    // cursor param sent yet at all), one video per platform, unfiltered by
+    // topic — same reasoning as buildTwoPhaseMix's identical phase for the
+    // main Feed. getCursorFeedPage already round-robin-mixes every source
+    // on every page (see its own comment), so sizing the limit to exactly
+    // the number of active sources naturally yields "one from each, then
+    // stop" without needing separate mixing logic here.
+    const isFreshSession = !req.query.cursor;
+    let introPosts = [];
+    let cursorAfterIntro = cursorMap;
+    if (isFreshSession && cursorSources.length) {
+      const intro = await getCursorFeedPage({
+        sources: cursorSources, cursorMap, limit: cursorSources.length,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+      });
+      introPosts = intro.posts;
+      cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
+    }
+
+    // Phase 2 ("topic mix") — the round-robin-across-sources true mix
+    // getCursorFeedPage already does on every page, hard-filtered to the
+    // viewer's own onboarding-selected topics. Fetched 3x wider than
+    // needed since filterByUserTopics can shrink the pool — same
+    // "widen the candidate pool before filtering" tradeoff the main Feed's
+    // own pool-building already accepts, rather than a precise but far
+    // more complex retry-until-full-page loop.
+    const introIds = new Set(introPosts.map(p => p.id));
+    const remaining = Math.max(0, feedLimit - introPosts.length);
+    let mixPosts = [], nextCursor = encodeFeedCursor(cursorAfterIntro), hasMore = introPosts.length > 0;
+    if (remaining > 0) {
+      const mix = await getCursorFeedPage({
+        sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+      });
+      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id)), userTopics).slice(0, remaining);
+      nextCursor = mix.nextCursor;
+      hasMore = mix.hasMore;
+    }
+
+    const posts = [...introPosts, ...mixPosts];
     markPostsSeen(req.user.id, posts, 'videos');
     res.json({ posts, cursor: nextCursor, hasMore });
   } catch (e) {
