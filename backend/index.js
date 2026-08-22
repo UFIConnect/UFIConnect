@@ -2603,26 +2603,37 @@ async function fetchYouTubeByKeyword(keyword) {
 
   let lastError = null;
   try {
-    // Official YouTube Data API v3 — used when key is available
+    // Official YouTube Data API v3 — used when key is available. Wrapped in
+    // its own try/catch, not the outer one, so a failure here (invalid key,
+    // network hiccup, or — the expected steady state — quota exhausted;
+    // search.list costs 100 units/call, 2 calls per topic between the main
+    // search and the shorts supplement, against a 10,000/day free default,
+    // so the budget covers well under one full pass over FEED_TOPICS) falls
+    // through to the RSS tier below instead of skipping it entirely, same
+    // cascading-fallback shape as fetchRedditSub's OAuth→anon→RSS chain.
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (apiKey) {
-      const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=50&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
-      const [data, shortsPosts] = await Promise.all([
-        fetchJSON(url),
-        fetchYouTubeShortsByKeyword(keyword, apiKey),
-      ]);
-      const seenIds = new Set();
-      const posts = [
-        ...(data?.items || [])
-          .filter(v => v.id?.videoId && v.snippet?.title)
-          .map(v => mapYouTubePost(
-            v.id.videoId, v.snippet.title, v.snippet.description,
-            v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-            v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
-          )),
-        ...shortsPosts,
-      ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
-      if (posts.length) { setCached(cacheKey, posts); return posts; }
+      try {
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=50&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
+        const [data, shortsPosts] = await Promise.all([
+          fetchJSON(url),
+          fetchYouTubeShortsByKeyword(keyword, apiKey),
+        ]);
+        const seenIds = new Set();
+        const posts = [
+          ...(data?.items || [])
+            .filter(v => v.id?.videoId && v.snippet?.title)
+            .map(v => mapYouTubePost(
+              v.id.videoId, v.snippet.title, v.snippet.description,
+              v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
+              v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
+            )),
+          ...shortsPosts,
+        ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
+        if (posts.length) { setCached(cacheKey, posts); return posts; }
+      } catch (e) {
+        console.warn(`[YouTube] official API failed for "${keyword}" (falling back to RSS): ${e.message}`);
+      }
     }
 
     // Primary: YouTube channel RSS feeds — no API key, served by YouTube, always works
