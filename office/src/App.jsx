@@ -1123,7 +1123,7 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
         </Btn>
       </div>
       <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 16px' }}>
-        Queues every source worker to refetch, then drains the queue one at a time (paced — this is
+        Queues every source worker to refetch, then drains the queue 4 at a time in parallel (paced — this is
         the same mechanism a full refresh always used, just now with visible progress instead of firing blind).
       </p>
 
@@ -1136,7 +1136,7 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 8 }}>
               <span style={{ color: '#e2e8f0' }}>
-                Transferring <strong>{q.currentId || '…'}</strong>
+                Transferring <strong>{q.currentIds?.length ? q.currentIds.join(', ') : '…'}</strong>
               </span>
               <span style={{ color: '#60a5fa' }}>{q.batchDone}/{q.batchTotal} done · {q.pending} queued</span>
             </div>
@@ -1286,7 +1286,7 @@ function PipelineView({ status }) {
   const filterAgent  = status?.filterAgent;
   const sortAgent    = status?.sortAgent;
   const topicFilterAgent = status?.topicFilterAgent;
-  const twoPhaseMixAgent = status?.twoPhaseMixAgent;
+  const topicComposition = status?.sortRankTopicComposition || [];
   const q            = status?.refreshQueue;
   const running      = !!q?.running;
   const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
@@ -1400,7 +1400,7 @@ function PipelineView({ status }) {
             </div>
             <div style={{ fontSize: 11, color: running ? '#38bdf8' : '#64748b' }}>
               {running
-                ? `${q.currentId || '…'} · ${q.batchDone}/${q.batchTotal}`
+                ? `${q.currentIds?.length ? q.currentIds.join(', ') : '…'} · ${q.batchDone}/${q.batchTotal}`
                 : (q?.lastFinished ? `Idle · last ${fmtAgo(q.lastFinished)}` : 'Idle — no transfer run yet')}
             </div>
           </PipelineNode>
@@ -1470,7 +1470,7 @@ function PipelineView({ status }) {
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
-        <TransferByTopicCard twoPhaseMixAgent={twoPhaseMixAgent} />
+        <TransferByTopicCard topicComposition={topicComposition} />
         <ViewedDetailCard pageviews={pageviews} />
       </div>
     </>
@@ -1748,16 +1748,19 @@ function TopicFilterDetailCard({ topicFilterAgent }) {
   );
 }
 
-// The real transfer, animated: exactly how many posts of each topic have
-// actually landed in a genuine viewer's feed or Videos (buildTwoPhaseMix's
-// phase 2 — see twoPhaseMixAgent's own comment server-side), not just how
-// big the candidate pool was before filtering (that's TopicFilterDetailCard
-// above). One growing bar per topic, same grow-in-on-load treatment as the
-// Topics view, so it's visibly obvious this is live data landing in real
-// feeds and not a static table.
-function TransferByTopicCard({ twoPhaseMixAgent }) {
+// The real transfer, animated: exactly how many posts of each topic are
+// sitting in the shared cache right after Sort & Rank (sortRankTopicComposition
+// — a live, computed-on-read breakdown, same pattern feed.composition
+// already uses for sources). Deliberately NOT counted from real per-user
+// feed/Videos responses — that only updates when someone's actually
+// logged in and loading a feed, so this panel could sit on "no data yet"
+// for a long stretch even while the pipeline itself was fully healthy.
+// This updates continuously, in step with every other stage in the
+// Pipeline, regardless of live user traffic. One growing bar per topic,
+// same grow-in-on-load treatment as the Topics view.
+function TransferByTopicCard({ topicComposition }) {
   const [grown, setGrown] = useState(false);
-  const byTopic = twoPhaseMixAgent?.byTopic || [];
+  const byTopic = topicComposition || [];
 
   useEffect(() => {
     if (!byTopic.length) return;
@@ -1765,22 +1768,22 @@ function TransferByTopicCard({ twoPhaseMixAgent }) {
     return () => cancelAnimationFrame(id);
   }, [byTopic.length]);
 
-  const maxPosts = Math.max(1, ...byTopic.map(t => t.posts));
+  const maxCount = Math.max(1, ...byTopic.map(t => t.count));
+  const totalPosts = byTopic.reduce((sum, t) => sum + t.count, 0);
 
   return (
     <Card>
       <Label color="#a78bfa">Transfer — by topic</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Every post that survives Sort &amp; Rank and the Topic Filter still has to actually land somewhere — this is
-        that landing, counted per topic, straight from real feed/Videos responses. Not a sample: every run updates
-        every bar below.
+        Every post that survives Sort &amp; Rank has to actually land somewhere — this is that landing, counted per
+        topic straight from the shared cache right now. Live, not a sample: every poll updates every bar below,
+        whether or not anyone's actively browsing.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 12, marginBottom: 14 }}>
-        <DetailStat label="total runs" value={(twoPhaseMixAgent?.totalRuns ?? 0).toLocaleString()} color="#a78bfa" />
-        <DetailStat label="last intro size" value={(twoPhaseMixAgent?.lastIntroCount ?? 0).toLocaleString()} />
-        <DetailStat label="topics seen" value={byTopic.length.toLocaleString()} />
-        <DetailStat label="last run" value={twoPhaseMixAgent?.lastRun ? fmtAgo(twoPhaseMixAgent.lastRun) : '—'} />
+        <DetailStat label="total posts" value={totalPosts.toLocaleString()} color="#a78bfa" />
+        <DetailStat label="topics represented" value={byTopic.length.toLocaleString()} />
+        <DetailStat label="top topic" value={byTopic[0] ? `${byTopic[0].pct}%` : '—'} />
       </div>
 
       {byTopic.length > 0 ? (
@@ -1789,11 +1792,11 @@ function TransferByTopicCard({ twoPhaseMixAgent }) {
             <div key={t.topic}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 3, gap: 10 }}>
                 <span style={{ fontSize: 11.5, color: '#e2e8f0', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.topic}</span>
-                <span style={{ fontSize: 10.5, color: '#64748b', flexShrink: 0 }}>{t.posts.toLocaleString()} posts · {t.runs.toLocaleString()} runs</span>
+                <span style={{ fontSize: 10.5, color: '#64748b', flexShrink: 0 }}>{t.count.toLocaleString()} posts · {t.pct}%</span>
               </div>
               <div style={{
                 height: 8, borderRadius: 3, background: 'rgba(255,255,255,.04)', overflow: 'hidden',
-                width: grown ? `${Math.max(1.5, (t.posts / maxPosts) * 100)}%` : '0%',
+                width: grown ? `${Math.max(1.5, (t.count / maxCount) * 100)}%` : '0%',
                 transition: `width .6s cubic-bezier(.16,1,.3,1) ${Math.min(i * 15, 400)}ms`,
               }}>
                 <div style={{ width: '100%', height: '100%', background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length] }} />
@@ -1802,7 +1805,7 @@ function TransferByTopicCard({ twoPhaseMixAgent }) {
           ))}
         </div>
       ) : (
-        <div style={{ fontSize: 12, color: '#475569' }}>No transfers recorded yet — waits for a real logged-in viewer to load their feed.</div>
+        <div style={{ fontSize: 12, color: '#475569' }}>No posts in the shared cache yet.</div>
       )}
     </Card>
   );

@@ -6184,22 +6184,6 @@ const topicFilterAgentState = {
   byTopic: {},
 };
 
-// Tracks buildTwoPhaseMix — the actual transfer of ranked/sorted posts into
-// each viewer's own topic buckets (phase 2 of the default feed/Videos —
-// see its own comment). Where topicFilterAgentState above tracks the
-// filter step (how big the candidate pool was per request), this tracks
-// what genuinely landed in a real feed afterward: exact per-topic post
-// counts out of the equalizer's real output, not just candidate-pool size.
-// byTopic accumulates for the life of the process, same bounded-growth
-// reasoning as topicFilterAgentState's own byTopic.
-const twoPhaseMixState = {
-  totalRuns: 0,
-  lastIntroCount: 0,
-  lastTopicCounts: {},
-  lastRun: null,
-  byTopic: {},
-};
-
 const activityAgentState = {
   status: 'idle',
   totalSweeps: 0,
@@ -6769,19 +6753,6 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
     .map(([, srcMap]) => roundRobinMerge([...srcMap.values()]));
   const topicMixed = roundRobinMerge(topicGroups);
 
-  twoPhaseMixState.totalRuns += 1;
-  twoPhaseMixState.lastIntroCount = intro.length;
-  twoPhaseMixState.lastRun = Date.now();
-  const lastCounts = {};
-  for (const p of topicMixed) {
-    const t = p?.topic || 'unknown';
-    lastCounts[t] = (lastCounts[t] || 0) + 1;
-    const bucket = twoPhaseMixState.byTopic[t] || (twoPhaseMixState.byTopic[t] = { posts: 0, runs: 0 });
-    bucket.posts += 1;
-  }
-  for (const t of Object.keys(lastCounts)) twoPhaseMixState.byTopic[t].runs += 1;
-  twoPhaseMixState.lastTopicCounts = lastCounts;
-
   return [...intro, ...topicMixed];
 }
 
@@ -6992,6 +6963,21 @@ function installCrashGuard() {
   });
 }
 
+// How many sources drainSourceRefreshQueue processes concurrently. Was 1
+// (strictly sequential) — with 36 sources and FEED_TOPICS now at 203
+// entries (see the onboarding-coverage expansion), a sequential drain's
+// real wall-clock cycle time had crept up to ~10.1min, right at the old
+// 10-minute auto-trigger interval itself (see AUTO_TRANSFER_INTERVAL_MS's
+// own comment). Different sources hit entirely different external APIs, so
+// running several concurrently doesn't add any risk to a single source's
+// own rate limit — each source's own pacing (RATE_LIMITED_MANUAL_SWEEP,
+// the 60ms normal-mode wait) is unchanged, still applied within that
+// source's own fetch sequence. 4 workers cuts the real cycle time to
+// roughly a quarter, well within what the app's continuous background
+// workers already demonstrate the (4GB) container can handle — they run
+// far more concurrent per-source shard loops than this, all the time.
+const TRANSFER_WORKER_COUNT = 4;
+
 const sourceRefreshQueue = {
   running: false,
   pendingIds: new Set(),
@@ -7001,8 +6987,9 @@ const sourceRefreshQueue = {
   lastReason: null,
   lastError: null,
   // Progress visibility for the office "transfer" panel — a blind trigger
-  // button gives no feedback while 30+ sources drain one at a time.
-  currentId: null,
+  // button gives no feedback while 30+ sources drain. Plural now that
+  // multiple sources can be in flight at once — see TRANSFER_WORKER_COUNT.
+  currentIds: [],
   batchTotal: 0,
   batchDone: 0,
 };
@@ -7043,31 +7030,29 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
   }
 }
 
-async function drainSourceRefreshQueue() {
-  if (sourceRefreshQueue.running) return;
-  sourceRefreshQueue.running = true;
-  sourceRefreshQueue.totalRuns += 1;
-  sourceRefreshQueue.lastStarted = Date.now();
-  sourceRefreshQueue.lastError = null;
+// One worker's own drain loop — pulls the next pending id, runs its
+// fetcher, repeats until the shared queue is empty. Several of these run
+// concurrently (see TRANSFER_WORKER_COUNT); the pull-a-task step below is
+// a synchronous check-then-delete with no `await` in between, so it's safe
+// against JS's single-threaded execution model the same way the old
+// single-loop version was — no two workers can ever grab the same id.
+async function transferWorker(stats) {
+  while (sourceRefreshQueue.pendingIds.size > 0) {
+    if (isStabilityCritical()) {
+      refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
+      sourceRefreshQueue.pendingIds.clear();
+      break;
+    }
 
-  let processed = 0;
-  try {
-    while (sourceRefreshQueue.pendingIds.size > 0) {
-      if (isStabilityCritical()) {
-        refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
-        sourceRefreshQueue.pendingIds.clear();
-        break;
-      }
-
-      const id = sourceRefreshQueue.pendingIds.values().next().value;
-      sourceRefreshQueue.pendingIds.delete(id);
-      sourceRefreshQueue.currentId = id;
-      const fetcher = SOURCE_FETCHERS[id];
-      if (typeof fetcher !== 'function') continue;
-
+    const id = sourceRefreshQueue.pendingIds.values().next().value;
+    if (id === undefined) break; // another worker already emptied it
+    sourceRefreshQueue.pendingIds.delete(id);
+    sourceRefreshQueue.currentIds.push(id);
+    const fetcher = SOURCE_FETCHERS[id];
+    if (typeof fetcher === 'function') {
       try {
         await fetcher();
-        processed++;
+        stats.processed++;
       } catch (err) {
         const h = workerHealth.get(id);
         if (h) {
@@ -7076,16 +7061,32 @@ async function drainSourceRefreshQueue() {
           h.lastError = err?.message || String(err);
         }
       }
-      sourceRefreshQueue.batchDone += 1;
-
-      await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
     }
+    const idx = sourceRefreshQueue.currentIds.indexOf(id);
+    if (idx !== -1) sourceRefreshQueue.currentIds.splice(idx, 1);
+    sourceRefreshQueue.batchDone += 1;
+
+    await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
+  }
+}
+
+async function drainSourceRefreshQueue() {
+  if (sourceRefreshQueue.running) return;
+  sourceRefreshQueue.running = true;
+  sourceRefreshQueue.totalRuns += 1;
+  sourceRefreshQueue.lastStarted = Date.now();
+  sourceRefreshQueue.lastError = null;
+  sourceRefreshQueue.currentIds = [];
+
+  const stats = { processed: 0 };
+  try {
+    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, () => transferWorker(stats)));
   } finally {
     sourceRefreshQueue.running = false;
-    sourceRefreshQueue.currentId = null;
+    sourceRefreshQueue.currentIds = [];
     sourceRefreshQueue.lastFinished = Date.now();
     logAgentAction('refresh_queue', '✅',
-      `Refresh queue complete - ${processed} source(s) processed`, '#4ADE80');
+      `Refresh queue complete - ${stats.processed} source(s) processed`, '#4ADE80');
   }
 }
 
@@ -14061,9 +14062,10 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastFinished: sourceRefreshQueue.lastFinished,
       lastReason: sourceRefreshQueue.lastReason,
       lastError: sourceRefreshQueue.lastError,
-      // Progress for the office transfer panel — which source is in flight
-      // right now, and how far through the current batch the queue is.
-      currentId: sourceRefreshQueue.currentId,
+      // Progress for the office transfer panel — which sources are in
+      // flight right now (plural: TRANSFER_WORKER_COUNT run concurrently),
+      // and how far through the current batch the queue is.
+      currentIds: sourceRefreshQueue.currentIds,
       batchTotal: sourceRefreshQueue.batchTotal,
       batchDone: sourceRefreshQueue.batchDone,
     },
@@ -14118,19 +14120,23 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
         .map(([topic, t]) => ({ topic, ...t }))
         .sort((a, b) => b.requests - a.requests),
     },
-    // The real transfer: exactly how many posts of each topic landed in a
-    // genuine feed/Videos response (phase 2 of buildTwoPhaseMix), not just
-    // how big the filtered candidate pool was — see twoPhaseMixState's own
-    // comment for the distinction from topicFilterAgent above.
-    twoPhaseMixAgent: {
-      totalRuns: twoPhaseMixState.totalRuns,
-      lastIntroCount: twoPhaseMixState.lastIntroCount,
-      lastTopicCounts: twoPhaseMixState.lastTopicCounts,
-      lastRun: twoPhaseMixState.lastRun,
-      byTopic: Object.entries(twoPhaseMixState.byTopic)
-        .map(([topic, t]) => ({ topic, ...t }))
-        .sort((a, b) => b.posts - a.posts),
-    },
+    // Real per-topic composition of the shared cache right after Sort &
+    // Rank — same live-computed-on-read pattern as feed.composition above,
+    // just grouped by topic instead of source. Deliberately NOT counted
+    // from real per-user feed/Videos responses (buildTwoPhaseMix) the way
+    // an earlier version of this did: that only updates when someone's
+    // actually logged in and loading a feed, so the office panel could sit
+    // on "no data yet" for a long stretch even while the pipeline itself
+    // was fully healthy. This updates continuously, in step with every
+    // other stage in the Pipeline, regardless of live user traffic.
+    sortRankTopicComposition: (() => {
+      const posts = realFeedPosts(globalFeedCache.posts);
+      const counts = {};
+      for (const p of posts) counts[p.topic || 'unknown'] = (counts[p.topic || 'unknown'] || 0) + 1;
+      return Object.entries(counts)
+        .map(([topic, count]) => ({ topic, count, pct: posts.length ? Math.round((count / posts.length) * 1000) / 10 : 0 }))
+        .sort((a, b) => b.count - a.count);
+    })(),
     sortDistributionAgent: {
       status: sortDistribState.lastError ? 'degraded' : 'healthy',
       totalRuns: sortDistribState.totalRuns,
