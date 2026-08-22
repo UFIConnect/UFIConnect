@@ -457,27 +457,23 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <div style={{ width: '100%', aspectRatio: '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
             <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }} />
             {ytFailed && (
-              // The player never went ready (blocked script, embed-disabled
-              // video, etc.) — a real, clickable way to actually watch it
-              // beats a silent blank box with no explanation and no way out.
-              <a
-                href={`https://www.youtube.com/watch?v=${src.id}`}
-                target="_blank" rel="noopener noreferrer"
-                style={{
-                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none',
-                  color: '#fff', background: src.poster ? `url(${src.poster}) center/cover` : '#111',
-                }}
-              >
-                <div style={{
-                  width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,.55)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
-                  border: '1px solid rgba(255,255,255,.3)',
-                }}>▶</div>
-                <span style={{ fontSize: 12.5, fontWeight: 600, textShadow: '0 1px 3px rgba(0,0,0,.8)' }}>
-                  Watch on YouTube ↗
-                </span>
-              </a>
+              // The IFrame Player API script (youtube.com/iframe_api) never
+              // went ready — confirmed live as a real, reproducible failure
+              // on some mobile devices/networks even though the YouTube
+              // embed itself isn't blocked there (same class of thing that
+              // makes some ad/privacy blockers target tracking-adjacent
+              // scripts specifically, not core video content). A plain
+              // embed iframe doesn't load that script at all and still
+              // autoplays muted on its own — same approach the Vimeo branch
+              // above already uses successfully, just without this app's
+              // own pause/mute/scrub control layer on top. Real playback
+              // beats a "click to leave the app" link.
+              <iframe
+                src={`https://www.youtube.com/embed/${src.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${src.id}&controls=1&modestbranding=1&rel=0`}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                title={post.title}
+              />
             )}
           </div>
         ) : (

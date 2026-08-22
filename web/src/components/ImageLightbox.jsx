@@ -52,6 +52,11 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   // starts already unmuted instead.
   const [muted, setMuted] = useState(() => !userWantsSound());
   const [paused, setPaused] = useState(false);
+  // See VideoFeedView's identical ytFailed — the IFrame Player API script
+  // doesn't load on some devices/networks; falls back to a plain embed
+  // iframe (still autoplays on its own, just without this app's own
+  // pause/mute control layer) instead of leaving the mount blank.
+  const [ytFailed, setYtFailed] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
   const ytMountRef = useRef(null);
@@ -214,6 +219,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
     if (!youtubeId) return;
     let cancelled = false;
     const startUnmuted = !muted;
+    setYtFailed(false);
+    const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -222,6 +229,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
             if (startUnmuted) e.target.unMute();
             // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
@@ -235,11 +243,13 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             if (cancelled) return;
             setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
           },
+          onError: () => { if (!cancelled) setYtFailed(true); },
         },
       });
-    });
+    }).catch(() => { if (!cancelled) setYtFailed(true); });
     return () => {
       cancelled = true;
+      clearTimeout(readyTimeout);
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
     };
@@ -414,20 +424,36 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             </div>
           ) : youtubeId ? (
             <div style={{ position: 'relative', width: 'min(92vw, 640px)', aspectRatio: '16 / 9', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
-              {/* Cross-origin iframe — the parent page can't see clicks that
-                  land inside it, so pointer-events are disabled on the mount
-                  itself and this wrapper's onClick drives play/pause instead
-                  (same technique VideoFeedView's YouTube slide uses). */}
-              <div onClick={e => { e.stopPropagation(); togglePlay(); }} style={{ position: 'absolute', inset: 0 }}>
-                <div key={youtubeId} ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
-              </div>
-              {paused && (
-                <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
-                  position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
-                  borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
-                }}>▶</button>
+              {ytFailed ? (
+                // See VideoFeedView's identical fallback — a plain embed
+                // iframe doesn't depend on the IFrame Player API script at
+                // all and still autoplays muted on its own, so real
+                // playback survives even where that script doesn't load.
+                <iframe
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=1&modestbranding=1&rel=0`}
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                  allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                  title={post.title}
+                />
+              ) : (
+                <>
+                  {/* Cross-origin iframe — the parent page can't see clicks
+                      that land inside it, so pointer-events are disabled on
+                      the mount itself and this wrapper's onClick drives
+                      play/pause instead (same technique VideoFeedView's
+                      YouTube slide uses). */}
+                  <div onClick={e => { e.stopPropagation(); togglePlay(); }} style={{ position: 'absolute', inset: 0 }}>
+                    <div key={youtubeId} ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
+                  </div>
+                  {paused && (
+                    <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
+                      position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
+                      borderRadius: '50%', background: 'rgba(0,0,0,.5)', border: 'none',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
+                    }}>▶</button>
+                  )}
+                </>
               )}
             </div>
           ) : (
