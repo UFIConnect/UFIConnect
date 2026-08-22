@@ -84,6 +84,8 @@ export default function PublicProfile() {
   const [modal,    setModal]    = useState(null);
   const [posts,    setPosts]    = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const moreBtnRef  = useRef(null);
   const moreMenuRef = useRef(null);
@@ -118,10 +120,27 @@ export default function PublicProfile() {
   useEffect(() => {
     setPostsLoading(true);
     client.get(`/users/${id}/posts`, { params: { limit: 50 } })
-      .then(({ data }) => setPosts(data.posts || []))
-      .catch(() => setPosts([]))
+      .then(({ data }) => { setPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
+      .catch(() => { setPosts([]); setPostsHasMore(false); })
       .finally(() => setPostsLoading(false));
   }, [id]);
+
+  // See PostList's onNearEnd / ImageLightbox's "max view" — same reasoning
+  // as Profile.jsx's own loadMorePosts.
+  async function loadMorePosts() {
+    if (postsLoadingMore || !postsHasMore) return;
+    setPostsLoadingMore(true);
+    try {
+      const { data } = await client.get(`/users/${id}/posts`, { params: { limit: 50, offset: posts.length } });
+      const incoming = data.posts || [];
+      setPosts(prev => {
+        const knownIds = new Set(prev.map(p => p.id));
+        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+      });
+      setPostsHasMore(!!data.hasMore);
+    } catch {}
+    finally { setPostsLoadingMore(false); }
+  }
 
   async function toggleFollow() {
     if (!user) return;
@@ -426,6 +445,7 @@ export default function PublicProfile() {
             showAuthor={false}
             emptyTitle="No posts yet"
             emptyDesc={`${user.name} has not posted to the community yet.`}
+            onNearEnd={loadMorePosts}
           />
         </div>
 

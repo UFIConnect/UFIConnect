@@ -41,6 +41,11 @@ export default function PostList({
   onPostUpdated = null,
   currentUserId = null,
   onPostDeleted = null,
+  // Lets the "max view" lightbox pull in more posts as the viewer nears the
+  // end of what's already loaded here — same idea as Feed.jsx's own
+  // loadMoreRemote, just optional since not every caller paginates (a
+  // caller with no more pages to fetch simply doesn't pass this).
+  onNearEnd = null,
 }) {
   const [localPosts, setLocalPosts] = useState(posts);
   const [likeBusy, setLikeBusy] = useState({});
@@ -411,6 +416,7 @@ export default function PostList({
           items={mediaPosts.map(p => ({ url: p.mediaUrl, type: p.mediaType, post: p }))}
           startIndex={mediaLightboxIndex}
           onClose={() => setMediaLightboxPostId(null)}
+          onNearEnd={onNearEnd}
         />
       )}
     </div>

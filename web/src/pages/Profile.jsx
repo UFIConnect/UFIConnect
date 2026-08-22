@@ -48,6 +48,8 @@ export default function Profile() {
   // Posts
   const [posts,        setPosts]        = useState([]);
   const [postsLoading, setPostsLoading] = useState(false);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
@@ -80,10 +82,29 @@ export default function Profile() {
     if (!profile?.id) return;
     setPostsLoading(true);
     client.get(`/users/${profile.id}/posts`)
-      .then(({ data }) => setPosts(data.posts || []))
-      .catch(() => setPosts([]))
+      .then(({ data }) => { setPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
+      .catch(() => { setPosts([]); setPostsHasMore(false); })
       .finally(() => setPostsLoading(false));
   }, [profile?.id]);
+
+  // See PostList's onNearEnd / ImageLightbox's "max view" — same reasoning
+  // as GroupDetail's loadMoreGroupPosts: without this, scrolling through
+  // this member's photos/videos in the fullscreen viewer dead-ended at
+  // whatever the initial fetch happened to return.
+  async function loadMorePosts() {
+    if (postsLoadingMore || !postsHasMore || !profile?.id) return;
+    setPostsLoadingMore(true);
+    try {
+      const { data } = await client.get(`/users/${profile.id}/posts`, { params: { offset: posts.length } });
+      const incoming = data.posts || [];
+      setPosts(prev => {
+        const knownIds = new Set(prev.map(p => p.id));
+        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+      });
+      setPostsHasMore(!!data.hasMore);
+    } catch {}
+    finally { setPostsLoadingMore(false); }
+  }
 
   function fetchAttachments() {
     setAttachmentsLoading(true);
@@ -522,6 +543,7 @@ export default function Profile() {
             emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>}
             currentUserId={profile?.id}
             onPostDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
+            onNearEnd={loadMorePosts}
           />
         </div>
       )}

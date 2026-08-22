@@ -43,6 +43,9 @@ export default function Post() {
   const [error,    setError]    = useState('');
   const [feed,     setFeed]     = useState([]);
   const [feedLoading, setFeedLoading] = useState(true);
+  const [feedHasMore, setFeedHasMore] = useState(false);
+  const [feedLoadingMore, setFeedLoadingMore] = useState(false);
+  const FEED_PAGE_SIZE = 40;
 
   // Photo/video attachment — uploads straight to Cloudinary the moment a
   // file is picked (see api/upload.js), not on submit, so the compose
@@ -72,13 +75,35 @@ export default function Post() {
 
     // Load recent community posts without calling the full live feed.
     setFeedLoading(true);
-    client.get('/posts', { params: { limit: 40 } })
+    client.get('/posts', { params: { limit: FEED_PAGE_SIZE } })
       .then(({ data }) => {
         setFeed(data.posts || []);
+        setFeedHasMore(!!data.hasMore);
       })
       .catch(() => {})
       .finally(() => setFeedLoading(false));
   }, [posted]);
+
+  // Lets ImageLightbox's "max view" (opened from a post's photo/video) keep
+  // pulling in more posts as the viewer scrolls near the end of what's
+  // already loaded — see PostList's onNearEnd. Offset by feed.length rather
+  // than a separate page counter since this list only ever grows by
+  // appending here (a real refresh — `posted` toggling — replaces it
+  // wholesale via the effect above, not through this path).
+  async function loadMoreFeed() {
+    if (feedLoadingMore || !feedHasMore) return;
+    setFeedLoadingMore(true);
+    try {
+      const { data } = await client.get('/posts', { params: { limit: FEED_PAGE_SIZE, offset: feed.length } });
+      const incoming = data.posts || [];
+      setFeed(prev => {
+        const knownIds = new Set(prev.map(p => p.id));
+        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+      });
+      setFeedHasMore(!!data.hasMore);
+    } catch {}
+    finally { setFeedLoadingMore(false); }
+  }
 
   function openCompose() {
     setComposing(true);
@@ -317,6 +342,7 @@ export default function Post() {
           emptyDesc="Be the first to post to the UFconnect community."
           emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
           currentUserId={profile?.id}
+          onNearEnd={loadMoreFeed}
         />
       </div>
     </Layout>

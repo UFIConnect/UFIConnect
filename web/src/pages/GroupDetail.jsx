@@ -24,6 +24,8 @@ export default function GroupDetail() {
 
   const [groupPosts,    setGroupPosts]    = useState([]);
   const [postsLoading,  setPostsLoading]  = useState(true);
+  const [postsHasMore,  setPostsHasMore]  = useState(false);
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [composing,     setComposing]     = useState(false);
   const [content,       setContent]       = useState('');
   const [posting,       setPosting]       = useState(false);
@@ -67,12 +69,31 @@ export default function GroupDetail() {
   function loadGroupPosts(opts = {}) {
     if (!opts.silent) setPostsLoading(true);
     client.get(`/groups/${id}/posts`)
-      .then(({ data }) => setGroupPosts(data.posts || []))
-      .catch(() => setGroupPosts([]))
+      .then(({ data }) => { setGroupPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
+      .catch(() => { setGroupPosts([]); setPostsHasMore(false); })
       .finally(() => setPostsLoading(false));
   }
 
   useEffect(() => { loadGroupPosts(); }, [id]); // eslint-disable-line
+
+  // See PostList's onNearEnd / ImageLightbox's "max view" — without this,
+  // scrolling through a group's photos/videos in the fullscreen viewer
+  // dead-ended at whatever this initial fetch happened to return, no matter
+  // how much more the group actually had.
+  async function loadMoreGroupPosts() {
+    if (postsLoadingMore || !postsHasMore) return;
+    setPostsLoadingMore(true);
+    try {
+      const { data } = await client.get(`/groups/${id}/posts`, { params: { offset: groupPosts.length } });
+      const incoming = data.posts || [];
+      setGroupPosts(prev => {
+        const knownIds = new Set(prev.map(p => p.id));
+        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+      });
+      setPostsHasMore(!!data.hasMore);
+    } catch {}
+    finally { setPostsLoadingMore(false); }
+  }
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
@@ -350,6 +371,7 @@ export default function GroupDetail() {
           emptyAction={joined ? <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button> : null}
           currentUserId={profile?.id}
           onPostDeleted={(id) => setGroupPosts((prev) => prev.filter((p) => p.id !== id))}
+          onNearEnd={loadMoreGroupPosts}
         />
       </div>
 

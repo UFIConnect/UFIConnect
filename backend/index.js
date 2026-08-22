@@ -9439,7 +9439,12 @@ async function getCommentsForPost(postId, limit = 50, offset = 0) {
   };
 }
 
-async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, limit = 50 } = {}) {
+// offset added so every surface backed by this (community feed, a group's
+// posts, a profile's posts) can page past its first batch instead of
+// dead-ending there — that dead-end was most visible in each page's own
+// ImageLightbox "max view" (see PostList's onNearEnd), which had nothing to
+// call to fetch more since none of these endpoints supported it at all.
+async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, limit = 50, offset = 0 } = {}) {
   let result = posts.filter((p) =>
     (p.source || 'uficonnect') === 'uficonnect'
     && (!authorId || p.authorId === authorId)
@@ -9458,7 +9463,10 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
         params.push(groupId);
         clauses.push(`group_id=$${params.length}`);
       }
-      params.push(limit);
+      // +1 (see the slice below) so the caller can tell "exactly limit posts
+      // exist" apart from "there's at least one more page" without a
+      // separate COUNT query.
+      params.push(offset + limit + 1);
       const { rows } = await db.query(
         `SELECT * FROM community_posts
          WHERE ${clauses.join(' AND ')}
@@ -9473,15 +9481,18 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
   }
 
   const seen = new Set();
-  return result
+  const deduped = result
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
     .filter((p) => {
       if (seen.has(p.id)) return false;
       seen.add(p.id);
       return true;
-    })
-    .slice(0, limit)
-    .map((p) => serializeCommunityPost(p, viewerId));
+    });
+  const page = deduped.slice(offset, offset + limit);
+  return {
+    posts: page.map((p) => serializeCommunityPost(p, viewerId)),
+    hasMore: deduped.length > offset + limit,
+  };
 }
 
 function fullProfile(user) {
@@ -11798,8 +11809,9 @@ app.get('/groups/:id/posts', authenticate, async (req, res) => {
     if (!group) return res.status(404).json({ message: 'Group not found.' });
     if (!canSeeGroup(group, req.user.id)) return res.status(404).json({ message: 'Group not found.' });
     const limit = boundedLimit(req.query.limit, 50, 100);
-    const groupPosts = await getCommunityPosts({ viewerId: req.user.id, groupId: group.id, limit });
-    res.json({ posts: groupPosts });
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const { posts: groupPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, groupId: group.id, limit, offset });
+    res.json({ posts: groupPosts, hasMore });
   } catch (e) { console.error('GET /groups/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -14878,8 +14890,9 @@ app.post('/hq/trigger/:agentId', (req, res) => {
 app.get('/posts', authenticate, async (req, res) => {
   try {
     const limit = boundedLimit(req.query.limit, 50, 100);
-    const communityPosts = await getCommunityPosts({ viewerId: req.user.id, limit });
-    res.json({ posts: communityPosts });
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const { posts: communityPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, limit, offset });
+    res.json({ posts: communityPosts, hasMore });
   } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -15478,8 +15491,9 @@ app.get('/users/:id/posts', authenticate, async (req, res) => {
       return res.status(403).json({ hidden: true, message: 'This profile is private.' });
     }
     const limit = boundedLimit(req.query.limit, 50, 100);
-    const userPosts = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit });
-    res.json({ posts: userPosts });
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const { posts: userPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, authorId: user.id, limit, offset });
+    res.json({ posts: userPosts, hasMore });
   } catch (e) { console.error('GET /users/:id/posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 

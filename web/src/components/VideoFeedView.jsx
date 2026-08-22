@@ -154,6 +154,17 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  // A raw <iframe src="youtube.com/embed/...">  would at least always paint
+  // something even if scripting failed; the IFrame Player API's own iframe
+  // only appears once YT.Player() actually constructs it, which depends on
+  // youtube.com/iframe_api loading and executing — an ad blocker or privacy
+  // DNS filter blocking that one script (common; YouTube embeds are a
+  // frequent blocklist target even when a plain video tag or a Vimeo/TikTok
+  // iframe on the same page would load fine) previously left this slide
+  // silently blank forever, with no visible video and no way to tell why.
+  // ytFailed flips true if the player hasn't gone ready within a few
+  // seconds of becoming active, and swaps in a real clickable fallback.
+  const [ytFailed, setYtFailed] = useState(false);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
 
@@ -242,6 +253,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     let cancelled = false;
     let pollId;
     const startUnmuted = !muted;
+    setYtFailed(false);
+    // If onReady hasn't fired by the time this fires, either the iframe_api
+    // script itself never loaded (blocked, offline, slow network) or the
+    // player construction otherwise silently stalled — either way, sitting
+    // on a blank mount indefinitely is worse than surfacing a real fallback.
+    const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
     loadYouTubeIframeApi().then((YT) => {
       if (cancelled || !ytMountRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
@@ -253,6 +270,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         events: {
           onReady: (e) => {
             if (cancelled) return;
+            clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
             setDuration(e.target.getDuration() || 0);
             if (startUnmuted) e.target.unMute();
@@ -263,6 +281,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             const d = e.target.getDuration();
             if (d) setDuration(d);
           },
+          // Covers embed-disabled/removed/private videos — these fire
+          // onError instead of onReady, so without this the timeout above
+          // was the only thing that ever caught them, several seconds late.
+          onError: () => { if (!cancelled) setYtFailed(true); },
         },
       });
       pollId = setInterval(() => {
@@ -270,9 +292,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
         }
       }, 250);
-    });
+    }).catch(() => { if (!cancelled) setYtFailed(true); });
     return () => {
       cancelled = true;
+      clearTimeout(readyTimeout);
       clearInterval(pollId);
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
@@ -407,7 +430,30 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           // internal letterboxing, and the backdrop fills the now-real
           // gap around it (centered by the root's flex layout).
           <div style={{ width: '100%', aspectRatio: '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
-            <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
+            <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }} />
+            {ytFailed && (
+              // The player never went ready (blocked script, embed-disabled
+              // video, etc.) — a real, clickable way to actually watch it
+              // beats a silent blank box with no explanation and no way out.
+              <a
+                href={`https://www.youtube.com/watch?v=${src.id}`}
+                target="_blank" rel="noopener noreferrer"
+                style={{
+                  position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none',
+                  color: '#fff', background: src.poster ? `url(${src.poster}) center/cover` : '#111',
+                }}
+              >
+                <div style={{
+                  width: 56, height: 56, borderRadius: '50%', background: 'rgba(0,0,0,.55)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+                  border: '1px solid rgba(255,255,255,.3)',
+                }}>▶</div>
+                <span style={{ fontSize: 12.5, fontWeight: 600, textShadow: '0 1px 3px rgba(0,0,0,.8)' }}>
+                  Watch on YouTube ↗
+                </span>
+              </a>
+            )}
           </div>
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
