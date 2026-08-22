@@ -1474,6 +1474,13 @@ export default function Feed() {
     }
   }, []);
   const sentinelRef   = useRef(null);
+  // Synchronous guard for loadMoreRemote — see its own comment. The
+  // loadingMore *state* the UI spinner reads isn't visible synchronously
+  // (React batches/defers the re-render), so a fast scroll firing the
+  // IntersectionObserver's callback several times before that update lands
+  // let every one of those calls read the same stale loadingMore:false and
+  // all start their own fetch. A ref updates immediately, in the same tick.
+  const loadingMoreRef = useRef(false);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
   const viewModeRef   = useRef(_saved?.viewMode || 'feed');
@@ -1757,7 +1764,16 @@ export default function Feed() {
   }, [loadFeed]); // eslint-disable-line
 
   const loadMoreRemote = useCallback(async () => {
-    if (loadingMore || !remoteHasMore) return;
+    // Confirmed live as a real crash: fast scrolling could fire this many
+    // times in the window before loadingMore's *state* update actually
+    // took effect (see loadingMoreRef's own comment), stacking up dozens of
+    // concurrent fetches — each appending up to FEED_PAGE_SIZE posts and
+    // triggering its own re-render/reflow, which moved the sentinel and
+    // re-triggered the observer again before the flood had a chance to
+    // subside. loadingMoreRef is checked and set synchronously, in the same
+    // tick, so only the very first call in a burst ever gets past this line.
+    if (loadingMoreRef.current || !remoteHasMore) return;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     try {
       const tabs = activeTabsRef.current;
@@ -1812,8 +1828,8 @@ export default function Feed() {
       else setRemotePage(p => p + 1);
       setRemoteHasMore(data.hasMore !== false);
     } catch {}
-    finally { setLoadingMore(false); }
-  }, [loadingMore, remoteHasMore, remotePage]);
+    finally { loadingMoreRef.current = false; setLoadingMore(false); }
+  }, [remoteHasMore, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
