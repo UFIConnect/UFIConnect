@@ -1498,7 +1498,6 @@ const TOPIC_SUBREDDITS = {
   'Yoga & Meditation':                  ['yoga', 'Meditation', 'Mindfulness'],
   'Running & Cycling':                  ['running', 'cycling', 'bicycling'],
   'Nutrition & Diet':                   ['nutrition', 'EatCheapAndHealthy', 'intermittentfasting'],
-  'Sports & Athletics':                 ['sports', 'Fitness', 'running'],
   'Live Events & Concerts':             ['concerts', 'livemusic', 'festivals'],
   'Songwriting':                        ['Songwriting', 'WeAreTheMusicMakers', 'musictheory'],
   'Football & Soccer':                  ['soccer', 'football', 'MLS'],
@@ -1517,7 +1516,6 @@ const TOPIC_SUBREDDITS = {
   'Solo Travel':                        ['solotravel', 'travel', 'backpacking'],
   'Cultural Tourism':                   ['travel', 'backpacking', 'digitalnomad'],
   'Budget Travel':                      ['shoestring', 'travel', 'backpacking'],
-  'Fashion & Style':                    ['malefashionadvice', 'femalefashionadvice', 'streetwear'],
   'Streetwear':                         ['streetwear', 'Sneakers', 'malefashionadvice'],
   'Sustainable Fashion':                ['ZeroWaste', 'femalefashionadvice', 'streetwear'],
   'Beauty & Skincare':                  ['SkincareAddiction', 'MakeupAddiction', 'beauty'],
@@ -1556,7 +1554,6 @@ const TOPIC_SUBREDDITS = {
   'Construction & Skilled Trades':      ['Construction', 'electricians', 'HVAC'],
   'Manufacturing & Industry':           ['manufacturing', 'engineering', 'AskEngineers'],
   'Energy & Utilities':                 ['energy', 'RenewableEnergy', 'solar'],
-  'Logistics & Supply Chain':           ['logistics', 'supplychain', 'procurement'],
   'Veterinary Science':                 ['AskVet', 'veterinaryprofession', 'vetmedicine'],
   'Environmental Science':              ['environmental_science', 'climate', 'ecology'],
   'Ocean & Marine Sciences':            ['oceanography', 'marinebiology', 'ocean'],
@@ -1567,7 +1564,6 @@ const TOPIC_SUBREDDITS = {
   'Music Industry':                     ['WeAreTheMusicMakers', 'Music', 'musicindustry'],
   'Sports Analytics':                   ['sportsanalytics', 'nba', 'sports'],
   'Culinary Arts':                      ['Cooking', 'KitchenConfidential', 'foodscience'],
-  'Hospitality & Tourism':              ['hospitality', 'travel', 'TalesFromTheFrontDesk'],
   'Chemical Engineering':               ['ChemicalEngineering', 'AskEngineers', 'chemistry'],
   'Biomedical Engineering':             ['BME', 'AskEngineers', 'biotech'],
   'International Relations':            ['IRstudies', 'geopolitics', 'PoliticalScience'],
@@ -5139,7 +5135,10 @@ const FEED_TOPICS = [
   // Entertainment & Casual — keeps the feed feeling like an all-in-one browse,
   // not a work-only stream.
   'Gaming', 'Sports', 'Fashion', 'Film & TV', 'Movies & Shows', 'Pets & Animals',
-  'Home & Garden', 'Food & Drink', 'Travel', 'Books',
+  // 'Travel' removed — redundant with 'Travel & Adventure' below (a user
+  // who picks either still matches the other via filterByUserTopics'
+  // substring check; only one needs a real fetch behind it).
+  'Home & Garden', 'Food & Drink', 'Books',
   // ── Everything below was already selectable at signup (see ALL_INTERESTS/
   // EXTRA_INTERESTS in web/src/pages/Onboarding.jsx and roles.js) but had no
   // real fetch behind it — with filterByUserTopics now hard-excluding
@@ -5164,7 +5163,7 @@ const FEED_TOPICS = [
   'RetailTech', 'FoodTech', 'SportsTech',
   // ── People & work ──
   'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
-  'Future of Work', 'Recruiting & Hiring', 'Diversity & Inclusion', 'Mental Health & Wellness',
+  'Future of Work', 'Recruiting & Hiring', 'Diversity & Inclusion',
   'People Ops',
   // ── Content & media ──
   'Podcasting', 'YouTube & Video', 'Social Media',
@@ -5172,7 +5171,7 @@ const FEED_TOPICS = [
   'Dropshipping', 'Amazon FBA', 'Subscription Businesses', 'Public Speaking',
   'Social Impact',
   // ── Health & fitness ──
-  'Yoga & Meditation', 'Running & Cycling', 'Nutrition & Diet', 'Sports & Athletics',
+  'Yoga & Meditation', 'Running & Cycling', 'Nutrition & Diet',
   // ── Music & audio ──
   'Live Events & Concerts', 'Songwriting', 'DJing & Remixing',
   // ── Sports ──
@@ -5185,7 +5184,7 @@ const FEED_TOPICS = [
   // ── Travel ──
   'Solo Travel', 'Cultural Tourism', 'Budget Travel',
   // ── Fashion & style ──
-  'Fashion & Style', 'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
+  'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
   // ── Books & literature ──
   'Reading & Book Clubs', 'Fiction & Storytelling', 'Non-Fiction & Learning', 'Poetry & Creative Writing',
   // ── Gaming ──
@@ -5202,12 +5201,11 @@ const FEED_TOPICS = [
   'Aviation & Aerospace', 'Military & Defense', 'Policy & Government', 'International Relations',
   'Accounting & Tax', 'Insurance & Risk', 'Agriculture & Farming', 'Pharmaceutical & Drug Development',
   'Public Health', 'Psychology & Behavioral Science', 'Construction & Skilled Trades', 'Manufacturing & Industry',
-  'Energy & Utilities', 'Logistics & Supply Chain', 'Veterinary Science', 'Environmental Science',
+  'Energy & Utilities', 'Veterinary Science', 'Environmental Science',
   'Ocean & Marine Sciences', 'Materials Science', 'Nonprofit Management', 'Journalism & Media',
   'Screenwriting & Film', 'Music Industry', 'Sports Analytics', 'Culinary Arts',
-  'Hospitality & Tourism',
   // ── Already-mapped (reuse existing TOPIC_SUBREDDITS entry) ──
-  'Robotics', 'Quantum Computing', 'Machine Learning', 'MLOps',
+  'Robotics', 'Quantum Computing', 'MLOps',
   'Privacy', 'AI Ethics', 'Digital Nomad', 'Networking',
 ];
 
@@ -5403,6 +5401,16 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       const key = keyMapper(topic);
       if (!key) continue;
       if (health) health.fetchCount++;
+      // Unlike the continuous cycler above (which only busts once its own
+      // TTL has actually elapsed), a Transfer sweep's whole point is to
+      // force a fresh pull right now — without this, fetchFn's own
+      // getCached() check at the top of every fetch function would just
+      // hand back whatever's already cached (up to 30min stale, or fresher
+      // still if the continuous worker or the last Transfer run happened
+      // to touch this exact topic recently), so "Transfer" could silently
+      // do nothing but re-confirm old data — confirmed live as Transfer
+      // running successfully with zero new posts most cycles.
+      if (cachePrefix) bustCache(`${cachePrefix}${key}`);
       const posts = await fetchFn(key).catch(() => []);
       if (health) {
         health.lastAttempt = Date.now();
