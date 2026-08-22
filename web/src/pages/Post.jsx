@@ -5,6 +5,7 @@ import PostList from '../components/PostList';
 import client from '../api/client';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useToast } from '../contexts/ToastContext';
+import EmojiPicker from '../components/EmojiPicker';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -283,6 +284,7 @@ export default function Post() {
                 >
                   📷 Photo/Video
                 </button>
+                <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
                 <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
                   {content.length} / 2000
                 </span>

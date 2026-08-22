@@ -5,6 +5,8 @@ import PostList from '../components/PostList';
 import { useAuth } from '../contexts/AuthContext';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
+import EmojiPicker from '../components/EmojiPicker';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -27,6 +29,18 @@ export default function GroupDetail() {
   const [posting,       setPosting]       = useState(false);
   const [postError,     setPostError]     = useState('');
   const textareaRef = useRef(null);
+
+  // Photo/video attachment — same direct-to-Cloudinary-on-select pattern as
+  // Post.jsx's own composer (see api/upload.js): uploads the moment a file
+  // is picked, not on submit, so Publish isn't sitting there uploading a
+  // video while the user waits.
+  const [mediaFile,     setMediaFile]     = useState(null);
+  const [mediaPreview,  setMediaPreview]  = useState(null);
+  const [uploadedMedia, setUploadedMedia] = useState(null); // { url, type }
+  const [uploading,     setUploading]     = useState(false);
+  const [uploadProgress,setUploadProgress]= useState(0);
+  const [mediaError,    setMediaError]    = useState('');
+  const fileInputRef = useRef(null);
 
   // Only the group's own creator gets this at all — external/seeded groups
   // (subreddit-backed, etc.) have no createdBy, so this naturally never
@@ -99,15 +113,63 @@ export default function GroupDetail() {
     setTimeout(() => textareaRef.current?.focus(), 50);
   }
 
+  // Local preview URLs are only ever released explicitly (resetMedia) or on
+  // unmount — revoking here too covers navigating away mid-compose.
+  useEffect(() => () => { if (mediaPreview) URL.revokeObjectURL(mediaPreview); }, [mediaPreview]);
+
+  function resetMedia() {
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview);
+    setMediaFile(null);
+    setMediaPreview(null);
+    setUploadedMedia(null);
+    setUploading(false);
+    setUploadProgress(0);
+    setMediaError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      setMediaError('Only photos and videos are supported.');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setMediaError(`File is too large (max ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB).`);
+      return;
+    }
+    setMediaError('');
+    setUploadedMedia(null);
+    setMediaFile(file);
+    setMediaPreview(URL.createObjectURL(file));
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const result = await uploadMedia(file, setUploadProgress);
+      setUploadedMedia(result);
+    } catch (err) {
+      setMediaError(err?.response?.data?.message || err?.message || 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function handlePost(e) {
     e.preventDefault();
-    if (!content.trim()) { setPostError('Write something before posting.'); return; }
+    if (!content.trim() && !uploadedMedia) { setPostError('Write something or attach a photo/video before posting.'); return; }
+    if (uploading) { setPostError('Your photo/video is still uploading — one moment.'); return; }
     setPostError('');
     setPosting(true);
     try {
-      const { data } = await client.post(`/groups/${id}/posts`, { content: content.trim() });
+      const { data } = await client.post(`/groups/${id}/posts`, {
+        content: content.trim(),
+        mediaUrl: uploadedMedia?.url || undefined,
+        mediaType: uploadedMedia?.type || undefined,
+      });
       setGroupPosts((prev) => [data.post, ...prev]);
       setContent('');
+      resetMedia();
       setComposing(false);
     } catch (err) {
       setPostError(err.response?.data?.message || 'Failed to publish. Please try again.');
@@ -213,16 +275,62 @@ export default function GroupDetail() {
                 onChange={(e) => { setContent(e.target.value); setPostError(''); }}
                 style={{ resize: 'vertical', fontSize: '.93rem', lineHeight: 1.6, marginBottom: 10 }}
               />
+
+              {/* Media preview */}
+              {mediaPreview && (
+                <div style={{ position: 'relative', marginBottom: 10, borderRadius: 'var(--radius)', overflow: 'hidden', background: '#000', maxHeight: 320 }}>
+                  {mediaFile?.type.startsWith('video/') ? (
+                    <video src={mediaPreview} controls style={{ width: '100%', maxHeight: 320, display: 'block' }} />
+                  ) : (
+                    <img src={mediaPreview} alt="" style={{ width: '100%', maxHeight: 320, objectFit: 'contain', display: 'block' }} />
+                  )}
+                  <button
+                    type="button"
+                    onClick={resetMedia}
+                    aria-label="Remove media"
+                    style={{
+                      position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: '50%',
+                      background: 'rgba(0,0,0,.6)', border: 'none', color: '#fff', fontSize: '1rem', cursor: 'pointer',
+                    }}
+                  >×</button>
+                  {uploading && (
+                    <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 4, background: 'rgba(255,255,255,.3)' }}>
+                      <div style={{ height: '100%', width: `${Math.round(uploadProgress * 100)}%`, background: 'var(--primary)', transition: 'width .15s' }} />
+                    </div>
+                  )}
+                </div>
+              )}
+              {mediaError && <div className="auth-error" style={{ marginBottom: 10 }}>{mediaError}</div>}
+
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
-                  {content.length} / 2000
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    onChange={handleFileSelect}
+                    style={{ display: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!!mediaFile}
+                    title="Add a photo or video"
+                  >
+                    📷 Photo/Video
+                  </button>
+                  <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
+                  <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
+                    {content.length} / 2000
+                  </span>
+                </div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setPostError(''); }}>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setComposing(false); setContent(''); setPostError(''); resetMedia(); }}>
                     Cancel
                   </button>
-                  <button type="submit" className="btn btn-primary btn-sm" disabled={posting || !content.trim()} style={{ minWidth: 90 }}>
-                    {posting ? <span className="spinner" /> : '✏️ Publish'}
+                  <button type="submit" className="btn btn-primary btn-sm" disabled={posting || uploading || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
+                    {posting ? <span className="spinner" /> : uploading ? 'Uploading…' : '✏️ Publish'}
                   </button>
                 </div>
               </div>
