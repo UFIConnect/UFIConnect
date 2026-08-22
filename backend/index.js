@@ -11605,29 +11605,13 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
 // live external fetch. See shouldFetchLive below.
 async function handleFeedRequest(req, res) {
   try {
-  // Manual refresh is stale-while-revalidate: serve the best current feed now, then
-  // ask the workers to refresh in the background so a slow source cannot blank a tab.
-  if (req.query.bust === '1') {
-    const bustSource = req.query.source;
-    if (bustSource) {
-      const agentKey = feedWorkerKey(bustSource);
-      setImmediate(() => {
-        const prefix = CACHE_KEY_PREFIX[agentKey];
-        if (prefix) bustCachePrefix(prefix);
-        enqueueSourceRefresh([agentKey], `feed bust ${bustSource}`);
-      });
-    } else {
-      // Refresh all source workers through the queue so every tab gets fresh content without a burst.
-      setImmediate(() => {
-        postCache.clear();
-        enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'feed bust all');
-      });
-      // An explicit "refresh everything" request shouldn't have to wait out
-      // the rest of the 10-minute snapshot window — let the next request
-      // recompute the sort from whatever's already in the DB/memory caches.
-      mainFeedSnapshots.clear();
-    }
-  }
+  // Manual refresh pulls only from what Sort & Rank has already produced
+  // (globalFeedCache/agentSourceCache) — it never reaches out to the source
+  // workers itself. The continuous background workers already keep those
+  // pools fresh on their own schedule; a pull-to-refresh just clears the
+  // shared snapshot so the next computation re-sorts/re-rotates from the
+  // current sort-and-rank pool instead of serving a stale snapshot.
+  if (req.query.bust === '1') mainFeedSnapshots.clear();
 
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
@@ -12679,19 +12663,12 @@ async function handleVideoFeedRequest(req, res) {
     // established elsewhere.
     const videoTimeRange = isUnfilteredVideo ? '24h' : null;
     // Manual refresh (see VideoFeedView's handleRefresh, which sets both
-    // reset:true and bust:true) — same stale-while-revalidate shape as the
-    // main Feed's own bust handling: serve the current cursor page now, and
-    // ask the workers to go fetch fresh content in the background so a
-    // refresh tap actually pulls new material instead of just re-reading
-    // whatever was already cached (which is all this did before — genuinely
-    // a no-op against the DB itself, just re-querying the same table).
-    // Scoped to cursorSources, not the full 36-source list — a Videos
-    // refresh has no reason to also burst-refresh sources that don't carry
-    // video content.
-    if (req.query.bust === '1') {
-      const agentKeys = cursorSources.map(feedWorkerKey);
-      setImmediate(() => enqueueSourceRefresh(agentKeys, 'video feed bust'));
-    }
+    // reset:true and bust:true) pulls only from what Sort & Rank has already
+    // produced — getCursorFeedPage below always reads the live current pool
+    // straight from agentSourceCache/globalFeedCache, never a snapshot, so
+    // there's no cache to bust and no reason to reach out to the source
+    // workers; reset:true (client-side cursor clear) is what makes a refresh
+    // tap actually show new material.
     const cursorMap = decodeFeedCursor(req.query.cursor);
     // 'videos' context — kept independent of the main Feed's own "already
     // shown" tracking (default 'feed' context) so scrolling past a video in
@@ -14298,27 +14275,30 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
 // refetch every source independently, forever, on each source's own
 // SOURCE_CONFIG ttl/shard schedule, and most of the highest-volume sources
 // (reddit/hn/mastodon/bluesky) already cycle faster than every 8 minutes —
-// well inside this 15-minute window on their own. A second, blind full
-// external re-fetch of all 203 topics × 36 sources every 15 minutes wasn't
-// buying meaningfully fresher content, just doubling real API load for no
-// benefit (and was the entire reason this interval and TRANSFER_WORKER_COUNT
-// needed tuning in the first place — see their own history above/on
-// TRANSFER_WORKER_COUNT).
+// well inside this 15-minute window on their own. A blind full external
+// re-fetch of all 203 topics × 36 sources every 15 minutes wasn't buying
+// meaningfully fresher content, just doubling real API load for no benefit.
 //
-// Runs runSortAgentCheck instead: cheap, in-memory, re-sorts/re-ranks
-// whatever the continuous workers have already fetched into
-// globalFeedCache — no external calls, nothing to rate-limit. It already
-// runs on its own independent 3-minute SORT_AGENT_INTERVAL_MS timer; this
-// is a second, harmless nudge on the slot the office Pipeline still shows
-// as "Transfer," so that stage keeps doing *something* real on its own
-// schedule instead of just going quiet. The manual "Transfer content to
-// website" button (see the office Transfer Helper panel) still runs the
-// full parallel source-refetch sweep — genuinely useful as an explicit,
-// on-demand action (e.g. right after adding new topics/sources), just not
-// something that should keep happening blindly in the background.
+// What this does now is the two cheap, no-external-call halves of the
+// pipeline, back to back: re-sort/re-rank globalFeedCache (same
+// runSortAgentCheck this already shares with its own independent 3-minute
+// SORT_AGENT_INTERVAL_MS timer — a harmless second nudge, not wasted work),
+// then bulk-upsert that freshly-sorted pool into feed_posts_cache
+// (savePostsToDBFast, one batched query) so the DB is explicitly resynced
+// with whatever's actually in memory right now — a real "transfer," not
+// just trusting that every individual fetch's own incremental
+// addAndBroadcast→savePostsToDB call already landed. A real user's manual
+// refresh (bust=1, see handleFeedRequest/handleVideoFeedRequest) never
+// reaches out to source workers either — it only re-sorts/re-rotates from
+// this same already-fetched pool, same as this timer's own re-sort half.
+// The continuous background workers are the only thing that ever talks to
+// the external sources on their own regular schedule; the manual "Transfer
+// content to website" office button is still there for an explicit,
+// on-demand full sweep (e.g. right after adding new sources).
 const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
 setInterval(() => {
   runSortAgentCheck();
+  savePostsToDBFast(globalFeedCache.posts).catch(e => console.warn('[auto-transfer] savePostsToDBFast:', e.message));
 }, AUTO_TRANSFER_INTERVAL_MS);
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
