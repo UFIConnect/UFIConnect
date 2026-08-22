@@ -723,8 +723,17 @@ function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
       aspectRatio: '16/9', margin: '0 auto',
     }}>
       {playing ? (
+        // No app-level mute button for Vimeo (unlike YouTube's real IFrame
+        // Player API, a plain iframe here has no postMessage control layer
+        // — Vimeo's own native player chrome, still visible since only
+        // title/byline/portrait are suppressed above, is what handles
+        // further volume changes once mounted). Best-effort respects the
+        // stored preference at mount time instead: if this browser has
+        // already earned "unmuted" elsewhere (a real click, see
+        // userWantsSound), start Vimeo unmuted too rather than forcing
+        // yet another mute cycle the app can't itself unwind.
         <iframe
-          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
+          src={`https://player.vimeo.com/video/${embedId}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0`}
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           allow="autoplay; fullscreen; picture-in-picture"
           title={title}

@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, InlineAutoplayVideo } from '../components/videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, userWantsSound } from '../components/videoMedia';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -192,17 +192,34 @@ export default function PostDetail() {
           )}
 
           {youtubeId && (
+            // No in-app mute button here (this is a raw iframe, not the
+            // real IFrame Player API YouTubeEmbedBlock uses elsewhere) —
+            // native controls stay enabled (no controls=0 in the URL) so
+            // YouTube's own volume control handles anything past the
+            // initial state, which at least respects the stored
+            // preference instead of always forcing muted.
             <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 12 }}>
-              <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1`}
+              <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}`}
                 title={post.title} frameBorder="0"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen style={{ display: 'block' }} />
             </div>
           )}
           {!youtubeId && (playlistUrl || directVideoUrl) && (
+            // This is the single dedicated post page, not a scrolling
+            // preview — real native controls (including volume) make more
+            // sense here than InlineAutoplayVideo's silent, always-muted
+            // loop (which exists for feed-card previews that open a
+            // lightbox for real playback elsewhere; this page has no such
+            // lightbox to fall back on).
             <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12, background: '#000' }}>
-              <InlineAutoplayVideo kind={playlistUrl ? 'hls' : 'file'} src={playlistUrl || directVideoUrl} poster={post.mediaUrl}
-                style={{ width: '100%', display: 'block', maxHeight: 480 }} />
+              {playlistUrl ? (
+                <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={!userWantsSound()}
+                  style={{ width: '100%', display: 'block', maxHeight: 480 }} />
+              ) : (
+                <video src={directVideoUrl} poster={post.mediaUrl} controls autoPlay playsInline
+                  muted={!userWantsSound()} style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
+              )}
             </div>
           )}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (

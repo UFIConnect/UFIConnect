@@ -428,10 +428,15 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       ) : src.kind === 'vimeo' ? (
         // Same plain mount/unmount iframe treatment as TikTok above — a raw
         // Vimeo iframe embed exposes no programmatic control either, so
-        // there's nothing for the scrub bar below to attach to.
+        // there's nothing for the scrub bar below to attach to, and the
+        // shared mute button (below) can't affect it post-mount — see its
+        // own kind check. Best-effort respects the stored preference at
+        // mount time instead: if this browser already earned "unmuted"
+        // elsewhere, start here unmuted too rather than forcing yet
+        // another mute cycle the app can't itself unwind.
         active ? (
           <iframe
-            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=1&loop=1&title=0&byline=0&portrait=0`}
+            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0`}
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
             allow="autoplay; fullscreen; picture-in-picture"
             title={post.title}
@@ -1019,6 +1024,16 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [onExit]);
 
+  // TikTok/Vimeo are both plain iframes with no postMessage control layer
+  // (see VideoSlide's own tiktok/vimeo render branches) — this shared
+  // button can't actually change their audio once mounted, only the
+  // `muted` state file/hls/youtube slides read. Toggling it while looking
+  // at one of those would silently do nothing but still look like it
+  // worked, which is worse than being upfront that it's not controllable
+  // here — dimmed and inert instead, rather than a false control.
+  const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
+  const muteControllable = activeSrc?.kind !== 'tiktok' && activeSrc?.kind !== 'vimeo';
+
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
       <button onClick={onExit} aria-label="Back to Feed" style={{ position: 'absolute', top: 16, left: 16, ...OVERLAY_BTN_STYLE }}>
@@ -1038,9 +1053,13 @@ export default function VideoFeedView({ onExit }) {
         <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
       </button>
       <button
-        onClick={() => setMuted(m => { rememberSoundPreference(m); return !m; })}
-        aria-label={muted ? 'Unmute' : 'Mute'}
-        style={{ position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem' }}
+        onClick={() => { if (!muteControllable) return; setMuted(m => { rememberSoundPreference(m); return !m; }); }}
+        disabled={!muteControllable}
+        aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
+        style={{
+          position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem',
+          opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
+        }}
       >{muted ? '🔇' : '🔊'}</button>
 
       {/* Feed/Following toggle — same split and reasoning as pages/Feed.jsx's
