@@ -5100,10 +5100,21 @@ function addAndBroadcast(incoming) {
   // to dominate an arbitrarily large pool the same way it dominated the old
   // small one, just slower. Confirmed live (uneven platform composition in
   // the office Sort & Rank view) — back to a real 25% cap.
+  //
+  // strict:true — a non-strict cap here still let hackernews reach 83.8% of
+  // the live cache: once every other source's supply ran dry, diversifyBySource's
+  // own "can't honor the cap without stalling forever" fallback drained all
+  // of hackernews's held-back excess back in anyway, since GLOBAL_FEED_CACHE_LIMIT
+  // (100k) is far bigger than real total supply, so that fallback fired on
+  // nearly every batch. strict genuinely excludes the excess instead of
+  // deferring it — correct for the cache itself (nobody's looking at a
+  // shorter pool directly, unlike a page response, which is why every other
+  // diversifyBySource caller stays non-strict).
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
     maxSharePct: 0.25,
+    strict: true,
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
@@ -6365,7 +6376,7 @@ function normalizeFeedTimeRange(value) {
 // consecutive same-source runs grew well past maxConsecutive (confirmed via
 // a synthetic 6-source benchmark: worst-case run of 16 vs. this version's 3,
 // out-of-order pairs cut by two-thirds on the same input).
-function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxSharePct = null) {
+function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxSharePct = null, strict = false) {
   const queue = posts.filter(Boolean);
   // Posts skipped past because their source was already on cooldown —
   // resolved back in the instant a different source breaks the streak,
@@ -6410,10 +6421,18 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
       }
       picked = next;
       qi++;
-    } else if (held.length) {
-      // Main queue is exhausted and every held post still shares lastSource
-      // (only one source's content remains) — the cap can't be honored any
-      // further without stalling forever, so just drain them in order.
+    } else if (held.length && !strict) {
+      // Main queue is exhausted and everything left in held is over-cap
+      // (or shares lastSource) — non-strict callers (a page response that
+      // has to fill its limit for the user looking at it right now) drain
+      // them anyway rather than hand back a short page. strict callers
+      // (building the shared cache pool itself, not a response anyone's
+      // looking at) stop right here instead: those posts are genuinely
+      // excluded, not just reordered, which is the only way a source's cap
+      // actually holds over time instead of every excess post eventually
+      // draining back in once alternatives run out — see the strict
+      // call sites' own comments for why that mattered in practice (one
+      // source reaching 83.8% of the live cache despite the cap existing).
       picked = held.shift();
     }
     if (!picked) break;
@@ -6811,7 +6830,7 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
     // "true mix" shouldn't be a Balanced-sort-only guarantee.
     const shouldDiversify = options.diversify || sortMode === 'balanced';
     const output = shouldDiversify
-      ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2, options.maxSharePct || null)
+      ? diversifyBySource(unique, limit, options.maxConsecutivePerSource || 2, options.maxSharePct || null, options.strict || false)
       : unique.slice(0, limit);
 
     sortAgentState.totalRuns += 1;
@@ -7207,6 +7226,7 @@ async function refreshGlobalFeedCache() {
         limit: GLOBAL_FEED_CACHE_LIMIT,
         diversify: true,
         maxSharePct: 0.25,
+        strict: true, // see addAndBroadcast's own comment on strict
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
@@ -7368,6 +7388,9 @@ function runSortAgentCheck() {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
     maxSharePct: 0.25,
+    strict: true, // see addAndBroadcast's own comment on strict — this
+    // periodic re-sort is exactly the pass that was draining the excess
+    // back in every few minutes even when addAndBroadcast's own cap held.
   });
 
   let sourcePools = 0;
