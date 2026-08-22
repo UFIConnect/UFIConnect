@@ -5218,8 +5218,8 @@ const CIRCUIT_EMPTY_CYCLES = 5;  // empty full-cycles before pausing (increased 
 const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto-recover faster)
 
 // SOURCE_FETCHERS[agentId]() (the full-sweep path — triggered by the
-// automatic 10-minute transfer, any bust=1 request, and a manual office
-// refresh) used to pace every source at a flat 60ms/150ms regardless of
+// automatic transfer (see AUTO_TRANSFER_INTERVAL_MS), any bust=1 request,
+// and a manual office refresh) used to pace every source at a flat 60ms/150ms regardless of
 // which API it was hitting, completely bypassing the per-source delay
 // tiers SOURCE_CONFIG above carefully documents. For a source with a real
 // external quota that's a genuine problem, not just a missed optimization:
@@ -5232,12 +5232,15 @@ const CIRCUIT_PAUSE_MS     = 3 * 60 * 1000; // 3 minutes (shorter so agents auto
 // four keeps a full sweep fast for everything else while keeping these
 // four inside the budget their continuous worker already respects — sized
 // so (continuous worker's own hourly rate) + (this cap × sweeps/hour at
-// the current 10-minute AUTO_TRANSFER_INTERVAL_MS) stays under each
-// source's real ceiling with real headroom, not right up against it.
+// the current AUTO_TRANSFER_INTERVAL_MS) stays under each source's real
+// ceiling with real headroom, not right up against it. AUTO_TRANSFER_
+// INTERVAL_MS moved from 10 to 15 minutes (4 sweeps/hour, not 6) after the
+// topic-count expansion — same absolute topicCap now sweeps less often,
+// so this has *more* headroom than the numbers below describe, not less.
 const RATE_LIMITED_MANUAL_SWEEP = {
-  github:        { topicCap: 7,  delayMs: 4000 },  // 60/hr unauth; continuous worker alone already uses ~15/hr — 7×6 sweeps/hr keeps the combined total near 57/hr
+  github:        { topicCap: 7,  delayMs: 4000 },  // 60/hr unauth; continuous worker alone already uses ~15/hr — 7×4 sweeps/hr keeps the combined total near 43/hr
   arxiv:         { topicCap: 5,  delayMs: 20000 }, // OAI-PMH hard requirement — 20s is the floor, not a courtesy margin, for every request this makes
-  stackoverflow: { topicCap: 10, delayMs: 4000 },  // 300/day quota — a full 69-topic sweep alone would be a fifth of the whole day's budget
+  stackoverflow: { topicCap: 10, delayMs: 4000 },  // 300/day quota — a full topic sweep alone would still be a meaningful chunk of the day's budget
   usajobs:       { topicCap: 10, delayMs: 4000 },  // free self-serve key — stay conservative per the source's own existing comment
 };
 
@@ -7027,9 +7030,9 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
   }
   logAgentAction('refresh_queue', '🔁',
     `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
-  // (see AUTO_TRANSFER_INTERVAL_MS below for the automatic 10-minute trigger
-  // that used to require someone to click "Transfer content to website" in
-  // the office by hand)
+  // (see AUTO_TRANSFER_INTERVAL_MS below for the automatic trigger that
+  // used to require someone to click "Transfer content to website" in the
+  // office by hand)
 
   if (!sourceRefreshQueue.running) {
     setImmediate(() => drainSourceRefreshQueue().catch((err) => {
@@ -14279,12 +14282,23 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
 // "Transfer content to website" (queue every source worker to refetch, see
 // the office Transfer Helper panel above) used to require someone to click
 // the button by hand. Runs the exact same enqueueSourceRefresh call
-// automatically every 10 minutes instead — enqueueSourceRefresh already
-// no-ops during a stability-critical window, so this can't pile on top of
-// an already-struggling instance.
-const AUTO_TRANSFER_INTERVAL_MS = 10 * 60 * 1000;
+// automatically instead — enqueueSourceRefresh already no-ops during a
+// stability-critical window, so this can't pile on top of an already-
+// struggling instance.
+//
+// Was 10 minutes — safe when FEED_TOPICS had 69 entries (full sweep ≈5.8
+// min), but this session's topic expansion (69→203, see the onboarding-
+// coverage work) pushed a real full cycle to ≈10.1 min: at or past the old
+// interval itself. With the queue rarely finishing before the next trigger
+// re-added the same source ids, "every 10 minutes" stopped being an
+// accurate description of what was actually happening — bumped to 15 for
+// real headroom (≈67% of interval spent draining, not ≈101%) rather than
+// shrinking per-topic request pacing (RATE_LIMITED_MANUAL_SWEEP/the 60ms
+// normal-mode wait), which exists to avoid hammering external APIs, not to
+// hit a specific interval.
+const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
 setInterval(() => {
-  enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'automatic 10-minute transfer');
+  enqueueSourceRefresh(Object.keys(SOURCE_FETCHERS), 'automatic 15-minute transfer');
 }, AUTO_TRANSFER_INTERVAL_MS);
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
