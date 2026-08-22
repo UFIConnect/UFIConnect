@@ -1285,6 +1285,7 @@ function PipelineView({ status }) {
   const composition  = status?.feed?.composition || [];
   const filterAgent  = status?.filterAgent;
   const sortAgent    = status?.sortAgent;
+  const topicFilterAgent = status?.topicFilterAgent;
   const q            = status?.refreshQueue;
   const running      = !!q?.running;
   const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
@@ -1293,11 +1294,11 @@ function PipelineView({ status }) {
     <>
       <h1 style={H1}>Pipeline</h1>
       <p style={SUBTITLE}>
-        Every platform, live — from fetch through filtering, sorting, transfer, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
+        Every platform, live — from fetch through filtering, sorting, transfer, per-user topic narrowing, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
       </p>
 
       <Card style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 1140 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 1400 }}>
           {/* Stage 1 — Sources */}
           <PipelineNode style={{ flex: '1 1 360px', minWidth: 320 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1403,9 +1404,37 @@ function PipelineView({ status }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#38bdf8', '#4ade80']} />
+          <FlowConnector colors={['#38bdf8', '#f472b6']} />
 
-          {/* Stage 5 — Viewed (live site) */}
+          {/* Stage 5 — Topic Filter: the one genuinely per-user step in this
+              pipeline — every stage before this is shared/global, the same
+              for every visitor. Hard-excludes anything not matching
+              whichever topics this specific viewer picked at signup (see
+              filterByUserTopics server-side). "Last run" reflects whichever
+              request happened most recently, same live-motion convention
+              Sort & Rank's own node already uses for its own per-request
+              calls — not a global aggregate. */}
+          <PipelineNode glow="#f472b6" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#f472b6">Topic Filter</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(244,114,182,.28), rgba(244,114,182,.03))',
+              border: '1px solid rgba(244,114,182,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>🎯</div>
+            <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 8, fontWeight: 700 }}>
+              <span style={{ color: '#f87171' }}>−{(topicFilterAgent?.lastDropped ?? 0).toLocaleString()}</span>
+              <span style={{ color: '#4ade80' }}>+{(topicFilterAgent?.lastOutput ?? 0).toLocaleString()}</span>
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              {topicFilterAgent?.lastRun ? `Filtered ${fmtAgo(topicFilterAgent.lastRun)}` : 'Not run yet'}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#f472b6', '#4ade80']} />
+
+          {/* Stage 6 — Viewed (live site) */}
           <PipelineNode glow="#4ade80" style={{ flex: '1 1 200px', textAlign: 'center', alignItems: 'center' }}>
             <Label color="#4ade80">Viewed</Label>
             <div style={{
@@ -1439,6 +1468,7 @@ function PipelineView({ status }) {
         <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} />
+        <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <ViewedDetailCard pageviews={pageviews} />
       </div>
     </>
@@ -1643,6 +1673,75 @@ function TransferDetailCard({ q }) {
         <div>Reason: <span style={{ color: '#94a3b8' }}>{q?.lastReason || '—'}</span></div>
         {q?.lastError && <div style={{ color: '#f87171' }}>⚠ {q.lastError}</div>}
       </div>
+    </Card>
+  );
+}
+
+// The one genuinely per-user stage in this pipeline (see filterByUserTopics
+// server-side) — everything upstream of it is shared/global, the same pool
+// for every visitor. "Last run" is whichever request happened most
+// recently across every user, not a global aggregate — same convention
+// Sort & Rank's own detail card already uses for its own per-request calls.
+// byTopic is a running total for the life of the process: which topics
+// users have actually picked, and how much survives the filter for each.
+function TopicFilterDetailCard({ topicFilterAgent }) {
+  const input = topicFilterAgent?.lastInput ?? 0;
+  const output = topicFilterAgent?.lastOutput ?? 0;
+  const dropped = topicFilterAgent?.lastDropped ?? 0;
+  const durationS = (topicFilterAgent?.lastDurationMs ?? 0) / 1000;
+  const rate = durationS > 0 ? Math.round(input / durationS) : 0;
+  const avgPerRun = topicFilterAgent?.totalRuns ? Math.round((topicFilterAgent.totalInput || 0) / topicFilterAgent.totalRuns) : 0;
+  const byTopic = topicFilterAgent?.byTopic || [];
+
+  return (
+    <Card>
+      <Label color="#f472b6">Topic Filter — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Runs per request, after Sort &amp; Rank: hard-excludes anything that doesn't match one of this specific
+        viewer's onboarding-selected topics (job listings are exempt, same spacing reasoning as everywhere else in
+        the pipeline). Real numbers from the most recent request below, not averages.
+      </p>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(255,255,255,.04)', fontSize: 12, color: '#e2e8f0', fontWeight: 700 }}>
+          {input.toLocaleString()} in
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: dropped > 0 ? 'rgba(239,68,68,.1)' : 'rgba(255,255,255,.04)', fontSize: 12, color: dropped > 0 ? '#f87171' : '#64748b', fontWeight: 700 }}>
+          −{dropped.toLocaleString()} off-topic
+        </div>
+        <span style={{ color: '#475569' }}>→</span>
+        <div style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(74,222,128,.1)', fontSize: 12, color: '#4ade80', fontWeight: 700 }}>
+          {output.toLocaleString()} shown
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="items / sec" value={rate ? rate.toLocaleString() : '—'} color="#f472b6" />
+        <DetailStat label="last run" value={`${topicFilterAgent?.lastDurationMs ?? 0}ms`} />
+        <DetailStat label="total runs" value={(topicFilterAgent?.totalRuns ?? 0).toLocaleString()} />
+        <DetailStat label="avg items/run" value={avgPerRun.toLocaleString()} />
+      </div>
+
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
+        Last viewer's topics: <span style={{ color: '#94a3b8' }}>{topicFilterAgent?.lastTopics?.length ? topicFilterAgent.lastTopics.join(', ') : '—'}</span>
+        {topicFilterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {topicFilterAgent.lastError}</div>}
+      </div>
+
+      {byTopic.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>What users are actually filtering to</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 160, overflowY: 'auto' }}>
+            {byTopic.map((t, i) => (
+              <div key={t.topic} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: COMPOSITION_COLORS[i % COMPOSITION_COLORS.length], flexShrink: 0 }} />
+                <span style={{ color: '#94a3b8', flex: 1 }}>{t.topic}</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{t.requests.toLocaleString()} requests</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }

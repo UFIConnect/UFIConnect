@@ -5936,6 +5936,30 @@ const filterAgentState = {
   bySource: {},
 };
 
+// Tracks filterByUserTopics — a genuinely per-user, per-request stage (see
+// its own comment near personalizeOrder), unlike filterAgentState above
+// which is one shared, global pass every post goes through exactly once.
+// "Last run" here means the most recent request from *any* user, same
+// convention sortAgentState already uses for its own per-request calls —
+// not a global aggregate, just live motion for the office Pipeline.
+// byTopic accumulates for the life of the process, bounded by the real
+// number of distinct topic keywords (see FEED_TOPICS/interestKeyword), so
+// it's safe to keep as a plain growing object the same way filterAgentState's
+// bySource is.
+const topicFilterAgentState = {
+  totalRuns: 0,
+  totalInput: 0,
+  totalOutput: 0,
+  lastInput: 0,
+  lastOutput: 0,
+  lastDropped: 0,
+  lastTopics: [],
+  lastDurationMs: 0,
+  lastRun: null,
+  lastError: null,
+  byTopic: {},
+};
+
 const activityAgentState = {
   status: 'idle',
   totalSweeps: 0,
@@ -6399,6 +6423,51 @@ function jobMatchesUserLocation(locationStr, countryCode) {
   const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
   return !!keywords && keywords.some(k => loc.includes(k));
 }
+// Hard per-user topic filter — deliberately the opposite of
+// personalizeOrder just below (which soft-boosts instead of excluding).
+// Runs first, ahead of personalizeOrder, so only posts matching one of the
+// viewer's own onboarding-selected topics/skills (the same userTopics
+// personalizeOrder itself reads — see its definition in handleFeedRequest)
+// are even in the pool personalizeOrder then reorders by country/affinity.
+// Job listings are exempt for the same reason personalizeOrder carves them
+// out of its own matched/rest split: they're not "about" a content topic
+// the way an article is, and excluding them here would undo the even
+// job-listing spacing built elsewhere in the pipeline.
+//
+// Falls back to the unfiltered pool if the user has no declared topics yet
+// (fresh account mid-onboarding) or if the hard filter would leave nothing
+// at all — same "never truly dead-end" rule every other filter in this
+// pipeline follows (see filterUnseen's identical fallback).
+function filterByUserTopics(posts, userTopics) {
+  const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
+  if (!topics.length || !posts.length) return posts;
+
+  const started = Date.now();
+  const kept = [];
+  for (const p of posts) {
+    if (JOB_LISTING_SOURCES.includes(p.source)) { kept.push(p); continue; }
+    const postTopic = (p.topic || '').toLowerCase();
+    if (postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic))) kept.push(p);
+  }
+
+  topicFilterAgentState.totalRuns += 1;
+  topicFilterAgentState.totalInput += posts.length;
+  topicFilterAgentState.totalOutput += kept.length;
+  topicFilterAgentState.lastInput = posts.length;
+  topicFilterAgentState.lastOutput = kept.length;
+  topicFilterAgentState.lastDropped = posts.length - kept.length;
+  topicFilterAgentState.lastTopics = topics;
+  topicFilterAgentState.lastDurationMs = Date.now() - started;
+  topicFilterAgentState.lastRun = Date.now();
+  for (const t of topics) {
+    const bucket = topicFilterAgentState.byTopic[t] || (topicFilterAgentState.byTopic[t] = { requests: 0, keptTotal: 0 });
+    bucket.requests += 1;
+    bucket.keptTotal += kept.length;
+  }
+
+  return kept.length ? kept : posts;
+}
+
 // Soft per-user personalization: boost posts matching the viewer's
 // interests/skills to appear more often near the top, without hard-
 // filtering everything else out — a strict filter was tried earlier and
@@ -6408,6 +6477,13 @@ function jobMatchesUserLocation(locationStr, countryCode) {
 // snapshot) without breaking pagination — same inputs always produce the
 // same order, so slicing at different offsets across separate requests
 // never duplicates or skips anything.
+//
+// NOTE: filterByUserTopics above now runs ahead of this at every call site
+// in handleFeedRequest, hard-excluding non-matching posts before this ever
+// sees them — this function's own topic-based matched/rest split still
+// runs but is now close to a no-op for topics specifically (nearly
+// everything left already matches by construction); its country/affinity
+// reordering is still the meaningful part happening here.
 function personalizeOrder(posts, userTopics, userCountry = null, userAffinity = null) {
   const hasAffinity = !!(userAffinity && (userAffinity.source.size || userAffinity.topic.size));
   if ((!userTopics?.length && !userCountry && !hasAffinity) || !posts.length) return posts;
@@ -11707,7 +11783,7 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        let personalized = personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity);
+        let personalized = personalizeOrder(filterByUserTopics(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity);
         // See applyResumeMatchedJobs's own comment — swaps whichever posts
         // already landed in a job-source slot for a better resume match,
         // same slot, same mix shape.
@@ -11853,7 +11929,7 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      let personalized = filterUnseen(personalizeOrder(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+      let personalized = filterUnseen(personalizeOrder(filterByUserTopics(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity), seenIds);
       const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
@@ -12214,7 +12290,7 @@ async function handleFeedRequest(req, res) {
   // fresh per response instead — same treatment as the cached-snapshot read
   // paths above, so this request's user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  let personalizedExternal = filterUnseen(personalizeOrder(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userCountry, userAffinity), seenIds);
+  let personalizedExternal = filterUnseen(personalizeOrder(filterByUserTopics(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics), userTopics, userCountry, userAffinity), seenIds);
   if (isDefaultAggregateView) {
     // Reuses the wide-window job fetch already done above (extraJobPosts)
     // instead of a second, separate query for the same data.
@@ -13717,6 +13793,25 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastDurationMs: sortAgentState.lastDurationMs,
       lastRun: sortAgentState.lastRun,
       lastError: sortAgentState.lastError,
+    },
+    topicFilterAgent: {
+      status: topicFilterAgentState.lastError ? 'degraded' : 'healthy',
+      totalRuns: topicFilterAgentState.totalRuns,
+      totalInput: topicFilterAgentState.totalInput,
+      totalOutput: topicFilterAgentState.totalOutput,
+      lastInput: topicFilterAgentState.lastInput,
+      lastOutput: topicFilterAgentState.lastOutput,
+      lastDropped: topicFilterAgentState.lastDropped,
+      lastTopics: topicFilterAgentState.lastTopics,
+      lastDurationMs: topicFilterAgentState.lastDurationMs,
+      lastRun: topicFilterAgentState.lastRun,
+      lastError: topicFilterAgentState.lastError,
+      // Per-topic breakdown, accumulated for the life of the process —
+      // sorted by request volume so the office can show which topics
+      // users actually have selected most, not an alphabetical list.
+      byTopic: Object.entries(topicFilterAgentState.byTopic)
+        .map(([topic, t]) => ({ topic, ...t }))
+        .sort((a, b) => b.requests - a.requests),
     },
     sortDistributionAgent: {
       status: sortDistribState.lastError ? 'degraded' : 'healthy',
