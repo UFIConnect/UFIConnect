@@ -10564,6 +10564,22 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   }
   const page = (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
 
+  // Genuine exhaustion — not "nothing unseen left" (that's `exhausted`
+  // above, and already has a reshow-the-seen-ones fallback), but "there is
+  // truly nothing left to query at all": every source came back with zero
+  // rows before its own cursor (real retained history, bounded by
+  // STALE_POST_MAX_AGE_MS, actually ran out), or live mode found nothing
+  // new since going live. Scroll shouldn't just stop because of that —
+  // wrap the cursor back to the start and keep going, same wraparound idea
+  // sliceCircular already uses for the pool-based branches elsewhere in
+  // this pipeline. Real repeats are the accepted tradeoff over a hard
+  // dead-end; seenIds is dropped on the wrapped call since admitting
+  // repeats is the whole point once genuinely fresh content is gone.
+  const genuinelyExhausted = isLiveMode ? page.length === 0 : !allLists.some(arr => arr.length > 0);
+  if (genuinelyExhausted && !_isRetry) {
+    return getCursorFeedPage({ sources, cursorMap: {}, limit, mediaType, timeRange, extraLists, seenIds: null, freshOnly, _isRetry: true });
+  }
+
   const nextCursor = { ...cursorMap };
   if (isLiveMode) {
     // Advance the single live watermark to the newest thing just shown —
@@ -10586,15 +10602,14 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   return {
     posts: page,
     nextCursor: encodeFeedCursor(nextCursor),
-    // Honest signal, not just "more exists conceptually": in normal mode,
-    // only false once every single selected source came back with zero
-    // rows before its own cursor. In live mode, there's always more
-    // *eventually* (new content keeps arriving on the 0-5-minute worker
-    // cadence), but not necessarily *right now* — a fast scroller catching
-    // up to real-time can genuinely hit an empty page, and hasMore:true
-    // against an empty page would just have the client hammer this
-    // endpoint for content that doesn't exist yet.
-    hasMore: isLiveMode ? page.length > 0 : allLists.some(arr => arr.length > 0),
+    // Was `allLists.some(...)` — i.e. could go false once real content ran
+    // out. Now that genuine exhaustion wraps around above instead of
+    // returning here, false only reaches the client on the wrapped retry
+    // pass finding truly nothing at all (an empty pool — no sources ever
+    // had any content for these params), which wrapping around again
+    // couldn't fix either — a real "there is nothing here," not "scroll
+    // stopped early."
+    hasMore: page.length > 0,
   };
 }
 
