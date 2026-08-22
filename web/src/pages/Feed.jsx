@@ -483,7 +483,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => setPlaying(entry.isIntersecting),
-      { threshold: 0.4 }
+      { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -709,7 +709,7 @@ function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.4 }
+      { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
     );
     observer.observe(el);
     return () => observer.disconnect();
@@ -749,7 +749,7 @@ function TikTokEmbedBlock({ embedId, poster, title, forcePause = false }) {
     if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.4 }
+      { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
     );
     observer.observe(el);
     return () => observer.disconnect();

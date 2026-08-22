@@ -110,22 +110,30 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     setErrored(false);
     let hls;
     let cancelled = false;
-    // Always start muted and stay muted — the one autoplay policy every
-    // browser reliably allows. This used to reveal sound right after play()
-    // resolved if the caller wanted it unmuted, but that reveal is a
-    // delayed, asynchronous `.muted = false` write, not the direct,
-    // synchronous result of a user gesture — Safari in particular can
-    // silently accept the property write (so `.muted` correctly reads back
-    // false, and any UI bound to it shows "unmuted") while still refusing
-    // to actually output audio, which is exactly what "shows unmuted but no
-    // voice is playing" looks like from the outside. The caller's own mute
-    // button is what actually unmutes now (see the effect below), since a
-    // direct click handler is a gesture every browser honors.
+    // Always START muted — the one autoplay policy every browser reliably
+    // allows — then correct to the real desired state (muted prop, itself
+    // driven by userWantsSound: has this browser ever seen a direct unmute
+    // click before) only once play() has actually resolved, confirming
+    // playback genuinely started while still forced-muted. This has to
+    // happen here, not just in the [muted]-sync effect below: on the
+    // hls.js path (every non-Safari browser — most Android/Chrome mobile),
+    // startMuted only runs later, async, inside the MANIFEST_PARSED
+    // handler, well after the [muted] effect already ran once at mount.
+    // With no correction here, that left the video permanently force-muted
+    // regardless of the stored preference, with nothing left to fix it —
+    // confirmed live as the actual mechanism behind "keep hitting a muted
+    // video" despite having unmuted elsewhere already, and worse: the
+    // mute button's displayed "unmuted" state (bound to the muted prop,
+    // never actually corrected) went stale, so the next toggle click
+    // called rememberSoundPreference with the wrong value and wiped the
+    // saved preference entirely.
     function startMuted() {
       video.muted = true;
       video.defaultMuted = true;
       video.playsInline = true;
-      video.play().catch(() => {});
+      video.play().then(() => {
+        if (videoRef.current) videoRef.current.muted = muted;
+      }).catch(() => {});
     }
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari/iOS play HLS natively — no need to pull in hls.js at all.
@@ -196,9 +204,14 @@ export function InlineAutoplayVideo({ kind, src, poster, style, forcePause = fal
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    // Was 0.4 — on a small mobile viewport a video box scrolling in doesn't
+    // linger at high visibility for long before either settling fully into
+    // view or continuing past, so a lower bar means autoplay actually
+    // triggers during that transition instead of only once scrolling has
+    // essentially already stopped with the video mostly centered.
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.4 }
+      { threshold: 0.25 }
     );
     observer.observe(el);
     return () => observer.disconnect();
