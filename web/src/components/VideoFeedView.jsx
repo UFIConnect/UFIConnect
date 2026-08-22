@@ -1080,9 +1080,29 @@ export default function VideoFeedView({ onExit }) {
   const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
   const muteControllable = activeSrc?.kind !== 'tiktok' && activeSrc?.kind !== 'vimeo';
 
+  // Standalone/installed-PWA mobile ("app view") renders under a real
+  // status bar/notch that a plain mobile-browser tab doesn't have — index.html
+  // already sets viewport-fit=cover so env(safe-area-inset-top) is live; adding
+  // it here (rather than just a fixed px offset) keeps the whole control
+  // cluster clear of a notch across whatever device this actually runs on,
+  // in-browser or installed, instead of guessing one fixed number that's
+  // only right for some devices.
+  const topSafe = 'calc(16px + env(safe-area-inset-top, 0px))';
+  const row2Safe = 'calc(64px + env(safe-area-inset-top, 0px))';
+
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
-      <button onClick={onExit} aria-label="Back to Feed" style={{ position: 'absolute', top: 16, left: 16, ...OVERLAY_BTN_STYLE }}>
+      {/* Row 1 is icon buttons ONLY (back / refresh / mute) — the
+          Feed/Following toggle used to sit in this same row, centered, and
+          on real mobile widths its pill was wide enough to visually and
+          functionally overlap the refresh button's position. Both were
+          painting at the same z-index, and the toggle rendered later in the
+          DOM, so it silently won every tap meant for refresh (and
+          sometimes mute) — confirmed as exactly "can't click mute or
+          refresh." Moving the toggle to its own row below removes any way
+          for that overlap to happen again, rather than tuning positions
+          closer together and hoping. */}
+      <button onClick={onExit} aria-label="Back to Feed" style={{ position: 'absolute', top: topSafe, left: 16, ...OVERLAY_BTN_STYLE }}>
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
           <path d="M15 18l-6-6 6-6" />
         </svg>
@@ -1092,7 +1112,7 @@ export default function VideoFeedView({ onExit }) {
         disabled={refreshing}
         aria-label="Refresh videos"
         style={{
-          position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE,
+          position: 'absolute', top: topSafe, right: 64, ...OVERLAY_BTN_STYLE,
           fontSize: '1.05rem', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
         }}
       >
@@ -1103,16 +1123,20 @@ export default function VideoFeedView({ onExit }) {
         disabled={!muteControllable}
         aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
         style={{
-          position: 'absolute', top: 16, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem',
+          position: 'absolute', top: topSafe, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem',
           opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
         }}
       >{muted ? '🔇' : '🔊'}</button>
 
-      {/* Feed/Following toggle — same split and reasoning as pages/Feed.jsx's
-          view-mode tabs, styled for the dark full-bleed video overlay
-          instead of the light page chrome. */}
+      {/* Row 2: Feed/Following toggle — same split and reasoning as
+          pages/Feed.jsx's view-mode tabs, styled for the dark full-bleed
+          video overlay instead of the light page chrome. Own row now (see
+          row-1 comment above), so its content-dependent width can never
+          collide with the fixed-position icon buttons above it regardless
+          of device width or which label ("Following" vs "Feed") is
+          currently longer. */}
       <div style={{
-        position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+        position: 'absolute', top: row2Safe, left: '50%', transform: 'translateX(-50%)',
         zIndex: 10, display: 'flex', gap: 6,
         background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
         border: '1px solid rgba(255,255,255,.18)', borderRadius: 20, padding: 3,
@@ -1136,8 +1160,8 @@ export default function VideoFeedView({ onExit }) {
         })}
       </div>
 
-      {/* Platform filter — used to be a permanently-visible row of every
-          publicly-aggregated source (FEED_VIDEO_SOURCES, ~30 of them)
+      {/* Row 3: Platform filter — used to be a permanently-visible row of
+          every publicly-aggregated source (FEED_VIDEO_SOURCES, ~30 of them)
           floating over the video at all times, which read as visual
           overload on top of an already-full-bleed video. Collapsed into a
           single button that opens a sheet with the full picker instead —
@@ -1146,12 +1170,13 @@ export default function VideoFeedView({ onExit }) {
           separate source list (FOLLOWING_VIDEO_SOURCES) — an entirely
           different pool from Feed mode's (see getFollowingFeedPosts
           server-side) — the sheet below switches between them based on
-          viewMode. */}
+          viewMode. Own row below the toggle (was row 2, sharing space with
+          it) for the same no-overlap reasoning as above. */}
       <button
         onClick={() => setFilterOpen(true)}
         aria-label="Filter by platform"
         style={{
-          position: 'absolute', top: 62, left: '50%', transform: 'translateX(-50%)',
+          position: 'absolute', top: `calc(${row2Safe} + 46px)`, left: '50%', transform: 'translateX(-50%)',
           zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
           padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
           fontWeight: 700, fontSize: '.78rem',
