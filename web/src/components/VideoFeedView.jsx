@@ -334,18 +334,27 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // slide transitions (play-from-start, pause-and-rewind-to-0 for the next
   // viewer). This one only pauses-in-place and resumes-in-place while
   // scrolling happens to pass over an already-active slide without fully
-  // leaving it — no rewind, no re-priming autoplay, just a hold. Declared
-  // after the active-effect above so if both fire in the same commit (a
-  // fresh slide becomes active while still mid-scroll), this one's pause
-  // is what actually lands.
+  // leaving it — no rewind, no re-priming autoplay, just a hold.
+  //
+  // file/hls only — YouTube deliberately exempted. Confirmed live via an
+  // instrumented build tracing every playVideo/pauseVideo call: this effect
+  // would pause a YouTube player mid-scroll (onStateChange correctly firing
+  // PLAYING right beforehand, so autoplay itself was fine), and the
+  // "resume once isScrolling settles" half wasn't reliably reconnecting —
+  // if `active` flips even briefly around the same window (a snap-scroll
+  // settle landing on a neighboring slide, a fast flick's momentum still
+  // decaying), the pause-effect's own `if (!active) return` at the top
+  // means nothing calls playVideo() again for that slide, and it just
+  // stays paused. file/hls's local <video> element has no equivalent
+  // async construction/ready lifecycle to race against, so pausing it
+  // in-place is cheap and reliable — pausing a remote iframe player isn't,
+  // and the original reason for pausing at all (avoiding local decode
+  // thrash during a fast scroll) doesn't really apply to a remote player
+  // either. Simplest fix: never pause YouTube for scrolling, only for a
+  // real slide transition (the active/inactive effect above already
+  // handles that by destroying the player outright).
   useEffect(() => {
-    if (!active) return;
-    if (src?.kind === 'youtube') {
-      const p = ytPlayerRef.current;
-      if (!p) return;
-      if (isScrolling) p.pauseVideo?.(); else p.playVideo?.();
-      return;
-    }
+    if (!active || src?.kind === 'youtube') return;
     const v = getNativeEl();
     if (!v) return;
     if (isScrolling) v.pause();
