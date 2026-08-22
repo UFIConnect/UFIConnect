@@ -5092,20 +5092,18 @@ function addAndBroadcast(incoming) {
   // only caps what a single *request* sees, downstream of whatever's
   // already in here).
   //
-  // The 25% per-source share cap that used to sit here (added after a real
-  // incident — Bluesky hit 70% of the shared cache) is gone now that
-  // GLOBAL_FEED_CACHE_LIMIT is sized in the tens of thousands rather than a
-  // fixed 300 slots: with that much more room, a fast-fetching source no
-  // longer has to evict everything else to keep winning the recency sort,
-  // it just occupies more of a much bigger pool. diversify:true is still
-  // on, so streak-limiting (no more than 2-in-a-row from the same source,
-  // see diversifyBySource's maxConsecutive) still keeps the cache itself
-  // interleaved — the per-user round-robin-then-time-based mix this
-  // actually serves (getCursorFeedPage/roundRobinMerge) is unaffected
-  // either way, since that logic never read maxSharePct in the first place.
+  // The 25% per-source share cap was removed for a while on the theory that
+  // GLOBAL_FEED_CACHE_LIMIT's much bigger size (100k, not the old fixed 300)
+  // gave a fast-fetching source room to occupy without evicting everything
+  // else. In practice that only bounds absolute eviction, not relative
+  // share — a source that simply fetches faster than the rest still grows
+  // to dominate an arbitrarily large pool the same way it dominated the old
+  // small one, just slower. Confirmed live (uneven platform composition in
+  // the office Sort & Rank view) — back to a real 25% cap.
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
+    maxSharePct: 0.25,
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
@@ -6992,8 +6990,49 @@ const sourceRefreshQueue = {
   currentIds: [],
   batchTotal: 0,
   batchDone: 0,
+  // Rolling completion timestamps, separate from batchTotal/batchDone —
+  // those reset to 0 at the start of every new batch (see enqueueSourceRefresh),
+  // which reads as "the pipeline keeps resetting to zero" now that batches
+  // are mostly small, incidental self-healing refills (a handful of sources)
+  // rather than one sustained full sweep. This tracks real throughput across
+  // batch boundaries so the office can show "N transferred in the last hour"
+  // instead of only a per-batch percentage that zeroes out constantly.
+  recentCompletions: [],
 };
+const TRANSFER_RECENT_WINDOW_MS = 60 * 60 * 1000;
+function recordTransferCompletion() {
+  const now = Date.now();
+  sourceRefreshQueue.recentCompletions.push(now);
+  const cutoff = now - TRANSFER_RECENT_WINDOW_MS;
+  while (sourceRefreshQueue.recentCompletions.length && sourceRefreshQueue.recentCompletions[0] < cutoff) {
+    sourceRefreshQueue.recentCompletions.shift();
+  }
+}
+function getRecentTransferCount() {
+  const cutoff = Date.now() - TRANSFER_RECENT_WINDOW_MS;
+  while (sourceRefreshQueue.recentCompletions.length && sourceRefreshQueue.recentCompletions[0] < cutoff) {
+    sourceRefreshQueue.recentCompletions.shift();
+  }
+  return sourceRefreshQueue.recentCompletions.length;
+}
 
+// How many posts have actually made it to the DB — the real "Transfer"
+// total, distinct from the in-memory Sort & Rank pool size (globalFeedCache
+// can hold posts not yet persisted, and the DB retains history evicted from
+// memory long ago). A plain COUNT(*) is cheap enough on its own but polled
+// far too often via /office/status to run inline on every request, so this
+// refreshes on the same cadence as AUTO_TRANSFER_INTERVAL_MS instead (see
+// its own setInterval) and /office/status just reads the cached value.
+let dbFeedPostCount = null;
+async function refreshDbFeedPostCount() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.readQuery('SELECT COUNT(*)::int AS n FROM feed_posts_cache', []);
+    dbFeedPostCount = rows[0]?.n ?? dbFeedPostCount;
+  } catch (e) {
+    console.warn('[refreshDbFeedPostCount] query failed:', e.message);
+  }
+}
 function enqueueSourceRefresh(ids, reason = 'manual') {
   const requestedIds = (Array.isArray(ids) ? ids : [ids]).filter(id => typeof SOURCE_FETCHERS[id] === 'function');
   if (!requestedIds.length) return;
@@ -7042,7 +7081,7 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
 // push/splice, specifically so the office can render 4 fixed, independently
 // -animated lanes ("worker 1 is doing X, worker 2 is doing Y...") instead
 // of a list that reshuffles every time any worker starts or finishes.
-async function transferWorker(slot, stats) {
+async function transferWorker(slot, stats, priorityOrder) {
   while (sourceRefreshQueue.pendingIds.size > 0) {
     if (isStabilityCritical()) {
       refreshControl.skippedFetches += sourceRefreshQueue.pendingIds.size;
@@ -7050,7 +7089,19 @@ async function transferWorker(slot, stats) {
       break;
     }
 
-    const id = sourceRefreshQueue.pendingIds.values().next().value;
+    // Highest topic-pull source still pending goes next — see
+    // rankPendingTransferSources's own comment. priorityOrder is a shared
+    // array (one per drainSourceRefreshQueue run, not per worker), so all 4
+    // workers drain it in the same rank order; anything added to
+    // pendingIds mid-drain (a small self-healing top-up, not part of the
+    // original ranked batch) isn't in priorityOrder at all and falls
+    // through to plain Set order below, same as before this change.
+    let id;
+    while (priorityOrder.length) {
+      const next = priorityOrder.shift();
+      if (sourceRefreshQueue.pendingIds.has(next)) { id = next; break; }
+    }
+    if (id === undefined) id = sourceRefreshQueue.pendingIds.values().next().value;
     if (id === undefined) break; // another worker already emptied it
     sourceRefreshQueue.pendingIds.delete(id);
     sourceRefreshQueue.currentIds[slot] = id;
@@ -7070,9 +7121,31 @@ async function transferWorker(slot, stats) {
     }
     sourceRefreshQueue.currentIds[slot] = null;
     sourceRefreshQueue.batchDone += 1;
+    recordTransferCompletion();
 
     await waitMs(refreshControl.mode === 'pressure' ? 750 : 250);
   }
+}
+
+// One pass over the current Sort & Rank pool, counting distinct topics each
+// pending source actually contributed — a source feeding 40 different
+// topics is doing more useful work per fetch than one flooding a single
+// topic 40 times over, so it's worth refreshing before the other 3 workers
+// each in turn. Computed once per drain (not per-pick — the pool can be up
+// to GLOBAL_FEED_CACHE_LIMIT posts, far too expensive to rescan on every
+// single task grab), so this reflects composition at the moment the batch
+// started, not a live-updating rank.
+function rankPendingTransferSources() {
+  const topicsBySource = new Map();
+  for (const p of realFeedPosts(globalFeedCache.posts)) {
+    const src = p.source || 'unknown';
+    if (!sourceRefreshQueue.pendingIds.has(src)) continue;
+    let set = topicsBySource.get(src);
+    if (!set) topicsBySource.set(src, set = new Set());
+    if (p.topic) set.add(p.topic);
+  }
+  return [...sourceRefreshQueue.pendingIds].sort((a, b) =>
+    (topicsBySource.get(b)?.size || 0) - (topicsBySource.get(a)?.size || 0));
 }
 
 async function drainSourceRefreshQueue() {
@@ -7084,8 +7157,9 @@ async function drainSourceRefreshQueue() {
   sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
 
   const stats = { processed: 0 };
+  const priorityOrder = rankPendingTransferSources();
   try {
-    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, (_, slot) => transferWorker(slot, stats)));
+    await Promise.all(Array.from({ length: TRANSFER_WORKER_COUNT }, (_, slot) => transferWorker(slot, stats, priorityOrder)));
   } finally {
     sourceRefreshQueue.running = false;
     sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
@@ -7132,6 +7206,7 @@ async function refreshGlobalFeedCache() {
       globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
         limit: GLOBAL_FEED_CACHE_LIMIT,
         diversify: true,
+        maxSharePct: 0.25,
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
@@ -7292,6 +7367,7 @@ function runSortAgentCheck() {
   globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'sort-agent-global', {
     limit: GLOBAL_FEED_CACHE_LIMIT,
     diversify: true,
+    maxSharePct: 0.25,
   });
 
   let sourcePools = 0;
@@ -7392,6 +7468,171 @@ async function runSortDistribCheck() {
     sortDistribState.lastError = e.message;
     sortDistribState.lastRun = Date.now();
     logAgentAction('sort_distrib', '⚠️', `Distribution pass failed: ${e.message}`, '#FBBF24');
+  }
+}
+
+// ─── Topic Audit + Topic Fix agents ─────────────────────────────────────────
+// Every post's `topic` field is set once, at fetch time, to whichever
+// FEED_TOPICS keyword the search that found it was actually searching for
+// (see the `topic: keyword`/`topic: tag` assignments throughout the source
+// fetchers) — it's a record of the query, not a verified claim about the
+// post's real content. A keyword search can genuinely mismatch (a Reddit
+// search for "Startup" surfacing a post that's actually about "Venture
+// Capital", a subreddit mapped to one topic carrying an off-topic front-page
+// post), and nothing downstream ever re-checks that assumption — filterByUserTopics
+// (the per-user hard filter) trusts p.topic as ground truth, it doesn't look
+// at the post's actual title/content at all. These two agents are that
+// missing check: Audit samples already-transferred posts and compares each
+// one's assigned topic against what its own title/content actually says;
+// Fix drains whatever Audit found and moves each post to the topic its
+// content really matches, both in memory and in the DB it was already
+// transferred to.
+//
+// Precomputed once (FEED_TOPICS doesn't change at runtime): each topic's
+// name split into its own meaningful keyword fragments the same way a human
+// would read it apart ("AI & Machine Learning" -> ["ai", "machine
+// learning"]), so a post's text only has to contain any ONE fragment to
+// count as a real content match — same bidirectional-substring spirit
+// filterByUserTopics already uses, just applied to real post text instead
+// of the user's own topic selection string.
+const TOPIC_KEYWORD_FRAGMENTS = new Map(FEED_TOPICS.map(t => {
+  const frags = t.toLowerCase().split(/\s*[/&,]\s*/).map(s => s.trim()).filter(s => s.length > 2);
+  return [t, frags.length ? frags : [t.toLowerCase()]];
+}));
+
+// Returns the single topic this post's own title/content most supports, or
+// null if nothing in FEED_TOPICS matches at all (genuinely ambiguous —
+// deliberately NOT corrected; a wrong-but-confident guess would just
+// replace one unverified assumption with another).
+function guessTopicForPost(post) {
+  const text = `${post?.title || ''} ${post?.content || ''}`.toLowerCase();
+  if (!text.trim()) return null;
+  const matches = [];
+  for (const [topic, frags] of TOPIC_KEYWORD_FRAGMENTS) {
+    if (frags.some(f => text.includes(f))) matches.push(topic);
+  }
+  if (!matches.length) return null;
+  if (matches.length === 1) return matches[0];
+  // Genuinely ambiguous (the text supports more than one topic keyword) —
+  // if the post's own already-assigned topic is among the real matches,
+  // that's still a legitimate match, not a misfile; only reach for the
+  // longest (most specific) matched keyword as a tiebreaker when it isn't.
+  if (post?.topic && matches.includes(post.topic)) return post.topic;
+  return matches.reduce((best, t) => {
+    const bestLen = Math.max(...TOPIC_KEYWORD_FRAGMENTS.get(best).map(f => f.length));
+    const tLen = Math.max(...TOPIC_KEYWORD_FRAGMENTS.get(t).map(f => f.length));
+    return tLen > bestLen ? t : best;
+  });
+}
+
+const TOPIC_AUDIT_BATCH_SIZE = 400;
+const topicAuditState = {
+  totalRuns: 0, totalChecked: 0, totalMismatches: 0,
+  lastRun: null, lastChecked: 0, lastMismatches: 0, lastError: null,
+  cursorIndex: 0,
+  recentMismatches: [], // [{id, source, from, to}], newest first, bounded below
+};
+// Bounded FIFO the Fix agent drains from — a plain array is fine at this
+// size (capped, see the push site below), no need for a Set/Map here since
+// duplicates just mean Fix corrects the same post twice, which is harmless
+// (the second pass finds it already matches and does nothing).
+const TOPIC_MISMATCH_QUEUE_MAX = 3000;
+const topicMismatchQueue = [];
+
+function runTopicAuditCheck() {
+  if (isStabilityCritical()) return;
+  try {
+    const pool = realFeedPosts(globalFeedCache.posts);
+    if (!pool.length) return;
+    // Rotates through the whole pool across runs instead of re-checking the
+    // same front slice every time — cursorIndex just keeps advancing
+    // (wrapping via %), so a pool bigger than one batch still gets fully
+    // covered over enough runs, same rotation idea SOURCE_CONFIG's own
+    // per-source cycling already uses.
+    let mismatches = 0;
+    const start = topicAuditState.cursorIndex % pool.length;
+    for (let i = 0; i < Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length); i++) {
+      const post = pool[(start + i) % pool.length];
+      if (!post?.id || !post.topic || JOB_LISTING_SOURCES.includes(post.source)) continue;
+      const guessed = guessTopicForPost(post);
+      if (guessed && guessed !== post.topic) {
+        mismatches++;
+        topicMismatchQueue.push({ id: post.id, source: post.source, from: post.topic, to: guessed });
+        if (topicMismatchQueue.length > TOPIC_MISMATCH_QUEUE_MAX) topicMismatchQueue.shift();
+        topicAuditState.recentMismatches.unshift({ id: post.id, source: post.source, from: post.topic, to: guessed });
+        if (topicAuditState.recentMismatches.length > 30) topicAuditState.recentMismatches.pop();
+      }
+    }
+    topicAuditState.cursorIndex = (start + TOPIC_AUDIT_BATCH_SIZE) % pool.length;
+    topicAuditState.totalRuns += 1;
+    topicAuditState.totalChecked += Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length);
+    topicAuditState.totalMismatches += mismatches;
+    topicAuditState.lastChecked = Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length);
+    topicAuditState.lastMismatches = mismatches;
+    topicAuditState.lastRun = Date.now();
+    topicAuditState.lastError = null;
+    logAgentAction('topic_audit', '🔍',
+      mismatches > 0
+        ? `Checked ${Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length)} posts — found ${mismatches} in the wrong topic`
+        : `Checked ${Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length)} posts — all correctly sorted`,
+      mismatches > 0 ? '#FBBF24' : '#4ADE80');
+  } catch (e) {
+    topicAuditState.lastError = e.message;
+    logAgentAction('topic_audit', '⚠️', `Topic audit failed: ${e.message}`, '#F87171');
+  }
+}
+
+const TOPIC_FIX_BATCH_SIZE = 150;
+const topicFixState = {
+  totalRuns: 0, totalFixed: 0,
+  lastRun: null, lastFixed: 0, lastError: null,
+  recentFixes: [], // [{id, source, from, to}], newest first, bounded below
+};
+
+async function runTopicFixCheck() {
+  if (isStabilityCritical() || !topicMismatchQueue.length) return;
+  try {
+    const batch = topicMismatchQueue.splice(0, TOPIC_FIX_BATCH_SIZE);
+    const byId = new Map(batch.map(m => [m.id, m]));
+
+    // In memory first — same pool the office Sort & Rank composition and
+    // every live feed request reads from right now, so a fix is visible
+    // immediately rather than only after the next DB round-trip.
+    let fixed = 0;
+    for (const post of globalFeedCache.posts) {
+      const m = post?.id && byId.get(post.id);
+      if (m && post.topic === m.from) { post.topic = m.to; fixed++; }
+    }
+    for (const cache of agentSourceCache.values()) {
+      if (!Array.isArray(cache.posts)) continue;
+      for (const post of cache.posts) {
+        const m = post?.id && byId.get(post.id);
+        if (m && post.topic === m.from) post.topic = m.to;
+      }
+    }
+
+    // Then the DB row it was already transferred to — this is specifically
+    // correcting posts Transfer already persisted, so the fix has to land
+    // there too, not just in memory until the next process restart.
+    if (db.isConnected() && batch.length) {
+      await Promise.all(batch.map(m =>
+        db.query('UPDATE feed_posts_cache SET topic=$1 WHERE id=$2', [m.to, m.id]).catch(() => {})
+      ));
+    }
+
+    topicFixState.totalRuns += 1;
+    topicFixState.totalFixed += fixed;
+    topicFixState.lastFixed = fixed;
+    topicFixState.lastRun = Date.now();
+    topicFixState.lastError = null;
+    for (const m of batch) {
+      topicFixState.recentFixes.unshift(m);
+      if (topicFixState.recentFixes.length > 30) topicFixState.recentFixes.pop();
+    }
+    logAgentAction('topic_fix', '🛠️', `Moved ${fixed} post(s) to their correct topic (${topicMismatchQueue.length} still queued)`, '#818CF8');
+  } catch (e) {
+    topicFixState.lastError = e.message;
+    logAgentAction('topic_fix', '⚠️', `Topic fix failed: ${e.message}`, '#F87171');
   }
 }
 
@@ -8264,6 +8505,13 @@ setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGEN
 // Distribution agent refills empty sources and diversifies the global feed at
 // SORT_DISTRIB_INTERVAL_MS (was previously hardcoded to 2min — now wired in).
 setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 90 * 1000);
+// Topic Audit/Fix — staggered so Fix's first pass always has something
+// Audit already found waiting in topicMismatchQueue, not an empty queue on
+// its own first tick. Both cheap/in-memory (Fix's DB writes are the only
+// I/O, and only for however many mismatches actually turned up), so a few
+// minutes' cadence is plenty — this isn't gating anything time-sensitive.
+setTimeout(() => { runTopicAuditCheck(); setInterval(runTopicAuditCheck, 4 * 60 * 1000); }, 3 * 60 * 1000);
+setTimeout(() => { runTopicFixCheck(); setInterval(runTopicFixCheck, 4 * 60 * 1000); }, 4 * 60 * 1000);
 // Activity agent — sweep every 2 min so new/stale agents get heartbeats fast
 setTimeout(() => runAgentActivityCheck(true), 20 * 1000);
 setInterval(runAgentActivityCheck, 2 * 60 * 1000);
@@ -10155,7 +10403,7 @@ function equalizeThenRecencyMerge(lists, limit) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null }) {
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _isRetry = false }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -10275,6 +10523,27 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // reach.
   const trulyUnseen = seenIds?.size ? merged.filter(p => !p?.id || !seenIds.has(p.id)) : merged;
   const exhausted = !isLiveMode && !!seenIds?.size && merged.length > 0 && trulyUnseen.length === 0;
+  // freshOnly (a manual pull-to-refresh, always a fresh cursor) opts out of
+  // the reshow-already-seen fallback below: a refresh resets the cursor
+  // straight back to "now," and "now"'s newest posts are usually exactly
+  // what this user was just shown a moment ago (already in seenIds) — the
+  // plain fallback handed those right back, which is what made refresh look
+  // like it did nothing. Falling through to a live-mode requery in that
+  // exact spot instead gives a refresh tap an honest shot at genuinely new
+  // content (or a genuinely empty "nothing new yet" page) instead of a
+  // replay. Normal infinite-scroll calls keep the old reshow fallback — see
+  // its own comment above — that's still the right behavior there.
+  if (exhausted && freshOnly && !_isRetry) {
+    const liveCursor = { ...cursorMap };
+    for (const src of allSources) {
+      const shown = merged.filter(p => p.source === src);
+      if (!shown.length) continue;
+      const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
+      liveCursor[src] = new Date(postTimestamp(oldest)).toISOString();
+    }
+    liveCursor.__liveSince = new Date().toISOString();
+    return getCursorFeedPage({ sources, cursorMap: liveCursor, limit, mediaType, timeRange, extraLists, seenIds, freshOnly, _isRetry: true });
+  }
   const page = (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
 
   const nextCursor = { ...cursorMap };
@@ -11732,6 +12001,7 @@ async function handleFeedRequest(req, res) {
       timeRange: cursorTimeRange,
       extraLists,
       seenIds,
+      freshOnly: req.query.bust === '1',
     });
 
     const result = cursorPosts.map(p => p.isExternal === false ? p : {
@@ -11832,6 +12102,7 @@ async function handleFeedRequest(req, res) {
         timeRange: cursorTimeRange,
         extraLists,
         seenIds,
+        freshOnly: req.query.bust === '1',
       });
 
       const result = cursorPosts.map(p => p.isExternal === false ? p : {
@@ -12675,6 +12946,11 @@ async function handleVideoFeedRequest(req, res) {
     // one surface doesn't silently remove it from the other. See
     // getUserSeenSet/markPostsSeen's own comment for why this split exists.
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
+    // See getCursorFeedPage's own comment on freshOnly — a manual refresh
+    // (reset:true + bust:true client-side) always sends a fresh/empty
+    // cursor, and without this the response could just reshow whatever this
+    // user was already shown seconds ago, reading as "refresh did nothing."
+    const freshOnly = req.query.bust === '1';
 
     // Same two-phase shape as the main Feed's buildTwoPhaseMix, only applied
     // when nothing's explicitly filtered by source — an explicit platform
@@ -12683,7 +12959,7 @@ async function handleVideoFeedRequest(req, res) {
     if (!isUnfilteredVideo) {
       const { posts, nextCursor, hasMore } = await getCursorFeedPage({
         sources: cursorSources, cursorMap, limit: feedLimit,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
       markPostsSeen(req.user.id, posts, 'videos');
       return res.json({ posts, cursor: nextCursor, hasMore });
@@ -12709,7 +12985,7 @@ async function handleVideoFeedRequest(req, res) {
     if (isFreshSession && cursorSources.length) {
       const intro = await getCursorFeedPage({
         sources: cursorSources, cursorMap, limit: cursorSources.length,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
       introPosts = intro.posts;
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
@@ -12728,7 +13004,7 @@ async function handleVideoFeedRequest(req, res) {
     if (remaining > 0) {
       const mix = await getCursorFeedPage({
         sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds,
+        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
       mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id)), userTopics).slice(0, remaining);
       nextCursor = mix.nextCursor;
@@ -14050,6 +14326,13 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       currentIds: sourceRefreshQueue.currentIds,
       batchTotal: sourceRefreshQueue.batchTotal,
       batchDone: sourceRefreshQueue.batchDone,
+      // Rolling/cumulative stats — see recordTransferCompletion's own
+      // comment for why these exist alongside batchTotal/batchDone: those
+      // reset to 0 at the start of every new batch, which now happens
+      // often (small self-healing refills, not one sustained sweep), so on
+      // their own they read as the pipeline "resetting to zero" constantly.
+      processedLastHour: getRecentTransferCount(),
+      dbPostCount: dbFeedPostCount,
     },
     filterAgent: {
       status: filterAgentState.lastError ? 'degraded' : filterAgentState.status,
@@ -14101,6 +14384,33 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       byTopic: Object.entries(topicFilterAgentState.byTopic)
         .map(([topic, t]) => ({ topic, ...t }))
         .sort((a, b) => b.requests - a.requests),
+    },
+    // Checks posts already transferred to a topic against what their own
+    // title/content actually says (see guessTopicForPost) — distinct from
+    // topicFilterAgent above, which trusts p.topic as given and just
+    // filters by it per-request.
+    topicAuditAgent: {
+      status: topicAuditState.lastError ? 'degraded' : 'healthy',
+      totalRuns: topicAuditState.totalRuns,
+      totalChecked: topicAuditState.totalChecked,
+      totalMismatches: topicAuditState.totalMismatches,
+      lastChecked: topicAuditState.lastChecked,
+      lastMismatches: topicAuditState.lastMismatches,
+      lastRun: topicAuditState.lastRun,
+      lastError: topicAuditState.lastError,
+      queueDepth: topicMismatchQueue.length,
+      recentMismatches: topicAuditState.recentMismatches,
+    },
+    // Drains whatever topicAuditAgent found and actually moves each post to
+    // its correct topic, in memory and in the DB row Transfer already wrote.
+    topicFixAgent: {
+      status: topicFixState.lastError ? 'degraded' : 'healthy',
+      totalRuns: topicFixState.totalRuns,
+      totalFixed: topicFixState.totalFixed,
+      lastFixed: topicFixState.lastFixed,
+      lastRun: topicFixState.lastRun,
+      lastError: topicFixState.lastError,
+      recentFixes: topicFixState.recentFixes,
     },
     // Real per-topic composition of the shared cache right after Sort &
     // Rank — same live-computed-on-read pattern as feed.composition above,
@@ -14299,7 +14609,9 @@ const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
 setInterval(() => {
   runSortAgentCheck();
   savePostsToDBFast(globalFeedCache.posts).catch(e => console.warn('[auto-transfer] savePostsToDBFast:', e.message));
+  refreshDbFeedPostCount();
 }, AUTO_TRANSFER_INTERVAL_MS);
+refreshDbFeedPostCount();
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
 // per-user-connected-account equivalent of the app-level transfer just

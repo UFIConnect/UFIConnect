@@ -1173,6 +1173,10 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
           <div style={{ fontSize: 12, color: '#64748b' }}>
             Idle — {q?.lastFinished ? `last transfer finished ${fmtAgo(q.lastFinished)}` : 'no transfer run yet'}
             {q?.lastReason ? ` (${q.lastReason})` : ''}
+            <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
+              {(q?.processedLastHour ?? 0).toLocaleString()} sources transferred in the last hour
+              {q?.dbPostCount != null ? ` · ${q.dbPostCount.toLocaleString()} posts in DB` : ''}
+            </div>
           </div>
         )}
       </div>
@@ -1417,7 +1421,14 @@ function PipelineView({ status }) {
 
           <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} />
 
-          {/* Stage 4 — Transfer */}
+          {/* Stage 4 — Transfer. The ring still genuinely reflects the
+              current batch (batches are mostly small self-healing refills
+              now, not one sustained sweep — see AUTO_TRANSFER_INTERVAL_MS's
+              own comment server-side), so it's honest for it to sit at 0%
+              right as a fresh tiny batch starts. What it doesn't do on its
+              own is convey that anything's actually happening overall — a
+              rolling count underneath does that regardless of whether a
+              batch happens to be running at this exact instant. */}
           <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
             <Label color="#38bdf8">Transfer</Label>
             <div style={{ margin: '14px 0' }}>
@@ -1427,6 +1438,10 @@ function PipelineView({ status }) {
               {running
                 ? `${q.currentIds?.length ? q.currentIds.join(', ') : '…'} · ${q.batchDone}/${q.batchTotal}`
                 : (q?.lastFinished ? `Idle · last ${fmtAgo(q.lastFinished)}` : 'Idle — no transfer run yet')}
+            </div>
+            <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
+              {(q?.processedLastHour ?? 0).toLocaleString()} sources/hr
+              {q?.dbPostCount != null ? ` · ${q.dbPostCount.toLocaleString()} posts in DB` : ''}
             </div>
           </PipelineNode>
 
@@ -1719,6 +1734,16 @@ function TransferDetailCard({ q, workers = [] }) {
         <DetailStat label="ETA" value={etaS != null ? `~${etaS}s` : '—'} />
       </div>
 
+      {/* Rolling, not per-batch — batchTotal/batchDone above reset to 0 at
+          the start of every new batch (mostly small self-healing refills
+          now), which reads as constant resetting on its own. This stays
+          non-zero across batch boundaries as long as anything real has
+          moved through in the last hour. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="sources / last hr" value={(q?.processedLastHour ?? 0).toLocaleString()} color="#4ade80" />
+        <DetailStat label="posts in DB" value={q?.dbPostCount != null ? q.dbPostCount.toLocaleString() : '—'} />
+      </div>
+
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Total transfer runs: <span style={{ color: '#94a3b8' }}>{(q?.totalRuns ?? 0).toLocaleString()}</span></div>
         <div>Last full run took: <span style={{ color: '#94a3b8' }}>{lastFullRunS != null ? `${lastFullRunS}s` : '—'}</span></div>
@@ -1991,6 +2016,21 @@ function TopicsView() {
     return map;
   }, [topics]);
 
+  // "Where posts are coming from" — same per-topic source breakdown the
+  // bars below already carry, just re-summed across every topic instead of
+  // one at a time, so "32 sources feeding in" is a single glanceable number
+  // instead of something you'd have to add up yourself from 200 bars.
+  const bySourceTotal = useMemo(() => {
+    const map = new Map();
+    for (const t of topics) for (const s of t.sources) map.set(s.source, (map.get(s.source) || 0) + s.count);
+    return [...map.entries()].sort((a, b) => b[1] - a[1]);
+  }, [topics]);
+  // "Where posts are ending" — every post counted here already has a topic
+  // (see the SQL's WHERE topic IS NOT NULL), so this total *is* the count
+  // of posts that made it all the way through to a final topic bucket.
+  const grandTotal = topics.reduce((sum, t) => sum + t.total, 0);
+  const filledTopics = topics.filter(t => t.total > 0).length;
+
   if (!data) {
     return (<><h1 style={H1}>Topics</h1><p style={SUBTITLE}>Loading…</p></>);
   }
@@ -2008,12 +2048,13 @@ function TopicsView() {
             has, and exactly which platforms filled it. Real totals, not the capped in-memory pool.
           </p>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          {lastLoaded && (
-            <span style={{ fontSize: 11, color: '#64748b' }}>
-              {refreshing ? 'Refreshing…' : `Loaded ${fmtAgo(lastLoaded)}`}
-            </span>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: '#e2e8f0', fontVariantNumeric: 'tabular-nums' }}>
+              {grandTotal.toLocaleString()}
+            </div>
+            <div style={{ fontSize: 10.5, color: '#64748b' }}>total posts</div>
+          </div>
           <button
             onClick={handleRefresh}
             disabled={refreshing}
@@ -2029,12 +2070,34 @@ function TopicsView() {
           </button>
         </div>
       </div>
+      {lastLoaded && (
+        <div style={{ textAlign: 'right', fontSize: 11, color: '#64748b', marginTop: 4 }}>
+          {refreshing ? 'Refreshing…' : `Loaded ${fmtAgo(lastLoaded)}`}
+        </div>
+      )}
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18, marginTop: 18 }}>
-        {[...sourceColor.entries()].map(([source, color]) => (
-          <span key={source} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#94a3b8' }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
-            {source}
+      {/* Coming from → ending: the same two numbers every bar below is built
+          from, said in plain language up front instead of something you'd
+          have to piece together yourself from 200 individual rows. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        margin: '18px 0', padding: '12px 16px', borderRadius: 10,
+        background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)',
+        fontSize: 12.5, color: '#94a3b8',
+      }}>
+        <span>📥 <strong style={{ color: '#e2e8f0' }}>{grandTotal.toLocaleString()}</strong> posts in</span>
+        <span style={{ color: '#475569' }}>from</span>
+        <strong style={{ color: '#e2e8f0' }}>{bySourceTotal.length}</strong> sources
+        <span style={{ color: '#475569' }}>→</span>
+        <span>sorted into</span>
+        <strong style={{ color: '#e2e8f0' }}>{filledTopics}</strong> of {topics.length} topics 🎯
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
+        {bySourceTotal.map(([source, count]) => (
+          <span key={source} title={`${count.toLocaleString()} posts`} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#94a3b8' }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: sourceColor.get(source) || '#475569', flexShrink: 0 }} />
+            {source} <span style={{ color: '#475569' }}>{count.toLocaleString()}</span>
           </span>
         ))}
       </div>
