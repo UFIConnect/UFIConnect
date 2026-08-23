@@ -1222,88 +1222,87 @@ setInterval(() => {
 // separate RATE_LIMITED_MANUAL_SWEEP cap so a manual/auto full-sweep
 // trigger can't blow through that same budget in a single burst either
 // (see that constant's own comment for the incident this fixes).
-// Every tier below is sized for a ≤5-minute full cycle through all of
-// FEED_TOPICS (203 entries as of this pass) — cycle = ceil(203/shards) ×
-// delay. The comments this replaced were computed back when FEED_TOPICS
-// had 69 entries and were never revisited as the list grew (69→210→203
-// over this session) — e.g. reddit's old "16 fetch/min, ~4.3min cycle"
-// comment was true at 69 topics; at 203 it was actually running a genuine
-// ~12.7min cycle with the shard count left unchanged. Delay (the pacing
-// between successive requests within one shard — the actual politeness
-// signal to the external API) is left as-is everywhere in this pass;
-// shards (how many of those paced streams run concurrently) is what's
-// increased to hit 5 minutes, same lever this file's own history already
-// used for exactly this problem (see the git history on this block).
+// shards is how many independent, permanently-running async loops
+// makeTopicCycler spins up for that one source (see its own definition) —
+// NOT a free lever. A previous pass in this file's history pushed every
+// tier's shard count up 4-16x to force a uniform ≤5min cycle through all of
+// FEED_TOPICS (203 entries), which looked reasonable per-source in
+// isolation but summed to ~2,100 concurrent shard loops across the whole
+// app (was ~220) — confirmed live as the actual cause of both external
+// sources getting rate-limited/circuit-paused (real APIs correctly
+// reacting to a sudden burst) and the app itself becoming unstable under
+// concurrent real user traffic (that many permanent background loops
+// competing with request handling for the same single Node process's event
+// loop and memory). Reverted back to the original counts below. Delay (the
+// pacing between successive requests within one shard) is untouched by
+// either the increase or this revert.
 const SOURCE_CONFIG = {
   //               TTL (ms)           DELAY/topic     shards
   // ── [BREAKING] 15–30s — live social/news firehose ───────────────────────────
-  reddit:        { ttl:  8*60000, delay: 15000, shards: 11 },  // r/new firehose, many subreddits — 5min cycle
-  hn:            { ttl:  8*60000, delay: 20000, shards: 14 },  // Algolia — front page churns constantly — 5min cycle
-  mastodon:      { ttl:  8*60000, delay: 20000, shards: 14 },  // public federated timelines, live chatter — 5min cycle
+  reddit:        { ttl:  8*60000, delay: 15000, shards: 4 },  // r/new firehose, many subreddits
+  hn:            { ttl:  8*60000, delay: 20000, shards: 5 },  // Algolia — front page churns constantly
+  mastodon:      { ttl:  8*60000, delay: 20000, shards: 5 },  // public federated timelines, live chatter
   // Was the fastest tier by itself (8min/10s/4 shards) and, combined with its
   // per-fetch limit, made it the single biggest contributor to the shared
   // cache while Twitter/LinkedIn/Instagram/Facebook sat at 0 posts with no
   // app-level API token configured. Composition dominance is now capped
   // independently by diversifyBySource's maxSharePct (see addAndBroadcast),
   // so it's rated with its breaking-news peers, just at the slow end of the tier.
-  bluesky:       { ttl: 10*60000, delay: 30000, shards: 21 },  // public ATP API, live social posts — 5min cycle
+  bluesky:       { ttl: 10*60000, delay: 30000, shards: 6 },  // public ATP API, live social posts
 
   // ── [HIGH-VOL] 60s — high-frequency, freshness-sensitive ────────────────────
-  devto:         { ttl: 20*60000, delay: 60000,  shards: 41 },  // dev blogging platform, constant new posts — 5min cycle
-  indeed:        { ttl: 20*60000, delay: 60000,  shards: 41 },  // job RSS feeds, new listings continuously — 5min cycle
-  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 41 },  // tech news RSS, several stories/day — 5min cycle
-  theverge:      { ttl: 20*60000, delay: 60000,  shards: 41 },  // tech news RSS, several stories/day — 5min cycle
+  devto:         { ttl: 20*60000, delay: 60000,  shards: 6 },  // dev blogging platform, constant new posts
+  indeed:        { ttl: 20*60000, delay: 60000,  shards: 6 },  // job RSS feeds, new listings continuously
+  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day
+  theverge:      { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day
   // ── [HIGH-VOL] 90s ───────────────────────────────────────────────────────────
-  medium:        { ttl: 25*60000, delay: 90000,  shards: 61 },  // CDN RSS, huge publishing platform — 5min cycle
-  youtube:       { ttl: 25*60000, delay: 90000,  shards: 61 },  // channel RSS across many creators — 5min cycle
-  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 61 },  // freeCodeCamp RSS — 5min cycle
-  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // daily launches, steady submission stream — 5min cycle
-  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // tech news RSS — 5min cycle
-  wired:         { ttl: 25*60000, delay: 90000,  shards: 61 },  // tech/culture news RSS — 5min cycle
-  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 61 },  // AI/startup news RSS — 5min cycle
-  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 61 },  // Linux/hardware news, multiple posts/day — 5min cycle
+  medium:        { ttl: 25*60000, delay: 90000,  shards: 7 },  // CDN RSS, huge publishing platform
+  youtube:       { ttl: 25*60000, delay: 90000,  shards: 7 },  // channel RSS across many creators
+  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // freeCodeCamp RSS
+  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // daily launches, steady submission stream
+  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech news RSS
+  wired:         { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech/culture news RSS
+  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // AI/startup news RSS
+  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // Linux/hardware news, multiple posts/day
   // ── [HIGH-VOL] 120s ──────────────────────────────────────────────────────────
-  theregister:   { ttl: 30*60000, delay: 120000, shards: 82 },  // enterprise IT/security RSS — 5min cycle
-  remoteok:      { ttl: 30*60000, delay: 120000, shards: 82 },  // remote jobs API — 5min cycle
-  behance:       { ttl: 30*60000, delay: 120000, shards: 82 },  // creative portfolios RSS — 5min cycle
+  theregister:   { ttl: 30*60000, delay: 120000, shards: 9 },  // enterprise IT/security RSS
+  remoteok:      { ttl: 30*60000, delay: 120000, shards: 9 },  // remote jobs API
+  behance:       { ttl: 30*60000, delay: 120000, shards: 9 },  // creative portfolios RSS
 
   // ── [ACTIVE] flat 3min — steady content, not minute-by-minute ──────────────
-  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 122 }, // community posts — 5min cycle
-  smashing:      { ttl: 45*60000, delay: 180000, shards: 122 }, // web dev/design RSS, long-form articles — 5min cycle
-  infoq:         { ttl: 45*60000, delay: 180000, shards: 122 }, // enterprise/cloud RSS, moderate cadence — 5min cycle
-  mittr:         { ttl: 45*60000, delay: 180000, shards: 122 }, // deep tech RSS, moderate cadence — 5min cycle
-  gitlab:        { ttl: 45*60000, delay: 180000, shards: 122 }, // public project API
-  yc:            { ttl: 45*60000, delay: 180000, shards: 122 }, // startup/professional RSS — 5min cycle
-  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 122 }, // business/funding RSS — deals aren't continuous
-  designweb:     { ttl: 45*60000, delay: 180000, shards: 122 }, // design/web industry RSS aggregator — 5min cycle
+  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 10 }, // community posts
+  smashing:      { ttl: 45*60000, delay: 180000, shards: 10 }, // web dev/design RSS, long-form articles
+  infoq:         { ttl: 45*60000, delay: 180000, shards: 10 }, // enterprise/cloud RSS, moderate cadence
+  mittr:         { ttl: 45*60000, delay: 180000, shards: 10 }, // deep tech RSS, moderate cadence
+  gitlab:        { ttl: 45*60000, delay: 180000, shards: 10 }, // public project API
+  yc:            { ttl: 45*60000, delay: 180000, shards: 10 }, // startup/professional RSS
+  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 10 }, // business/funding RSS — deals aren't continuous
+  designweb:     { ttl: 45*60000, delay: 180000, shards: 10 }, // design/web industry RSS aggregator
 
-  // ── [LOW-ACT] no hard external limit — pushed to 5min like every other tier
-  // per explicit direction: small/low-traffic sites get the same target as
-  // the rest rather than being held back out of caution with no documented
-  // limit to actually justify it.
-  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 163 },  // small, low-traffic site — 5min cycle
+  // ── [LOW-ACT] no hard external limit, but a small/low-traffic site — kept
+  // moderate rather than pushed to 5min; that target isn't worth the extra
+  // concurrent shard loops for a source this size (see this block's own
+  // history above for why concurrent shard count is a real, shared cost,
+  // not a free per-source knob).
+  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 8 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either
 
-  // ── Real external ceilings — pushed to each one's own actual safe maximum
-  // instead of the 5min target, which none of these three can structurally
-  // reach without a higher-tier API key: github/stackoverflow are bound by a
-  // fixed hourly/daily request budget (more shards doesn't help — total
-  // throughput is the constraint, not concurrency), and arxiv's OAI-PMH
-  // endpoint requires ≥20s between *any* two requests globally, which rules
-  // out ever running more than 1 shard against it.
-  // Both of these also get topped up by RATE_LIMITED_MANUAL_SWEEP's own
-  // independent, uncoordinated pacing (self-healing events, not a fixed
-  // schedule) — the delay below leaves real headroom for that second path
-  // firing around the same time, not just for the continuous worker alone.
-  github:        { ttl: 20*60000, delay: 80000,   shards: 1 },  // 60 req/hr unauthed hard cap — 45/hr on its own, leaving ~15/hr of headroom for an occasional manual-sweep top-up (was 4min/15 req-hr, far more margin than actually needed)
-  arxiv:         { ttl: 40*60000, delay: 25000,   shards: 1 },  // OAI-PMH's real requirement is ≥20s between *any* two requests, globally — 25s (not the bare 20s floor) leaves a buffer against RATE_LIMITED_MANUAL_SWEEP's own separately-paced 20s stream interleaving closer than 20s apart if both fire around the same time; still ~9x faster than the old 4min (was a 12x wider margin than required)
-  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, no documented hard limit found; left conservative as a courtesy rather than guessed at
-  // 300/day Stack Exchange unauthenticated quota is a fixed total-per-day
-  // budget — splitting it across more shards doesn't shorten the cycle
-  // (same total requests, same daily ceiling either way), so 1 shard at the
-  // slowest safe delay that still uses the full budget is genuinely optimal
-  // here, not just cautious. 288s (300/day exactly, 203 topics/cycle) is the
-  // real safe maximum; was 300s (~288/day, already nearly this).
-  stackoverflow: { ttl: 40*60000, delay: 288000,  shards: 1 },  // 300/day API budget, fully used — ~16.2hr cycle is this endpoint's real floor
+  // ── [LOW-ACT] flat 4min, 1 shard — real external ceiling, left as-is ───────
+  // These four keep both their original 1-shard cadence AND get capped in
+  // RATE_LIMITED_MANUAL_SWEEP — see that constant's comment. Reverted back
+  // to the original delay values along with the shard-count revert above —
+  // see this block's own history comment for why: under active production
+  // instability, restoring the fully known-stable baseline took priority
+  // over incremental per-source tuning, even for changes (these four are
+  // single-shard, so don't add to the concurrent-loop count that was the
+  // main problem) that weren't confirmed to be part of the actual cause.
+  github:        { ttl: 20*60000, delay: 240000,  shards: 1 },  // 60 req/hr unauthed — 15 fetch/hr worst case, still under the cap
+  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires ≥20s between requests — 4min is a wide courtesy margin
+  usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
+  // 48 mapped topics × 1 fetch/full-cycle would land ~250/day at the same
+  // 4min the rest of this tier uses — too close to the Stack Exchange
+  // unauthenticated 300/day quota. Held at the tier-5 (5min) ceiling instead,
+  // which keeps it ~200/day with real headroom.
+  stackoverflow: { ttl: 40*60000, delay: 300000,  shards: 1 },  // 300/day API budget — kept at the archival ceiling for quota headroom
 
   // ── [ARCHIVAL] flat 5min, 1 shard — system-wide ceiling ─────────────────────
   // No free public API — requires a genuine app-level public token
