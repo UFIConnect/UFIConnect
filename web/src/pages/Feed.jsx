@@ -525,7 +525,11 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
       if (cancelled || !ytMountRef.current || ytPlayerRef.current) return;
       const player = new YT.Player(ytMountRef.current, {
         videoId: embedId,
-        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0 },
+        // origin: without it, the IFrame Player API's postMessage bridge
+        // back to this page can silently fail ("Unable to post message to
+        // https://www.youtube.com...") — confirmed live on mobile WebKit,
+        // same fix applied to VideoFeedView/ImageLightbox's own players.
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
             if (cancelled) return;

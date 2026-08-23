@@ -267,6 +267,17 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         playerVars: {
           autoplay: 1, mute: 1, playsinline: 1, loop: 1,
           controls: 0, modestbranding: 1, rel: 0, playlist: src.id,
+          // Without this, the IFrame Player API's postMessage bridge back
+          // to this page can silently fail ("Unable to post message to
+          // https://www.youtube.com. Recipient has origin ...") — confirmed
+          // live on mobile WebKit: the iframe itself loads and autoplays
+          // fine (autoplay=1 works independent of postMessage), but every
+          // JS-API call this file makes through it — playVideo/pauseVideo,
+          // getDuration, the onReady/onStateChange callbacks the scrub bar
+          // and play/pause button depend on — goes nowhere, which is
+          // exactly what "the play button doesn't do anything" looks like
+          // from the outside even though the video is visibly playing.
+          origin: window.location.origin,
         },
         events: {
           onReady: (e) => {
