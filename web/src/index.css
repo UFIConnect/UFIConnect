@@ -403,7 +403,16 @@ input, textarea, select { font-family: inherit; }
 .demo-hint strong { color: var(--text); }
 
 /* ── Post card ────────────────────────────────────────────── */
-.post-card { padding: 18px 20px; }
+/* overflow-wrap/word-break are inherited properties — setting them here
+   covers every descendant text node (titles, tags, meta, embeds' captions)
+   in one place instead of needing every individual <p>/<span> across every
+   card variant (YouTube/TikTok/generic/PostList) to opt in separately,
+   which is exactly what let some post titles keep overflowing their card
+   on mobile after .post-content alone got this fix. Elements that
+   deliberately use white-space: nowrap (source-URL ellipsis, pill/button
+   labels) are unaffected — nowrap already keeps them on one line before
+   overflow-wrap would ever apply. */
+.post-card { padding: 18px 20px; overflow-wrap: break-word; word-break: break-word; }
 .post-header {
   display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px;
 }
