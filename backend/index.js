@@ -10255,7 +10255,7 @@ const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
 // once it's actually needed. Seen posts are exempt regardless of age here
 // (they still fall under the 20-day rule above like everything else) —
 // this only prunes content that's provably never been useful to anyone yet.
-const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 3 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
+const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 7 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
 function trimFeedPostsCache() {
   if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
