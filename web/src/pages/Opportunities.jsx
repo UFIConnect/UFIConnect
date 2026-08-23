@@ -23,6 +23,13 @@ const PLATFORM_META = {
   glassdoor: { label: 'Glassdoor',  icon: '🟢', color: '#0CAA41', bg: '#E6F9EE' },
   wellfound: { label: 'Wellfound',  icon: '🚀', color: '#000',    bg: '#F3F4F6' },
   google:    { label: 'Google',     icon: '🔎', color: '#EA4335', bg: '#FEE8E6' },
+  // A real fallback, not a redundant one: USAJobs' own live listings (see
+  // fetchUSAJobsOpportunities) only appear when USAJOBS_API_KEY/
+  // USAJOBS_USER_AGENT are configured — without them (or if a given search
+  // genuinely has no matches) USAJobs was completely absent from this page,
+  // unlike LinkedIn/Indeed/Glassdoor/Wellfound/Google which always at least
+  // get this placeholder search link.
+  usajobs:   { label: 'USAJobs',    icon: '🏛️', color: '#005EA8', bg: '#E8F1FA' },
 };
 
 const FILTERS = [

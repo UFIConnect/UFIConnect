@@ -16248,6 +16248,13 @@ function getPlatformSearchUrls(role, title) {
     glassdoor: `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc}&remoteWorkType=1`,
     wellfound: `https://wellfound.com/jobs?q=${enc}`,
     google:    `https://www.google.com/search?q=${encodeURIComponent(q + ' jobs remote 2025')}`,
+    // Real fallback, not a redundant one — USAJobs' own live listings (see
+    // fetchUSAJobsOpportunities) only appear when USAJOBS_API_KEY/
+    // USAJOBS_USER_AGENT are configured, unlike the other five platforms
+    // here which are always search links regardless. Without a key (or a
+    // genuinely zero-match search) USAJobs was completely absent from this
+    // page rather than falling back to this like everything else does.
+    usajobs:   `https://www.usajobs.gov/Search/Results?k=${enc}`,
   };
 }
 
