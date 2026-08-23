@@ -8856,10 +8856,16 @@ const PLATFORMS = {
   },
 };
 
+// Display/connect order for Connected Accounts — Set iteration order
+// follows insertion order, so this list's order IS the UI order. TikTok is
+// deliberately last: it's the platform most likely to need real portal
+// configuration (Login Kit product, redirect URI registration, sandbox
+// testers) before it actually works, so it shouldn't be the first thing a
+// member sees/tries.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'instagram', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
+  'medium', 'dribbble', 'behance', 'bluesky', 'tiktok',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
