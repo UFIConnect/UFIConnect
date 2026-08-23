@@ -16377,36 +16377,53 @@ async function fetchMuseJobs(role, experience) {
   }
 }
 
-// RemoteOK posts come from the shared feed pipeline (real RSS items, each
-// sourceUrl already points at the specific job posting) — reshape them into
-// the same opportunity shape used by Remotive/Muse so they can merge in.
-async function fetchRemoteOKOpportunities(role) {
-  const query = ROLE_JOB_QUERIES[role] || role || 'developer';
+// RemoteOK/Indeed/USAJobs used to each run their OWN separate live query
+// here, scoped to a single keyword derived from the viewer's role
+// (ROLE_JOB_QUERIES[role]) — e.g. "software engineer developer" for an
+// Engineer. That's a real, narrow search against each API, right now, for
+// this one request. Meanwhile the continuous background pipeline
+// (SOURCE_FETCHERS.usajobs etc.) has been cycling through all 203
+// FEED_TOPICS for as long as it's been running, accumulating a much wider
+// real result set in feed_posts_cache/globalFeedCache — confirmed live:
+// the same account saw 31 real USAJobs listings across a wide variety of
+// categories (Content Creator, Mental Health, Supply Chain...) in Feed,
+// versus almost none in Opportunities for the exact same USAJOBS_API_KEY.
+// Feed already reads from that shared, accumulated pool; Opportunities'
+// live per-role query never had a chance to see the same breadth. Reading
+// from the same shared pool here instead — role no longer picks a query
+// keyword (there's nothing left to query live), it's just one of the
+// existing relevance-scoring signals /opportunities already applies below.
+async function getSharedJobListings() {
+  if (!db.isConnected()) return [];
   try {
-    const posts = await fetchRemoteOKJobs(query);
-    // sourceUrl is `j.url || j.apply_url` upstream — both can be missing on
-    // a malformed listing, same accuracy bar as Remotive/Muse below. Was
-    // capped at 20 (same ceiling Remotive had before its own bump to 50) —
-    // fetchRemoteOKJobs itself already pulls up to 100 candidates, so this
-    // was throwing away real, already-fetched matches for no reason.
-    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 50).map(p => ({
-      id:        `remoteok_${p.id}`,
-      type:      'job',
-      title:     p.title,
-      org:       p.author?.name || p.author?.organization || 'Company',
-      location:  'Remote',
-      pay:       '',
-      tags:      [],
-      source:    'Remote OK',
-      sourceUrl: p.sourceUrl,
-      posted:    p.createdAt || new Date().toISOString(),
-      remote:    true,
-      isLive:    true,
-      logo:      null,
-    }));
-  } catch {
+    const rows = await getPostsFromDB([], 300, 0, JOB_LISTING_SOURCES, { timeRange: '30d' });
+    return realFeedPosts(rows);
+  } catch (e) {
+    console.warn('[getSharedJobListings] query failed:', e.message);
     return [];
   }
+}
+function mapSharedJobPost(p, label) {
+  return {
+    id:        `${p.source}_${p.id}`,
+    type:      'job',
+    title:     p.title,
+    org:       p.author?.name || p.author?.organization || 'Company',
+    location:  p.location || (label === 'USAJobs' ? 'United States' : 'Remote'),
+    pay:       '',
+    tags:      [],
+    source:    label,
+    sourceUrl: p.sourceUrl,
+    posted:    p.createdAt || new Date().toISOString(),
+    remote:    label !== 'USAJobs',
+    isLive:    true,
+    logo:      p.mediaUrl || null,
+  };
+}
+async function fetchRemoteOKOpportunities() {
+  const pool = await getSharedJobListings();
+  return pool.filter(p => p.source === 'remoteok' && p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl))
+    .map(p => mapSharedJobPost(p, 'Remote OK'));
 }
 
 // "Indeed" here is Remotive's API + WeWorkRemotely's RSS relabeled (see
@@ -16418,28 +16435,10 @@ async function fetchRemoteOKOpportunities(role) {
 // dedup in getLiveJobs wouldn't have caught it. getLiveJobs dedupes the
 // combined list by sourceUrl for exactly this reason — same real posting,
 // same landing-page URL, regardless of which label fetched it first.
-async function fetchIndeedOpportunities(role) {
-  const query = ROLE_JOB_QUERIES[role] || role || 'analyst';
-  try {
-    const posts = await fetchIndeedJobs(query);
-    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 50).map(p => ({
-      id:        `indeed_${p.id}`,
-      type:      'job',
-      title:     p.title,
-      org:       p.author?.name || p.author?.organization || 'Company',
-      location:  p.location || 'Remote',
-      pay:       '',
-      tags:      [],
-      source:    'Indeed',
-      sourceUrl: p.sourceUrl,
-      posted:    p.createdAt || new Date().toISOString(),
-      remote:    true,
-      isLive:    true,
-      logo:      p.mediaUrl || null,
-    }));
-  } catch {
-    return [];
-  }
+async function fetchIndeedOpportunities() {
+  const pool = await getSharedJobListings();
+  return pool.filter(p => p.source === 'indeed' && p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl))
+    .map(p => mapSharedJobPost(p, 'Indeed'));
 }
 
 // USAJobs: the official U.S. federal government jobs API — genuinely free,
@@ -16447,34 +16446,10 @@ async function fetchIndeedOpportunities(role) {
 // USAJOBS_USER_AGENT are set (see fetchUSAJobsByKeyword above). Federal
 // listings only, not a general-purpose board, but as an official government
 // source it's about as verifiable as a job posting gets.
-async function fetchUSAJobsOpportunities(role) {
-  const query = ROLE_JOB_QUERIES[role] || role || 'analyst';
-  try {
-    const posts = await fetchUSAJobsByKeyword(query);
-    // sourceUrl is `d.PositionURI || 'https://www.usajobs.gov'` upstream —
-    // same generic-homepage-fallback problem fixed for Remotive/Muse above.
-    return posts.filter(p => p.sourceUrl && p.sourceUrl !== 'https://www.usajobs.gov' && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 25).map(p => ({
-      // p.id is already `usajobs_${MatchedObjectId}` from fetchUSAJobsByKeyword
-      // above — this used to prefix it again (`usajobs_usajobs_...`), which
-      // still worked (each MatchedObjectId is genuinely unique on its own)
-      // but was pure noise, not a real bug on its own.
-      id:        p.id,
-      type:      'job',
-      title:     p.title,
-      org:       p.author?.organization || p.author?.name || 'U.S. Government',
-      location:  p.location || 'United States',
-      pay:       '',
-      tags:      [],
-      source:    'USAJobs',
-      sourceUrl: p.sourceUrl,
-      posted:    p.createdAt || new Date().toISOString(),
-      remote:    false,
-      isLive:    true,
-      logo:      null,
-    }));
-  } catch {
-    return [];
-  }
+async function fetchUSAJobsOpportunities() {
+  const pool = await getSharedJobListings();
+  return pool.filter(p => p.source === 'usajobs' && p.sourceUrl && p.sourceUrl !== 'https://www.usajobs.gov' && /^https?:\/\//i.test(p.sourceUrl))
+    .map(p => mapSharedJobPost(p, 'USAJobs'));
 }
 
 // Baseline legitimacy bar every live job listing has to clear regardless of
@@ -16509,9 +16484,9 @@ async function getLiveJobs(role, experience) {
   const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
     Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
     fetchMuseJobs(role, experience),
-    fetchRemoteOKOpportunities(role),
-    fetchUSAJobsOpportunities(role),
-    fetchIndeedOpportunities(role),
+    fetchRemoteOKOpportunities(),
+    fetchUSAJobsOpportunities(),
+    fetchIndeedOpportunities(),
   ]);
   const seenIds = new Set();
   const seenUrls = new Set();

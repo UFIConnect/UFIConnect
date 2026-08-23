@@ -656,19 +656,11 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <span style={{ fontSize: '1.3rem' }}>💬</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
         </button>
-        {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-            onClick={(e) => {
-              e.stopPropagation();
-              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
-            }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textDecoration: 'none' }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: '50%', background: 'rgba(255,255,255,.16)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', backdropFilter: 'blur(4px)',
-            }}>↗</div>
-            <span style={{ fontSize: '.62rem', fontWeight: 600 }}>Open</span>
-          </a>
+        {src && duration > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
+            <span style={{ fontSize: '1.3rem' }}>⏱️</span>
+            <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{formatTime(duration)}</span>
+          </div>
         )}
       </div>
     </div>

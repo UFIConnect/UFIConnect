@@ -58,6 +58,7 @@ export default function PostList({
   const [commentBusy, setCommentBusy] = useState({});
   const [deleteBusy, setDeleteBusy] = useState({});
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
+  const [expandedPosts, setExpandedPosts] = useState({});
 
   useEffect(() => {
     setLocalPosts(posts);
@@ -197,6 +198,8 @@ export default function PostList({
       {localPosts.map((post) => {
         const commentsOpen = !!openComments[post.id];
         const comments = commentsByPost[post.id] || [];
+        const isExpanded = !!expandedPosts[post.id];
+        const isLongPost = !!post.content && post.content.length > CONTENT_PREVIEW_LEN;
         return (
           <div key={post.id} className="card post-card" style={{ marginBottom: 12 }}>
             {showAuthor ? (
@@ -259,17 +262,18 @@ export default function PostList({
             )}
 
             {post.content && (
-              <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>
-                {post.content.length > CONTENT_PREVIEW_LEN
+              <p style={{ margin: '0 0 10px', fontSize: '.9rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
+                {isLongPost && !isExpanded
                   ? `${truncateAtWord(post.content, CONTENT_PREVIEW_LEN)}… `
                   : post.content}
-                {post.content.length > CONTENT_PREVIEW_LEN && (
-                  <Link
-                    to={`/p/${encodeURIComponent(post.id)}`}
-                    style={{ fontWeight: 700, color: 'var(--primary)', textDecoration: 'none', whiteSpace: 'nowrap' }}
+                {isLongPost && (
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPosts(prev => ({ ...prev, [post.id]: !isExpanded }))}
+                    style={{ fontWeight: 700, color: 'var(--primary)', background: 'none', border: 'none', padding: 0, marginLeft: isExpanded ? 0 : 4, cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap', display: isExpanded ? 'block' : 'inline' }}
                   >
-                    Read more
-                  </Link>
+                    {isExpanded ? 'Show less' : 'Read more'}
+                  </button>
                 )}
               </p>
             )}
