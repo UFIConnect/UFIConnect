@@ -653,7 +653,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         </button>
         {post.likesCount > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-            <span style={{ fontSize: '1.3rem' }}>❤️</span>
+            <span style={{ fontSize: '1.3rem' }}>🤍</span>
             <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
           </div>
         )}
