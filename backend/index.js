@@ -10268,13 +10268,31 @@ const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
 // (they still fall under the 20-day rule above like everything else) —
 // this only prunes content that's provably never been useful to anyone yet.
 const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 7 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
+// A quiet/rate-limited/circuit-paused source stops adding fresh rows while
+// high-volume sources keep pushing newer ones ahead of it — under the old
+// plain "delete everything past the Nth-newest row overall" cap, that quiet
+// source's own last posts were always the oldest-looking rows in the table
+// and got evicted first, well before the 20-day ceiling below ever applied
+// to them, so the source could vanish from what's servable even though
+// nothing was actually wrong with it. This floor exempts each source's own
+// most-recent SOURCE_KEEP_FLOOR rows from the count-cap eviction (they're
+// still subject to the 20-day/unseen rules right below) so a source that's
+// gone quiet keeps up to 20 days of its own backlog servable instead of
+// disappearing early just because other sources fetch more.
+const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 function trimFeedPostsCache() {
   if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
   db.query(
     `DELETE FROM feed_posts_cache WHERE id IN (
-       SELECT id FROM feed_posts_cache ORDER BY post_created_at DESC OFFSET $1
-     )`, [MAX_CACHED_DB_POSTS]
+       SELECT id FROM (
+         SELECT id,
+                ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
+                ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
+         FROM feed_posts_cache
+       ) ranked
+       WHERE global_rank > $1 AND source_rank > $2
+     )`, [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
   ).catch(() => {});
   db.query(
     `DELETE FROM feed_posts_cache WHERE post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds'`
