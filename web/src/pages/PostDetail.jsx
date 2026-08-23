@@ -147,8 +147,14 @@ export default function PostDetail() {
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   const youtubeId = post.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : null;
+  // TikTok previously had no branch here at all — a TikTok post fell
+  // through every video/image check (its mediaUrl is a poster image, not a
+  // playable file, so isDirectVideoUrl never matched either) and rendered
+  // with no media at all, just title/text. Same real embed treatment
+  // YouTube gets above, via TikTok's own public oEmbed-style player.
+  const tiktokId = post.source === 'tiktok' ? post.embedId : null;
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
+  const directVideoUrl = isVideo && !playlistUrl && !youtubeId && !tiktokId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
   const canComment = !post.isExternal;
 
   return (
@@ -205,7 +211,14 @@ export default function PostDetail() {
                 allowFullScreen style={{ display: 'block' }} />
             </div>
           )}
-          {!youtubeId && (playlistUrl || directVideoUrl) && (
+          {tiktokId && (
+            <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '9/16', maxHeight: 700, margin: '0 auto 12px', background: '#000' }}>
+              <iframe width="100%" height="100%" src={`https://www.tiktok.com/embed/v2/${tiktokId}`}
+                title={post.title} frameBorder="0"
+                allow="autoplay; encrypted-media; fullscreen" style={{ display: 'block' }} />
+            </div>
+          )}
+          {!youtubeId && !tiktokId && (playlistUrl || directVideoUrl) && (
             // This is the single dedicated post page, not a scrolling
             // preview — real native controls (including volume) make more
             // sense here than InlineAutoplayVideo's silent, always-muted
@@ -222,7 +235,7 @@ export default function PostDetail() {
               )}
             </div>
           )}
-          {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
+          {!youtubeId && !tiktokId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
             <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12 }}>
               <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 480, objectFit: 'contain', background: '#000' }} />
             </div>

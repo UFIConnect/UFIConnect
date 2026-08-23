@@ -669,7 +669,14 @@ const SOCIAL_CFG = {
     // video.list is what fetchTikTokUserVideos actually calls — was missing
     // here, so a token issued before this fix has no permission to list the
     // owner's videos regardless of what the fetcher requests.
-    scope: 'user.info.basic video.list',
+    // Comma-separated, not space — TikTok's own docs specify
+    // scope=user.info.basic,video.list; a space-joined scope string (valid
+    // OAuth2 elsewhere, and what every other platform in this config uses)
+    // isn't what TikTok's authorization server expects, and surfaced as a
+    // "Something went wrong... correct the following: scope" error on
+    // TikTok's own consent screen — confirmed live. Instagram/Facebook
+    // below already use commas for the same reason.
+    scope: 'user.info.basic,video.list',
     pkce: true,
     clientIdParam: 'client_key',
   },
