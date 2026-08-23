@@ -67,6 +67,7 @@ function SourceBadge({ opp }) {
     'Remotive': { icon: '🔴', label: 'Live · Remotive', color: '#2563EB', bg: '#EFF6FF' },
     'The Muse': { icon: '✦', label: 'Live · The Muse', color: '#7C3AED', bg: '#F3EEFF' },
     'Remote OK': { icon: '🔴', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
+    'USAJobs':   { icon: '🔴', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
   };
   const badge = badges[opp.source];
   return (

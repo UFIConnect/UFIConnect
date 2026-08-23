@@ -414,7 +414,7 @@ input, textarea, select { font-family: inherit; }
   font-size: .7rem; font-weight: 600; padding: 2px 8px; border-radius: 12px;
   border: 1.5px solid currentColor;
 }
-.post-content { font-size: .9rem; line-height: 1.6; color: var(--text); margin-bottom: 14px; }
+.post-content { font-size: .9rem; line-height: 1.6; color: var(--text); margin-bottom: 14px; overflow-wrap: break-word; word-break: break-word; }
 .post-actions { display: flex; gap: 16px; }
 .post-action-btn {
   background: none; border: none;

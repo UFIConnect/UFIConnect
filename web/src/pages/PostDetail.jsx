@@ -184,9 +184,9 @@ export default function PostDetail() {
             )}
           </div>
 
-          {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</h1>}
+          {post.title && <h1 style={{ fontSize: '1.15rem', fontWeight: 700, margin: '0 0 10px', lineHeight: 1.4, overflowWrap: 'break-word', wordBreak: 'break-word' }}>{post.title}</h1>}
           {post.content && (
-            <p style={{ fontSize: '.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0 0 12px', color: 'var(--text)' }}>
+            <p style={{ fontSize: '.92rem', lineHeight: 1.65, whiteSpace: 'pre-wrap', margin: '0 0 12px', color: 'var(--text)', overflowWrap: 'break-word', wordBreak: 'break-word' }}>
               {post.content}
             </p>
           )}
@@ -295,7 +295,7 @@ export default function PostDetail() {
                   {c.score > 0 && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>▲ {c.score.toLocaleString()}</span>}
                   <span style={{ fontSize: '.68rem', color: 'var(--muted)', marginLeft: 'auto' }}>{timeAgo(c.created)}</span>
                 </div>
-                <p style={{ fontSize: '.83rem', lineHeight: 1.6, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{c.body}</p>
+                <p style={{ fontSize: '.83rem', lineHeight: 1.6, margin: 0, color: 'var(--text)', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', wordBreak: 'break-word' }}>{c.body}</p>
               </div>
             </div>
           ))}

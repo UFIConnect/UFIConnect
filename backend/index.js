@@ -16364,7 +16364,11 @@ async function fetchUSAJobsOpportunities(role) {
     // sourceUrl is `d.PositionURI || 'https://www.usajobs.gov'` upstream —
     // same generic-homepage-fallback problem fixed for Remotive/Muse above.
     return posts.filter(p => p.sourceUrl && p.sourceUrl !== 'https://www.usajobs.gov' && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 25).map(p => ({
-      id:        `usajobs_${p.id}`,
+      // p.id is already `usajobs_${MatchedObjectId}` from fetchUSAJobsByKeyword
+      // above — this used to prefix it again (`usajobs_usajobs_...`), which
+      // still worked (each MatchedObjectId is genuinely unique on its own)
+      // but was pure noise, not a real bug on its own.
+      id:        p.id,
       type:      'job',
       title:     p.title,
       org:       p.author?.organization || p.author?.name || 'U.S. Government',
