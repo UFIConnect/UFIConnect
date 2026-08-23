@@ -19,6 +19,51 @@ const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const DOUBLE_TAP_ZOOM = 2.5;
 
+// Same formatting VideoFeedView's swipe feed uses for its scrub bar.
+function formatTime(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+// Same scrub tracker as VideoFeedView's swipe feed — click or drag anywhere
+// on the bar to skip to that point. Shared across the hls/file/YouTube
+// branches below instead of tripling the JSX.
+function ScrubBar({ progressBarRef, onPointerDown, progressFraction, seeking, currentTime, duration }) {
+  if (!(duration > 0)) return null;
+  return (
+    <>
+      <div
+        ref={progressBarRef}
+        onPointerDown={onPointerDown}
+        style={{
+          position: 'absolute', left: 10, right: 10, bottom: 10, zIndex: 5,
+          height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(255,255,255,.28)',
+          cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
+        }}
+      >
+        <div style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4,
+          width: `${progressFraction * 100}%`, background: '#fff',
+        }} />
+        <div style={{
+          position: 'absolute', top: '50%', left: `${progressFraction * 100}%`,
+          transform: 'translate(-50%, -50%)', width: seeking ? 16 : 11, height: seeking ? 16 : 11,
+          borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,.5)',
+          transition: 'width .12s, height .12s',
+        }} />
+      </div>
+      <div style={{
+        position: 'absolute', right: 12, bottom: 20, zIndex: 5, color: '#fff', fontSize: '.65rem',
+        fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
+      }}>
+        {formatTime(currentTime)} / {formatTime(duration)}
+      </div>
+    </>
+  );
+}
+
 // Full-screen media viewer with next/prev navigation across every
 // image- OR video-bearing post currently on screen. Photos and videos used
 // to open into two separate, non-scrollable viewers (this one for images
@@ -61,6 +106,12 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const hlsVideoRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
+  // Scrub tracker state — same shape as VideoFeedView's swipe feed.
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [seeking, setSeeking] = useState(false);
+  const seekingRef = useRef(false);
+  const progressBarRef = useRef(null);
 
   // Photo zoom/pan — pinch, double-tap, wheel, or the +/− buttons below all
   // funnel into the same zoom/pan state. Scoped to plain photos only (not
@@ -200,8 +251,10 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
 
   // Fresh video each time the index changes — starts playing (see above),
   // so the pause indicator resets instead of carrying over the previous
-  // video's state.
-  useEffect(() => { setPaused(false); }, [index]);
+  // video's state. Scrub state resets the same way so the bar doesn't
+  // briefly show the previous video's progress before the new one's own
+  // onLoadedMetadata/onReady fires.
+  useEffect(() => { setPaused(false); setDuration(0); setCurrentTime(0); setSeeking(false); }, [index]);
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
   // feed — a raw <iframe src="..."> embed has no programmatic control at
@@ -218,6 +271,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   useEffect(() => {
     if (!youtubeId) return;
     let cancelled = false;
+    let pollId;
     const startUnmuted = !muted;
     setYtFailed(false);
     const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
@@ -231,6 +285,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             if (cancelled) return;
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
+            setDuration(e.target.getDuration() || 0);
             if (startUnmuted) e.target.unMute();
             // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
             // alone isn't reliable on every re-construction (confirmed live
@@ -242,16 +297,29 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           onStateChange: (e) => {
             if (cancelled) return;
             setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
+            const d = e.target.getDuration();
+            if (d) setDuration(d);
           },
           onError: () => { if (!cancelled) setYtFailed(true); },
         },
       });
+      // The IFrame Player API has no time-update event — onStateChange only
+      // fires on play/pause/seek/end, not continuously — so the scrub bar's
+      // moving playhead needs its own poll, same as VideoFeedView's.
+      pollId = setInterval(() => {
+        if (ytPlayerRef.current && !seekingRef.current) {
+          try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
+        }
+      }, 250);
     }).catch(() => { if (!cancelled) setYtFailed(true); });
     return () => {
       cancelled = true;
       clearTimeout(readyTimeout);
+      clearInterval(pollId);
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
+      setCurrentTime(0);
+      setDuration(0);
     };
   }, [youtubeId]);
 
@@ -273,6 +341,44 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
     if (!v) return;
     if (v.paused) v.play().catch(() => {}); else v.pause();
   }
+
+  function computeFraction(clientX) {
+    const el = progressBarRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    if (!rect.width) return 0;
+    return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  }
+
+  function seekToFraction(fraction) {
+    const time = fraction * (duration || 0);
+    setCurrentTime(time);
+    if (youtubeId) {
+      ytPlayerRef.current?.seekTo(time, true);
+    } else {
+      const v = getNativeEl();
+      if (v) v.currentTime = time;
+    }
+  }
+
+  function handleBarPointerDown(e) {
+    e.stopPropagation();
+    if (!duration) return;
+    seekingRef.current = true;
+    setSeeking(true);
+    seekToFraction(computeFraction(e.clientX));
+    const handleMove = (ev) => seekToFraction(computeFraction(ev.clientX));
+    const handleUp = () => {
+      seekingRef.current = false;
+      setSeeking(false);
+      document.removeEventListener('pointermove', handleMove);
+      document.removeEventListener('pointerup', handleUp);
+    };
+    document.addEventListener('pointermove', handleMove);
+    document.addEventListener('pointerup', handleUp);
+  }
+
+  const progressFraction = duration > 0 ? Math.min(1, currentTime / duration) : 0;
 
   if (!item) return null;
 
@@ -397,6 +503,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                 videoRef={hlsVideoRef} onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
                 onMutedFallback={() => setMuted(true)}
+                onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
+                onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ maxWidth: '92vw', maxHeight: '72vh', borderRadius: 10 }} />
               {paused && (
                 <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
@@ -406,12 +514,16 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                   color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
                 }}>▶</button>
               )}
+              <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
+                progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : directVideoUrl ? (
             <div style={{ position: 'relative', display: 'inline-block', maxWidth: '92vw' }}>
               <video key={item.url} ref={fileVideoRef} src={directVideoUrl} muted={muted} playsInline
                 onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+                onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
+                onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
               {paused && (
                 <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
@@ -421,6 +533,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                   color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
                 }}>▶</button>
               )}
+              <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
+                progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : youtubeId ? (
             <div style={{ position: 'relative', width: 'min(92vw, 640px)', aspectRatio: '16 / 9', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
@@ -453,6 +567,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                       color: '#fff', fontSize: '1.5rem', cursor: 'pointer',
                     }}>▶</button>
                   )}
+                  <ScrubBar progressBarRef={progressBarRef} onPointerDown={handleBarPointerDown}
+                    progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
                 </>
               )}
             </div>
