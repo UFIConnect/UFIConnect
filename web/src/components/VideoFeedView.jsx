@@ -640,12 +640,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
       {/* Right-side action rail */}
       <div style={{ position: 'absolute', right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
-        {post.likesCount > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-            <span style={{ fontSize: '1.3rem' }}>❤️</span>
-            <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
-          </div>
-        )}
         <button
           onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
           style={{
@@ -656,10 +650,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <span style={{ fontSize: '1.3rem' }}>💬</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
         </button>
-        {src && duration > 0 && (
+        {post.likesCount > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-            <span style={{ fontSize: '1.3rem' }}>⏱️</span>
-            <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{formatTime(duration)}</span>
+            <span style={{ fontSize: '1.3rem' }}>❤️</span>
+            <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
           </div>
         )}
       </div>
