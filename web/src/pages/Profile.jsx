@@ -63,6 +63,7 @@ export default function Profile() {
   const [uploadError,        setUploadError]         = useState('');
   const [expandedAttachment, setExpandedAttachment]  = useState(null);
   const [deletingAttachment, setDeletingAttachment]  = useState(null);
+  const [selectingAttachment, setSelectingAttachment] = useState(null);
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -163,7 +164,11 @@ export default function Profile() {
       const formData = new FormData();
       formData.append('file', file);
       const { data } = await client.post('/profile/attachments', formData);
-      setAttachments(prev => [data, ...prev]);
+      // Server marks the fresh upload primary and unsets every other one for
+      // this user (see POST /profile/attachments) — mirror that locally so
+      // the "Used for matching" label moves immediately instead of waiting
+      // on a full refetch to notice.
+      setAttachments(prev => [data, ...prev.map(a => ({ ...a, isPrimary: false }))]);
       setExpandedAttachment(data.id);
       showToast(`Resume scored ${data.atsScore}/100`, 'success');
     } catch (err) {
@@ -182,6 +187,17 @@ export default function Profile() {
     } catch {
       showToast('Failed to delete — please try again.', 'error');
     } finally { setDeletingAttachment(null); }
+  }
+
+  async function handleAttachmentSelect(id) {
+    setSelectingAttachment(id);
+    try {
+      await client.post(`/profile/attachments/${id}/select`);
+      setAttachments(prev => prev.map(a => ({ ...a, isPrimary: a.id === id })));
+      showToast('This resume is now used for opportunity matching.', 'success');
+    } catch {
+      showToast('Failed to update — please try again.', 'error');
+    } finally { setSelectingAttachment(null); }
   }
 
   async function handleAttachmentDownload(attachment) {
@@ -645,9 +661,29 @@ export default function Profile() {
                         <div style={{ fontWeight:600, fontSize:'.875rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.filename}</div>
                         <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>
                           {new Date(a.createdAt).toLocaleDateString()} · {(a.fileSize / 1024).toFixed(0)} KB
-                          {idx === 0 && attachments.length > 1 && <span style={{ color:'var(--primary)', fontWeight:600 }}> · Used for opportunity matching</span>}
+                          {a.isPrimary && attachments.length > 1 && <span style={{ color:'var(--primary)', fontWeight:600 }}> · Used for opportunity matching</span>}
                         </div>
                       </div>
+                      {/* Explicit selection (see POST /profile/attachments/:id/select) —
+                          this used to be purely "whichever was uploaded most
+                          recently," with no way to pick an older, more
+                          relevant resume back up once a newer one existed. */}
+                      {!a.isPrimary && attachments.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleAttachmentSelect(a.id); }}
+                          disabled={selectingAttachment === a.id}
+                          style={{
+                            flexShrink: 0, fontSize: '.7rem', fontWeight: 600, padding: '4px 9px',
+                            borderRadius: 'var(--radius-xs)', border: '1.5px solid var(--border)',
+                            background: 'var(--surface)', color: 'var(--text)',
+                            cursor: selectingAttachment === a.id ? 'default' : 'pointer',
+                            opacity: selectingAttachment === a.id ? 0.6 : 1,
+                          }}
+                        >
+                          {selectingAttachment === a.id ? '…' : 'Use for matching'}
+                        </button>
+                      )}
                       {/* Score next to the attachment, as asked */}
                       <span style={{
                         fontSize:'.8rem', fontWeight:800, padding:'4px 10px', borderRadius:20,

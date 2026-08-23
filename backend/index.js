@@ -6692,8 +6692,12 @@ async function getJobCandidatePool() {
 async function getUserResumeKeywords(userId) {
   if (!db.isConnected()) return new Set();
   try {
+    // is_primary DESC first — a user with multiple resumes can explicitly
+    // pick which one this means (see /profile/attachments/:id/select);
+    // falls back to most recent when nothing's ever been explicitly
+    // selected, same as the old behavior this replaced.
     const { rows } = await db.query(
-      `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,
+      `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY is_primary DESC, created_at DESC LIMIT 1`,
       [userId]
     );
     if (rows.length && Array.isArray(rows[0].keywords)) {
@@ -10004,6 +10008,14 @@ async function migrateDB() {
       )
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS attachments_user_idx ON attachments(user_id, created_at DESC)`);
+    // Which resume actually gets used for opportunity/feed matching used to
+    // be purely inferred (whichever was uploaded most recently) — no way
+    // for a user with multiple resumes to pick an older, more relevant one
+    // back up. is_primary makes that explicit; ORDER BY is_primary DESC,
+    // created_at DESC everywhere this gets read means existing accounts
+    // with no row ever marked primary keep the exact old "most recent"
+    // behavior as a fallback, not a behavior change on its own.
+    await db.query(`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false`);
 
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
@@ -15408,15 +15420,20 @@ app.post('/profile/attachments', authenticate, (req, res) => {
       const id = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const createdAt = new Date().toISOString();
 
+      // A fresh upload becomes primary by default (matches the old implicit
+      // "most recent wins" behavior) — explicit unset-then-insert rather
+      // than relying on ORDER BY alone, so GET's isPrimary flag is correct
+      // immediately without needing a second read-after-write.
+      await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
       await db.query(
-        `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
         [id, req.user.id, originalname, mimetype || null, size, buffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
       );
 
       res.status(201).json({
         id, filename: originalname, mimeType: mimetype || null, fileSize: size,
-        atsScore: score, atsChecks: checks, keywords, createdAt,
+        atsScore: score, atsChecks: checks, keywords, createdAt, isPrimary: true,
       });
     } catch (e) {
       console.error('POST /profile/attachments:', e.message);
@@ -15429,17 +15446,32 @@ app.get('/profile/attachments', authenticate, async (req, res) => {
   try {
     if (!db.isConnected()) return res.json({ attachments: [] });
     const { rows } = await db.query(
-      `SELECT id, filename, mime_type, file_size, ats_score, ats_feedback, keywords, created_at
-       FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`,
+      `SELECT id, filename, mime_type, file_size, ats_score, ats_feedback, keywords, created_at, is_primary
+       FROM attachments WHERE user_id=$1 ORDER BY is_primary DESC, created_at DESC`,
       [req.user.id]
     );
     res.json({
       attachments: rows.map(r => ({
         id: r.id, filename: r.filename, mimeType: r.mime_type, fileSize: r.file_size,
         atsScore: r.ats_score, atsChecks: r.ats_feedback, keywords: r.keywords, createdAt: r.created_at,
+        isPrimary: r.is_primary,
       })),
     });
   } catch (e) { console.error('GET /profile/attachments:', e.message); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// Lets a user with multiple resumes pick which one actually gets used for
+// opportunity/feed matching, instead of it always being whichever was
+// uploaded most recently (see attachments.is_primary's own comment).
+app.post('/profile/attachments/:id/select', authenticate, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.status(503).json({ message: 'Not available right now.' });
+    const { rows } = await db.query(`SELECT id FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
+    if (!rows.length) return res.status(404).json({ message: 'Not found.' });
+    await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
+    await db.query(`UPDATE attachments SET is_primary=true WHERE id=$1`, [req.params.id]);
+    res.json({ ok: true, id: req.params.id });
+  } catch (e) { console.error('POST /profile/attachments/:id/select:', e.message); res.status(500).json({ message: 'Failed to update.' }); }
 });
 
 app.get('/profile/attachments/:id/download', authenticate, async (req, res) => {
@@ -16377,6 +16409,39 @@ async function fetchRemoteOKOpportunities(role) {
   }
 }
 
+// "Indeed" here is Remotive's API + WeWorkRemotely's RSS relabeled (see
+// fetchIndeedJobs's own comment — there's no real Indeed.com API access,
+// this reuses the same fetcher the main feed's Indeed source already
+// calls), which means it can genuinely overlap with the Remotive source
+// just above — same underlying Remotive-API postings, different id scheme
+// (md5 hash here vs Remotive's own numeric id), so the plain id-based
+// dedup in getLiveJobs wouldn't have caught it. getLiveJobs dedupes the
+// combined list by sourceUrl for exactly this reason — same real posting,
+// same landing-page URL, regardless of which label fetched it first.
+async function fetchIndeedOpportunities(role) {
+  const query = ROLE_JOB_QUERIES[role] || role || 'analyst';
+  try {
+    const posts = await fetchIndeedJobs(query);
+    return posts.filter(p => p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl)).slice(0, 50).map(p => ({
+      id:        `indeed_${p.id}`,
+      type:      'job',
+      title:     p.title,
+      org:       p.author?.name || p.author?.organization || 'Company',
+      location:  p.location || 'Remote',
+      pay:       '',
+      tags:      [],
+      source:    'Indeed',
+      sourceUrl: p.sourceUrl,
+      posted:    p.createdAt || new Date().toISOString(),
+      remote:    true,
+      isLive:    true,
+      logo:      p.mediaUrl || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // USAJobs: the official U.S. federal government jobs API — genuinely free,
 // self-serve (developer.usajobs.gov), no-op until USAJOBS_API_KEY and
 // USAJOBS_USER_AGENT are set (see fetchUSAJobsByKeyword above). Federal
@@ -16428,7 +16493,9 @@ const JOB_PLACEHOLDER_ORGS = new Set(['unknown', 'company', 'n/a', 'confidential
 // lower-friction marketplace that also carries self-serve/paid listings;
 // USAJobs listings are official U.S. government postings — about as
 // verifiable as a job posting gets.
-const JOB_SOURCE_LEGITIMACY = { 'Remotive': 2, 'The Muse': 2, 'USAJobs': 3, 'Remote OK': 1 };
+// Indeed shares Remotive's own underlying data (see fetchIndeedOpportunities's
+// own comment) so it gets the same weight, not a separately-judged one.
+const JOB_SOURCE_LEGITIMACY = { 'Remotive': 2, 'The Muse': 2, 'USAJobs': 3, 'Remote OK': 1, 'Indeed': 2 };
 function isLegitimateJobListing(j) {
   if (!j.title || j.title.trim().length < 3) return false;
   if (!j.org || JOB_PLACEHOLDER_ORGS.has(j.org.trim().toLowerCase())) return false;
@@ -16439,17 +16506,27 @@ function isLegitimateJobListing(j) {
 async function getLiveJobs(role, experience) {
   const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
   const uniqCats = [...new Set(cats)];
-  const [remotiveResults, museResults, remoteOkResults, usaJobsResults] = await Promise.all([
+  const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
     Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
     fetchMuseJobs(role, experience),
     fetchRemoteOKOpportunities(role),
     fetchUSAJobsOpportunities(role),
+    fetchIndeedOpportunities(role),
   ]);
-  const seen = new Set();
-  return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults].filter((j) => {
+  const seenIds = new Set();
+  const seenUrls = new Set();
+  // sourceUrl, not just id — Indeed and Remotive can genuinely return the
+  // exact same posting under two different labels (see
+  // fetchIndeedOpportunities's own comment); a same-URL duplicate is
+  // dropped here regardless of which source label got there first in this
+  // array, keeping whichever one was listed earliest (Remotive, since it's
+  // first below) rather than an arbitrary pick.
+  return [...remotiveResults, ...museResults, ...remoteOkResults, ...usaJobsResults, ...indeedResults].filter((j) => {
     if (!isLegitimateJobListing(j)) return false;
-    if (seen.has(j.id)) return false;
-    seen.add(j.id);
+    if (seenIds.has(j.id)) return false;
+    if (j.sourceUrl && seenUrls.has(j.sourceUrl)) return false;
+    seenIds.add(j.id);
+    if (j.sourceUrl) seenUrls.add(j.sourceUrl);
     return true;
   });
 }
@@ -16577,24 +16654,18 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const goals      = (user?.preferences?.goals || []);
   const roleTypes  = ROLE_OP_TYPES[role] || new Set();
 
-  // Resume-derived keywords (see computeATSScore) — the most recently
-  // uploaded attachment's keyword set, if any. Kept as its own signal
+  // Resume-derived keywords (see computeATSScore) — this user's explicitly-
+  // selected resume if they've picked one (see attachments.is_primary),
+  // otherwise whichever was uploaded most recently. Kept as its own signal
   // rather than merged into `skills` above: skills is what the user
   // explicitly typed into their profile, this is what the resume itself
   // actually says, and a mismatch between the two is worth surfacing as a
   // distinct "matches your resume" reason rather than silently blending in.
-  let resumeKeywords = new Set();
-  if (db.isConnected()) {
-    try {
-      const { rows } = await db.query(
-        `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1`,
-        [req.user.id]
-      );
-      if (rows.length && Array.isArray(rows[0].keywords)) {
-        resumeKeywords = new Set(rows[0].keywords.map(k => String(k).toLowerCase()));
-      }
-    } catch (e) { /* resume matching is a bonus signal, never block the listing over it */ }
-  }
+  // Was its own duplicated inline query here — now just calls the same
+  // shared function the main feed's own resume matching already uses, so
+  // "matches your resume" can't quietly drift into meaning two different
+  // things in the two places it's shown.
+  const resumeKeywords = await getUserResumeKeywords(req.user.id);
 
   // Build the set of goal-boosted op types from this user's goals
   const goalBoostedTypes = new Set(goals.flatMap(g => [...(GOAL_TYPE_BOOST[g] || [])]));

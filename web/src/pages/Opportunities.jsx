@@ -68,6 +68,7 @@ function SourceBadge({ opp }) {
     'The Muse': { icon: '✦', label: 'Live · The Muse', color: '#7C3AED', bg: '#F3EEFF' },
     'Remote OK': { icon: '🔴', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
     'USAJobs':   { icon: '🔴', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
+    'Indeed':    { icon: '🔴', label: 'Live · Indeed',    color: '#2557A7', bg: '#EEF2FB' },
   };
   const badge = badges[opp.source];
   return (
@@ -107,6 +108,15 @@ export default function Opportunities() {
   const [page,      setPage]      = useState(1);
   const [refreshTick, setRefreshTick] = useState(0);
   const silentRefreshRef = useRef(false);
+  // Set right before a type-filter click (Job/Gig/Grant/etc, including
+  // "All") — the fetch effect below reads and clears it. Live sources
+  // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
+  // their own TTL, same as every other source in this app; a type click
+  // was previously a passive re-filter of whatever happened to already be
+  // cached, same as clicking into a tab that just silently shows stale
+  // data. Bust makes clicking "Job" (or any type) double as a real
+  // refresh for that type, matching how tab-clicks already work in Feed.
+  const bustOnNextFetchRef = useRef(false);
 
   const searchRef = useRef('');
 
@@ -133,6 +143,7 @@ export default function Opportunities() {
     if (search) params.search = search;
     if (remote) params.remote = true;
     if (sourceFilter.length) params.sources = sourceFilter.join(',');
+    if (bustOnNextFetchRef.current) { params.bust = '1'; bustOnNextFetchRef.current = false; }
 
     // Only show the full loading state on a real filter/search change —
     // refreshTick-driven refetches (scroll-to-refresh) should refill quietly
@@ -232,7 +243,23 @@ export default function Opportunities() {
           {FILTERS.map(({ value, label }) => (
             <button
               key={value}
-              onClick={() => { setFilter(value); setPage(1); }}
+              onClick={() => {
+                bustOnNextFetchRef.current = true;
+                setPage(1);
+                if (value === filter) {
+                  // Already active — setFilter(value) alone wouldn't
+                  // actually change state (same value in, same value out),
+                  // so the fetch effect's own [filter, ...] dependency
+                  // would never re-fire and clicking the current type again
+                  // would silently do nothing. refreshTick exists exactly
+                  // for this: re-run the same effect without a real filter
+                  // change, same "click the tab you're already on to
+                  // refresh it" pattern the main Feed uses.
+                  setRefreshTick(t => t + 1);
+                } else {
+                  setFilter(value);
+                }
+              }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
                 padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -246,7 +273,7 @@ export default function Opportunities() {
             </button>
           ))}
           <button
-            onClick={() => { setRemote(!remote); setPage(1); }}
+            onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); setPage(1); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
               padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -259,7 +286,7 @@ export default function Opportunities() {
             🌍 Remote
           </button>
           <button
-            onClick={() => { setLiveOnly(!liveOnly); setPage(1); }}
+            onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); setPage(1); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
               padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
