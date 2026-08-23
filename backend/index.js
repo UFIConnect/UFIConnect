@@ -10055,6 +10055,13 @@ async function migrateDB() {
     // dropped rather than left as dead weight on every future INSERT.
     await db.query(`DROP INDEX IF EXISTS seen_posts_user_time_idx`);
     await db.query(`CREATE INDEX IF NOT EXISTS seen_posts_user_context_time_idx ON seen_posts(user_id, context, seen_at DESC)`);
+    // post_id-only lookups (trimFeedPostsCache's "has anyone ever seen this
+    // post" NOT EXISTS check) aren't served by the (user_id, ...) index
+    // above — that one's only useful when user_id is the leading filter.
+    // Without this, that prune query falls back to a full sequential scan
+    // of seen_posts on every trim pass, fine while traffic (and this
+    // table) is still small but a real cost once it isn't.
+    await db.query(`CREATE INDEX IF NOT EXISTS seen_posts_post_id_idx ON seen_posts(post_id)`);
     // engaged_at: see markPostsEngaged/POST /posts/engaged — a genuine
     // "the user actually watched/read this" signal, distinct from
     // seen_posts' existing row (written the moment a post is merely
@@ -10232,10 +10239,23 @@ const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000
 // connection pool. Only let it really execute once per TRIM_INTERVAL_MS.
 let lastFeedPostsTrimAt = 0;
 const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
-// Aggregated content goes stale — a 6-week-old post has no business resurfacing
-// in the main feed. Age-based cleanup piggybacks on the same throttled pass as
-// the count-based cap so it adds no extra query volume.
-const STALE_POST_MAX_AGE_MS = 42 * 24 * 60 * 60 * 1000;
+// Aggregated content goes stale — a post has no business resurfacing in the
+// main feed indefinitely. Age-based cleanup piggybacks on the same
+// throttled pass as the count-based cap so it adds no extra query volume.
+// Was 42 days; cut to 20 — real traffic is still ramping up, so most of
+// what's fetched in a 6-week window was never realistically going to be
+// seen by anyone, just sitting in Render's Postgres storage costing space.
+const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
+// Separate, shorter rule: a post nobody has ever actually been shown (zero
+// rows in seen_posts referencing it) is safe to drop well before the hard
+// 20-day ceiling above — while traffic is this low, keeping weeks of
+// never-seen backlog around "just in case" isn't worth the storage it
+// costs, and the continuous background workers will simply fetch
+// comparably fresh replacement content again on their own normal schedule
+// once it's actually needed. Seen posts are exempt regardless of age here
+// (they still fall under the 20-day rule above like everything else) —
+// this only prunes content that's provably never been useful to anyone yet.
+const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 3 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
 function trimFeedPostsCache() {
   if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
@@ -10246,6 +10266,11 @@ function trimFeedPostsCache() {
   ).catch(() => {});
   db.query(
     `DELETE FROM feed_posts_cache WHERE post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds'`
+  ).catch(() => {});
+  db.query(
+    `DELETE FROM feed_posts_cache fp
+     WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
+       AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
   ).catch(() => {});
 }
 
