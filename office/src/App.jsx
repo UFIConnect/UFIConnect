@@ -1312,6 +1312,7 @@ function PipelineView({ status }) {
   const workers = (status?.sources?.workers || []).slice().sort((a, b) => (b.postCount || 0) - (a.postCount || 0));
   const healthyCount = workers.filter(w => ['healthy', 'ready', 'fallback', 'pro'].includes(w.status)).length;
   const composition  = status?.feed?.composition || [];
+  const equalizer    = status?.equalizer;
   const filterAgent  = status?.filterAgent;
   const sortAgent    = status?.sortAgent;
   const topicFilterAgent = status?.topicFilterAgent;
@@ -1366,7 +1367,35 @@ function PipelineView({ status }) {
             )}
           </PipelineNode>
 
-          <FlowConnector colors={['#60a5fa', '#fbbf24']} />
+          <FlowConnector colors={['#60a5fa', '#38bdf8']} />
+
+          {/* Stage 1.5 — Equalizer: sits between raw fetches and Filter —
+              see runEqualizerDrain server-side. Each source's fetches queue
+              here instead of going straight to Filter; a drain every 2s
+              interleaves them fairly, weighted by each source's own
+              configured pull rate (SOURCE_CONFIG shards) and dampened for
+              whichever source is currently over-represented in what's
+              actually made it through recently — never excludes, only
+              reorders, same as every other diversity mechanism in this
+              pipeline. */}
+          <PipelineNode glow="#38bdf8" style={{ flex: '0 0 210px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#38bdf8">Equalizer</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(56,189,248,.28), rgba(56,189,248,.03))',
+              border: '1px solid rgba(56,189,248,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>⚖️</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+              {(equalizer?.pendingTotal ?? 0).toLocaleString()} queued
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              {equalizer?.lastRun ? `Drained ${fmtAgo(equalizer.lastRun)}` : 'Not run yet'}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#38bdf8', '#fbbf24']} />
 
           {/* Stage 2 — Filter: every fetched post's first checkpoint, before
               it's even eligible for sorting — see filterAgentState/
@@ -1506,6 +1535,7 @@ function PipelineView({ status }) {
 
       {/* ── Detail row: what's actually happening inside each stage ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
+        <EqualizerDetailCard equalizer={equalizer} workers={workers} />
         <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} workers={workers} />
@@ -1523,6 +1553,62 @@ function DetailStat({ label, value, color }) {
       <div style={{ fontSize: 17, fontWeight: 800, color: color || '#e2e8f0', lineHeight: 1.2 }}>{value}</div>
       <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{label}</div>
     </div>
+  );
+}
+
+// Sits before Filter — see runEqualizerDrain server-side. bufferedBySource/
+// pendingTotal are live (computed on read there, same pattern as
+// feed.composition elsewhere), so "queued" always reflects exactly what's
+// waiting for the next drain, not a stale snapshot from the last one.
+function EqualizerDetailCard({ equalizer, workers = [] }) {
+  const bufferedBySource = equalizer?.bufferedBySource || {};
+  const drainedBySource = equalizer?.lastDrainedBySource || {};
+  const sharePct = equalizer?.recentSharePct || {};
+  const queuedRows = Object.entries(bufferedBySource).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const shareRows = Object.entries(sharePct).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const nameFor = (id) => (workers.find(w => w.id === id)?.name || id).replace(' Agent', '');
+  const emojiFor = (id) => workers.find(w => w.id === id)?.emoji || '⚙️';
+
+  return (
+    <Card>
+      <Label color="#38bdf8">Equalizer — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Drains every 2s: interleaves whatever's queued from each source, weighted by its own configured pull rate
+        and dampened if it's currently over-represented in recent output — reorders fairly, never drops anything.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="queued now" value={(equalizer?.pendingTotal ?? 0).toLocaleString()} color="#38bdf8" />
+        <DetailStat label="drained/tick" value={(Object.values(drainedBySource).reduce((s, n) => s + n, 0)).toLocaleString()} />
+        <DetailStat label="total drained" value={(equalizer?.totalDrained ?? 0).toLocaleString()} />
+        <DetailStat label="last tick" value={equalizer?.lastDurationMs != null ? `${equalizer.lastDurationMs}ms` : '—'} />
+      </div>
+
+      {queuedRows.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '.4px', marginBottom: 6 }}>Waiting for next drain</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {queuedRows.map(([id, n]) => (
+              <span key={id} style={{
+                display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#e2e8f0',
+                padding: '3px 9px', borderRadius: 14, background: 'rgba(56,189,248,.1)', border: '1px solid rgba(56,189,248,.25)',
+              }}>
+                {emojiFor(id)} {nameFor(id)} <span style={{ color: '#64748b' }}>{n}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {shareRows.length > 0 && (
+        <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
+          <div style={{ marginBottom: 4 }}>Recent output share (what the dampening reacts to):</div>
+          {shareRows.map(([id, pct]) => (
+            <div key={id}>{emojiFor(id)} {nameFor(id)}: <span style={{ color: '#94a3b8' }}>{pct}%</span></div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 

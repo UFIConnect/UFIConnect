@@ -5343,7 +5343,16 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
           if (fresh.length) {
             indexPostUrls(fresh);
-            const n = addAndBroadcast(fresh);
+            // Queued for the Equalizer's next drain (see its own comment)
+            // instead of calling addAndBroadcast directly — real dedup
+            // (and the "how many were actually new" count the old log line
+            // here used to report) now happens there, fairly interleaved
+            // with whatever else arrived in the same short window, rather
+            // than immediately in whichever order fetches happened to
+            // resolve in. Health/cache tracking below is untouched —
+            // still immediate, still per-fetch, so none of that behavior
+            // changes.
+            pushToEqualizer(agentId, fresh);
             const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
             agentSourceCache.set(agentId, {
               posts: sortFeedBatch([...fresh, ...prev.posts], `${agentId}-source-cache`, {
@@ -5353,7 +5362,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
               totalSeen: prev.totalSeen + fresh.length,
               emoji, color,
             });
-            if (n > 0) logAgentAction(agentId, emoji, `+${n} new — topic: ${topic}`, color);
+            logAgentAction(agentId, emoji, `+${fresh.length} queued — topic: ${topic}`, color);
             fullCyclesEmpty = 0;
             emptyTopicsThisCycle = 0;
             health.consecutiveErrors = 0;
@@ -5670,6 +5679,124 @@ function roundRobinMerge(lists) {
   }
   return result;
 }
+
+// ─── Equalizer: fair, weighted interleave of raw fetches before Filter ─────
+// A genuine pipeline stage, not just a visualization — sits between raw
+// source fetches (SOURCE_FETCHERS/makeTopicCycler) and Filter (see
+// addAndBroadcast). Each source's own fetch results land in a per-source
+// buffer here (pushToEqualizer) instead of calling addAndBroadcast
+// directly; a periodic drain (runEqualizerDrain) interleaves those buffers
+// — weighted by each source's own configured pull rate (SOURCE_CONFIG
+// shards, the rate just retuned — more shards means proportionally more
+// turns) — then dampened for any source whose actual recent output share
+// is running ahead of its fair share, before finally calling
+// addAndBroadcast with the combined, fairly-ordered batch. Draining every
+// EQUALIZER_DRAIN_MS keeps this close to real-time (not a meaningful delay
+// even for breaking-news sources), while still giving every fetch a real
+// chance to be reordered fairly relative to whatever else arrived in the
+// same short window. Weight is never dampened to zero and the drain always
+// takes at least a small floor of whatever's waiting regardless of weight
+// — every source still gets through, same "reorder, don't exclude" lesson
+// the reverted strict 25% cap taught (see addAndBroadcast's own history
+// comment).
+const EQUALIZER_DRAIN_MS = 2000;
+const equalizerBuffer = new Map(); // sourceId -> post[], awaiting the next drain
+const equalizerState = {
+  totalRuns: 0, totalBuffered: 0, totalDrained: 0,
+  lastRun: null, lastDurationMs: 0,
+  lastDrainedBySource: {}, // sourceId -> count drained on the most recent tick
+  recentSharePct: {},      // sourceId -> rolling % of total drained, feeds both the office display and the dampening calc below
+};
+// Rolling window (not just "last tick") so the dampening calc reacts to a
+// real recent trend instead of one drain's noise — decayed proportionally
+// once it grows past target size rather than hard-reset, so the "recent"
+// signal stays smooth instead of periodically snapping to zero.
+const EQUALIZER_SHARE_WINDOW = 500;
+let equalizerShareTotal = 0;
+const equalizerShareCounts = new Map(); // sourceId -> weighted count within the current window
+
+function pushToEqualizer(sourceId, posts) {
+  if (!posts?.length) return;
+  if (!equalizerBuffer.has(sourceId)) equalizerBuffer.set(sourceId, []);
+  equalizerBuffer.get(sourceId).push(...posts);
+  equalizerState.totalBuffered += posts.length;
+}
+
+function recordEqualizerShare(sourceId, count) {
+  if (!count) return;
+  equalizerShareCounts.set(sourceId, (equalizerShareCounts.get(sourceId) || 0) + count);
+  equalizerShareTotal += count;
+  if (equalizerShareTotal > EQUALIZER_SHARE_WINDOW) {
+    const scale = EQUALIZER_SHARE_WINDOW / equalizerShareTotal;
+    let newTotal = 0;
+    for (const [id, c] of equalizerShareCounts) {
+      const scaled = c * scale;
+      equalizerShareCounts.set(id, scaled);
+      newTotal += scaled;
+    }
+    equalizerShareTotal = newTotal;
+  }
+}
+
+function runEqualizerDrain() {
+  const sourceIds = [...equalizerBuffer.keys()].filter(id => equalizerBuffer.get(id)?.length);
+  if (!sourceIds.length) return;
+  const started = Date.now();
+
+  // Fair share = this source's own configured pull rate (shards) as a
+  // fraction of every currently-buffered source's combined rate — a source
+  // configured to pull faster earns proportionally more turns, the "based
+  // on the limit we just set" half of this.
+  const totalShards = sourceIds.reduce((sum, id) => sum + (SOURCE_CONFIG[id]?.shards || 1), 0);
+  const perSourceLists = [];
+  const drainedBySource = {};
+  for (const id of sourceIds) {
+    const buf = equalizerBuffer.get(id);
+    const baseWeight = SOURCE_CONFIG[id]?.shards || 1;
+    const fairShare = baseWeight / totalShards;
+    const recentShare = equalizerShareTotal > 0 ? (equalizerShareCounts.get(id) || 0) / equalizerShareTotal : fairShare;
+    // Dampen — never boost — a source currently running ahead of its fair
+    // share. This is the "also take into account some sources really
+    // over-dominating" half: a source configured to pull fast still gets
+    // fewer turns this tick if it's already over-represented in what's
+    // actually made it through recently, not just its raw configured rate.
+    const dampening = recentShare > fairShare ? Math.max(0.15, fairShare / recentShare) : 1;
+    const weight = Math.max(1, Math.round(baseWeight * dampening));
+    // The extra ceil(buf.length/20) floor keeps a backlog from growing
+    // unbounded under sustained dampening — always drains at least 5% of
+    // whatever's waiting on top of the weighted amount, so a heavily-
+    // dampened source's buffer still empties out, just slower than a
+    // fairly-weighted one's.
+    const drained = buf.splice(0, Math.max(weight, Math.ceil(buf.length / 20)));
+    if (!drained.length) continue;
+    perSourceLists.push(drained);
+    drainedBySource[id] = drained.length;
+    recordEqualizerShare(id, drained.length);
+  }
+  if (!perSourceLists.length) return;
+
+  // Smoothly interleaved (not source-A-then-B-then-C in blocks) via the
+  // same fair round-robin primitive the rest of this pipeline already
+  // uses — see its own comment for why this is "the full equalizer."
+  const merged = roundRobinMerge(perSourceLists);
+  const n = addAndBroadcast(merged);
+
+  equalizerState.totalRuns += 1;
+  equalizerState.totalDrained += merged.length;
+  equalizerState.lastRun = Date.now();
+  equalizerState.lastDurationMs = Date.now() - started;
+  equalizerState.lastDrainedBySource = drainedBySource;
+  equalizerState.recentSharePct = Object.fromEntries(
+    [...equalizerShareCounts.entries()].map(([id, c]) =>
+      [id, equalizerShareTotal ? Math.round((c / equalizerShareTotal) * 1000) / 10 : 0])
+  );
+  if (n > 0) {
+    logAgentAction('equalizer', '⚖️',
+      `Drained ${merged.length} posts across ${perSourceLists.length} source(s), ${n} new`, '#38BDF8');
+  }
+}
+setInterval(runEqualizerDrain, EQUALIZER_DRAIN_MS);
+
 // Per-source queries run in parallel (not one source=ANY([...]) query) —
 // see the "Fix multi-source Feed filter shutting out lower-ranked sources"
 // commit: a single combined ORDER BY <rank> LIMIT query lets whichever
@@ -14402,6 +14529,23 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // their own they read as the pipeline "resetting to zero" constantly.
       processedLastHour: getRecentTransferCount(),
       dbPostCount: dbFeedPostCount,
+    },
+    // Sits before Filter in the real pipeline — see runEqualizerDrain's own
+    // comment. bufferedBySource is live (computed on read, same pattern as
+    // feed.composition elsewhere) so the office can show exactly what's
+    // waiting for the next drain, not just the last completed one.
+    equalizer: {
+      totalRuns: equalizerState.totalRuns,
+      totalBuffered: equalizerState.totalBuffered,
+      totalDrained: equalizerState.totalDrained,
+      lastRun: equalizerState.lastRun,
+      lastDurationMs: equalizerState.lastDurationMs,
+      lastDrainedBySource: equalizerState.lastDrainedBySource,
+      recentSharePct: equalizerState.recentSharePct,
+      pendingTotal: [...equalizerBuffer.values()].reduce((sum, arr) => sum + arr.length, 0),
+      bufferedBySource: Object.fromEntries(
+        [...equalizerBuffer.entries()].filter(([, arr]) => arr.length).map(([id, arr]) => [id, arr.length])
+      ),
     },
     filterAgent: {
       status: filterAgentState.lastError ? 'degraded' : filterAgentState.status,
