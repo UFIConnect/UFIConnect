@@ -1231,60 +1231,62 @@ setInterval(() => {
 // app (was ~220) — confirmed live as the actual cause of both external
 // sources getting rate-limited/circuit-paused (real APIs correctly
 // reacting to a sudden burst) and the app itself becoming unstable under
-// concurrent real user traffic (that many permanent background loops
-// competing with request handling for the same single Node process's event
-// loop and memory). Reverted back to the original counts below. Delay (the
-// pacing between successive requests within one shard) is untouched by
-// either the increase or this revert.
+// concurrent real user traffic (that many permanent background loops, each
+// firing that much more often, competing with request handling for the
+// same single Node process's event loop, memory, and network stack). That
+// pass was fully reverted to the original counts, then reapplied here at a
+// deliberately smaller step — roughly 2x the original shard count, not
+// 4-16x — to still meaningfully shorten cycle times while keeping total
+// concurrent load well under whatever threshold actually caused the crash
+// (total went from ~220 to ~2,100 last time; this step lands around ~440).
+// Watch real behavior at this level before pushing any further. Delay (the
+// pacing between successive requests within one shard) stays untouched.
 const SOURCE_CONFIG = {
   //               TTL (ms)           DELAY/topic     shards
   // ── [BREAKING] 15–30s — live social/news firehose ───────────────────────────
-  reddit:        { ttl:  8*60000, delay: 15000, shards: 4 },  // r/new firehose, many subreddits
-  hn:            { ttl:  8*60000, delay: 20000, shards: 5 },  // Algolia — front page churns constantly
-  mastodon:      { ttl:  8*60000, delay: 20000, shards: 5 },  // public federated timelines, live chatter
+  reddit:        { ttl:  8*60000, delay: 15000, shards: 8 },  // r/new firehose, many subreddits — was 4
+  hn:            { ttl:  8*60000, delay: 20000, shards: 10 },  // Algolia — front page churns constantly — was 5
+  mastodon:      { ttl:  8*60000, delay: 20000, shards: 10 },  // public federated timelines, live chatter — was 5
   // Was the fastest tier by itself (8min/10s/4 shards) and, combined with its
   // per-fetch limit, made it the single biggest contributor to the shared
   // cache while Twitter/LinkedIn/Instagram/Facebook sat at 0 posts with no
   // app-level API token configured. Composition dominance is now capped
   // independently by diversifyBySource's maxSharePct (see addAndBroadcast),
   // so it's rated with its breaking-news peers, just at the slow end of the tier.
-  bluesky:       { ttl: 10*60000, delay: 30000, shards: 6 },  // public ATP API, live social posts
+  bluesky:       { ttl: 10*60000, delay: 30000, shards: 12 },  // public ATP API, live social posts — was 6
 
   // ── [HIGH-VOL] 60s — high-frequency, freshness-sensitive ────────────────────
-  devto:         { ttl: 20*60000, delay: 60000,  shards: 6 },  // dev blogging platform, constant new posts
-  indeed:        { ttl: 20*60000, delay: 60000,  shards: 6 },  // job RSS feeds, new listings continuously
-  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day
-  theverge:      { ttl: 20*60000, delay: 60000,  shards: 6 },  // tech news RSS, several stories/day
+  devto:         { ttl: 20*60000, delay: 60000,  shards: 12 },  // dev blogging platform, constant new posts — was 6
+  indeed:        { ttl: 20*60000, delay: 60000,  shards: 12 },  // job RSS feeds, new listings continuously — was 6
+  techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
+  theverge:      { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
   // ── [HIGH-VOL] 90s ───────────────────────────────────────────────────────────
-  medium:        { ttl: 25*60000, delay: 90000,  shards: 7 },  // CDN RSS, huge publishing platform
-  youtube:       { ttl: 25*60000, delay: 90000,  shards: 7 },  // channel RSS across many creators
-  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // freeCodeCamp RSS
-  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // daily launches, steady submission stream
-  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech news RSS
-  wired:         { ttl: 25*60000, delay: 90000,  shards: 7 },  // tech/culture news RSS
-  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 7 },  // AI/startup news RSS
-  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 7 },  // Linux/hardware news, multiple posts/day
+  medium:        { ttl: 25*60000, delay: 90000,  shards: 14 },  // CDN RSS, huge publishing platform — was 7
+  youtube:       { ttl: 25*60000, delay: 90000,  shards: 14 },  // channel RSS across many creators — was 7
+  hashnode:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // freeCodeCamp RSS — was 7
+  producthunt:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // daily launches, steady submission stream — was 7
+  arstechnica:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // tech news RSS — was 7
+  wired:         { ttl: 25*60000, delay: 90000,  shards: 14 },  // tech/culture news RSS — was 7
+  venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // AI/startup news RSS — was 7
+  phoronix:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // Linux/hardware news, multiple posts/day — was 7
   // ── [HIGH-VOL] 120s ──────────────────────────────────────────────────────────
-  theregister:   { ttl: 30*60000, delay: 120000, shards: 9 },  // enterprise IT/security RSS
-  remoteok:      { ttl: 30*60000, delay: 120000, shards: 9 },  // remote jobs API
-  behance:       { ttl: 30*60000, delay: 120000, shards: 9 },  // creative portfolios RSS
+  theregister:   { ttl: 30*60000, delay: 120000, shards: 18 },  // enterprise IT/security RSS — was 9
+  remoteok:      { ttl: 30*60000, delay: 120000, shards: 18 },  // remote jobs API — was 9
+  behance:       { ttl: 30*60000, delay: 120000, shards: 18 },  // creative portfolios RSS — was 9
 
   // ── [ACTIVE] flat 3min — steady content, not minute-by-minute ──────────────
-  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 10 }, // community posts
-  smashing:      { ttl: 45*60000, delay: 180000, shards: 10 }, // web dev/design RSS, long-form articles
-  infoq:         { ttl: 45*60000, delay: 180000, shards: 10 }, // enterprise/cloud RSS, moderate cadence
-  mittr:         { ttl: 45*60000, delay: 180000, shards: 10 }, // deep tech RSS, moderate cadence
-  gitlab:        { ttl: 45*60000, delay: 180000, shards: 10 }, // public project API
-  yc:            { ttl: 45*60000, delay: 180000, shards: 10 }, // startup/professional RSS
-  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 10 }, // business/funding RSS — deals aren't continuous
-  designweb:     { ttl: 45*60000, delay: 180000, shards: 10 }, // design/web industry RSS aggregator
+  indiehackers:  { ttl: 45*60000, delay: 180000, shards: 20 }, // community posts — was 10
+  smashing:      { ttl: 45*60000, delay: 180000, shards: 20 }, // web dev/design RSS, long-form articles — was 10
+  infoq:         { ttl: 45*60000, delay: 180000, shards: 20 }, // enterprise/cloud RSS, moderate cadence — was 10
+  mittr:         { ttl: 45*60000, delay: 180000, shards: 20 }, // deep tech RSS, moderate cadence — was 10
+  gitlab:        { ttl: 45*60000, delay: 180000, shards: 20 }, // public project API — was 10
+  yc:            { ttl: 45*60000, delay: 180000, shards: 20 }, // startup/professional RSS — was 10
+  crunchbase:    { ttl: 45*60000, delay: 180000, shards: 20 }, // business/funding RSS — deals aren't continuous — was 10
+  designweb:     { ttl: 45*60000, delay: 180000, shards: 20 }, // design/web industry RSS aggregator — was 10
 
-  // ── [LOW-ACT] no hard external limit, but a small/low-traffic site — kept
-  // moderate rather than pushed to 5min; that target isn't worth the extra
-  // concurrent shard loops for a source this size (see this block's own
-  // history above for why concurrent shard count is a real, shared cost,
-  // not a free per-source knob).
-  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 8 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either
+  // ── [LOW-ACT] no hard external limit, but a small/low-traffic site — still
+  // only a modest step up, same reasoning as the rest of this pass.
+  lobsters:      { ttl: 20*60000, delay: 240000,  shards: 16 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either — was 8
 
   // ── [LOW-ACT] flat 4min, 1 shard — real external ceiling, left as-is ───────
   // These four keep both their original 1-shard cadence AND get capped in
