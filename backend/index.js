@@ -16407,20 +16407,18 @@ async function fetchMuseJobs(role, experience) {
 // categories (Content Creator, Mental Health, Supply Chain...) in Feed,
 // versus almost none in Opportunities for the exact same USAJOBS_API_KEY.
 // Feed already reads from that shared, accumulated pool; Opportunities'
-// live per-role query never had a chance to see the same breadth. Reading
-// from the same shared pool here instead — role no longer picks a query
-// keyword (there's nothing left to query live), it's just one of the
-// existing relevance-scoring signals /opportunities already applies below.
-async function getSharedJobListings() {
-  if (!db.isConnected()) return [];
-  try {
-    const rows = await getPostsFromDB([], 300, 0, JOB_LISTING_SOURCES, { timeRange: '30d' });
-    return realFeedPosts(rows);
-  } catch (e) {
-    console.warn('[getSharedJobListings] query failed:', e.message);
-    return [];
-  }
-}
+// live per-role query never had a chance to see the same breadth.
+//
+// Each source gets its own dedicated query against its own board (source
+// filter applied at the DB level, not blended together) rather than one
+// combined query across all three job sources — a single LIMIT-capped
+// query spanning multiple sources would just reproduce the same
+// domination problem one layer deeper: a higher-volume board (Indeed's
+// Remotive-backed feed, say) would fill most of the shared LIMIT and
+// crowd out a lower-volume one (USAJobs) even though both have real
+// content sitting in the DB. Each fetcher below strictly pulls from its
+// own source, so every board gets its own guaranteed slice regardless of
+// how much the others are producing.
 function mapSharedJobPost(p, label) {
   return {
     id:        `${p.source}_${p.id}`,
@@ -16438,10 +16436,20 @@ function mapSharedJobPost(p, label) {
     logo:      p.mediaUrl || null,
   };
 }
+async function fetchJobBoardListings(source, label, { excludeUrl = null, limit = 150 } = {}) {
+  if (!db.isConnected()) return [];
+  try {
+    const rows = await getPostsFromDB([], limit, 0, source, { timeRange: '30d' });
+    return realFeedPosts(rows)
+      .filter(p => p.sourceUrl && p.sourceUrl !== excludeUrl && /^https?:\/\//i.test(p.sourceUrl))
+      .map(p => mapSharedJobPost(p, label));
+  } catch (e) {
+    console.warn(`[fetchJobBoardListings:${source}] query failed:`, e.message);
+    return [];
+  }
+}
 async function fetchRemoteOKOpportunities() {
-  const pool = await getSharedJobListings();
-  return pool.filter(p => p.source === 'remoteok' && p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl))
-    .map(p => mapSharedJobPost(p, 'Remote OK'));
+  return fetchJobBoardListings('remoteok', 'Remote OK');
 }
 
 // "Indeed" here is Remotive's API + WeWorkRemotely's RSS relabeled (see
@@ -16454,9 +16462,7 @@ async function fetchRemoteOKOpportunities() {
 // combined list by sourceUrl for exactly this reason — same real posting,
 // same landing-page URL, regardless of which label fetched it first.
 async function fetchIndeedOpportunities() {
-  const pool = await getSharedJobListings();
-  return pool.filter(p => p.source === 'indeed' && p.sourceUrl && /^https?:\/\//i.test(p.sourceUrl))
-    .map(p => mapSharedJobPost(p, 'Indeed'));
+  return fetchJobBoardListings('indeed', 'Indeed');
 }
 
 // USAJobs: the official U.S. federal government jobs API — genuinely free,
@@ -16465,9 +16471,7 @@ async function fetchIndeedOpportunities() {
 // listings only, not a general-purpose board, but as an official government
 // source it's about as verifiable as a job posting gets.
 async function fetchUSAJobsOpportunities() {
-  const pool = await getSharedJobListings();
-  return pool.filter(p => p.source === 'usajobs' && p.sourceUrl && p.sourceUrl !== 'https://www.usajobs.gov' && /^https?:\/\//i.test(p.sourceUrl))
-    .map(p => mapSharedJobPost(p, 'USAJobs'));
+  return fetchJobBoardListings('usajobs', 'USAJobs', { excludeUrl: 'https://www.usajobs.gov' });
 }
 
 // Baseline legitimacy bar every live job listing has to clear regardless of
