@@ -11552,26 +11552,32 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 
   try {
     let accessToken;
+    let raw; // last token-endpoint response body — kept for the catch below,
+             // since postForm/fetchJSON resolve on any parseable JSON body
+             // regardless of HTTP status, so a rejected exchange (bad
+             // redirect_uri, unapproved scope, etc) previously surfaced as
+             // an opaque "No access_token in response" with the actual
+             // reason TikTok/etc sent back silently discarded.
 
     if (cfg.getToken) {
       // GET-based token exchange (Facebook)
-      const data = await fetchJSON(
+      raw = await fetchJSON(
         `${cfg.tokenUrl}?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`
       );
-      accessToken = data.access_token;
+      accessToken = raw.access_token;
     } else if (cfg.basicAuth) {
       // Basic-auth token exchange (Twitter, Reddit)
       const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
-      const data = await postForm(cfg.tokenUrl, {
+      raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,
         redirect_uri:  redirectUri,
         ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
       }, { Authorization: `Basic ${basicAuth}` });
-      accessToken = data.access_token;
+      accessToken = raw.access_token;
     } else if (cfg.clientIdParam) {
       // Non-standard client_id param (TikTok uses client_key)
-      const data = await postForm(cfg.tokenUrl, {
+      raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,
         redirect_uri:  redirectUri,
@@ -11579,10 +11585,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
         client_secret: clientSecret,
         ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
       });
-      accessToken = data.data?.access_token || data.access_token;
+      accessToken = raw.data?.access_token || raw.access_token;
     } else {
       // Standard POST form (LinkedIn, Instagram, GitHub, Discord, YouTube, Reddit, Medium, Dribbble, Behance, Bluesky)
-      const data = await postForm(cfg.tokenUrl, {
+      raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,
         redirect_uri:  redirectUri,
@@ -11590,17 +11596,28 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
         client_secret: clientSecret,
         ...(entry.codeVerifier ? { code_verifier: entry.codeVerifier } : {}),
       });
-      accessToken = data.access_token;
+      accessToken = raw.access_token;
     }
 
-    if (!accessToken) throw new Error('No access_token in response');
+    if (!accessToken) {
+      // Every provider's own error CODE (invalid_client, invalid_grant,
+      // invalid_scope, etc — never a token/secret) is safe to log and to
+      // hand back to the client for display; the fields that could ever
+      // carry a secret (access_token, refresh_token) simply aren't present
+      // on an error response. Kept short/coded (not error_description,
+      // which providers sometimes echo request details into) since this
+      // rides in a redirect query param, visible in browser history.
+      const providerErrorCode = raw?.error?.code || raw?.error || raw?.message || 'unknown';
+      throw Object.assign(new Error(`No access_token in response — provider said: ${providerErrorCode}`), { providerErrorCode });
+    }
 
     await saveSocialToken(entry.userId, platform, accessToken);
     logAgentAction('cache_helper', '🔗', `User connected ${platform} — social feed now active`, '#6366F1');
     res.redirect(`${frontendProfile}?social_connected=${platform}`);
   } catch (e) {
     console.error(`Social OAuth callback ${platform}:`, e.message);
-    res.redirect(`${frontendProfile}?social_error=${platform}&reason=token_exchange_failed`);
+    const detail = e.providerErrorCode ? `:${encodeURIComponent(String(e.providerErrorCode).slice(0, 60))}` : '';
+    res.redirect(`${frontendProfile}?social_error=${platform}&reason=token_exchange_failed${detail}`);
   }
 });
 

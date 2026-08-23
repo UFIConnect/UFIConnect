@@ -53,10 +53,17 @@ export default function ConnectedAccounts() {
       flash_('success', `${connected_} connected successfully.`);
       setSearchParams({}, { replace: true });
     } else if (errPlatform) {
-      const msg = errReason === 'invalid_state' ? 'Connection expired — please try again.'
-        : errReason === 'access_denied'          ? 'You cancelled the connection.'
+      // token_exchange_failed:<providerErrorCode> — see the backend
+      // callback's own comment — carries the provider's own short error
+      // code (invalid_client, invalid_scope, etc), not a generic dead end,
+      // so a failure can actually be diagnosed from what's on screen
+      // instead of needing server log access.
+      const [reasonBase, providerCode] = (errReason || '').split(':');
+      const msg = reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
+        : reasonBase === 'access_denied'          ? 'You cancelled the connection.'
+        : providerCode                            ? `Could not connect ${errPlatform}: ${decodeURIComponent(providerCode)}.`
         : `Could not connect ${errPlatform}.`;
-      flash_('error', msg, 6000);
+      flash_('error', msg, 8000);
       setSearchParams({}, { replace: true });
     }
   }, []); // eslint-disable-line
