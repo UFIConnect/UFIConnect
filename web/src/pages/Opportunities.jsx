@@ -17,12 +17,19 @@ const TYPE_META = {
   learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
 };
 
-// Glassdoor/Handshake/Wellfound/Google are real source-tab entries now (see
-// SourceBadge's own badges map and the backend's OFFICIAL_SEARCH_SOURCES) —
-// this stays around only for the LinkedIn "search more platforms" link
-// below, which is the one platform that's deliberately not been promoted.
+// None of these five has a public jobs-listing API (see the backend's
+// getPlatformSearchUrls) — Glassdoor/Handshake/Wellfound/Google were
+// briefly tried as promoted source-tab entries instead of plain links and
+// reverted: a single static search-link card standing in for a real
+// "source" ended up being exactly the kind of listing this page exists to
+// avoid. Plain external links, personalized to the user's title/role/resume
+// (see getPlatformSearchUrls), is the honest version of this.
 const PLATFORM_META = {
-  linkedin: { label: 'LinkedIn', icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
+  linkedin:  { label: 'LinkedIn',  icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
+  glassdoor: { label: 'Glassdoor', icon: '🟢', color: '#0CAA41', bg: '#E6F9EE' },
+  handshake: { label: 'Handshake', icon: '🤝', color: '#F97316', bg: '#FFF3E8' },
+  wellfound: { label: 'Wellfound', icon: '🚀', color: '#111827', bg: '#F3F4F6' },
+  google:    { label: 'Google',    icon: '🔎', color: '#EA4335', bg: '#FEE8E6' },
 };
 
 const FILTERS = [
@@ -69,14 +76,6 @@ function SourceBadge({ opp }) {
     'Remote OK': { icon: '🔴', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
     'USAJobs':   { icon: '🔴', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
     'Indeed':    { icon: '🔴', label: 'Live · Indeed',    color: '#2557A7', bg: '#EEF2FB' },
-    // Glassdoor/Handshake/Wellfound/Google have no public listings API (see
-    // the backend's buildOfficialSearchEntries) — "Search" instead of
-    // "Live" keeps that honest: these are a role-filled search link, not an
-    // aggregated posting, even though they're now a real source-tab entry.
-    'Glassdoor': { icon: '🟢', label: 'Search · Glassdoor', color: '#0CAA41', bg: '#E6F9EE' },
-    'Handshake': { icon: '🤝', label: 'Search · Handshake', color: '#F97316', bg: '#FFF3E8' },
-    'Wellfound': { icon: '🚀', label: 'Search · Wellfound', color: '#111827', bg: '#F3F4F6' },
-    'Google':    { icon: '🔎', label: 'Search · Google',    color: '#EA4335', bg: '#FEE8E6' },
   };
   const badge = badges[opp.source];
   return (
@@ -371,18 +370,19 @@ export default function Opportunities() {
           </select>
         </div>
 
-        {/* LinkedIn doesn't offer a public jobs API — there's no legitimate
-            way to pull its listings directly the way Remotive/The Muse/
-            RemoteOK/USAJobs are above, and faking that would be exactly the
-            kind of low-legitimacy listing this page is trying to avoid.
-            Glassdoor/Handshake/Wellfound/Google have the same real-API gap
-            but are promoted into the Source filter row itself instead (see
-            availableSources/SourceBadge) — LinkedIn is deliberately the one
-            platform left here as a plain external search link, styled to
-            match the Source chips above (same pill shape/size/border-
-            radius) even though behavior is unchanged: still an external
-            link, not an in-app filter, so the ↗ and "Search" label stay to
-            keep that honest. */}
+        {/* LinkedIn/Glassdoor/Handshake/Wellfound/Google don't offer a
+            public jobs API — there's no legitimate way to pull their
+            listings directly the way Remotive/The Muse/RemoteOK/USAJobs/
+            Indeed are above, and faking that would be exactly the kind of
+            low-legitimacy listing this page is trying to avoid. What's real
+            and accurate instead: a live search on each platform, pre-filled
+            with this user's actual title/role and (see the backend's
+            getPlatformSearchUrls) their selected resume's own keywords.
+            Styled to match the Source filter chips above (same pill shape/
+            size/border-radius) even though behavior is unchanged — still an
+            external link, not an in-app filter — so the ↗ and "Search"
+            label stay to keep that honest rather than implying these are
+            real aggregated listings like the tabs next to them. */}
         {platformSearchUrls && (
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>

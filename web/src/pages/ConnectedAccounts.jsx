@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -148,10 +149,12 @@ export default function ConnectedAccounts() {
                 {connectedList.slice(0, 5).map(([k, p]) => (
                   <div key={k} style={{
                     width: 28, height: 28, borderRadius: '50%',
-                    background: p.color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: hasBrandIcon(k) ? '#fff' : p.color,
+                    border: hasBrandIcon(k) ? '1px solid var(--border)' : 'none',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
                     fontSize: '.7rem', color: '#fff', fontWeight: 700,
                   }}>
-                    {p.name[0]}
+                    {hasBrandIcon(k) ? <BrandIcon platform={k} size={15} /> : p.name[0]}
                   </div>
                 ))}
               </div>
@@ -236,15 +239,22 @@ function PlatformCard({
   return (
     <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Platform icon */}
+        {/* Platform icon — the platform's own official mark where one's
+            available (see BrandIcon), initials-on-brand-color otherwise. */}
         <div style={{
           width: 40, height: 40, borderRadius: 10,
-          background: p.color, display: 'flex', alignItems: 'center',
+          background: hasBrandIcon(platformKey) ? '#fff' : p.color,
+          border: hasBrandIcon(platformKey) ? '1px solid var(--border)' : 'none',
+          display: 'flex', alignItems: 'center',
           justifyContent: 'center', flexShrink: 0,
         }}>
-          <span style={{ color: '#fff', fontWeight: 700, fontSize: '.85rem' }}>
-            {p.name.slice(0, 2).toUpperCase()}
-          </span>
+          {hasBrandIcon(platformKey) ? (
+            <BrandIcon platform={platformKey} size={22} />
+          ) : (
+            <span style={{ color: '#fff', fontWeight: 700, fontSize: '.85rem' }}>
+              {p.name.slice(0, 2).toUpperCase()}
+            </span>
+          )}
         </div>
 
         {/* Name + description */}

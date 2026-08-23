@@ -16257,61 +16257,31 @@ const ROLE_JOB_QUERIES = {
 
 // title = user's specific saved title (e.g. "Senior Frontend Engineer") — used as primary query
 // role  = macro category fallback
-function getPlatformSearchUrls(role, title) {
-  const q   = (title && title.trim()) ? title.trim() : (ROLE_JOB_QUERIES[role] || role);
+// resumeKeywords = this user's selected-attachment keywords (see
+// getUserResumeKeywords) — blended into the query the same way the rest of
+// this page already personalizes to "what the user has experience in," not
+// just their profile title.
+// LinkedIn/Glassdoor/Handshake/Wellfound/Google don't offer a public jobs
+// API — there's no legitimate way to pull their listings directly the way
+// Remotive/The Muse/RemoteOK/USAJobs are below, and faking that would be
+// exactly the kind of low-legitimacy listing this page is trying to avoid.
+// What's real and accurate instead: a live search on each platform,
+// pre-filled with this user's actual title/role/resume. (These were briefly
+// tried as promoted source-tab entries instead of plain links — reverted:
+// a single static search-link card standing in for a real "source" ended up
+// being exactly the kind of listing this page exists to avoid.)
+function getPlatformSearchUrls(role, title, resumeKeywords) {
+  const base = (title && title.trim()) ? title.trim() : (ROLE_JOB_QUERIES[role] || role);
+  const extra = (resumeKeywords && resumeKeywords.size) ? [...resumeKeywords].slice(0, 2).join(' ') : '';
+  const q   = extra ? `${base} ${extra}` : base;
   const enc = encodeURIComponent(q);
   return {
     linkedin:  `https://www.linkedin.com/jobs/search/?keywords=${enc}&f_WT=2`,
-    indeed:    `https://www.indeed.com/jobs?q=${enc}&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11`,
     glassdoor: `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc}&remoteWorkType=1`,
     handshake: `https://app.joinhandshake.com/job-search?query=${enc}`,
     wellfound: `https://wellfound.com/jobs?q=${enc}`,
     google:    `https://www.google.com/search?q=${encodeURIComponent(q + ' jobs remote 2025')}`,
   };
-}
-
-// Glassdoor/Handshake/Wellfound/Google promoted to real, always-selectable
-// source-tab entries (like USAJobs, see availableSources below) instead of
-// living only in the separate "search more platforms" link row — none of
-// the four has a public jobs-listing API to pull real postings from
-// (Glassdoor and Wellfound never offered one broadly, Handshake is a closed
-// student/school platform, Google for Jobs isn't third-party-queryable), so
-// a live, role-filled search link is the most accurate real thing this page
-// can surface for them. What's new is presenting that link as a genuine
-// card in the results list and a real chip in the Source filter, the same
-// as any other source, rather than a visually separate "external link"
-// section. LinkedIn deliberately stays out of this — still link-only.
-const OFFICIAL_SEARCH_SOURCES = [
-  { key: 'glassdoor', label: 'Glassdoor' },
-  { key: 'handshake', label: 'Handshake' },
-  { key: 'wellfound',  label: 'Wellfound' },
-  { key: 'google',    label: 'Google' },
-];
-function buildOfficialSearchEntries(role, title) {
-  const urls = getPlatformSearchUrls(role, title);
-  const q = (title && title.trim()) ? title.trim() : (ROLE_JOB_QUERIES[role] || role || 'jobs');
-  return OFFICIAL_SEARCH_SOURCES.map(({ key, label }) => ({
-    id:              `official_${key}`,
-    type:            'job',
-    title:           `Search "${q}" jobs on ${label}`,
-    org:             label,
-    location:        'Multiple locations',
-    pay:             '',
-    tags:            [],
-    source:          label,
-    sourceUrl:       urls[key],
-    // Deliberately not "now" — these never actually change between
-    // requests, so always sorting as the single newest thing on the page
-    // (Newest sort re-derives this on every request) would make a static
-    // search link permanently outrank every real, freshly-posted listing.
-    // A few days back keeps it in the normal recency range instead; the
-    // equalizer below is what actually guarantees it stays visible, not
-    // artificial freshness.
-    posted:          ago(3 * D),
-    remote:          false,
-    isLive:          false,
-    isOfficialSearch: true,
-  }));
 }
 
 // ─── Remotive live job fetching ───────────────────────────────────────────────
@@ -16732,13 +16702,6 @@ app.get('/opportunities', authenticate, async (req, res) => {
     ]);
   } catch (e) { /* silently skip */ }
 
-  // Official Glassdoor/Handshake/Wellfound/Google search-link entries (see
-  // buildOfficialSearchEntries) — only meaningful while jobs are actually in
-  // view, same scoping as USAJobs's forced availableSources entry below.
-  const officialSearchEntries = (!type || type === 'all' || type === 'job')
-    ? buildOfficialSearchEntries(role, userTitle)
-    : [];
-
   // Combine curated list + live jobs
   const seenIds = new Set();
   // Curated "job" entries are illustrative sample data with links to
@@ -16747,7 +16710,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // (Remotive, The Muse, Remote OK) whose sourceUrl is the actual listing.
   // Non-job types (gigs, grants, events, etc.) don't have a live API yet,
   // so the curated list still fills those in.
-  const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs, ...officialSearchEntries].filter((o) => {
+  const allOps = [...OPPORTUNITIES.filter(o => o.type !== 'job'), ...liveJobs].filter((o) => {
     if (seenIds.has(o.id)) return false;
     seenIds.add(o.id);
     return true;
@@ -16769,16 +16732,12 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // same reasoning as above, so switching sources back and forth within the
   // current type/remote/search never shrinks the picker's own options.
   const availableSources = new Set(results.map(o => o.source).filter(Boolean));
-  // USAJobs (and the four official search sources above) always show as
-  // real, selectable source chips when browsing jobs — not tucked away as a
-  // "search elsewhere" link the way LinkedIn is — even on a search/day
-  // where USAJobs's live results happen to come back empty (or
-  // USAJOBS_API_KEY isn't configured yet). Scoped to when jobs are actually
-  // in view so none of this shows up while filtering to Grants.
-  if (!type || type === 'all' || type === 'job') {
-    availableSources.add('USAJobs');
-    for (const { label } of OFFICIAL_SEARCH_SOURCES) availableSources.add(label);
-  }
+  // USAJobs always shows as a real, selectable source chip when browsing
+  // jobs — not tucked away as a "search elsewhere" link the way LinkedIn is
+  // — even on a search/day where its live results happen to come back
+  // empty (or USAJOBS_API_KEY isn't configured yet). Scoped to when jobs
+  // are actually in view so it doesn't show up while filtering to Grants.
+  if (!type || type === 'all' || type === 'job') availableSources.add('USAJobs');
   if (sourceSet) results = results.filter((o) => sourceSet.has(o.source));
 
   results = results.map((o) => {
@@ -16844,13 +16803,9 @@ app.get('/opportunities', authenticate, async (req, res) => {
     return { ...o, matchScore: score, matchReasons: [...new Set(reasons)] };
   });
 
-  // When user has a role, filter out curated items that don't match (score=0 AND wrong type).
-  // isOfficialSearch entries (Glassdoor/Handshake/Wellfound/Google) are exempt for the same
-  // reason USAJobs is exempt from ever disappearing above — a generic search-link source
-  // chip shouldn't blink out just because this particular role's type set doesn't include
-  // "job" (e.g. Investor / VC).
+  // When user has a role, filter out curated items that don't match (score=0 AND wrong type)
   if (role && roleTypes.size > 0) {
-    results = results.filter(o => o.isLive || o.matchScore > 0 || roleTypes.has(o.type) || o.isOfficialSearch);
+    results = results.filter(o => o.isLive || o.matchScore > 0 || roleTypes.has(o.type));
   }
 
   // Sort — default newest-first (by posted date); 'match' sorts by relevance
@@ -16895,7 +16850,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userRole: role,
     userTitle: userTitle || null,
     sort: sortMode,
-    platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle) : null,
+    platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle, resumeKeywords) : null,
     availableSources: [...availableSources].sort(),
   });
 });
