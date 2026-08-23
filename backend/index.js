@@ -5011,8 +5011,16 @@ function addSeenId(id) {
   }
 }
 
-// Truncate long content strings before storing to cap per-post memory
-const MAX_CONTENT_LEN = 600;
+// Truncate long content strings before storing to cap per-post memory. Was
+// 600 — genuinely too tight: most sources (Reddit, DEV.to, Mastodon, HN,
+// RSS full-text feeds) hand back considerably more real text than that in
+// their own API response, and this was discarding it before it ever
+// reached the DB, forcing Feed's "Read full post ↗" external link to
+// appear far more often than the actual source material required. Raised
+// to 1500 — still a real bound (not unlimited; per-post memory across up to
+// MAX_CACHED_DB_POSTS rows still matters), just wide enough that a normal
+// post's real content usually fits without hitting the wall.
+const MAX_CONTENT_LEN = 1500;
 function trimPostContent(p) {
   if (!p) return p;
   if (p.content && p.content.length > MAX_CONTENT_LEN) {
@@ -10601,6 +10609,16 @@ function decodeFeedCursor(str) {
     return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
   } catch { return {}; }
 }
+// A per-source cursorMap entry is now a compound {ts, id} (see
+// getCursorFeedPage's own comment on why) rather than a bare ISO string —
+// callers outside getCursorFeedPage that just need "how far back did this
+// source get" (not the id tiebreak itself, e.g. the native-uficonnect-posts
+// extraLists branches below) go through this instead of assuming either
+// shape directly.
+function cursorTsOf(cur) {
+  if (!cur) return null;
+  return typeof cur === 'string' ? cur : (cur.ts || null);
+}
 // "Reconstruct true mix so all sources are actually visible, no time
 // factor — repeat that style until there's truly nothing else, then let
 // recency take over" — this is roundRobinMerge (see its own comment: every
@@ -10666,12 +10684,31 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   if (sources.length && db.isConnected()) {
     try {
       const params = [];
+      // Compound (timestamp, id) cursor, not timestamp alone — two posts
+      // from the same source can share an identical post_created_at (a
+      // batch ingested in one fetch cycle, or a source whose own timestamp
+      // precision is coarser than the gap between posts). A timestamp-only
+      // "before" filter excludes everything at that exact instant on the
+      // next page, including same-timestamp posts that never actually got
+      // shown — a real, confirmed skip, not just a theoretical one. id
+      // (immutable — unlike fetched_at, which savePostsToDB's ON CONFLICT
+      // DO UPDATE bumps on every re-fetch of an already-seen post, making
+      // it unsafe as a stable sort/tiebreak key) is the tiebreak. A cursor
+      // from before this change carries a bare ISO string rather than
+      // {ts,id} — treated as {ts: <string>, id: null} so an in-flight old
+      // cursor degrades to the previous (safe, just not tie-proof)
+      // behavior for one page instead of breaking.
       const cursorValues = sources.map(src => {
         params.push(src);
         const srcParam = params.length;
-        params.push(!isLiveMode && cursorMap[src] ? new Date(cursorMap[src]).toISOString() : null);
-        const curParam = params.length;
-        return `($${srcParam}, $${curParam}::timestamptz)`;
+        const cur = !isLiveMode ? cursorMap[src] : null;
+        const curTs = cur ? (typeof cur === 'string' ? cur : cur.ts) : null;
+        const curId = (cur && typeof cur === 'object' && cur.id) ? cur.id : null;
+        params.push(curTs ? new Date(curTs).toISOString() : null);
+        const tsParam = params.length;
+        params.push(curId);
+        const idParam = params.length;
+        return `($${srcParam}, $${tsParam}::timestamptz, $${idParam}::text)`;
       }).join(', ');
       const clauses = [
         `fp.id NOT LIKE '%\\_fallback' ESCAPE '\\'`,
@@ -10681,7 +10718,7 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
         `fp.id !~* '^govt_g[0-9]+$'`,
         isLiveMode
           ? `fp.post_created_at > $${params.push(new Date(cursorMap.__liveSince).toISOString())}`
-          : `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts)`,
+          : `(c.before_ts IS NULL OR fp.post_created_at < c.before_ts OR (fp.post_created_at = c.before_ts AND (c.before_id IS NULL OR fp.id < c.before_id)))`,
       ];
       if (mediaType) {
         params.push(mediaType);
@@ -10694,14 +10731,18 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       }
       params.push(perSourceLimit);
       const limitParam = params.length;
-      const order = isLiveMode ? 'post_created_at ASC, fetched_at ASC' : 'post_created_at DESC, fetched_at DESC';
+      // id, not fetched_at, as the tiebreak — same reasoning as the cursor
+      // comment above (fetched_at can shift for an already-cached post,
+      // id can't), so a page's own internal ordering matches exactly what
+      // the cursor above can actually resume from.
+      const order = isLiveMode ? 'post_created_at ASC, id ASC' : 'post_created_at DESC, id DESC';
       // readQuery, not query — this exact call is what timed out and
       // silently returned an empty feed under real load on 2026-08-20 (see
       // the timeRange fix above). Failing over to a backup DB for just this
       // read means an overloaded primary degrades to slightly-stale content
       // instead of an empty page. See db.js's readQuery/initBackupDB.
       const { rows } = await db.readQuery(
-        `WITH c(source, before_ts) AS (VALUES ${cursorValues})
+        `WITH c(source, before_ts, before_id) AS (VALUES ${cursorValues})
          SELECT * FROM (
            SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY ${order}) AS rn
            FROM feed_posts_cache fp
@@ -10810,8 +10851,15 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
     for (const src of allSources) {
       const shown = page.filter(p => p.source === src);
       if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
-      const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
-      nextCursor[src] = new Date(postTimestamp(oldest)).toISOString();
+      // Matches the query's own ORDER BY (post_created_at DESC, id DESC):
+      // the "last shown" boundary is the smallest timestamp, and among
+      // ties at that timestamp, the smallest id.
+      const oldest = shown.reduce((min, p) => {
+        const pt = postTimestamp(p), mt = postTimestamp(min);
+        if (pt !== mt) return pt < mt ? p : min;
+        return p.id < min.id ? p : min;
+      });
+      nextCursor[src] = { ts: new Date(postTimestamp(oldest)).toISOString(), id: oldest.id };
     }
     if (exhausted) nextCursor.__liveSince = new Date().toISOString();
   }
@@ -12234,7 +12282,8 @@ async function handleFeedRequest(req, res) {
       // as everything else (see getCursorFeedPage's extraLists) rather
       // than force-pinned to the top regardless of actual age, which is
       // what the old snapshot-based aggregate view did.
-      const beforeMs = cursorMap.uficonnect ? new Date(cursorMap.uficonnect).getTime() : Infinity;
+      const uficonnectCursorTs = cursorTsOf(cursorMap.uficonnect);
+      const beforeMs = uficonnectCursorTs ? new Date(uficonnectCursorTs).getTime() : Infinity;
       extraLists = {
         uficonnect: posts
           .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
@@ -12335,7 +12384,8 @@ async function handleFeedRequest(req, res) {
         // unfiltered cursor branch uses, so a community post competes on
         // actual recency instead of being force-pinned ahead of everything
         // else regardless of age.
-        const beforeMs = cursorMap.uficonnect ? new Date(cursorMap.uficonnect).getTime() : Infinity;
+        const uficonnectCursorTs = cursorTsOf(cursorMap.uficonnect);
+        const beforeMs = uficonnectCursorTs ? new Date(uficonnectCursorTs).getTime() : Infinity;
         extraLists = {
           uficonnect: posts
             .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
