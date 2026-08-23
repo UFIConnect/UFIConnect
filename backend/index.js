@@ -13160,6 +13160,33 @@ app.get('/office/feed', authenticate, handleFeedRequest);
 // page, per source, so scrolling keeps surfacing real distinct videos for
 // as long as retained history allows (see STALE_POST_MAX_AGE_MS),
 // genuinely newest-first, with no pre-built pool to exhaust.
+// Mirrors the frontend's resolveVideoSource (see VideoFeedView.jsx/
+// ImageLightbox.jsx) — a post can be tagged media_type='video' in the DB
+// without actually being resolvable to something playable client-side (a
+// Bluesky post whose mediaUrl doesn't follow the .../thumbnail.* pattern
+// deriveBlueskyPlaylistUrl needs, a stale row saved under an earlier/looser
+// classification, etc). Confirmed live: exactly this let a genuinely
+// unplayable post reach the Videos feed as its very first/active slide,
+// showing "Video unavailable" as a new user's entire first impression of
+// the feature. Filtering server-side means a source-classification bug can
+// never surface as a dead slide again, regardless of how a bad row ended
+// up in the cache.
+function isPlayableVideoPost(p) {
+  if (!p || p.mediaType !== 'video') return false;
+  if (p.source === 'bluesky') return !!(p.mediaUrl && p.mediaUrl.includes('/thumbnail.'));
+  if (p.source === 'tiktok') return !!p.embedId;
+  if (p.source === 'youtube') {
+    return !!(p.embedId || /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.sourceUrl || ''));
+  }
+  // Any other source's article embedding a YouTube or Vimeo player, or a
+  // direct-file video URL (Reddit/Mastodon/etc) — same precedence order as
+  // resolveVideoSource client-side.
+  if (/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.mediaUrl || '')) return true;
+  if (/vimeo\.com\/(?:video\/)?\d+/.test(p.mediaUrl || '')) return true;
+  if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(p.mediaUrl || '')) return true;
+  return false;
+}
+
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
@@ -13212,8 +13239,9 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      markPostsSeen(req.user.id, posts, 'videos');
-      return res.json({ posts, cursor: nextCursor, hasMore });
+      const playable = posts.filter(isPlayableVideoPost);
+      markPostsSeen(req.user.id, playable, 'videos');
+      return res.json({ posts: playable, cursor: nextCursor, hasMore });
     }
 
     const user = await getUser(req.user.id);
@@ -13238,7 +13266,7 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      introPosts = intro.posts;
+      introPosts = intro.posts.filter(isPlayableVideoPost);
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
     }
 
@@ -13257,7 +13285,7 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id)), userTopics).slice(0, remaining);
+      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id) && isPlayableVideoPost(p)), userTopics).slice(0, remaining);
       nextCursor = mix.nextCursor;
       hasMore = mix.hasMore;
     }
@@ -13291,7 +13319,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
     const all = await getFollowingFeedPosts(req.user.id, sourceFilter);
-    const videos = all.filter(p => p.mediaType === 'video' && p.mediaUrl);
+    const videos = all.filter(isPlayableVideoPost);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = videos.slice(offset, offset + feedLimit);
     res.json({

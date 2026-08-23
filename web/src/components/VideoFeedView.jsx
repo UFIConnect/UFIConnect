@@ -3,6 +3,7 @@ import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
@@ -1066,15 +1067,12 @@ export default function VideoFeedView({ onExit }) {
     }
   }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
 
+  useLockBodyScroll();
+
   useEffect(() => {
     const handleKey = (e) => { if (e.key === 'Escape') onExit(); };
     document.addEventListener('keydown', handleKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = prevOverflow;
-    };
+    return () => document.removeEventListener('keydown', handleKey);
   }, [onExit]);
 
   // TikTok/Vimeo are both plain iframes with no postMessage control layer

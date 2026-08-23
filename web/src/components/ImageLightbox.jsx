@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer, userWantsSound, rememberSoundPreference } from './videoMedia';
+import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
 // refresh/mute) — kept as one consistent control language for every video
@@ -175,6 +176,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
 
   function touchDist(t1, t2) { return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY); }
 
+  useLockBodyScroll();
+
   useEffect(() => {
     function handleKey(e) {
       if (e.key === 'Escape') onClose();
@@ -182,12 +185,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
       else if (e.key === 'ArrowLeft') goPrev();
     }
     document.addEventListener('keydown', handleKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = prevOverflow;
-    };
+    return () => document.removeEventListener('keydown', handleKey);
   }, [onClose, goNext, goPrev]);
 
   // Browsing through media used to dead-end at whatever was already loaded
