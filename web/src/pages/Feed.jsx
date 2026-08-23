@@ -178,9 +178,16 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 // thin), no lock wall in that combined view. The single-source lock wall
 // (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
 // path above, not this multi-select one.
+// tiktok deliberately absent — same reasoning as VideoFeedView's identical
+// exclusion (see FEED_ONLY_EXCLUDED_SOURCES there): no SOURCE_CONFIG
+// aggregate fetcher exists for it, and none can be built against a
+// legitimate API (TikTok's Display API only exposes a connected user's own
+// uploads; general discovery needs the Research API, restricted to
+// approved academic/nonprofit orgs) — a filter chip here would always be
+// permanently empty, confirmed live once a member actually connected.
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube', 'hackernews',
-  'bluesky', 'tiktok', 'linkedin', 'twitter', 'instagram', 'facebook',
+  'bluesky', 'linkedin', 'twitter', 'instagram', 'facebook',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
   'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
