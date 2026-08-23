@@ -24,11 +24,17 @@ const TYPE_META = {
 // "source" ended up being exactly the kind of listing this page exists to
 // avoid. Plain external links, personalized to the user's title/role/resume
 // (see getPlatformSearchUrls), is the honest version of this.
+// Glassdoor, Handshake, and Wellfound all gate their job search behind a
+// login wall (confirmed live — clicking through lands on a sign-in prompt,
+// not results), unlike LinkedIn/Google which show real results with no
+// account needed. loginRequired drives an honest label instead of a bare
+// "Search X ↗" that reads the same as the two that actually work without
+// signing in and then surprises whoever isn't already a member.
 const PLATFORM_META = {
   linkedin:  { label: 'LinkedIn',  icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
-  glassdoor: { label: 'Glassdoor', icon: '🟢', color: '#0CAA41', bg: '#E6F9EE' },
-  handshake: { label: 'Handshake', icon: '🤝', color: '#F97316', bg: '#FFF3E8' },
-  wellfound: { label: 'Wellfound', icon: '🚀', color: '#111827', bg: '#F3F4F6' },
+  glassdoor: { label: 'Glassdoor', icon: '🟢', color: '#0CAA41', bg: '#E6F9EE', loginRequired: true },
+  handshake: { label: 'Handshake', icon: '🤝', color: '#F97316', bg: '#FFF3E8', loginRequired: true },
+  wellfound: { label: 'Wellfound', icon: '🚀', color: '#111827', bg: '#F3F4F6', loginRequired: true },
   google:    { label: 'Google',    icon: '🔎', color: '#EA4335', bg: '#FEE8E6' },
 };
 
@@ -396,6 +402,7 @@ export default function Opportunities() {
                     href={platformSearchUrls[key]}
                     target="_blank"
                     rel="noopener noreferrer"
+                    title={meta.loginRequired ? `${meta.label} requires a school or employer login to search` : undefined}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
                       padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -404,7 +411,7 @@ export default function Opportunities() {
                       border: `1.5px solid ${meta.color}55`,
                     }}
                   >
-                    {meta.icon} Search {meta.label} ↗
+                    {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''} ↗
                   </a>
                 )
               ))}
