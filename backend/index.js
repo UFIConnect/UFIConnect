@@ -16248,13 +16248,6 @@ function getPlatformSearchUrls(role, title) {
     glassdoor: `https://www.glassdoor.com/Job/jobs.htm?sc.keyword=${enc}&remoteWorkType=1`,
     wellfound: `https://wellfound.com/jobs?q=${enc}`,
     google:    `https://www.google.com/search?q=${encodeURIComponent(q + ' jobs remote 2025')}`,
-    // Real fallback, not a redundant one — USAJobs' own live listings (see
-    // fetchUSAJobsOpportunities) only appear when USAJOBS_API_KEY/
-    // USAJOBS_USER_AGENT are configured, unlike the other five platforms
-    // here which are always search links regardless. Without a key (or a
-    // genuinely zero-match search) USAJobs was completely absent from this
-    // page rather than falling back to this like everything else does.
-    usajobs:   `https://www.usajobs.gov/Search/Results?k=${enc}`,
   };
 }
 
@@ -16726,7 +16719,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // Snapshot of what's actually pickable before narrowing by source itself —
   // same reasoning as above, so switching sources back and forth within the
   // current type/remote/search never shrinks the picker's own options.
-  const availableSources = [...new Set(results.map(o => o.source).filter(Boolean))].sort();
+  const availableSources = new Set(results.map(o => o.source).filter(Boolean));
+  // USAJobs always shows as a real, selectable source chip when browsing
+  // jobs — not tucked away as a "search elsewhere" link the way LinkedIn is
+  // — even on a search/day where its live results happen to come back
+  // empty (or USAJOBS_API_KEY isn't configured yet). Scoped to when jobs
+  // are actually in view so it doesn't show up while filtering to Grants.
+  if (!type || type === 'all' || type === 'job') availableSources.add('USAJobs');
   if (sourceSet) results = results.filter((o) => sourceSet.has(o.source));
 
   results = results.map((o) => {
@@ -16823,7 +16822,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userTitle: userTitle || null,
     sort: sortMode,
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle) : null,
-    availableSources,
+    availableSources: [...availableSources].sort(),
   });
 });
 
