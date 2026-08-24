@@ -178,13 +178,6 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 // thin), no lock wall in that combined view. The single-source lock wall
 // (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
 // path above, not this multi-select one.
-// tiktok deliberately absent — same reasoning as VideoFeedView's identical
-// exclusion (see FEED_ONLY_EXCLUDED_SOURCES there): no SOURCE_CONFIG
-// aggregate fetcher exists for it, and none can be built against a
-// legitimate API (TikTok's Display API only exposes a connected user's own
-// uploads; general discovery needs the Research API, restricted to
-// approved academic/nonprofit orgs) — a filter chip here would always be
-// permanently empty, confirmed live once a member actually connected.
 const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube', 'hackernews',
   'bluesky', 'linkedin', 'twitter', 'instagram', 'facebook',
@@ -713,23 +706,15 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
 }
 
 // Unlike YouTubeEmbedBlock, a plain <iframe> here is entirely React-owned —
-// TikTok's embed player doesn't reach in and replace its mount node the way
+// Vimeo's player doesn't reach in and replace its mount node the way
 // YouTube's IFrame API does (see YouTubeEmbedBlock's own comment for the
 // real crash that caused), so there's no risk in just conditionally
 // rendering/unmounting the iframe itself on scroll visibility, same as
-// InlineAutoplayVideo already does for HLS/direct-file video. TikTok's
-// player supplies its own native mute/follow/like controls as part of the
-// embed (unlike YouTube's, which needed controls:0 + a custom button to get
-// a minimal UI), so there's no separate mute button built here.
-// Same "plain iframe, entirely React-owned" reasoning as TikTokEmbedBlock —
-// Vimeo's player doesn't reach in and replace its mount node either, so
-// conditionally mounting/unmounting on scroll visibility is safe. Unlike
-// TikTok (always 9/16), Vimeo content is typically landscape, matching
-// YouTube's own aspect ratio — and unlike TikTok, Vimeo's embed keeps its
-// own native play/pause/volume controls by default (no controls=0 the way
-// YouTubeEmbedBlock needs, since that one built a custom minimal UI on top
-// via the real IFrame Player API instead), so there's no separate mute
-// button needed here either.
+// InlineAutoplayVideo already does for HLS/direct-file video. Vimeo's embed
+// keeps its own native play/pause/volume controls by default (no
+// controls=0 the way YouTubeEmbedBlock needs, since that one built a
+// custom minimal UI on top via the real IFrame Player API instead), so
+// there's no separate mute button needed here either.
 function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
@@ -781,103 +766,6 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
   );
 }
 
-function TikTokEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
-  const [inView, setInView] = useState(false);
-  const containerRef = useRef(null);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
-      { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // forcePause: this exact post's media is open in ImageLightbox — same
-  // "don't play two copies of the same thing at once" reasoning as
-  // YouTubeEmbedBlock's own forcePause, simpler to honor here since
-  // unmounting this iframe is always safe. Also gated through the shared
-  // solo-playback arbiter (see useSoloVideoPlayback) so only the
-  // most-recently-scrolled-to video across the whole Feed plays at once.
-  const playing = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause) && !forcePause;
-
-  return (
-    <div ref={containerRef} style={{
-      position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
-      aspectRatio: '9/16', maxHeight: 520, margin: '0 auto',
-    }}>
-      {playing ? (
-        <iframe
-          src={`https://www.tiktok.com/embed/v2/${embedId}`}
-          style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-          allow="autoplay; encrypted-media; fullscreen"
-          title={title}
-        />
-      ) : poster ? (
-        <img src={poster} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-      ) : (
-        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
-          🎵 TikTok video
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TikTokCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
-  const src = SOURCE_META.tiktok;
-  const c   = catStyle(post.group?.category);
-  const embedId = post.embedId;
-  return (
-    <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
-        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>TikTok</span>
-        {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
-        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
-        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
-          {timeAgo(post.createdAt)}
-        </Link>
-      </div>
-      <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
-      {embedId ? (
-        <div style={{ marginBottom: 10, position: 'relative' }}>
-          <TikTokEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} forcePause={isMediaOpen} />
-          {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
-        </div>
-      ) : post.mediaUrl ? (
-        <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
-          <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
-            onError={e => {
-              e.currentTarget.style.display = 'none';
-              const fallback = e.currentTarget.parentElement.querySelector('[data-tiktok-img-fallback]');
-              if (fallback) fallback.style.display = 'flex';
-            }} />
-          <div data-tiktok-img-fallback style={{
-            display: 'none', alignItems: 'center', justifyContent: 'center',
-            height: 200, color: 'var(--muted)', fontSize: '.85rem',
-          }}>
-            📷 Image unavailable
-          </div>
-        </div>
-      ) : null}
-      {post.content && <PostText text={post.content} />}
-      {post.sourceUrl && (
-        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
-            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
-            <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>▶️ Watch ↗</span>
-          </a>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // Sources that have an inline comment/review section
 const COMMENT_SOURCES = new Set([
   'uficonnect',
@@ -885,7 +773,7 @@ const COMMENT_SOURCES = new Set([
   'mastodon','bluesky','lobsters','producthunt','techcrunch','theverge',
   'indiehackers','hashnode','arstechnica','wired','theregister','venturebeat',
   'smashing','phoronix','infoq','mittr','youtube','twitter','linkedin',
-  'instagram','facebook','tiktok',
+  'instagram','facebook',
 ]);
 // Article sources where comments read as reader reviews/discussion
 const ARTICLE_SOURCES = new Set([
@@ -899,7 +787,7 @@ const JOB_SOURCES = new Set(['indeed', 'remoteok']);
 function commentSectionLabel(source) {
   if (source === 'stackoverflow') return 'Answers';
   if (source === 'github')        return 'Discussion';
-  if (['twitter','linkedin','instagram','facebook','bluesky','mastodon','tiktok'].includes(source)) return 'Replies';
+  if (['twitter','linkedin','instagram','facebook','bluesky','mastodon'].includes(source)) return 'Replies';
   if (ARTICLE_SOURCES.has(source)) return 'Reader Comments';
   return 'Comments';
 }
@@ -932,7 +820,6 @@ function commentUrl(post) {
     case 'linkedin':     return u;
     case 'instagram':    return u;
     case 'facebook':     return u;
-    case 'tiktok':       return u;
     case 'producthunt':  return u;
     case 'indiehackers': return u;
     case 'medium':       return u;
@@ -987,7 +874,6 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
 
   if (post.source === 'youtube') return <YouTubeCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
-  if (post.source === 'tiktok') return <TikTokCard post={post} cardRef={cardRef} onMediaOpen={onMediaOpen} isMediaOpen={isMediaOpen} />;
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);

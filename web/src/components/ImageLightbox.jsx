@@ -212,14 +212,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
     ? (post.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : extractYouTubeId(post.mediaUrl))
     : null;
   const playlistUrl = isVideo && !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
-  // TikTok previously had no branch here — its mediaUrl is a poster image,
-  // not a playable file, so it fell through every check above into the
-  // static-poster-plus-decorative-play-button fallback (a button that
-  // isn't actually wired to anything, since there's no video to play).
-  // Real embed via TikTok's own public player, same as PostDetail/Feed.
-  const tiktokId = isVideo && !youtubeId && post.source === 'tiktok' ? post.embedId : null;
-  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && !tiktokId && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
-  const playableVideo = !!(youtubeId || playlistUrl || tiktokId || directVideoUrl);
+  const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
+  const playableVideo = !!(youtubeId || playlistUrl || directVideoUrl);
 
   const getNativeEl = useCallback(
     () => (playlistUrl ? hlsVideoRef.current : fileVideoRef.current),
@@ -577,19 +571,6 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                     progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
                 </>
               )}
-            </div>
-          ) : tiktokId ? (
-            // TikTok's embed carries its own native mute/play controls (see
-            // Feed's identical TikTokEmbedBlock) — no scrub bar/mute button
-            // layered on top the way YouTube/HLS/file need, since there's
-            // no postMessage control API to hook into here either way.
-            <div style={{ position: 'relative', width: 'min(92vw, 400px)', aspectRatio: '9 / 16', maxHeight: '80vh', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
-              <iframe
-                src={`https://www.tiktok.com/embed/v2/${tiktokId}`}
-                style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-                allow="autoplay; encrypted-media; fullscreen"
-                title={post.title}
-              />
             </div>
           ) : (
             <div style={{ position: 'relative', maxWidth: '92vw' }}>

@@ -53,7 +53,7 @@ export function useGlobalMuted() {
   return [muted, toggleMuted];
 }
 
-// Feed cards (YouTube/Vimeo/TikTok embeds, inline autoplay previews) each
+// Feed cards (YouTube/Vimeo embeds, inline autoplay previews) each
 // run their own IntersectionObserver to know when they've scrolled into
 // view, but did so entirely independently of one another. On a normal card
 // height (unlike the Videos swipe feed, where each slide fills the whole

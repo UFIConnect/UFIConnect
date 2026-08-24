@@ -144,7 +144,7 @@ export default function TermsOfService() {
         <Section title="6. Connected accounts">
           <P>
             The Connected Accounts feature lets you optionally link third-party platforms (for example
-            LinkedIn, Twitter/X, Instagram, Facebook, or TikTok) via that platform's official OAuth
+            LinkedIn, Twitter/X, or Facebook) via that platform's official OAuth
             login. Doing so is subject to that platform's own terms of service in addition to these
             Terms. You can disconnect any linked platform at any time from Profile → Connected Accounts;
             see our <Link to="/privacy" style={{ color: 'var(--primary)' }}>Privacy Policy</Link> for

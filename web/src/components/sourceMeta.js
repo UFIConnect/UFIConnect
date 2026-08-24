@@ -7,7 +7,6 @@ export const SOURCE_META = {
   bluesky:       { label: 'Bluesky',       color: '#0085FF', icon: '🦋' },
   facebook:      { label: 'Facebook',      color: '#1877F2', icon: '🔵' },
   instagram:     { label: 'Instagram',     color: '#E1306C', icon: '📸' },
-  tiktok:        { label: 'TikTok',        color: '#010101', icon: '🎵' },
   github:        { label: 'GitHub',        color: '#24292F', icon: '🐙' },
   gitlab:        { label: 'GitLab',        color: '#FC6D26', icon: 'GL' },
   discord:       { label: 'Discord',       color: '#5865F2', icon: '🎮' },
@@ -53,7 +52,7 @@ export const SOURCE_META = {
 // source with temporarily-thin supply, rather than being left off the
 // picker entirely.
 export const CONNECTED_SOCIAL_PLATFORMS = [
-  'linkedin', 'twitter', 'instagram', 'facebook',
+  'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'behance', 'tiktok', 'bluesky',
+  'medium', 'dribbble', 'behance', 'bluesky',
 ];

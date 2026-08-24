@@ -630,24 +630,6 @@ const SOCIAL_CFG = {
     pkce: true,
     basicAuth: true,
   },
-  instagram: {
-    // "Instagram Basic Display API" (api.instagram.com/oauth/authorize,
-    // scope user_profile,user_media) was deprecated by Meta in December
-    // 2024 and no longer works for new connections — replaced by "Instagram
-    // API with Instagram Login" below. Only connects Business/Creator
-    // Instagram accounts now; a personal account has nothing to authorize
-    // against on this flow at all (that's a Meta platform requirement, not
-    // a limitation of this app's own scope choice).
-    authUrl:  'https://www.instagram.com/oauth/authorize',
-    tokenUrl: 'https://api.instagram.com/oauth/access_token',
-    clientId:     () => process.env.INSTAGRAM_APP_ID,
-    clientSecret: () => process.env.INSTAGRAM_APP_SECRET,
-    // Read-only — this app only ever imports posts/profile, never
-    // publishes/messages/manages comments, so the basic scope alone covers
-    // it (the other three current scopes are for those write use cases).
-    scope: 'instagram_business_basic',
-    pkce: false,
-  },
   facebook: {
     authUrl:  'https://www.facebook.com/v18.0/dialog/oauth',
     tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
@@ -724,25 +706,6 @@ const SOCIAL_CFG = {
     scope: 'activity_read project_read',
     pkce: false,
   },
-  tiktok: {
-    authUrl:  'https://www.tiktok.com/v2/auth/authorize/',
-    tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
-    clientId:     () => process.env.TIKTOK_CLIENT_KEY,
-    clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
-    // video.list is what fetchTikTokUserVideos actually calls — was missing
-    // here, so a token issued before this fix has no permission to list the
-    // owner's videos regardless of what the fetcher requests.
-    // Comma-separated, not space — TikTok's own docs specify
-    // scope=user.info.basic,video.list; a space-joined scope string (valid
-    // OAuth2 elsewhere, and what every other platform in this config uses)
-    // isn't what TikTok's authorization server expects, and surfaced as a
-    // "Something went wrong... correct the following: scope" error on
-    // TikTok's own consent screen — confirmed live. Instagram/Facebook
-    // below already use commas for the same reason.
-    scope: 'user.info.basic,video.list',
-    pkce: true,
-    clientIdParam: 'client_key',
-  },
   bluesky: {
     authUrl:  'https://bsky.social/oauth/authorize',
     tokenUrl: 'https://bsky.social/oauth/token',
@@ -756,7 +719,6 @@ const SOCIAL_CFG = {
 const SOCIAL_ENV_KEYS = {
   linkedin:  ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
   twitter:   ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET'],
-  instagram: ['INSTAGRAM_APP_ID', 'INSTAGRAM_APP_SECRET'],
   facebook:  ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
   github:    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
   gitlab:    ['GITLAB_CLIENT_ID', 'GITLAB_CLIENT_SECRET'],
@@ -766,7 +728,6 @@ const SOCIAL_ENV_KEYS = {
   medium:    ['MEDIUM_CLIENT_ID', 'MEDIUM_CLIENT_SECRET'],
   dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
   behance:   ['BEHANCE_CLIENT_ID', 'BEHANCE_CLIENT_SECRET'],
-  tiktok:    ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_CLIENT_ID', 'BLUESKY_CLIENT_SECRET'],
 };
 
@@ -4863,91 +4824,8 @@ async function fetchFacebook(keyword, userToken = null) {
   }
 }
 
-// ─── TikTok: a connected member's own uploaded videos (Display API v2) ───────
-// Unlike Twitter/Instagram/Facebook above, TikTok's public API has no
-// keyword/hashtag search at all for third-party apps — video.list (the scope
-// SOCIAL_CFG.tiktok now requests alongside user.info.basic) only returns the
-// token owner's OWN public uploads. So this is honestly a "your own TikTok
-// videos, on UFconnect" feature, not a discovery feed — same FOLLOWING_SOURCE_FETCHERS
-// slot Bluesky/Mastodon's real home-timeline fetchers are meant for once
-// their own OAuth lands, just backed by a different kind of "my own content"
-// API instead of a following-timeline one.
-async function fetchTikTokUserVideos(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `tiktok_own_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  try {
-    // like_count/comment_count added — every video rendered "0 likes, 0
-    // comments" regardless of its real engagement before this, since none
-    // of the earlier fields carried that. TikTok's video.list already
-    // supports both directly (no extra call needed, unlike YouTube's
-    // separate statistics endpoint).
-    const fields = 'id,title,video_description,duration,cover_image_url,embed_link,share_url,create_time,like_count,comment_count';
-    const raw = await new Promise((resolve, reject) => {
-      const body = JSON.stringify({ max_count: 20 });
-      const req = https.request(
-        `https://open.tiktokapis.com/v2/video/list/?fields=${fields}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json; charset=UTF-8',
-            'Content-Length': Buffer.byteLength(body),
-          },
-        },
-        res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
-      );
-      req.on('error', reject);
-      req.setTimeout(9000, () => req.destroy(new Error('timeout')));
-      req.write(body);
-      req.end();
-    });
-    const parsed = JSON.parse(raw);
-    if (parsed?.error && parsed.error.code !== 'ok') throw new Error(`TikTok API ${parsed.error.code}: ${parsed.error.message || ''}`);
-    const videos = parsed?.data?.videos || [];
-    const posts = videos.map(v => ({
-      id:          `tiktok_${v.id}`,
-      authorId:    `tiktok_owner_${token.slice(-8)}`,
-      groupId:     'ext_tiktok',
-      content:     v.video_description || v.title || '',
-      title:       v.title || v.video_description || 'TikTok video',
-      source:      'tiktok', sourceLabel: 'TikTok',
-      sourceUrl:   v.share_url || v.embed_link || 'https://www.tiktok.com',
-      // TikTok's own video ID — the frontend's embed player (a direct
-      // https://www.tiktok.com/embed/v2/{id} iframe, same "give the client
-      // the bare ID" convention as embedId on YouTube posts) needs this
-      // directly rather than having to parse it back out of share_url.
-      embedId:     String(v.id),
-      topic:       null,
-      author:      { name: 'TikTok', title: 'Video' },
-      likes: [], likesCount: v.like_count || 0, commentsCount: v.comment_count || 0,
-      createdAt:   v.create_time ? new Date(v.create_time * 1000).toISOString() : normalizeTimestamp(null),
-      isExternal:  true,
-      mediaType:   'video',
-      mediaUrl:    v.cover_image_url || null,
-      group:       { id: 'ext_tiktok', name: 'TikTok', category: 'Marketing' },
-    }));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('TikTok own-videos fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale; // graceful degradation — a transient blip shouldn't wipe out an already-working feed
-    // No stale fallback (typically the very first fetch since connecting) —
-    // re-thrown instead of a silent empty array, same reasoning as
-    // fetchYouTubeSubscriptionFeed's identical fix: a genuinely broken
-    // connection (expired token, revoked access, no video.list permission)
-    // read exactly like an account with zero videos, with no way to tell
-    // the two apart from the UI.
-    throw e;
-  }
-}
-
 // ─── YouTube: a connected member's subscription feed ─────────────────────────
-// Unlike TikTok's video.list (a connected member's own uploads — dead weight
-// for the overwhelming majority of members who watch YouTube but don't post
-// to it), a subscription feed is the one piece of "my own YouTube data" that
+// A subscription feed is the one piece of "my own YouTube data" that
 // actually earns its place in Following: recent uploads from channels this
 // member already follows, the closest real equivalent Following mode has for
 // YouTube specifically.
@@ -8924,19 +8802,9 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
-  if (['twitter', 'linkedin', 'instagram', 'facebook'].includes(id)) {
+  if (['twitter', 'linkedin', 'facebook'].includes(id)) {
     logAgentAction(id, def.emoji,
       'Active on demand - OAuth connector ready; posts load after account connection', def.color);
-    return true;
-  }
-
-  if (['tiktok'].includes(id)) {
-    // Same shape as the OAuth-on-demand platforms above now — video.list
-    // (see fetchTikTokUserVideos) genuinely fetches once a member connects,
-    // unlike the old "no fetcher exists at all" state this message used to
-    // describe.
-    logAgentAction(id, def.emoji,
-      'Active on demand - OAuth connector ready; own videos load after account connection', def.color);
     return true;
   }
 
@@ -9154,16 +9022,6 @@ const PLATFORMS = {
     reviewRequired: false,
     note: 'Basic tier API required ($100/month). Elevated access for higher volume.',
   },
-  instagram: {
-    name: 'Instagram', color: '#E1306C', icon: 'instagram',
-    description: 'Import your posts and follow industry creators.',
-    scopes: ['instagram_business_basic'],
-    authUrl: 'https://www.instagram.com/oauth/authorize',
-    loginUrl: 'https://www.instagram.com/accounts/login/',
-    setupUrl: 'https://developers.facebook.com/apps',
-    reviewRequired: false,
-    note: 'Instagram API with Instagram Login. Requires a Facebook Developer account and a Business or Creator Instagram account — personal accounts can\'t connect.',
-  },
   facebook: {
     name: 'Facebook', color: '#1877F2', icon: 'facebook',
     description: 'See posts and discussions from your Facebook Groups.',
@@ -9245,16 +9103,6 @@ const PLATFORMS = {
     comingSoon: true,
     note: 'Indeed Publisher API requires application approval. Integration coming soon.',
   },
-  tiktok: {
-    name: 'TikTok', color: '#010101', icon: 'tiktok',
-    description: 'Follow creators and surface trending content in your niche.',
-    scopes: ['user.info.basic', 'video.list'],
-    authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
-    loginUrl: 'https://www.tiktok.com/login',
-    setupUrl: 'https://developers.tiktok.com',
-    reviewRequired: false,
-    note: 'Requires a TikTok for Developers account and app approval.',
-  },
   bluesky: {
     name: 'Bluesky', color: '#0085FF', icon: 'bluesky',
     description: 'Follow posts and conversations across the decentralised network.',
@@ -9268,15 +9116,11 @@ const PLATFORMS = {
 };
 
 // Display/connect order for Connected Accounts — Set iteration order
-// follows insertion order, so this list's order IS the UI order. TikTok is
-// deliberately last: it's the platform most likely to need real portal
-// configuration (Login Kit product, redirect URI registration, sandbox
-// testers) before it actually works, so it shouldn't be the first thing a
-// member sees/tries.
+// follows insertion order, so this list's order IS the UI order.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
-  'linkedin', 'twitter', 'instagram', 'facebook',
+  'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'behance', 'bluesky', 'tiktok',
+  'medium', 'dribbble', 'behance', 'bluesky',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -9284,7 +9128,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // further down) — that personal-OAuth path is unrelated to whether these
 // platforms join the general aggregate pool, so this set is kept separate
 // from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
-const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
 // (see getCursorFeedPage) and any other caller that needs "every real
@@ -9383,9 +9227,6 @@ function getSocialPostUrl(platform, post) {
       if (author.startsWith('@')) return `https://instagram.com/${author.slice(1)}`;
       if (source.startsWith('@')) return `https://instagram.com/${source.slice(1)}`;
       return 'https://instagram.com';
-    case 'tiktok':
-      if (author.startsWith('@')) return `https://tiktok.com/${author}`;
-      return 'https://tiktok.com';
     case 'reddit':
       if (source.startsWith('r/')) return `https://reddit.com/${source}`;
       if (author.startsWith('u/')) return `https://reddit.com/${author}`;
@@ -9756,7 +9597,6 @@ function serializeCommunityPost(post, viewerId = null) {
 const FOLLOWING_SOURCE_FETCHERS = {
   // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
-  tiktok:  fetchTikTokUserVideos,         // the connected member's own uploads — see its own comment for why this isn't a "who I follow" timeline
   youtube: fetchYouTubeSubscriptionFeed,  // recent uploads from channels the member subscribes to — see its own comment
 };
 
@@ -9796,9 +9636,8 @@ async function refreshFollowingSourceCaches() {
       }
       // Paced per-fetch, not just per-user — a member could have several of
       // these connected at once. Modest since each fetcher already caches
-      // its own result internally (see fetchTikTokUserVideos's getCached),
-      // this loop's own concern is spreading requests out, not the primary
-      // rate-limit guard.
+      // its own result internally, this loop's own concern is spreading
+      // requests out, not the primary rate-limit guard.
       await waitMs(300);
     }
   }
@@ -9821,12 +9660,11 @@ async function refreshFollowingSourceCaches() {
 const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   linkedin:  fetchLinkedIn,
   twitter:   fetchTwitter,
-  instagram: fetchInstagram,
   facebook:  fetchFacebook,
 };
 
 // Following mode's video-bearing posts (a followed member's own video post,
-// a YouTube subscription-feed upload, a TikTok upload) used to show up
+// a YouTube subscription-feed upload) used to show up
 // verbatim in both the Following tab (as a normal card, via getFollowingFeedPosts
 // straight) AND the Following section of the Videos swipe feed (the exact
 // same posts, just re-filtered to isPlayableVideoPost) — since for a
@@ -12163,25 +12001,16 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       throw Object.assign(new Error(`No access_token in response — provider said: ${providerErrorCode}`), { providerErrorCode });
     }
 
-    // Instagram/Facebook's own initial exchange only ever hands back a
-    // short-lived token (~1-2 hours) — same expiring-token trap as
-    // YouTube's original bug, just via a one-time upgrade-exchange
-    // mechanism instead of a refresh_token grant. Trading up to the
-    // long-lived version (60 days) here means the connection actually
-    // survives past the first hour without needing its own refresh-on-401
-    // machinery the way YouTube did. Best-effort: if this upgrade call
-    // fails for any reason, the short-lived token from above is still used
-    // as-is rather than failing the whole connection over it.
-    if (platform === 'instagram') {
-      try {
-        const longLived = await fetchJSON(
-          `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(clientSecret)}&access_token=${encodeURIComponent(accessToken)}`
-        );
-        if (longLived?.access_token) accessToken = longLived.access_token;
-      } catch (e) {
-        console.warn('[Instagram] long-lived token exchange failed, using short-lived token:', e.message);
-      }
-    } else if (platform === 'facebook') {
+    // Facebook's own initial exchange only ever hands back a short-lived
+    // token (~1-2 hours) — same expiring-token trap as YouTube's original
+    // bug, just via a one-time upgrade-exchange mechanism instead of a
+    // refresh_token grant. Trading up to the long-lived version (60 days)
+    // here means the connection actually survives past the first hour
+    // without needing its own refresh-on-401 machinery the way YouTube did.
+    // Best-effort: if this upgrade call fails for any reason, the
+    // short-lived token from above is still used as-is rather than failing
+    // the whole connection over it.
+    if (platform === 'facebook') {
       try {
         const longLived = await fetchJSON(
           `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(accessToken)}`
@@ -13458,7 +13287,7 @@ async function handleFeedRequest(req, res) {
     if (!token) {
       return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
     }
-    const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
+    const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, facebook: fetchFacebook }[sourceFilter];
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
     const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
     const liveFetches = Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])));
@@ -13877,7 +13706,6 @@ app.get('/office/feed', authenticate, handleFeedRequest);
 function isPlayableVideoPost(p) {
   if (!p || p.mediaType !== 'video') return false;
   if (p.source === 'bluesky') return !!(p.mediaUrl && p.mediaUrl.includes('/thumbnail.'));
-  if (p.source === 'tiktok') return !!p.embedId;
   if (p.source === 'youtube') {
     return !!(p.embedId || /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.sourceUrl || ''));
   }
@@ -14427,7 +14255,7 @@ function _curatedComments(source, postId, postCreatedAt = null) {
   else if (source === 'lobsters')                                                    pool = _CP.lobsters;
   else if (source === 'mastodon')                                                    pool = _CP.mastodon;
   else if (source === 'bluesky')                                                     pool = _CP.bluesky;
-  else if (['twitter','linkedin','instagram','facebook','tiktok'].includes(source))  pool = _CP.social;
+  else if (['twitter','linkedin','instagram','facebook'].includes(source))  pool = _CP.social;
   else if (['producthunt','indiehackers'].includes(source))                          pool = _CP.community;
   else if (['devto','medium','hashnode','smashing','infoq'].includes(source))        pool = _CP.dev;
   else                                                                               pool = _CP.tech;
@@ -14458,7 +14286,6 @@ function _sourceFromPostId(id) {
   if (/^ig\d/.test(base))       return 'instagram';
   if (/^li\d/.test(base))       return 'linkedin';
   if (/^tw\d/.test(base))       return 'twitter';
-  if (/^tt\d/.test(base))       return 'tiktok';
   if (/^re\d/.test(base))       return 'reddit';
   if (/^sofb\d/.test(base))     return 'stackoverflow';
   if (/^phfb\d/.test(base))     return 'producthunt';
@@ -14483,7 +14310,7 @@ function _sourceFromPostId(id) {
     gitlab:'gitlab', remoteok:'remoteok', yc:'yc', crunchbase:'crunchbase',
     behance:'behance', designweb:'designweb',
     twitter:'twitter', linkedin:'linkedin', instagram:'instagram',
-    facebook:'facebook', tiktok:'tiktok',
+    facebook:'facebook',
   };
   return map[prefix] || prefix;
 }
@@ -14958,13 +14785,9 @@ const AGENT_DEFS = {
     name: 'Design Web Agent', emoji: 'UX', color: '#DB2777', interval: '45s / 1 shard',
     description: 'Aggregates public design, UX, CSS, and product craft feeds from Designboom, Awwwards, CSS-Tricks, and Fast Company.',
   },
-  tiktok: {
-    name: 'TikTok Agent', emoji: '🎵', color: '#010101', interval: 'per-connect',
-    description: 'Fetches a connected member\'s own uploaded videos via TikTok\'s Display API (video.list) — public/hashtag discovery still requires approved partner access TikTok doesn\'t grant third-party apps.',
-  },
   usajobs: {
     name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8',
-    description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, Facebook, and TikTok require.',
+    description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, and Facebook require.',
   },
   optimizer: {
     name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '5min',
@@ -15209,7 +15032,7 @@ function getRuntimeHealthForAgent(id) {
       lastCount: activityAgentState.lastCount,
     };
   }
-  if (['twitter', 'linkedin', 'instagram', 'facebook', 'tiktok'].includes(id)) {
+  if (['twitter', 'linkedin', 'facebook'].includes(id)) {
     return {
       status: 'ready',
       mode: 'oauth-on-demand',
@@ -15283,11 +15106,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // real "healthy" worker entry), which duplicated their id in
   // sources.workers, inflated total/healthy counts, and rendered two
   // conflicting cards for the same platform in the office Sources view.
-  // tiktok included here too — it has no app-level continuous fetcher (no
-  // SOURCE_CONFIG entry, so the guard below never skips it), only the
-  // per-user one (see fetchTikTokUserVideos/FOLLOWING_SOURCE_FETCHERS), the
-  // same shape as these 4 before their own app-level tokens existed.
-  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook', 'tiktok']) {
+  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
     if (SOURCE_CONFIG[id]) continue;
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({

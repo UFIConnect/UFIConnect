@@ -10,7 +10,6 @@ const PLATFORM_BENEFITS = {
   github:    ['Showcase your repos & contributions', 'Display commit activity on profile', 'Find open-source collaborators'],
   gitlab:    ['Showcase GitLab projects', 'Display CI/CD and open-source work', 'Find developer collaborators'],
   twitter:   ['Surface relevant tech threads', 'Share posts across platforms', 'Follow industry conversations'],
-  instagram: ['Display your creative portfolio', 'Import content to your profile', 'Connect with visual designers'],
   facebook:  ['Join professional Facebook Groups', 'Surface industry discussions', 'Expand your network'],
   discord:   ['See activity from your servers', 'Find community members on UFI', 'Share Discord highlights'],
   youtube:   ['Import your video library', 'Surface creator content in feed', 'Connect with fellow creators'],
@@ -18,7 +17,6 @@ const PLATFORM_BENEFITS = {
   medium:    ['Import your published articles', 'Share writing with your network', 'Discover great long-form reads'],
   dribbble:  ['Display your design shots', 'Get discovered by hiring managers', 'Connect with top designers'],
   behance:   ['Showcase your full portfolio', 'Import case studies to profile', 'Get design feedback'],
-  tiktok:    ['Follow creators in your niche', 'Surface trending videos in your feed', 'Connect with content creators'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 

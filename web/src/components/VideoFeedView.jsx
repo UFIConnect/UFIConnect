@@ -16,34 +16,25 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 
 // Platforms genuinely excluded from the shared Feed-mode video pool.
 // uficonnect is native/Following-only by design (a user's own network, not
-// an aggregated platform). discord, dribbble, and tiktok have no
-// SOURCE_CONFIG entry server-side — no aggregate fetcher exists for any of
-// them, so including them here would just be a permanently-empty filter
-// with no path to fix short of building one. tiktok specifically has no
-// public discovery API to build that fetcher against even in principle
-// (TikTok's Display API only exposes a connected user's own uploads,
-// video.list — general discovery needs the Research API, restricted to
-// approved academic/nonprofit orgs, commercial apps rejected) — it used to
-// sit in this filter anyway "per product decision," reversed now that a
-// connected member confirmed the general Feed/Videos filter genuinely never
-// surfaces anything for it.
+// an aggregated platform). discord and dribbble have no SOURCE_CONFIG entry
+// server-side — no aggregate fetcher exists for either, so including them
+// here would just be a permanently-empty filter with no path to fix short
+// of building one.
 //
-// Twitter/LinkedIn/Instagram/Facebook are a different situation from all
-// three of those: they DO have real SOURCE_CONFIG entries (see
-// backend/index.js) — a genuine shared, cached, app-level fetcher,
-// architecturally identical to every other source — just idling at 0 posts
-// until an app bearer token is configured, same as any source having a
-// quiet cycle (see the commit that brought them into the aggregate
-// sort/rank pool).
+// Twitter/LinkedIn/Instagram/Facebook are a different situation from those
+// two: they DO have real SOURCE_CONFIG entries (see backend/index.js) — a
+// genuine shared, cached, app-level fetcher, architecturally identical to
+// every other source — just idling at 0 posts until an app bearer token is
+// configured, same as any source having a quiet cycle (see the commit that
+// brought them into the aggregate sort/rank pool).
 //
 // Either way, this is entirely separate from Following mode's own path for
 // these same platforms (FOLLOWING_VIDEO_SOURCES below) — that one is a
 // per-user live fetch of a member's own connected account
 // (CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts), already works
 // today independent of any app-level token, and was never gated by this
-// exclusion list to begin with — a connected TikTok account's own videos
-// (once it actually has any) still show up there.
-const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble', 'tiktok'];
+// exclusion list to begin with.
+const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble'];
 // Feed mode's filter row — every publicly-aggregated source, since any of
 // them can carry a real video (a dedicated video source like YouTube, a
 // direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
@@ -83,21 +74,9 @@ function resolveVideoSource(post) {
   // Same idea for an article embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
   // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
-  // like YouTube's i.ytimg.com, so poster stays null — same
-  // placeholder-when-inactive treatment TikTok gets below when it also has
-  // no poster.
+  // like YouTube's i.ytimg.com, so poster stays null.
   const vimeoId = extractVimeoId(post.mediaUrl);
   if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
-  // TikTok: embedId is the numeric video id fetchTikTokUserVideos maps
-  // server-side (Following mode only — TikTok has no app-level discovery
-  // fetcher, see FOLLOWING_SOURCE_FETCHERS backend-side), rendered the same
-  // simple mount/unmount iframe way as Feed.jsx's TikTokEmbedBlock rather
-  // than plugged into the scrub bar below, which only understands a native
-  // <video> element or YouTube's IFrame Player API — TikTok's embed exposes
-  // neither.
-  if (post.source === 'tiktok') {
-    return post.embedId ? { kind: 'tiktok', id: post.embedId, poster: post.mediaUrl } : null;
-  }
   if (post.source === 'bluesky') {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaUrl } : null;
@@ -440,13 +419,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           doesn't reveal a hard border, reads as an intentional frame
           rather than empty space. z-index -1, not just DOM order: the
           foreground below is a mix of positioned (youtube's active
-          wrapper) and unpositioned (poster <img>, hls/file <video>,
-          tiktok <iframe>) elements, and per CSS painting order any
-          positioned element with z-index:auto paints above unpositioned
-          siblings regardless of DOM order — without a negative z-index
-          here this backdrop would cover the plain-element cases instead
-          of sitting behind them. Harmless no-op for kinds with no poster
-          (file) or that already fill the box natively (tiktok). */}
+          wrapper) and unpositioned (poster <img>, hls/file <video>)
+          elements, and per CSS painting order any positioned element with
+          z-index:auto paints above unpositioned siblings regardless of DOM
+          order — without a negative z-index here this backdrop would cover
+          the plain-element cases instead of sitting behind them. Harmless
+          no-op for kinds with no poster (file). */}
       {src?.poster && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: -1,
@@ -495,22 +473,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
-      ) : src.kind === 'tiktok' ? (
-        active ? (
-          <iframe
-            src={`https://www.tiktok.com/embed/v2/${src.id}`}
-            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            allow="autoplay; encrypted-media; fullscreen"
-            title={post.title}
-          />
-        ) : src.poster ? (
-          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
-        ) : (
-          <div style={{ color: '#888', fontSize: '.85rem' }}>🎵 TikTok video</div>
-        )
       ) : src.kind === 'vimeo' ? (
-        // Same plain mount/unmount iframe treatment as TikTok above — a raw
-        // Vimeo iframe embed exposes no programmatic control either, so
+        // A raw Vimeo iframe embed exposes no programmatic control, so
         // there's nothing for the scrub bar below to attach to, and the
         // shared mute button (below) can't affect it post-mount — see its
         // own kind check. Best-effort respects the stored preference at
@@ -913,8 +877,8 @@ export default function VideoFeedView({ onExit }) {
         if (reset) followingPageRef.current = 1;
         params += `&page=${followingPageRef.current}`;
         // getFollowingFeedPosts backend-side now has its own caching per
-        // connected source (TikTok's own uploads, YouTube's subscription
-        // feed) — bust=1 does apply here, same as the main feed: without
+        // connected source (YouTube's subscription feed) — bust=1 does
+        // apply here, same as the main feed: without
         // it, a manual refresh had no way to get past that cache, so a
         // bad/empty result cached right after first connecting an account
         // could sit there for the full cache window regardless of how many
@@ -1096,15 +1060,15 @@ export default function VideoFeedView({ onExit }) {
     return () => document.removeEventListener('keydown', handleKey);
   }, [onExit]);
 
-  // TikTok/Vimeo are both plain iframes with no postMessage control layer
-  // (see VideoSlide's own tiktok/vimeo render branches) — this shared
-  // button can't actually change their audio once mounted, only the
-  // `muted` state file/hls/youtube slides read. Toggling it while looking
-  // at one of those would silently do nothing but still look like it
-  // worked, which is worse than being upfront that it's not controllable
-  // here — dimmed and inert instead, rather than a false control.
+  // Vimeo is a plain iframe with no postMessage control layer (see
+  // VideoSlide's own vimeo render branch) — this shared button can't
+  // actually change its audio once mounted, only the `muted` state
+  // file/hls/youtube slides read. Toggling it while looking at a Vimeo
+  // slide would silently do nothing but still look like it worked, which
+  // is worse than being upfront that it's not controllable here — dimmed
+  // and inert instead, rather than a false control.
   const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
-  const muteControllable = activeSrc?.kind !== 'tiktok' && activeSrc?.kind !== 'vimeo';
+  const muteControllable = activeSrc?.kind !== 'vimeo';
 
   // Standalone/installed-PWA mobile ("app view") renders under a real
   // status bar/notch that a plain mobile-browser tab doesn't have — index.html
