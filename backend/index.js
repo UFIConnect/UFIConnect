@@ -706,14 +706,9 @@ const SOCIAL_CFG = {
     scope: 'activity_read project_read',
     pkce: false,
   },
-  bluesky: {
-    authUrl:  'https://bsky.social/oauth/authorize',
-    tokenUrl: 'https://bsky.social/oauth/token',
-    clientId:     () => process.env.BLUESKY_CLIENT_ID,
-    clientSecret: () => process.env.BLUESKY_CLIENT_SECRET,
-    scope: 'atproto transition:generic',
-    pkce: true,
-  },
+  // bluesky deliberately absent — AT Protocol OAuth doesn't fit this shape
+  // at all (no client_id/secret pair, no fixed authorization server). See
+  // the dedicated Bluesky OAuth section below instead.
 };
 
 const SOCIAL_ENV_KEYS = {
@@ -728,10 +723,22 @@ const SOCIAL_ENV_KEYS = {
   medium:    ['MEDIUM_CLIENT_ID', 'MEDIUM_CLIENT_SECRET'],
   dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
   behance:   ['BEHANCE_CLIENT_ID', 'BEHANCE_CLIENT_SECRET'],
-  bluesky:   ['BLUESKY_CLIENT_ID', 'BLUESKY_CLIENT_SECRET'],
+  bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
 function socialCredentialStatus(platform) {
+  // Bluesky's whole credential shape is one ES256 signing key (see the
+  // dedicated Bluesky OAuth section below), not a client_id/secret pair —
+  // doesn't fit the generic index-0/1 special-casing below at all.
+  if (platform === 'bluesky') {
+    const configured = !!BLUESKY_SIGNING_KEY;
+    return {
+      configured,
+      requiredEnv: ['BLUESKY_SIGNING_KEY'],
+      missingEnv: configured ? [] : ['BLUESKY_SIGNING_KEY'],
+      callbackUrl: oauthCallbackUrl('bluesky'),
+    };
+  }
   const cfg = SOCIAL_CFG[platform];
   const requiredEnv = SOCIAL_ENV_KEYS[platform] || [];
   const values = requiredEnv.map((key, i) => {
@@ -754,10 +761,17 @@ function oauthCallbackUrl(platform) {
 
 function pkceVerifier() { return crypto.randomBytes(32).toString('base64url'); }
 
-// Sign OAuth state as a JWT so it survives server restarts (no in-memory Map needed)
-function createOAuthState(userId, platform, codeVerifier) {
+// Sign OAuth state as a JWT so it survives server restarts (no in-memory Map
+// needed). extra is optional arbitrary data the callback needs back —
+// Bluesky's own flow is the only current user of it (see its own section
+// below): AT Protocol is federated, so unlike every other platform here,
+// the token endpoint/authorization-server issuer/DID aren't fixed values
+// the callback already knows, they're discovered fresh per connection at
+// /start time and have to survive the redirect round-trip somehow.
+function createOAuthState(userId, platform, codeVerifier, extra) {
   const payload = { userId, platform };
   if (codeVerifier) payload.cv = codeVerifier;
+  if (extra) payload.x = extra;
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '10m' });
 }
 
@@ -765,12 +779,335 @@ function verifyOAuthState(state, platform) {
   try {
     const payload = jwt.verify(state, process.env.JWT_SECRET);
     if (payload.platform !== platform) return null;
-    return { userId: payload.userId, platform: payload.platform, codeVerifier: payload.cv };
+    return { userId: payload.userId, platform: payload.platform, codeVerifier: payload.cv, extra: payload.x };
   } catch {
     return null;
   }
 }
 function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
+
+// ─── Bluesky (AT Protocol) OAuth ───────────────────────────────────────────────
+// AT Protocol OAuth doesn't fit the client_id/secret shape every other
+// platform above uses at all — see https://atproto.com/specs/oauth:
+//   - No developer dashboard issues credentials. client_id is a URL
+//     pointing to a self-hosted JSON metadata document (this app's own
+//     /oauth/bluesky/client-metadata.json below).
+//   - No client_secret. Confidential clients authenticate with a signed
+//     JWT ("client assertion") instead, using a real key pair whose public
+//     half is published at jwks_uri.
+//   - Every token request (and every later resource-server API call) needs
+//     a DPoP ("proof of possession") JWT freshly signed per-request, bound
+//     to that same key pair.
+//   - The authorization server itself isn't fixed — AT Proto is federated,
+//     so it has to be discovered per user: resolve their handle to a DID,
+//     the DID document to their Personal Data Server, and the PDS to its
+//     own authorization server, all before the actual OAuth redirect can
+//     even be built.
+//   - PAR (Pushed Authorization Request) is required — the authorization
+//     request's own parameters are POSTed to the server first to get an
+//     opaque request_uri, rather than passed directly in the redirect's
+//     query string the way every other platform here does it.
+//
+// One ES256 (P-256) key pair, generated once and stored as a single JWK in
+// BLUESKY_SIGNING_KEY, covers both roles (client assertion signing AND
+// DPoP proof signing) — the spec doesn't require separate keys for each.
+const BLUESKY_SIGNING_KEY = (() => {
+  const raw = process.env.BLUESKY_SIGNING_KEY;
+  if (!raw) return null;
+  try {
+    const jwk = JSON.parse(raw);
+    const privateKey = crypto.createPrivateKey({ key: jwk, format: 'jwk' });
+    const { d, ...publicJwk } = jwk; // 'd' is the private component — never published
+    return { jwk, privateKey, publicJwk };
+  } catch (e) {
+    console.warn('[Bluesky] BLUESKY_SIGNING_KEY is set but invalid:', e.message);
+    return null;
+  }
+})();
+
+function blueskyClientId() {
+  return `${API_BASE}/oauth/bluesky/client-metadata.json`;
+}
+
+// Signs a compact JWT with the shared ES256 key — used for both the DPoP
+// proof and the client_assertion, which have different claim shapes but
+// identical signing mechanics. AT Proto (and JOSE generally) wants the raw
+// 64-byte P-256 (r||s) signature ('ieee-p1363'), not the DER/ASN.1
+// structure Node's default EC signing produces.
+function signES256JWT(header, payload) {
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const signature = crypto.sign(null, Buffer.from(signingInput), {
+    key: BLUESKY_SIGNING_KEY.privateKey,
+    dsaEncoding: 'ieee-p1363',
+  });
+  return `${signingInput}.${signature.toString('base64url')}`;
+}
+
+function createDPoPProof(method, url, { nonce, accessToken } = {}) {
+  const header = { alg: 'ES256', typ: 'dpop+jwt', jwk: BLUESKY_SIGNING_KEY.publicJwk };
+  const payload = {
+    jti: crypto.randomUUID(),
+    htm: method,
+    htu: url,
+    iat: Math.floor(Date.now() / 1000),
+  };
+  if (nonce) payload.nonce = nonce;
+  // Required whenever the proof accompanies an access token (resource-
+  // server API calls, not the initial token request) — binds the proof to
+  // that specific token via its hash, per spec.
+  if (accessToken) payload.ath = crypto.createHash('sha256').update(accessToken).digest('base64url');
+  return signES256JWT(header, payload);
+}
+
+function createBlueskyClientAssertion(audience) {
+  const header = { alg: 'ES256', kid: BLUESKY_SIGNING_KEY.jwk.kid };
+  const clientId = blueskyClientId();
+  const payload = {
+    iss: clientId,
+    sub: clientId,
+    aud: audience,
+    jti: crypto.randomUUID(),
+    iat: Math.floor(Date.now() / 1000),
+  };
+  return signES256JWT(header, payload);
+}
+
+// Same shape as postForm, but exposes response headers/status instead of
+// resolving-or-rejecting on the JSON body alone — atprotoPost below needs
+// to see the DPoP-Nonce response header and a specific error status to
+// implement the nonce-retry dance the spec requires, neither of which
+// postForm's own shape (built for every other platform's simpler exchange)
+// exposes.
+function postFormWithMeta(url, params, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams(params).toString();
+    const u = new URL(url);
+    const opts = {
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, method: 'POST',
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+        'Accept': 'application/json',
+        ...headers,
+      },
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(data); } catch {}
+        resolve({ data: parsed, headers: res.headers, status: res.statusCode });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => req.destroy(new Error('postFormWithMeta timeout')));
+    req.write(body);
+    req.end();
+  });
+}
+
+// DPoP-authenticated POST — attaches a fresh DPoP proof (and, once
+// available, an Authorization: DPoP header) to every AT Proto PAR/token
+// request. The server can reject a first attempt specifically to hand back
+// a required nonce (error: "use_dpop_nonce") — this retries exactly once
+// with that nonce folded into a fresh proof, per spec.
+async function atprotoPost(url, formParams, { accessToken } = {}) {
+  let nonce;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const proof = createDPoPProof('POST', url, { nonce, accessToken });
+    const headers = { DPoP: proof };
+    if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
+    const result = await postFormWithMeta(url, formParams, headers);
+    const nextNonce = result.headers['dpop-nonce'];
+    if (nextNonce) nonce = nextNonce;
+    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    return result;
+  }
+}
+
+// Resolves a Bluesky handle all the way to its actual authorization server
+// — the federated equivalent of every other platform's fixed authUrl.
+// Handle -> DID (identity), DID -> DID document -> PDS (where their data
+// actually lives), PDS -> protected-resource metadata -> authorization
+// server, authorization server -> its own metadata (the real endpoints:
+// PAR, token, authorize).
+async function resolveBlueskyAuthServer(handle) {
+  const handleData = await fetchJSON(
+    `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`
+  );
+  const did = handleData?.did;
+  if (!did) throw new Error(`Could not resolve "${handle}" to a Bluesky account`);
+
+  let didDoc;
+  if (did.startsWith('did:web:')) {
+    const domain = decodeURIComponent(did.replace('did:web:', ''));
+    didDoc = await fetchJSON(`https://${domain}/.well-known/did.json`);
+  } else {
+    didDoc = await fetchJSON(`https://plc.directory/${encodeURIComponent(did)}`);
+  }
+  const pdsUrl = (didDoc?.service || []).find(
+    s => s.id === '#atproto_pds' || s.type === 'AtprotoPersonalDataServer'
+  )?.serviceEndpoint;
+  if (!pdsUrl) throw new Error('Could not find a Personal Data Server for this Bluesky account');
+
+  const resourceMeta = await fetchJSON(`${pdsUrl}/.well-known/oauth-protected-resource`);
+  const authServerUrl = resourceMeta?.authorization_servers?.[0];
+  if (!authServerUrl) throw new Error('Could not resolve an authorization server for this Bluesky account');
+
+  const authServerMeta = await fetchJSON(`${authServerUrl}/.well-known/oauth-authorization-server`);
+  if (!authServerMeta?.pushed_authorization_request_endpoint || !authServerMeta?.token_endpoint || !authServerMeta?.authorization_endpoint) {
+    throw new Error('Bluesky authorization server is missing required OAuth endpoints');
+  }
+  return { did, pdsUrl, authServerMeta };
+}
+
+// Public, unauthenticated — the authorization server fetches this document
+// itself during the OAuth flow (that's the whole "no developer dashboard"
+// model: registration is just "the metadata is reachable at this URL").
+app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
+  if (!BLUESKY_SIGNING_KEY) return res.status(501).json({ error: 'Bluesky OAuth not configured' });
+  res.json({
+    client_id: blueskyClientId(),
+    client_name: 'UFconnect',
+    client_uri: FRONTEND_BASE,
+    redirect_uris: [oauthCallbackUrl('bluesky')],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    scope: 'atproto transition:generic',
+    token_endpoint_auth_method: 'private_key_jwt',
+    token_endpoint_auth_signing_alg: 'ES256',
+    dpop_bound_access_tokens: true,
+    application_type: 'web',
+    jwks_uri: `${API_BASE}/oauth/bluesky/jwks.json`,
+  });
+});
+
+app.get('/oauth/bluesky/jwks.json', (_req, res) => {
+  if (!BLUESKY_SIGNING_KEY) return res.status(501).json({ error: 'Bluesky OAuth not configured' });
+  res.json({ keys: [BLUESKY_SIGNING_KEY.publicJwk] });
+});
+
+// Registered ahead of the generic /auth/social/:platform/start route below
+// (Express matches in registration order) — Bluesky needs a handle typed
+// in up front (there's no fixed authUrl to just redirect to) and a real
+// PAR round-trip before it has anything to redirect the browser to at all.
+app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
+  if (!BLUESKY_SIGNING_KEY) {
+    return res.status(501).json({
+      error: 'bluesky OAuth not configured',
+      detail: 'Set BLUESKY_SIGNING_KEY in your server environment variables.',
+      requiredEnv: ['BLUESKY_SIGNING_KEY'],
+      missingEnv: ['BLUESKY_SIGNING_KEY'],
+      callbackUrl: oauthCallbackUrl('bluesky'),
+    });
+  }
+  const handle = (req.query.handle || '').toString().trim().replace(/^@/, '');
+  if (!handle) return res.status(400).json({ error: 'Missing Bluesky handle' });
+
+  try {
+    const { did, pdsUrl, authServerMeta } = await resolveBlueskyAuthServer(handle);
+    const codeVerifier = pkceVerifier();
+    const redirectUri = oauthCallbackUrl('bluesky');
+    const clientId = blueskyClientId();
+    const state = createOAuthState(req.user.id, 'bluesky', codeVerifier, {
+      tokenEndpoint: authServerMeta.token_endpoint,
+      issuer: authServerMeta.issuer,
+      did, pdsUrl,
+    });
+
+    const parResult = await atprotoPost(authServerMeta.pushed_authorization_request_endpoint, {
+      client_id: clientId,
+      response_type: 'code',
+      code_challenge: pkceChallenge(codeVerifier),
+      code_challenge_method: 'S256',
+      state,
+      redirect_uri: redirectUri,
+      scope: 'atproto transition:generic',
+      login_hint: handle,
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: createBlueskyClientAssertion(authServerMeta.issuer),
+    });
+    if (!parResult?.data?.request_uri) {
+      throw new Error(`PAR request failed (${parResult?.status}): ${JSON.stringify(parResult?.data).slice(0, 300)}`);
+    }
+
+    const authUrl = `${authServerMeta.authorization_endpoint}?${new URLSearchParams({
+      client_id: clientId,
+      request_uri: parResult.data.request_uri,
+    })}`;
+    res.json({ url: authUrl });
+  } catch (e) {
+    console.error('[Bluesky] start error:', e.message);
+    res.status(500).json({ error: 'Failed to start Bluesky connection', detail: e.message });
+  }
+});
+
+// Same reasoning as /start above — registered ahead of the generic
+// /auth/social/:platform/callback route so this one wins for the literal
+// 'bluesky' path.
+app.get('/auth/social/bluesky/callback', async (req, res) => {
+  const { code, state, error: oauthError, iss } = req.query;
+  const frontendProfile = `${FRONTEND_BASE}/connected-accounts`;
+  if (oauthError) return res.redirect(`${frontendProfile}?social_error=bluesky&reason=${oauthError}`);
+
+  const entry = verifyOAuthState(state, 'bluesky');
+  if (!entry || !entry.extra) return res.redirect(`${frontendProfile}?social_error=bluesky&reason=invalid_state`);
+  const { tokenEndpoint, issuer, did, pdsUrl } = entry.extra;
+
+  // A real AT Proto security requirement (see the spec), not just a nice-
+  // to-have: the callback's own iss param must match the authorization
+  // server this exact flow actually started with.
+  if (iss && issuer && iss !== issuer) {
+    return res.redirect(`${frontendProfile}?social_error=bluesky&reason=issuer_mismatch`);
+  }
+
+  try {
+    const result = await atprotoPost(tokenEndpoint, {
+      grant_type: 'authorization_code',
+      code,
+      code_verifier: entry.codeVerifier,
+      redirect_uri: oauthCallbackUrl('bluesky'),
+      client_id: blueskyClientId(),
+      client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+      client_assertion: createBlueskyClientAssertion(issuer),
+    });
+    if (!result?.data?.access_token) {
+      throw new Error(`Token exchange failed (${result?.status}): ${JSON.stringify(result?.data).slice(0, 300)}`);
+    }
+    if (result.data.sub && result.data.sub !== did) {
+      throw new Error('Token subject did not match the account that authorized this connection');
+    }
+
+    // socialTokens.bluesky deliberately holds a JSON blob, not a bare
+    // token string like every other platform — Bluesky API calls need the
+    // DID/PDS/token-endpoint alongside the access token itself (and a
+    // "DPoP <token>" + fresh DPoP-proof header, not a plain Bearer token),
+    // so there's no way to use this value the same simple way anyway. Any
+    // future Bluesky fetcher needs to JSON.parse this specifically.
+    await saveSocialToken(
+      entry.userId,
+      'bluesky',
+      JSON.stringify({
+        accessToken: result.data.access_token,
+        did: result.data.sub || did,
+        pdsUrl,
+        tokenEndpoint,
+        issuer,
+      }),
+      result.data.refresh_token
+    );
+
+    logAgentAction('cache_helper', '🔗', 'User connected bluesky — social feed now active', '#6366F1');
+    res.redirect(`${frontendProfile}?social_connected=bluesky`);
+  } catch (e) {
+    console.error('[Bluesky] callback error:', e.message);
+    res.redirect(`${frontendProfile}?social_error=bluesky&reason=token_exchange_failed`);
+  }
+});
 
 // ─── Password reset ───────────────────────────────────────────────────────────
 function createPasswordResetToken(userId) {
@@ -9331,12 +9668,17 @@ const PLATFORMS = {
   bluesky: {
     name: 'Bluesky', color: '#0085FF', icon: 'bluesky',
     description: 'Follow posts and conversations across the decentralised network.',
-    scopes: ['read'],
-    authUrl: 'https://bsky.app/oauth/authorize',
+    scopes: ['atproto', 'transition:generic'],
+    // No fixed authUrl — AT Protocol is federated, so the real
+    // authorization server is discovered per member from whatever handle
+    // they type in (see /auth/social/bluesky/start server-side). needsHandle
+    // signals the frontend to prompt for a handle instead of just
+    // redirecting straight to a fixed URL like every other platform.
+    needsHandle: true,
     loginUrl: 'https://bsky.app/login',
-    setupUrl: 'https://atproto.com/docs',
+    setupUrl: 'https://atproto.com/specs/oauth',
     reviewRequired: false,
-    note: 'Uses the AT Protocol. No API key required — authenticate with your Bluesky handle.',
+    note: 'Uses the AT Protocol. No developer account or API key needed — just your Bluesky handle.',
   },
 };
 

@@ -72,9 +72,20 @@ export default function ConnectedAccounts() {
   }
 
   async function handleConnect(platform) {
+    // Bluesky has no fixed authorization URL to redirect straight to —
+    // AT Protocol is federated, so the real authorization server first has
+    // to be discovered from whichever handle the member actually uses (see
+    // /auth/social/bluesky/start server-side). Every other platform here
+    // needs nothing beyond the click itself.
+    let handleParam = '';
+    if (platform === 'bluesky') {
+      const handle = window.prompt('Enter your Bluesky handle (e.g. alice.bsky.social):');
+      if (!handle?.trim()) return;
+      handleParam = `?handle=${encodeURIComponent(handle.trim())}`;
+    }
     setConnecting(platform);
     try {
-      const { data } = await client.get(`/auth/social/${platform}/start`);
+      const { data } = await client.get(`/auth/social/${platform}/start${handleParam}`);
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (err) {
