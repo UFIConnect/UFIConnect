@@ -4793,10 +4793,19 @@ async function fetchTikTokUserVideos(token, { bust = false } = {}) {
 //      few videos
 // avoiding search.list entirely (100 quota units per call against a 10,000/
 // day default project quota — genuinely not viable per-member, per-channel)
-// in favor of list endpoints that cost ~1 unit each: ~17 units for a
-// 15-subscription member, not ~1,500.
-const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 15;
-const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 3;
+// in favor of list endpoints that cost ~1 unit each: ~52 units for a
+// 50-subscription member fetching 10 videos each, not ~5,000.
+//
+// Was 15 channels / 3 videos each (~45 videos, hard ceiling) — confirmed
+// live as the reason the Following tab's YouTube videos ran out of scroll
+// almost immediately: there was never more than 45 to page through, ever,
+// regardless of how many channels the member actually subscribes to. 50 is
+// subscriptions.list's own per-call maximum (still one page, no pageToken
+// pagination — a member with more than 50 subscriptions only gets their
+// first 50 alphabetically for now), and 10 videos/channel gives a much
+// deeper pool (up to 500) while staying trivially inside quota.
+const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 50;
+const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 10;
 async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `youtube_subfeed_${token.slice(-12)}`;
@@ -9549,6 +9558,23 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   facebook:  fetchFacebook,
 };
 
+// Following mode's video-bearing posts (a followed member's own video post,
+// a YouTube subscription-feed upload, a TikTok upload) used to show up
+// verbatim in both the Following tab (as a normal card, via getFollowingFeedPosts
+// straight) AND the Following section of the Videos swipe feed (the exact
+// same posts, just re-filtered to isPlayableVideoPost) — since for a
+// pure-video source like YouTube, ~100% of its Following content is a video,
+// the two surfaces were showing an almost-identical pool, confirmed as
+// "scroll Following, then scroll Videos, see the same posts again." Every
+// video post is deterministically assigned to exactly one surface (a stable
+// hash of its own id, so the same post always lands in the same surface
+// across requests/pages rather than flip-flopping) — non-video posts are
+// unaffected and still show in Following regardless.
+function followingVideoSurfaceBucket(postId) {
+  const h = crypto.createHash('md5').update(String(postId)).digest('hex');
+  return (parseInt(h.slice(0, 8), 16) % 2 === 0) ? 'feed' : 'videos';
+}
+
 // sourceFilter (a single source id or array — 'uficonnect' for native
 // follow-graph posts, plus whatever's in CONNECTED_SOCIAL_SEARCH_FETCHERS/
 // FOLLOWING_SOURCE_FETCHERS) scopes both which pools get computed at all
@@ -9556,7 +9582,11 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
 // discarding its results after) and which internal posts pass through —
 // this is what the Following tab's own filter chips call into, mirroring
 // the aggregate Feed's source tabs but over this narrower, per-user pool.
-async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false } = {}) {
+// surface ('feed' | 'videos' | null) splits video posts between the two
+// Following surfaces per followingVideoSurfaceBucket above — null (the
+// default) skips the split entirely, for any future caller that wants the
+// whole unsplit pool.
+async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const wantsSource = (src) => !wanted || wanted.has(src);
 
@@ -9636,7 +9666,11 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     }
   }
 
-  return { posts: interleaveByAuthor([...internalPosts, ...externalPosts]), sourceErrors };
+  let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
+  if (surface) {
+    merged = merged.filter(p => !isPlayableVideoPost(p) || followingVideoSurfaceBucket(p.id) === surface);
+  }
+  return { posts: merged, sourceErrors };
 }
 
 // True mix for Following, same idea as getBalancedFeedPosts/enforceFeedDiversity
@@ -10432,16 +10466,17 @@ const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
 // what's fetched in a 6-week window was never realistically going to be
 // seen by anyone, just sitting in Render's Postgres storage costing space.
 const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
-// Separate, shorter rule: a post nobody has ever actually been shown (zero
-// rows in seen_posts referencing it) is safe to drop well before the hard
-// 20-day ceiling above — while traffic is this low, keeping weeks of
-// never-seen backlog around "just in case" isn't worth the storage it
-// costs, and the continuous background workers will simply fetch
-// comparably fresh replacement content again on their own normal schedule
-// once it's actually needed. Seen posts are exempt regardless of age here
-// (they still fall under the 20-day rule above like everything else) —
-// this only prunes content that's provably never been useful to anyone yet.
-const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 7 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
+// Used to be a separate, shorter rule (7 days) pruning any post nobody had
+// ever been shown yet, ahead of the hard 20-day ceiling above — but that
+// quietly punished exactly the lower-volume sources (fewer viewers to ever
+// mark a post "seen" in the first place), so their backlog got cut to a
+// third of what high-traffic sources kept, well before it ever had a real
+// chance to surface — confirmed as the cause of those sources "running out"
+// of posts to page through in both the main feed and Following. Matched to
+// the 20-day ceiling now so every source, seen or not, gets the same full
+// window — the unseen-specific carve-out is effectively retired, kept only
+// as an env override for reintroducing it later if storage pressure returns.
+const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 20 * 24 * 60 * 60 * 1000, 6 * 60 * 60 * 1000, 20 * 24 * 60 * 60 * 1000);
 // A quiet/rate-limited/circuit-paused source stops adding fresh rows while
 // high-volume sources keep pushing newer ones ahead of it — under the old
 // plain "delete everything past the Nth-newest row overall" cap, that quiet
@@ -12521,7 +12556,7 @@ async function handleFeedRequest(req, res) {
     const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const { posts: allFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1' });
+    const { posts: allFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
     const pageRows = allFollowing.slice(offset, offset + feedLimit);
     return res.json({
       posts: pageRows,
@@ -13552,7 +13587,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
-    const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1' });
+    const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1', surface: 'videos' });
     const videos = all.filter(isPlayableVideoPost);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = videos.slice(offset, offset + feedLimit);
