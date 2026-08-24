@@ -4333,6 +4333,53 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
   }
 }
 
+// ─── Dribbble: a connected member's own shots ─────────────────────────────────
+// Dribbble's v2 API dropped every aggregated-discovery endpoint (no public
+// "browse shots" feed for third-party apps anymore, same shape as GitHub's
+// search-vs-received_events split) — GET /user/shots off the member's own
+// public-scope token is what's left, and it's exactly the "showcase your
+// design work" use case Connected Accounts already describes for this
+// platform. No app-level worker exists for Dribbble at all today (no
+// SOURCE_CONFIG entry), so this is its first real content source.
+async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `dribbble_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const data = await fetchJSON(
+      'https://api.dribbble.com/v2/user/shots?per_page=50',
+      { Authorization: `Bearer ${token}` }
+    );
+    const posts = (Array.isArray(data) ? data : [])
+      .filter(s => s?.id && s?.html_url)
+      .map(s => ({
+        id:          `dribbble_${s.id}`,
+        authorId:    `dribbble_${s.user?.id || 'member'}`,
+        groupId:     'ext_dribbble',
+        content:     stripAndDecodeHTML(s.description || '') || s.title || 'Dribbble shot',
+        title:       s.title || 'Dribbble shot',
+        source:      'dribbble', sourceLabel: 'Dribbble',
+        sourceUrl:   s.html_url,
+        topic:       null,
+        author:      { name: s.user?.name || 'Dribbble', title: 'Designer' },
+        likes: [], likesCount: s.likes_count || 0, commentsCount: s.comments_count || 0,
+        createdAt:   normalizeTimestamp(s.published_at || s.created_at),
+        isExternal:  true,
+        mediaType:   'image',
+        mediaUrl:    s.images?.normal || s.images?.teaser || s.images?.hidpi || null,
+        group:       { id: 'ext_dribbble', name: 'Dribbble', category: 'Design' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Dribbble own shots fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 // Remote OK: remote professional job listings
 async function fetchRemoteOKJobs(keyword) {
   const key = `remoteok_kw_${keyword}`;
@@ -9774,10 +9821,11 @@ function serializeCommunityPost(post, viewerId = null) {
 const FOLLOWING_SOURCE_FETCHERS = {
   // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
-  youtube: fetchYouTubeSubscriptionFeed,      // recent uploads from channels the member subscribes to — see its own comment
-  github:  fetchGitHubFollowingActivity,      // received_events — activity from people the member follows, see its own comment
-  gitlab:  fetchGitLabFollowingActivity,      // GET /events — the member's own GitLab dashboard activity feed
-  reddit:  fetchRedditHomeFeed,               // oauth.reddit.com/ — the member's real personalized front page
+  youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
+  github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
+  gitlab:   fetchGitLabFollowingActivity,     // GET /events — the member's own GitLab dashboard activity feed
+  reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
+  dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
