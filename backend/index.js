@@ -4766,6 +4766,54 @@ async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
   }
 }
 
+// Pinterest: the member's own pins, via API v5's GET /pins (requires
+// pins:read — Pinterest's own "list the requesting user's pins" endpoint,
+// same own-content shape as Dribbble's /user/shots above). Every v5 list
+// endpoint wraps results in { items, bookmark }, not a bare array.
+async function fetchPinterestOwnPins(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `pinterest_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const data = await fetchJSON(
+      'https://api.pinterest.com/v5/pins?page_size=50',
+      { Authorization: `Bearer ${token}` }
+    );
+    const posts = (Array.isArray(data?.items) ? data.items : [])
+      .filter(p => p?.id)
+      .map(p => {
+        const images = p.media?.images || {};
+        const image = images['600x'] || images['400x300'] || images.originals
+          || images['150x150'] || Object.values(images)[0] || null;
+        return {
+          id:          `pinterest_${p.id}`,
+          authorId:    'pinterest_member',
+          groupId:     'ext_pinterest',
+          content:     p.description || p.title || 'Pinterest pin',
+          title:       p.title || 'Pinterest pin',
+          source:      'pinterest', sourceLabel: 'Pinterest',
+          sourceUrl:   `https://www.pinterest.com/pin/${p.id}/`,
+          topic:       null,
+          author:      { name: 'Pinterest', title: 'Creator' },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(p.created_at),
+          isExternal:  true,
+          mediaType:   'image',
+          mediaUrl:    image?.url || null,
+          group:       { id: 'ext_pinterest', name: 'Pinterest', category: 'Design' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Pinterest own pins fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 // Remote OK: remote professional job listings
 async function fetchRemoteOKJobs(keyword) {
   const key = `remoteok_kw_${keyword}`;
@@ -10247,6 +10295,7 @@ const FOLLOWING_SOURCE_FETCHERS = {
   gitlab:   fetchGitLabFollowingActivity,     // GET /events — the member's own GitLab dashboard activity feed
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
   dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
+  pinterest: fetchPinterestOwnPins,           // GET /v5/pins — the member's own pins, see its own comment
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
