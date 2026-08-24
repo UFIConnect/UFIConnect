@@ -631,11 +631,21 @@ const SOCIAL_CFG = {
     basicAuth: true,
   },
   instagram: {
-    authUrl:  'https://api.instagram.com/oauth/authorize',
+    // "Instagram Basic Display API" (api.instagram.com/oauth/authorize,
+    // scope user_profile,user_media) was deprecated by Meta in December
+    // 2024 and no longer works for new connections — replaced by "Instagram
+    // API with Instagram Login" below. Only connects Business/Creator
+    // Instagram accounts now; a personal account has nothing to authorize
+    // against on this flow at all (that's a Meta platform requirement, not
+    // a limitation of this app's own scope choice).
+    authUrl:  'https://www.instagram.com/oauth/authorize',
     tokenUrl: 'https://api.instagram.com/oauth/access_token',
     clientId:     () => process.env.INSTAGRAM_APP_ID,
     clientSecret: () => process.env.INSTAGRAM_APP_SECRET,
-    scope: 'user_profile,user_media',
+    // Read-only — this app only ever imports posts/profile, never
+    // publishes/messages/manages comments, so the basic scope alone covers
+    // it (the other three current scopes are for those write use cases).
+    scope: 'instagram_business_basic',
     pkce: false,
   },
   facebook: {
@@ -9147,12 +9157,12 @@ const PLATFORMS = {
   instagram: {
     name: 'Instagram', color: '#E1306C', icon: 'instagram',
     description: 'Import your posts and follow industry creators.',
-    scopes: ['user_profile', 'user_media'],
-    authUrl: 'https://api.instagram.com/oauth/authorize',
+    scopes: ['instagram_business_basic'],
+    authUrl: 'https://www.instagram.com/oauth/authorize',
     loginUrl: 'https://www.instagram.com/accounts/login/',
     setupUrl: 'https://developers.facebook.com/apps',
     reviewRequired: false,
-    note: 'Instagram Basic Display API. Requires a Facebook Developer account.',
+    note: 'Instagram API with Instagram Login. Requires a Facebook Developer account and a Business or Creator Instagram account — personal accounts can\'t connect.',
   },
   facebook: {
     name: 'Facebook', color: '#1877F2', icon: 'facebook',
@@ -12151,6 +12161,35 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       // rides in a redirect query param, visible in browser history.
       const providerErrorCode = raw?.error?.code || raw?.error || raw?.message || 'unknown';
       throw Object.assign(new Error(`No access_token in response — provider said: ${providerErrorCode}`), { providerErrorCode });
+    }
+
+    // Instagram/Facebook's own initial exchange only ever hands back a
+    // short-lived token (~1-2 hours) — same expiring-token trap as
+    // YouTube's original bug, just via a one-time upgrade-exchange
+    // mechanism instead of a refresh_token grant. Trading up to the
+    // long-lived version (60 days) here means the connection actually
+    // survives past the first hour without needing its own refresh-on-401
+    // machinery the way YouTube did. Best-effort: if this upgrade call
+    // fails for any reason, the short-lived token from above is still used
+    // as-is rather than failing the whole connection over it.
+    if (platform === 'instagram') {
+      try {
+        const longLived = await fetchJSON(
+          `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${encodeURIComponent(clientSecret)}&access_token=${encodeURIComponent(accessToken)}`
+        );
+        if (longLived?.access_token) accessToken = longLived.access_token;
+      } catch (e) {
+        console.warn('[Instagram] long-lived token exchange failed, using short-lived token:', e.message);
+      }
+    } else if (platform === 'facebook') {
+      try {
+        const longLived = await fetchJSON(
+          `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(accessToken)}`
+        );
+        if (longLived?.access_token) accessToken = longLived.access_token;
+      } catch (e) {
+        console.warn('[Facebook] long-lived token exchange failed, using short-lived token:', e.message);
+      }
     }
 
     // Google access tokens expire in ~1 hour — YouTube's Following-tab
