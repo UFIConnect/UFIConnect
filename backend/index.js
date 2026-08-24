@@ -1770,12 +1770,18 @@ function extractRedditMedia(d) {
 // Parse Reddit's JSON API response (old.reddit.com/r/${sub}/new.json)
 function parseRedditJSON(data, topicKeyword) {
   const children = data?.data?.children || [];
-  const sub = children[0]?.data?.subreddit || topicKeyword;
-  const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
   return children
     .filter(c => c.kind === 't3' && c.data?.title && !c.data.stickied)
     .map(c => {
       const d = c.data;
+      // Read per-post, not once from children[0] — true for a single-
+      // subreddit listing (every child shares the same subreddit, so this
+      // was never visibly wrong there) but a real bug for a mixed-subreddit
+      // listing like a member's own home feed (fetchRedditHomeFeed): every
+      // post would otherwise inherit the FIRST post's subreddit/group
+      // regardless of which subreddit it actually came from.
+      const sub = d.subreddit || topicKeyword || 'reddit';
+      const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
       const selfUrl = `https://www.reddit.com${d.permalink}`;
       const media = extractRedditMedia(d);
       return {
@@ -1931,6 +1937,32 @@ async function fetchRedditByKeyword(keyword) {
   const fallback = getCached(key) || [];
   console.warn(`[Reddit] Failed to fetch fresh posts for "${keyword}" (${subs.length} subs), using stale cache (${fallback.length} posts)`);
   return fallback;
+}
+
+// ─── Reddit: a connected member's own home feed (subscribed subreddits) ──────
+// oauth.reddit.com/ with the member's own Bearer token returns their real
+// personalized front page — same response shape as a subreddit listing
+// (parseRedditJSON already handles it, just fed a null topicKeyword since
+// this isn't scoped to one subreddit/topic).
+async function fetchRedditHomeFeed(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `reddit_home_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const data = await fetchJSON(
+      'https://oauth.reddit.com/.json?limit=50&raw_json=1',
+      { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
+    );
+    const posts = parseRedditJSON(data, null);
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Reddit home feed fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
 }
 
 // ─── News: search by keyword via Algolia ───────────────────────────────────
@@ -2159,6 +2191,104 @@ async function fetchGitHubByKeyword(keyword) {
     // nothing to fall back on, letting the error propagate is what lets
     // the circuit breaker actually see and react to this source the same
     // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+// ─── GitHub: a connected member's own following activity ─────────────────────
+// GitHub's received_events API ("activity from people you follow" — exactly
+// the feed a member sees on github.com's own dashboard) is real, documented,
+// and works off nothing more than the read:user scope this app already
+// requests — unlike TikTok/Instagram, there's no "own content only" ceiling
+// here. Two calls: /user resolves the token owner's login (received_events
+// is keyed by username, not directly available from the token alone), then
+// /users/{login}/received_events for the actual feed.
+async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `github_following_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  if (githubBlocked()) {
+    const stale = postCache.get(key)?.v;
+    return stale || [];
+  }
+  try {
+    const auth = { Authorization: `token ${token}` };
+    const { data: me, headers: meHeaders } = await fetchJSONWithHeaders('https://api.github.com/user', auth);
+    recordGitHubRateLimitHeaders(meHeaders);
+    if (!me?.login) return [];
+
+    const { data: events, headers: evHeaders } = await fetchJSONWithHeaders(
+      `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=50`,
+      auth
+    );
+    recordGitHubRateLimitHeaders(evHeaders);
+
+    // Only the event types that actually read as a real feed item — GitHub's
+    // received_events stream includes a long tail of noisier types (member
+    // additions, gollum wiki edits, etc.) that would just clutter Following
+    // with low-signal noise.
+    const posts = (Array.isArray(events) ? events : [])
+      .filter(e => ['PushEvent', 'WatchEvent', 'PullRequestEvent', 'IssuesEvent', 'CreateEvent', 'ForkEvent'].includes(e.type))
+      .map(e => {
+        const repoName = e.repo?.name || 'unknown/unknown';
+        const repoUrl = `https://github.com/${repoName}`;
+        const actor = e.actor?.login || 'someone';
+        let title, content, url = repoUrl;
+        switch (e.type) {
+          case 'PushEvent': {
+            const commits = e.payload?.commits || [];
+            title = `${actor} pushed to ${repoName}`;
+            content = commits.map(c => c.message?.split('\n')[0]).filter(Boolean).slice(0, 3).join(' · ') || `${commits.length} commit${commits.length !== 1 ? 's' : ''}`;
+            break;
+          }
+          case 'WatchEvent':
+            title = `${actor} starred ${repoName}`;
+            content = e.payload?.description || repoName;
+            break;
+          case 'PullRequestEvent':
+            title = `${actor} ${e.payload?.action || 'updated'} a pull request in ${repoName}`;
+            content = e.payload?.pull_request?.title || repoName;
+            url = e.payload?.pull_request?.html_url || repoUrl;
+            break;
+          case 'IssuesEvent':
+            title = `${actor} ${e.payload?.action || 'updated'} an issue in ${repoName}`;
+            content = e.payload?.issue?.title || repoName;
+            url = e.payload?.issue?.html_url || repoUrl;
+            break;
+          case 'CreateEvent':
+            title = `${actor} created ${e.payload?.ref_type || 'a repository'}${e.payload?.ref ? ` "${e.payload.ref}"` : ''} in ${repoName}`;
+            content = repoName;
+            break;
+          case 'ForkEvent':
+            title = `${actor} forked ${repoName}`;
+            content = e.payload?.forkee?.full_name || repoName;
+            url = e.payload?.forkee?.html_url || repoUrl;
+            break;
+        }
+        return {
+          id:          `github_following_${e.id}`,
+          authorId:    `github_${actor}`,
+          groupId:     'ext_github',
+          content:     content || '',
+          title:       title || repoName,
+          source:      'github', sourceLabel: 'GitHub',
+          sourceUrl:   url,
+          topic:       null,
+          author:      { name: actor, title: 'GitHub' },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(e.created_at),
+          isExternal:  true,
+          group:       { id: 'ext_github', name: 'GitHub', category: 'Engineering' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    recordGitHubRateLimitHeaders(e.headers);
+    console.warn('GitHub following activity fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -4149,6 +4279,54 @@ async function fetchGitLabByKeyword(keyword) {
     // nothing to fall back on, letting the error propagate is what lets
     // the circuit breaker actually see and react to this source the same
     // way it already does for every other one.
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+// ─── GitLab: a connected member's own activity feed ───────────────────────────
+// GET /events (authenticated user, no :id) is GitLab's own dashboard
+// activity feed — real, documented, works off the read_user scope this app
+// already requests. Accepts either PRIVATE-TOKEN (personal access tokens)
+// or a standard OAuth Bearer, same convention every other OAuth-token
+// fetcher in this file already uses.
+async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `gitlab_following_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const data = await fetchJSON(
+      'https://gitlab.com/api/v4/events?per_page=50&sort=desc',
+      { Authorization: `Bearer ${token}` }
+    );
+    const posts = (Array.isArray(data) ? data : [])
+      .filter(e => e?.action_name)
+      .map(e => {
+        const actor = e.author?.name || e.author_username || 'Someone';
+        const target = e.target_title ? ` "${e.target_title}"` : '';
+        const targetType = e.target_type ? e.target_type.toLowerCase() : 'project';
+        return {
+          id:          `gitlab_following_${e.id}`,
+          authorId:    `gitlab_${e.author_username || e.author_id || 'member'}`,
+          groupId:     'ext_gitlab',
+          content:     `${actor} ${e.action_name} ${targetType}${target}`.trim(),
+          title:       `${actor} ${e.action_name}${target || ` a ${targetType}`}`,
+          source:      'gitlab', sourceLabel: 'GitLab',
+          sourceUrl:   e.author?.web_url || 'https://gitlab.com',
+          topic:       null,
+          author:      { name: actor, title: 'GitLab' },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(e.created_at),
+          isExternal:  true,
+          group:       { id: 'ext_gitlab', name: 'GitLab', category: 'Engineering' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('GitLab following activity fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -9583,33 +9761,35 @@ function serializeCommunityPost(post, viewerId = null) {
 // UFI's own follow graph (the `follows` array/table) is real and populated
 // today, so posts from people you follow on UFconnect itself work now.
 // "Include followers from all the platforms" is real per-platform work each
-// requires: (1) that platform's OAuth actually configured (most of the
-// client id/secret pairs in render.yaml are still unset placeholders), and
-// (2) a genuine "posts from accounts I follow" API — which several of these
-// platforms don't expose to third-party apps at all even with a valid user
-// token (LinkedIn and Instagram have no such endpoint; Twitter's requires
-// elevated API access). Bluesky (AT Protocol) and Mastodon both have a real,
-// freely-available home-timeline endpoint, so those are the realistic first
-// candidates once their OAuth connect flows exist. Add an entry here per
-// platform as each becomes available — deliberately never backed by keyword
-// search, which would mislabel unrelated public posts as "from people you
-// follow."
+// requires: (1) that platform's OAuth actually configured, and (2) a
+// genuine "posts from accounts I follow"/"my own activity" API — which
+// several of these platforms don't expose to third-party apps at all even
+// with a valid user token (LinkedIn has no such endpoint; Twitter's
+// requires elevated API access). YouTube, GitHub, GitLab, and Reddit all
+// have real, freely-available endpoints for this (see each fetcher's own
+// comment); Bluesky (AT Protocol) and Mastodon do too, once their OAuth
+// connect flows exist. Add an entry here per platform as each becomes
+// available — deliberately never backed by keyword search, which would
+// mislabel unrelated public posts as "from people you follow."
 const FOLLOWING_SOURCE_FETCHERS = {
   // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
-  youtube: fetchYouTubeSubscriptionFeed,  // recent uploads from channels the member subscribes to — see its own comment
+  youtube: fetchYouTubeSubscriptionFeed,      // recent uploads from channels the member subscribes to — see its own comment
+  github:  fetchGitHubFollowingActivity,      // received_events — activity from people the member follows, see its own comment
+  gitlab:  fetchGitLabFollowingActivity,      // GET /events — the member's own GitLab dashboard activity feed
+  reddit:  fetchRedditHomeFeed,               // oauth.reddit.com/ — the member's real personalized front page
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
 // rate SOURCE_CONFIG uses for the app-level continuous workers. There's no
-// app-level equivalent for these — both fetchers here are scoped to
-// whichever individual member authorised the app (TikTok's video.list, own
-// uploads only; YouTube's subscriptions/channels/playlistItems, a real
-// subscription feed but still per-member — see each fetcher's own comment)
-// rather than a platform-wide discovery API, so "pulling on the same
-// 5-minute rate" here means each connected member's own content is kept
-// fresh in the background on that cadence, not that new content gets
-// discovered across the platform the way Reddit/GitHub/etc. do. Without
+// app-level equivalent for these — every fetcher here is scoped to
+// whichever individual member authorised the app (YouTube's subscriptions/
+// channels/playlistItems, GitHub's received_events, GitLab's /events,
+// Reddit's own home feed — see each fetcher's own comment) rather than a
+// platform-wide discovery API, so "pulling on the same 5-minute rate" here
+// means each connected member's own content is kept fresh in the
+// background on that cadence, not that new content gets discovered across
+// the platform the way the app-level Reddit/GitHub/etc. workers do. Without
 // this, getFollowingFeedPosts called the fetcher live on every single
 // request, meaning a member's content here was only ever as fresh as
 // whenever they last happened to load their Following tab.
@@ -12030,6 +12210,28 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // provider's raw.refresh_token is simply undefined, so this is a no-op
     // for them, same as before.
     await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token);
+
+    // Fire the first pull immediately instead of waiting on the next
+    // 5-minute refreshFollowingSourceCaches sweep (or the member happening
+    // to load their Following tab, which is what triggered a live fetch
+    // before that background loop existed) — confirmed live as the actual
+    // gap: right after connecting, Following showed nothing for up to 5
+    // minutes even though the fetcher itself worked fine. Not awaited — the
+    // redirect back to the app shouldn't wait on an external API call, and
+    // a failure here isn't fatal (the background sweep or the member's own
+    // next Following visit will pick it up regardless).
+    const followingFetcher = FOLLOWING_SOURCE_FETCHERS[platform];
+    if (followingFetcher) {
+      followingFetcher(accessToken, { userId: entry.userId })
+        .then(raw => {
+          followingSourceCache.set(`${entry.userId}::${platform}`, {
+            posts: realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform })),
+            fetchedAt: Date.now(),
+          });
+        })
+        .catch(e => console.warn(`following source warm-up ${platform} (user ${entry.userId}):`, e.message));
+    }
+
     logAgentAction('cache_helper', '🔗', `User connected ${platform} — social feed now active`, '#6366F1');
     res.redirect(`${frontendProfile}?social_connected=${platform}`);
   } catch (e) {
