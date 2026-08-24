@@ -540,10 +540,19 @@ function fetchJSON(url, extraHeaders = {}) {
         const nextUrl = new URL(res.headers.location, url).toString();
         return fetchJSON(nextUrl, extraHeaders).then(resolve).catch(reject);
       }
-      // Reject on non-success HTTP status (catches 429, 403, 503, etc.)
+      // Reject on non-success HTTP status (catches 429, 403, 503, etc.) —
+      // reads the body instead of draining/discarding it first: most APIs
+      // that error this way (Google's included) put the actual reason in a
+      // JSON error body, not just the status code, and that reason was
+      // previously thrown away entirely. Appended after the existing
+      // "HTTP <code> for <url>" prefix (unchanged) so every existing
+      // caller pattern-matching on that exact prefix — several do, this
+      // file included — keeps working; this is purely additive.
       if (res.statusCode < 200 || res.statusCode >= 300) {
-        res.resume(); // drain the response
-        return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        let errBody = '';
+        res.on('data', (c) => { if (errBody.length < 500) errBody += c; });
+        res.on('end', () => reject(new Error(`HTTP ${res.statusCode} for ${url}${errBody ? ` — ${errBody.slice(0, 500)}` : ''}`)));
+        return;
       }
       let data = '';
       res.on('data', (c) => data += c);
