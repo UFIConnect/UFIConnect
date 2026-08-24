@@ -4783,7 +4783,13 @@ async function fetchTikTokUserVideos(token, { bust = false } = {}) {
 const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 15;
 const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 3;
 async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
-  if (!token) return [];
+  // TEMPORARY diagnostic scaffolding — every early-empty-return below is a
+  // throw instead, with a specific reason, so it surfaces through the
+  // sourceErrors mechanism (getFollowingFeedPosts → the Following tab's own
+  // empty state) instead of reading as an identical, silent "just nothing
+  // new." No server log access to check any other way — remove once the
+  // actual failure point is confirmed and fixed.
+  if (!token) throw new Error('DIAG: no token passed to fetchYouTubeSubscriptionFeed at all');
   const key = `youtube_subfeed_${token.slice(-12)}`;
   const cached = !bust && getCached(key);
   if (cached) return cached;
@@ -4793,10 +4799,13 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
       `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&maxResults=${YOUTUBE_SUB_FEED_CHANNEL_LIMIT}&order=alphabetical`,
       auth
     );
+    if (!subs || typeof subs !== 'object') throw new Error(`DIAG: subscriptions.list returned non-object: ${JSON.stringify(subs).slice(0, 200)}`);
     const channelIds = (subs?.items || [])
       .map(s => s.snippet?.resourceId?.channelId)
       .filter(Boolean);
-    if (!channelIds.length) { setCached(key, []); return []; }
+    if (!channelIds.length) {
+      throw new Error(`DIAG: subscriptions.list returned ${subs.pageInfo?.totalResults ?? '?'} totalResults, ${(subs.items || []).length} items, 0 usable channelIds. Raw sample: ${JSON.stringify(subs).slice(0, 300)}`);
+    }
 
     const channels = await fetchJSON(
       `https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&id=${channelIds.join(',')}`,
@@ -4808,17 +4817,29 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
         channelTitle: c.snippet?.title || 'YouTube',
       }))
       .filter(c => c.playlistId);
+    if (!uploadsPlaylists.length) {
+      throw new Error(`DIAG: ${channelIds.length} channelIds in, channels.list returned ${(channels?.items || []).length} items, 0 usable uploadsPlaylists. Raw sample: ${JSON.stringify(channels).slice(0, 300)}`);
+    }
 
-    const perChannelVideos = await Promise.all(
+    const perChannelResults = await Promise.all(
       uploadsPlaylists.map(({ playlistId, channelTitle }) =>
         fetchJSON(
           `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=${YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL}`,
           auth
         )
-          .then(r => (r?.items || []).map(item => ({ item, channelTitle })))
-          .catch(() => []) // one channel's uploads playlist being unavailable (deleted/private) shouldn't drop the rest
+          .then(r => ({ ok: true, items: (r?.items || []).map(item => ({ item, channelTitle })) }))
+          // one channel's uploads playlist being unavailable (deleted/
+          // private) shouldn't drop the rest — but DIAG mode still wants to
+          // know it happened rather than silently treating it the same as
+          // "this channel just has zero uploads."
+          .catch(e => ({ ok: false, error: e.message, channelTitle, items: [] }))
       )
     );
+    const playlistFailures = perChannelResults.filter(r => !r.ok);
+    const perChannelVideos = perChannelResults.map(r => r.items);
+    if (playlistFailures.length) {
+      console.warn('[fetchYouTubeSubscriptionFeed] playlistItems failures:', playlistFailures.map(f => `${f.channelTitle}: ${f.error}`).join(' | '));
+    }
 
     const posts = perChannelVideos.flat()
       .filter(({ item }) => item.snippet?.resourceId?.videoId)
@@ -4853,6 +4874,12 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
     return posts;
   } catch (e) {
     console.warn('YouTube subscription feed fetch:', e.message);
+    // DIAG-prefixed errors (see the temporary scaffolding above) are meant
+    // to surface through getFollowingFeedPosts' sourceErrors, not be
+    // swallowed here — re-thrown instead of falling through to the normal
+    // safe-empty-array behavior. Remove this branch along with the DIAG
+    // throws once the actual failure point is confirmed and fixed.
+    if (e.message?.startsWith('DIAG:')) throw e;
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     return []; // per-user fetch failing (expired token, no subscriptions, etc.) shouldn't break the rest of Following
