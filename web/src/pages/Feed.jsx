@@ -138,7 +138,7 @@ const FOLLOWING_SOURCE_TABS = [
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
 const FEED_PAGE_SIZE = 50;
-const FEED_AUTO_REFRESH_MS = 5 * 60 * 1000;
+const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 // Rolling dedup window for pagination — comfortably larger than the
 // backend's main-feed snapshot pool (300 posts) so a normal scroll session
 // never sees a near-term repeat, but bounded (not all-time) so pagination
