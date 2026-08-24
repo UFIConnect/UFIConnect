@@ -4760,6 +4760,98 @@ async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
   }
 }
 
+// Twitch: currently-live streams from channels the member follows, via
+// Helix's GET /streams/followed (requires user:read:follows). Helix calls
+// need a Client-Id header alongside the bearer token — unlike every other
+// platform here. Only ever returns something when a followed channel is
+// actually live right now; that's a real API limitation (there's no
+// "recent VODs from people I follow" endpoint), not a bug.
+async function fetchTwitchFollowedStreams(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `twitch_followed_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  const headers = { Authorization: `Bearer ${token}`, 'Client-Id': SOCIAL_CFG.twitch.clientId() };
+  try {
+    const me = await fetchJSON('https://api.twitch.tv/helix/users', headers);
+    const userId = me?.data?.[0]?.id;
+    if (!userId) return [];
+    const data = await fetchJSON(
+      `https://api.twitch.tv/helix/streams/followed?user_id=${userId}&first=50`,
+      headers
+    );
+    const posts = (Array.isArray(data?.data) ? data.data : [])
+      .filter(s => s?.id)
+      .map(s => ({
+        id:          `twitch_${s.id}`,
+        authorId:    `twitch_${s.user_id}`,
+        groupId:     'ext_twitch',
+        content:     s.title || 'Live on Twitch',
+        title:       s.title || 'Live on Twitch',
+        source:      'twitch', sourceLabel: 'Twitch',
+        sourceUrl:   `https://www.twitch.tv/${s.user_login}`,
+        topic:       s.game_name || null,
+        author:      { name: s.user_name || 'Twitch', title: s.game_name ? `Streaming ${s.game_name}` : 'Live now' },
+        likes: [], likesCount: s.viewer_count || 0, commentsCount: 0,
+        createdAt:   normalizeTimestamp(s.started_at),
+        isExternal:  true,
+        mediaType:   'image',
+        mediaUrl:    (s.thumbnail_url || '').replace('{width}', '440').replace('{height}', '248') || null,
+        group:       { id: 'ext_twitch', name: 'Twitch', category: 'Streaming' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Twitch followed streams fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+// Threads: the member's own published threads, via Graph API's GET
+// /v1.0/me/threads (requires threads_basic) — same own-content shape as
+// Dribbble/Twitch above; there's no third-party "home timeline" endpoint
+// on the Threads API at all, only own-account content.
+async function fetchThreadsOwnPosts(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `threads_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const fields = 'id,text,permalink,timestamp,media_type,media_url,thumbnail_url,username';
+    const data = await fetchJSON(
+      `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=50&access_token=${encodeURIComponent(token)}`
+    );
+    const posts = (Array.isArray(data?.data) ? data.data : [])
+      .filter(t => t?.id)
+      .map(t => ({
+        id:          `threads_${t.id}`,
+        authorId:    `threads_${t.username || 'member'}`,
+        groupId:     'ext_threads',
+        content:     t.text || 'Threads post',
+        title:       t.text ? t.text.slice(0, 80) : 'Threads post',
+        source:      'threads', sourceLabel: 'Threads',
+        sourceUrl:   t.permalink || 'https://www.threads.net/',
+        topic:       null,
+        author:      { name: t.username || 'Threads', title: 'Creator' },
+        likes: [], likesCount: 0, commentsCount: 0,
+        createdAt:   normalizeTimestamp(t.timestamp),
+        isExternal:  true,
+        mediaType:   t.media_type === 'VIDEO' ? 'video' : ['IMAGE', 'CAROUSEL_ALBUM'].includes(t.media_type) ? 'image' : 'text',
+        mediaUrl:    t.media_url || t.thumbnail_url || null,
+        group:       { id: 'ext_threads', name: 'Threads', category: 'Social' },
+      }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Threads own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 // Remote OK: remote professional job listings
 async function fetchRemoteOKJobs(keyword) {
   const key = `remoteok_kw_${keyword}`;
@@ -10231,6 +10323,16 @@ const FOLLOWING_SOURCE_FETCHERS = {
   gitlab:   fetchGitLabFollowingActivity,     // GET /events — the member's own GitLab dashboard activity feed
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
   dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
+  twitch:   fetchTwitchFollowedStreams,       // GET /streams/followed — currently-live followed channels, see its own comment
+  threads:  fetchThreadsOwnPosts,             // GET /v1.0/me/threads — the member's own published threads, see its own comment
+  // figma and linkedin deliberately absent — neither has a real content API
+  // reachable with the scopes we can actually get: Figma's REST API has no
+  // "list my files" endpoint without already knowing a team_id (verified
+  // against its OpenAPI spec — every file/project/folder endpoint requires
+  // one), and LinkedIn's openid/profile/email scope only unlocks basic
+  // profile info, not posts — real feed access needs LinkedIn's separate,
+  // heavily-gated Partner Program (see PLATFORMS.linkedin's own note).
+  // Both connect flows still work for identity/profile purposes.
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
