@@ -4885,13 +4885,16 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
     }
     // subscriptions.list?mine=true 403s even for a fully-consented account
     // owner if their YouTube privacy setting "Keep all my subscriptions
-    // private" (the default on every account) is still on — confirmed live.
-    // No app-side workaround exists; this is the account's own YouTube
-    // privacy setting, not anything OAuth-scope or Google-Cloud-project
-    // related, so every member connecting YouTube will hit this exact wall
-    // until they turn it off themselves.
+    // private" (the default on every account) is still on — the inferred
+    // explanation from general research below, NOT yet confirmed against
+    // Google's own stated reason for this specific account (that 403
+    // persisted through both turning the setting off and a full
+    // disconnect/reconnect, which the privacy-setting theory alone doesn't
+    // explain). fetchJSON now includes the real response body in e.message
+    // — surfaced alongside the inferred guidance rather than replacing it,
+    // so the actual reason is visible instead of guessed at a second time.
     if (/HTTP 403/.test(e.message) && /\/subscriptions\?/.test(e.message)) {
-      throw new Error('Your YouTube subscriptions are set to private. Turn off "Keep all my subscriptions private" at youtube.com → your profile → Settings → Privacy, then reconnect.');
+      throw new Error(`Your YouTube subscriptions may be set to private (Settings → Privacy → "Keep all my subscriptions private"). Google's actual error: ${e.message}`);
     }
     throw e;
   }
