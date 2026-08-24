@@ -737,6 +737,18 @@ const SOCIAL_CFG = {
     scope: 'threads_basic,threads_read_replies',
     pkce: false,
   },
+  pinterest: {
+    authUrl:  'https://www.pinterest.com/oauth/',
+    tokenUrl: 'https://api.pinterest.com/v5/oauth/token',
+    clientId:     () => process.env.PINTEREST_CLIENT_ID,
+    clientSecret: () => process.env.PINTEREST_CLIENT_SECRET,
+    scope: 'boards:read,pins:read,user_accounts:read',
+    pkce: false,
+    // Confirmed against Pinterest's own docs: token exchange is HTTP Basic
+    // Auth (client_id:client_secret, base64), same shape as Twitter/Reddit/
+    // Figma above.
+    basicAuth: true,
+  },
   // bluesky deliberately absent — AT Protocol OAuth doesn't fit this shape
   // at all (no client_id/secret pair, no fixed authorization server). See
   // the dedicated Bluesky OAuth section below instead.
@@ -756,6 +768,7 @@ const SOCIAL_ENV_KEYS = {
   figma:     ['FIGMA_CLIENT_ID', 'FIGMA_CLIENT_SECRET'],
   twitch:    ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'],
   threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
+  pinterest: ['PINTEREST_CLIENT_ID', 'PINTEREST_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
@@ -1006,7 +1019,10 @@ app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
   res.json({
     client_id: blueskyClientId(),
     client_name: 'UFconnect',
-    client_uri: FRONTEND_BASE,
+    // Must share the same origin as client_id itself (both live on the API
+    // host) — AT Protocol's client metadata validation rejects a client_uri
+    // pointing at a different origin (e.g. the separate frontend domain).
+    client_uri: API_BASE,
     redirect_uris: [oauthCallbackUrl('bluesky')],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
@@ -9707,6 +9723,16 @@ const PLATFORMS = {
     reviewRequired: false,
     note: 'Uses a Meta developer app with the Threads API product added.',
   },
+  pinterest: {
+    name: 'Pinterest', color: '#E60023', icon: 'pinterest',
+    description: 'Surface boards and pins matching your interests.',
+    scopes: ['boards:read', 'pins:read', 'user_accounts:read'],
+    authUrl: 'https://www.pinterest.com/oauth/',
+    loginUrl: 'https://www.pinterest.com/login',
+    setupUrl: 'https://developers.pinterest.com/apps',
+    reviewRequired: false,
+    note: null,
+  },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
     description: 'Get job recommendations matched to your profile and groups.',
@@ -9740,7 +9766,7 @@ const PLATFORMS = {
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
+  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'pinterest', 'bluesky',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -12579,7 +12605,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       );
       accessToken = raw.access_token;
     } else if (cfg.basicAuth) {
-      // Basic-auth token exchange (Twitter, Reddit)
+      // Basic-auth token exchange (Twitter, Reddit, Figma, Pinterest)
       const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
       raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',

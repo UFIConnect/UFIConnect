@@ -40,6 +40,7 @@ export const SOURCE_META = {
   figma:         { label: 'Figma',           color: '#F24E1E', icon: 'Fi' },
   twitch:        { label: 'Twitch',          color: '#9146FF', icon: '🕹' },
   threads:       { label: 'Threads',         color: '#000000', icon: '🧵' },
+  pinterest:     { label: 'Pinterest',       color: '#E60023', icon: '📌' },
   uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -57,5 +58,5 @@ export const SOURCE_META = {
 export const CONNECTED_SOCIAL_PLATFORMS = [
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
+  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'pinterest', 'bluesky',
 ];

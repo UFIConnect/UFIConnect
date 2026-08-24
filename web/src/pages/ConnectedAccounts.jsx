@@ -19,6 +19,7 @@ const PLATFORM_BENEFITS = {
   figma:     ['Showcase your files & projects', 'Import case studies to profile', 'Get design feedback'],
   twitch:    ['Surface streams from channels you follow', 'Share live content with your network', 'Connect with fellow streamers'],
   threads:   ['Import your Threads posts', 'Surface conversations in your feed', 'Cross-post to your network'],
+  pinterest: ['Surface boards matching your interests', 'Showcase your pins', 'Discover visual inspiration'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 
