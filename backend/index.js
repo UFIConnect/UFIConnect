@@ -618,7 +618,11 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://www.linkedin.com/oauth/v2/accessToken',
     clientId:     () => process.env.LINKEDIN_CLIENT_ID,
     clientSecret: () => process.env.LINKEDIN_CLIENT_SECRET,
-    scope: 'r_liteprofile r_emailaddress',
+    // r_liteprofile/r_emailaddress belonged to the old "Sign In with
+    // LinkedIn" product, deprecated in favor of "Sign In with LinkedIn
+    // using OpenID Connect" — openid/profile/email is the current scope
+    // set; the old names would fail against a newly-created app.
+    scope: 'openid profile email',
     pkce: false,
   },
   twitter: {
@@ -9586,7 +9590,7 @@ const PLATFORMS = {
   linkedin: {
     name: 'LinkedIn', color: '#0A66C2', icon: 'linkedin',
     description: 'Import your professional profile and network activity.',
-    scopes: ['r_liteprofile', 'r_emailaddress'],
+    scopes: ['openid', 'profile', 'email'],
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
