@@ -2925,13 +2925,59 @@ const INTEREST_TO_SO_TAG = {
   'E-commerce': 'shopify', 'Agile / Scrum': 'agile',
 };
 
+// StackExchange's API hands back its own throttling state on every single
+// response — `backoff` (seconds to wait before the next request, present
+// whenever the client's been hitting it too fast) and `quota_remaining`
+// (this IP's share of the day's 300-request anonymous budget). Nothing in
+// this app ever read either one — every fetch just fired on its own fixed
+// timer regardless of what StackExchange was actually telling it, which is
+// exactly what got this app's IP throttled before (see fetchStackOverflowByTag's
+// own catch block: "too many requests from this IP, more requests available
+// in ~2.4h"). Shared across both call sites that hit StackExchange (the
+// continuous per-tag worker below, and the per-question answers fetch in
+// the comments endpoint) so a backoff/low-quota signal from either one
+// protects the other too.
+let stackExchangeBackoffUntil = 0;
+let stackExchangeQuotaRemaining = null;
+function stackExchangeBlocked() {
+  return Date.now() < stackExchangeBackoffUntil;
+}
+function recordStackExchangeResponse(data) {
+  if (!data || typeof data !== 'object') return;
+  if (typeof data.backoff === 'number' && data.backoff > 0) {
+    // +2s cushion — respecting exactly the stated backoff to the second
+    // still risks landing right back on the edge of it under any clock
+    // drift or request latency.
+    stackExchangeBackoffUntil = Math.max(stackExchangeBackoffUntil, Date.now() + (data.backoff + 2) * 1000);
+  }
+  if (typeof data.quota_remaining === 'number') {
+    stackExchangeQuotaRemaining = data.quota_remaining;
+    // Stop entirely well before hitting zero — the anonymous daily quota
+    // resets at UTC midnight, and there's no way to know exactly how many
+    // more real user page-views (each one a potential answers-fetch call)
+    // are still coming today. 15 requests of headroom protects the
+    // continuous worker's own baseline cadence from also getting starved
+    // by a burst of per-post comment views late in the day.
+    if (data.quota_remaining <= 15) {
+      const now = new Date();
+      const nextUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+      stackExchangeBackoffUntil = Math.max(stackExchangeBackoffUntil, nextUtcMidnight);
+    }
+  }
+}
+
 async function fetchStackOverflowByTag(tag) {
   const key = `so_tag_${tag}`;
   const cached = getCached(key);
   if (cached) return cached;
+  if (stackExchangeBlocked()) {
+    const stale = postCache.get(key)?.v;
+    return stale || [];
+  }
   try {
     const url = `https://api.stackexchange.com/2.3/questions?tagged=${encodeURIComponent(tag)}&order=desc&sort=creation&site=stackoverflow&pagesize=100&filter=default`;
     const data = await fetchJSON(url);
+    recordStackExchangeResponse(data);
     const posts = (data?.items || [])
       .filter(q => q.title && q.link && !q.closed_date)
       .map(q => ({
@@ -10992,35 +11038,27 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // reach.
   const trulyUnseen = seenIds?.size ? merged.filter(p => !p?.id || !seenIds.has(p.id)) : merged;
   const exhausted = !isLiveMode && !!seenIds?.size && merged.length > 0 && trulyUnseen.length === 0;
-  // freshOnly (a manual pull-to-refresh, always a fresh cursor) opts out of
-  // the reshow-already-seen fallback below: a refresh resets the cursor
-  // straight back to "now," and "now"'s newest posts are usually exactly
-  // what this user was just shown a moment ago (already in seenIds) — the
-  // plain fallback handed those right back, which is what made refresh look
-  // like it did nothing. Falling through to a live-mode requery in that
-  // exact spot instead gives a refresh tap an honest shot at genuinely new
-  // content (or a genuinely empty "nothing new yet" page) instead of a
-  // replay. Normal infinite-scroll calls keep the old reshow fallback — see
-  // its own comment above — that's still the right behavior there.
-  if (exhausted && freshOnly && !_freshRetried) {
-    const liveCursor = { ...cursorMap };
-    for (const src of allSources) {
-      const shown = merged.filter(p => p.source === src);
-      if (!shown.length) continue;
-      const oldest = shown.reduce((min, p) => (postTimestamp(p) < postTimestamp(min) ? p : min));
-      liveCursor[src] = new Date(postTimestamp(oldest)).toISOString();
-    }
-    liveCursor.__liveSince = new Date().toISOString();
-    // _wrapRetried is deliberately NOT set here — this is a separate retry
-    // budget from the wraparound one below. Without that separation, a
-    // refresh landing here (freshOnly+exhausted) that then found live mode
-    // genuinely empty (see genuinelyExhausted below) had already spent its
-    // one retry on this branch and had nothing left to fall back on,
-    // returning zero posts outright — confirmed live as "every refresh
-    // makes the video feed disappear."
-    return getCursorFeedPage({ sources, cursorMap: liveCursor, limit, mediaType, timeRange, extraLists, seenIds, freshOnly, _freshRetried: true, _wrapRetried });
-  }
-  const page = (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
+  // freshOnly (a manual pull-to-refresh) used to opt out of the reshow-
+  // already-seen fallback by requerying in a narrow "only things newer than
+  // this literal instant" live mode instead, with a wraparound retry chain
+  // to catch the case where that came back empty. Reasonable in theory, but
+  // for an account that's already seen most of the current top of the feed
+  // (a heavy tester, or just an active daily user), that narrow window
+  // often comes back with almost nothing, and the wraparound retry meant to
+  // catch that just reshows the *exact same* top page as before — not
+  // empty, but not feeling like a refresh either. Confirmed live as "the
+  // refresh button doesn't refresh with a new feed every time." Simpler and
+  // more robust: never suppress content by seen-status on a manual refresh
+  // at all (seenIds exists to manage infinite-scroll exhaustion, not "did
+  // this exact page look different last time"), and shuffle the merged pool
+  // with a fresh per-request seed so the selection and order visibly change
+  // on every tap even when the underlying content hasn't — same idea as
+  // rotateForUser's seed for the ranked feed, applied here since this
+  // cursor-based pathway had no equivalent. Guaranteed non-empty as long as
+  // there's any content at all for these sources/params.
+  const page = freshOnly
+    ? _seededShuffle(merged, (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0).slice(0, limit)
+    : (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
 
   // Genuine exhaustion — not "nothing unseen left" (that's `exhausted`
   // above, and already has a reshow-the-seen-ones fallback), but "there is
@@ -14266,9 +14304,16 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
     const qId = postId.replace(/^so_/, '');
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_so_${qId}`, async () => {
+        // Shares the same backoff/quota guard as fetchStackOverflowByTag
+        // (see its own comment) — a burst of per-post comment views is
+        // exactly the kind of traffic that isn't paced by the continuous
+        // worker's own timer at all, so it needs to respect the same guard
+        // independently rather than adding unbounded extra load on top.
+        if (stackExchangeBlocked()) return [];
         const data = await fetchJSON(
           `https://api.stackexchange.com/2.3/questions/${qId}/answers?order=desc&sort=votes&site=stackoverflow&filter=withbody&pagesize=50`
         );
+        recordStackExchangeResponse(data);
         return (data?.items || []).map(a => ({
           id:      `${a.answer_id}`,
           author:  a.owner?.display_name || 'anonymous',
