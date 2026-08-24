@@ -10670,6 +10670,10 @@ function feedTimeRangeMs(range) {
   if (range === 'today' || range === '24h') return D;
   if (range === '2d') return 2 * D;
   if (range === 'week' || range === '7d') return 7 * D;
+  // Matches STALE_POST_MAX_AGE_MS — the DB never retains anything older
+  // than this anyway, so this is the widest a query window ever needs to be
+  // to reach everything genuinely still in feed_posts_cache.
+  if (range === '20d') return 20 * D;
   if (range === 'month' || range === '30d') return 30 * D;
   return 0;
 }
@@ -12460,7 +12464,27 @@ async function handleFeedRequest(req, res) {
   // back "your feed is empty" under the 1h default despite a week's worth
   // of real YouTube posts sitting one filter-tab click away.
   const isSourceFiltered = !!sourceFilter || sourcesParam.length > 0;
-  const dbTimeRange = timeRange !== 'all' ? timeRange : (isSourceFiltered ? '7d' : '1h');
+  // A flat '7d' regardless of how many sources were selected quietly built
+  // in a hard wall for any single lower-volume source (IndieHackers,
+  // VentureBeat, etc.) even filtered alone: getCursorFeedPage's WHERE clause
+  // reapplies "post_created_at >= NOW() - 7d" on *every* page, not just the
+  // first, so no cursor could ever page back past 7 days no matter how much
+  // real retained history (up to STALE_POST_MAX_AGE_MS's 20-day ceiling)
+  // actually existed — confirmed as "scroll a single-source tab and it hits
+  // a wall, then starts repeating" well short of the real 20-day retention
+  // window. Scaled by how many sources are actually selected instead of a
+  // flat filtered/unfiltered split: the original timeout this was guarding
+  // against was specifically the ~36-source unfiltered case sorting nearly
+  // the whole table (see the timing notes below) — a single- or few-source
+  // filter is selective enough on its own to safely open the window all the
+  // way out to the real retention ceiling, while a broad multi-source
+  // selection still needs a tighter cap to avoid reintroducing that timeout.
+  const filteredSourceCount = sourcesParam.length > 1 ? sourcesParam.length : (sourceFilter ? 1 : 0);
+  const dbTimeRange = timeRange !== 'all' ? timeRange
+    : !isSourceFiltered ? '1h'
+    : filteredSourceCount <= 3 ? '20d'
+    : filteredSourceCount <= 8 ? '7d'
+    : '2d';
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
