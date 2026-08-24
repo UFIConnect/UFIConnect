@@ -218,11 +218,31 @@ function catStyle(cat) {
   return CATEGORY_COLORS[cat] || { text: 'var(--primary)', bg: 'var(--primary-light)' };
 }
 
+// Long post bodies (up to MAX_CONTENT_LEN=1500 chars server-side) used to
+// render in full on the card every time — fine for a short caption, a wall
+// of text for a long article excerpt. Collapses anything past a normal
+// preview length behind an inline "Read more" instead, expanding in place —
+// replaces the old "Read full post ↗" external link entirely (see its own
+// former comment: our stored copy was already the complete truncated
+// content, so that link only ever pointed at the *original* source, never
+// showed anything this card couldn't already show itself).
+const POST_TEXT_COLLAPSE_LENGTH = 320;
 function PostText({ text }) {
+  const [expanded, setExpanded] = useState(false);
   if (!text) return null;
+  const needsCollapse = text.length > POST_TEXT_COLLAPSE_LENGTH;
+  const shown = needsCollapse && !expanded ? text.slice(0, POST_TEXT_COLLAPSE_LENGTH).trimEnd() : text;
   return (
     <p className="post-content" style={{ margin: '0 0 4px', whiteSpace: 'pre-wrap', lineHeight: 1.65 }}>
-      {text}
+      {shown}{needsCollapse && !expanded ? '… ' : ''}
+      {needsCollapse && (
+        <button
+          onClick={e => { e.stopPropagation(); e.preventDefault(); setExpanded(x => !x); }}
+          style={{ all: 'unset', cursor: 'pointer', color: 'var(--primary)', fontWeight: 700, fontSize: '.82rem', marginLeft: expanded ? 0 : 2 }}
+        >
+          {expanded ? ' Show less' : 'Read more'}
+        </button>
+      )}
     </p>
   );
 }
@@ -984,7 +1004,6 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(post.mediaUrl);
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
-  const isTruncated    = (post.content?.trim().endsWith('…') || post.content?.trim().endsWith('...'));
   const commUrl        = commentUrl(post);
   const hasComments    = COMMENT_SOURCES.has(post.source);
   const sectionLabel   = commentSectionLabel(post.source);
@@ -1108,20 +1127,6 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       )}
 
       <PostText text={post.content} />
-
-      {isTruncated && post.sourceUrl && (
-        // External, not in-app — our own copy is already cut down to
-        // ~400-600 chars at ingestion (see trimPostContent/truncateWithEllipsis
-        // server-side), so PostDetail has nothing more to show than what's
-        // already sitting right here in the card; it's the exact same
-        // string. The genuinely complete article only exists on the
-        // original source. Confirmed live: a Phoronix post's card content
-        // really was only about half the real article.
-        <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize: '.78rem', color: src.color, textDecoration: 'none', display: 'inline-block', marginBottom: 8 }}>
-          Read full post ↗
-        </a>
-      )}
 
       {post.mediaUrl && post.mediaType === 'image' && (
         <button
