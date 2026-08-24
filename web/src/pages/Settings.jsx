@@ -627,7 +627,9 @@ export default function Settings() {
 
           <SaveBar />
 
-          {/* Data export */}
+          {/* Data export + deletion — kept in one card so there's a single,
+              linkable place ("Your Data") covering both, e.g. for a
+              platform's "Data Deletion Instructions URL" requirement. */}
           <div className="card">
             <SectionHeading>📦 Your Data</SectionHeading>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
@@ -639,14 +641,12 @@ export default function Settings() {
                 {exporting ? <span className="spinner" /> : 'Download'}
               </button>
             </div>
-          </div>
 
-          {/* Danger zone */}
-          <div className="card" style={{ borderColor: '#FCA5A5' }}>
-            <SectionHeading>⚠️ Danger Zone</SectionHeading>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0' }} />
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete account</div>
+                <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Delete your data / account</div>
                 <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>Permanently remove your account and all associated data. This cannot be undone.</div>
               </div>
               <button type="button" className="btn btn-danger btn-sm" onClick={() => setDeleteModal(true)}>Delete account</button>
