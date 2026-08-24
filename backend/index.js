@@ -4760,6 +4760,105 @@ async function fetchTikTokUserVideos(token) {
   }
 }
 
+// ─── YouTube: a connected member's subscription feed ─────────────────────────
+// Unlike TikTok's video.list (a connected member's own uploads — dead weight
+// for the overwhelming majority of members who watch YouTube but don't post
+// to it), a subscription feed is the one piece of "my own YouTube data" that
+// actually earns its place in Following: recent uploads from channels this
+// member already follows, the closest real equivalent Following mode has for
+// YouTube specifically.
+//
+// The obvious single-call approach — activities.list?home=true — doesn't
+// exist anymore; Google deprecated that parameter years ago. What's left
+// takes three cheap calls instead of one expensive one:
+//   1. subscriptions.list?mine=true — which channels does this member follow
+//   2. channels.list?id=<batched, up to 50 ids in one call> — each channel's
+//      "uploads" playlist id (contentDetails.relatedPlaylists.uploads)
+//   3. playlistItems.list per uploads playlist — that channel's most recent
+//      few videos
+// avoiding search.list entirely (100 quota units per call against a 10,000/
+// day default project quota — genuinely not viable per-member, per-channel)
+// in favor of list endpoints that cost ~1 unit each: ~17 units for a
+// 15-subscription member, not ~1,500.
+const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 15;
+const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 3;
+async function fetchYouTubeSubscriptionFeed(token) {
+  if (!token) return [];
+  const key = `youtube_subfeed_${token.slice(-12)}`;
+  const cached = getCached(key);
+  if (cached) return cached;
+  try {
+    const auth = { Authorization: `Bearer ${token}` };
+    const subs = await fetchJSON(
+      `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&maxResults=${YOUTUBE_SUB_FEED_CHANNEL_LIMIT}&order=alphabetical`,
+      auth
+    );
+    const channelIds = (subs?.items || [])
+      .map(s => s.snippet?.resourceId?.channelId)
+      .filter(Boolean);
+    if (!channelIds.length) { setCached(key, []); return []; }
+
+    const channels = await fetchJSON(
+      `https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&id=${channelIds.join(',')}`,
+      auth
+    );
+    const uploadsPlaylists = (channels?.items || [])
+      .map(c => ({
+        playlistId: c.contentDetails?.relatedPlaylists?.uploads,
+        channelTitle: c.snippet?.title || 'YouTube',
+      }))
+      .filter(c => c.playlistId);
+
+    const perChannelVideos = await Promise.all(
+      uploadsPlaylists.map(({ playlistId, channelTitle }) =>
+        fetchJSON(
+          `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=${YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL}`,
+          auth
+        )
+          .then(r => (r?.items || []).map(item => ({ item, channelTitle })))
+          .catch(() => []) // one channel's uploads playlist being unavailable (deleted/private) shouldn't drop the rest
+      )
+    );
+
+    const posts = perChannelVideos.flat()
+      .filter(({ item }) => item.snippet?.resourceId?.videoId)
+      .map(({ item, channelTitle }) => {
+        const videoId = item.snippet.resourceId.videoId;
+        return {
+          id:          `youtube_sub_${videoId}`,
+          authorId:    `youtube_channel_${item.snippet.channelId || channelTitle}`,
+          groupId:     'ext_youtube',
+          content:     item.snippet.description || '',
+          title:       item.snippet.title || 'YouTube video',
+          source:      'youtube', sourceLabel: channelTitle,
+          sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
+          // Same bare-video-id convention every other YouTube post on this
+          // app already uses — resolveVideoSource/YouTubeEmbedBlock need no
+          // changes at all to play these; they already handle source
+          // 'youtube' with an embedId.
+          embedId:     videoId,
+          topic:       null,
+          author:      { name: channelTitle, title: 'YouTube' },
+          likes: [], likesCount: 0, commentsCount: 0,
+          createdAt:   normalizeTimestamp(item.snippet.publishedAt),
+          isExternal:  true,
+          mediaType:   'video',
+          mediaUrl:    item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
+          group:       { id: 'ext_youtube', name: 'YouTube', category: 'Video' },
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('YouTube subscription feed fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    return []; // per-user fetch failing (expired token, no subscriptions, etc.) shouldn't break the rest of Following
+  }
+}
+
 // Continuous-agent wrappers for the office source pipeline (single-arg
 // fetchFn(keyword) signature makeTopicCycler expects). Deliberately do NOT
 // pass a connected member's personal OAuth token here — that would mean one
@@ -9345,20 +9444,22 @@ function serializeCommunityPost(post, viewerId = null) {
 const FOLLOWING_SOURCE_FETCHERS = {
   // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
-  tiktok: fetchTikTokUserVideos, // the connected member's own uploads — see its own comment for why this isn't a "who I follow" timeline
+  tiktok:  fetchTikTokUserVideos,         // the connected member's own uploads — see its own comment for why this isn't a "who I follow" timeline
+  youtube: fetchYouTubeSubscriptionFeed,  // recent uploads from channels the member subscribes to — see its own comment
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
 // rate SOURCE_CONFIG uses for the app-level continuous workers. There's no
-// app-level equivalent for these — TikTok in particular has no public
-// discovery/search API a bearer token could pull from at all, only a
-// video.list endpoint scoped to whichever individual member authorised the
-// app (see fetchTikTokUserVideos's own comment) — so "pulling on the same
+// app-level equivalent for these — both fetchers here are scoped to
+// whichever individual member authorised the app (TikTok's video.list, own
+// uploads only; YouTube's subscriptions/channels/playlistItems, a real
+// subscription feed but still per-member — see each fetcher's own comment)
+// rather than a platform-wide discovery API, so "pulling on the same
 // 5-minute rate" here means each connected member's own content is kept
 // fresh in the background on that cadence, not that new content gets
 // discovered across the platform the way Reddit/GitHub/etc. do. Without
 // this, getFollowingFeedPosts called the fetcher live on every single
-// request, meaning a member's TikTok videos were only ever as fresh as
+// request, meaning a member's content here was only ever as fresh as
 // whenever they last happened to load their Following tab.
 const followingSourceCache = new Map(); // "userId::source" → { posts, fetchedAt }
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
