@@ -4883,19 +4883,14 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
     if (/HTTP 429/.test(e.message)) {
       throw new Error('YouTube API quota exceeded for today (shared with the app\'s own YouTube content fetcher) — try again after the daily quota resets, or move this OAuth client to its own Google Cloud project.');
     }
-    // subscriptions.list?mine=true 403s even for a fully-consented account
-    // owner if their YouTube privacy setting "Keep all my subscriptions
-    // private" (the default on every account) is still on — the inferred
-    // explanation from general research below, NOT yet confirmed against
-    // Google's own stated reason for this specific account (that 403
-    // persisted through both turning the setting off and a full
-    // disconnect/reconnect, which the privacy-setting theory alone doesn't
-    // explain). fetchJSON now includes the real response body in e.message
-    // — surfaced alongside the inferred guidance rather than replacing it,
-    // so the actual reason is visible instead of guessed at a second time.
-    if (/HTTP 403/.test(e.message) && /\/subscriptions\?/.test(e.message)) {
-      throw new Error(`Your YouTube subscriptions may be set to private (Settings → Privacy → "Keep all my subscriptions private"). Google's actual error: ${e.message}`);
-    }
+    // A 403 here can be several genuinely different things (API not
+    // enabled for the project, private subscriptions, a revoked token) —
+    // confirmed live as "API not enabled," not the privacy setting an
+    // earlier version of this guessed. fetchJSON's error already includes
+    // Google's own real reason (and, for the "not enabled" case, a direct
+    // link to fix it) in the response body, which is more reliable than
+    // this app pre-guessing which of the several possible causes it is —
+    // just re-thrown as-is rather than replaced with a specific guess.
     throw e;
   }
 }
