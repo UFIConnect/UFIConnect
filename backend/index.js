@@ -564,6 +564,50 @@ function fetchJSON(url, extraHeaders = {}) {
   });
 }
 
+// Same shape as fetchJSON, but also hands back response headers — needed
+// for GitHub's rate-limit guard below, which reads X-RateLimit-Remaining/
+// X-RateLimit-Reset off of every response (success or not), not something
+// carried in the JSON body the way StackExchange's backoff/quota_remaining
+// are. A separate function rather than changing fetchJSON's own resolved
+// shape, which 70+ existing call sites destructure as the plain JSON body
+// directly.
+function fetchJSONWithHeaders(url, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    const opts = {
+      headers: {
+        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'Accept':          'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Cache-Control':   'no-cache',
+        ...extraHeaders,
+      },
+    };
+    https.get(url, opts, (res) => {
+      if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) {
+        const nextUrl = new URL(res.headers.location, url).toString();
+        return fetchJSONWithHeaders(nextUrl, extraHeaders).then(resolve).catch(reject);
+      }
+      const headers = res.headers;
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        let errBody = '';
+        res.on('data', (c) => { if (errBody.length < 500) errBody += c; });
+        res.on('end', () => {
+          const err = new Error(`HTTP ${res.statusCode} for ${url}${errBody ? ` — ${errBody.slice(0, 500)}` : ''}`);
+          err.headers = headers;
+          reject(err);
+        });
+        return;
+      }
+      let data = '';
+      res.on('data', (c) => data += c);
+      res.on('end', () => {
+        try { resolve({ data: JSON.parse(data), headers }); }
+        catch (e) { reject(new Error(`JSON parse failed for ${url}: ${e.message}`)); }
+      });
+    }).on('error', reject).setTimeout(15000, function() { this.destroy(new Error('timeout')); });
+  });
+}
+
 // ─── Social OAuth config ─────────────────────────────────────────────────────
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
@@ -2068,10 +2112,37 @@ async function fetchDevToByTag(tag) {
 }
 
 // ─── GitHub: search repositories by keyword ──────────────────────────────────
+// GitHub's unauthenticated search API caps out at 60 requests/hour, enforced
+// against this app's IP regardless of which/how-many users trigger a given
+// fetch — same "external quota is shared no matter what" situation as
+// StackExchange (see stackExchangeBlocked's own comment). GitHub reports the
+// live count via X-RateLimit-Remaining/X-RateLimit-Reset response headers on
+// every request, success or not — read via fetchJSONWithHeaders since
+// fetchJSON itself only ever resolves the JSON body.
+let githubBackoffUntil = 0;
+function githubBlocked() {
+  return Date.now() < githubBackoffUntil;
+}
+function recordGitHubRateLimitHeaders(headers) {
+  if (!headers) return;
+  const remaining = parseInt(headers['x-ratelimit-remaining'], 10);
+  const resetAt   = parseInt(headers['x-ratelimit-reset'], 10); // unix seconds
+  // Stop well before zero — same reasoning as StackExchange's 15-request
+  // floor: leaves headroom for whatever other keyword fetches are already
+  // mid-flight in the same cycle rather than racing them all down to zero.
+  if (Number.isFinite(remaining) && remaining <= 5 && Number.isFinite(resetAt)) {
+    githubBackoffUntil = Math.max(githubBackoffUntil, resetAt * 1000 + 2000);
+  }
+}
+
 async function fetchGitHubByKeyword(keyword) {
   const key = `github_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
+  if (githubBlocked()) {
+    const stale = postCache.get(key)?.v;
+    return stale || [];
+  }
   try {
     // GitHub public repos only — recent pushes (last 7 days), sorted by freshness
     const since = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
@@ -2080,7 +2151,8 @@ async function fetchGitHubByKeyword(keyword) {
     // dump up to 100 posts in at once against a 300-item cap. 20 keeps the
     // per-fetch weight proportionate to what other sources contribute.
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(`${keyword} is:public pushed:>${since}`)}&sort=updated&order=desc&per_page=20`;
-    const data = await fetchJSON(url, GITHUB_HEADERS);
+    const { data, headers } = await fetchJSONWithHeaders(url, GITHUB_HEADERS);
+    recordGitHubRateLimitHeaders(headers);
     const posts = (data?.items || [])
       .filter(r => r.description)
       .map(r => ({
@@ -2102,6 +2174,7 @@ async function fetchGitHubByKeyword(keyword) {
     setCached(key, posts);
     return posts;
   } catch (e) {
+    recordGitHubRateLimitHeaders(e.headers);
     console.warn(`GitHub search "${keyword}":`, e.message);
     // Unconditionally swallowing this (old behavior) meant a *sustained*
     // failure was completely invisible to the shared per-source circuit
@@ -2965,6 +3038,40 @@ function recordStackExchangeResponse(data) {
     }
   }
 }
+// A throttled/quota-exhausted response comes back as a non-2xx HTTP status,
+// which fetchJSON rejects on *before* handing back a parsed body — so
+// recordStackExchangeResponse (the success-path reader above) never runs for
+// exactly the response that matters most. fetchJSON's rejection still
+// appends the raw error body text to its own Error message (see fetchJSON's
+// own comment), so this regex-extracts the same two signals from that
+// string instead of a parsed object. Confirmed live against production
+// data: "too many requests from this IP, more requests available in 38194
+// seconds" — a quota-exhaustion message, not the smaller per-request
+// backoff field, so both patterns are checked.
+function recordStackExchangeErrorMessage(message) {
+  if (!message) return;
+  const backoffMatch = /"backoff"\s*:\s*(\d+)/.exec(message);
+  if (backoffMatch) {
+    stackExchangeBackoffUntil = Math.max(stackExchangeBackoffUntil, Date.now() + (parseInt(backoffMatch[1], 10) + 2) * 1000);
+  }
+  const quotaMatch = /more requests available in (\d+) seconds/.exec(message);
+  if (quotaMatch) {
+    stackExchangeBackoffUntil = Math.max(stackExchangeBackoffUntil, Date.now() + (parseInt(quotaMatch[1], 10) + 2) * 1000);
+    return;
+  }
+  // Neither pattern matched a specific duration — StackExchange's API sits
+  // behind Cloudflare, which can reject a request with its own generic rate-
+  // limit page ("error code: 1015") that carries no StackExchange-shaped
+  // body to parse at all. Confirmed live: this is a real response shape,
+  // not hypothetical. A short conservative default backoff is safer than no
+  // backoff at all whenever the failure looks rate-limit-shaped but the
+  // exact duration can't be determined — erring toward backing off too much
+  // costs a few minutes of thinner StackOverflow content; erring toward not
+  // backing off at all is what gets the IP throttled for hours.
+  if (/429|rate.?limit|throttle|error code:\s*1015/i.test(message)) {
+    stackExchangeBackoffUntil = Math.max(stackExchangeBackoffUntil, Date.now() + 5 * 60 * 1000);
+  }
+}
 
 async function fetchStackOverflowByTag(tag) {
   const key = `so_tag_${tag}`;
@@ -2999,6 +3106,7 @@ async function fetchStackOverflowByTag(tag) {
     setCached(key, posts);
     return posts;
   } catch (e) {
+    recordStackExchangeErrorMessage(e.message);
     console.warn(`StackOverflow tag "${tag}":`, e.message);
     // Swallowing this unconditionally used to let a sustained failure stay
     // completely invisible — confirmed live: StackExchange's API throttling
@@ -4760,7 +4868,12 @@ async function fetchTikTokUserVideos(token, { bust = false } = {}) {
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
-    const fields = 'id,title,video_description,duration,cover_image_url,embed_link,share_url,create_time';
+    // like_count/comment_count added — every video rendered "0 likes, 0
+    // comments" regardless of its real engagement before this, since none
+    // of the earlier fields carried that. TikTok's video.list already
+    // supports both directly (no extra call needed, unlike YouTube's
+    // separate statistics endpoint).
+    const fields = 'id,title,video_description,duration,cover_image_url,embed_link,share_url,create_time,like_count,comment_count';
     const raw = await new Promise((resolve, reject) => {
       const body = JSON.stringify({ max_count: 20 });
       const req = https.request(
@@ -4798,7 +4911,7 @@ async function fetchTikTokUserVideos(token, { bust = false } = {}) {
       embedId:     String(v.id),
       topic:       null,
       author:      { name: 'TikTok', title: 'Video' },
-      likes: [], likesCount: 0, commentsCount: 0,
+      likes: [], likesCount: v.like_count || 0, commentsCount: v.comment_count || 0,
       createdAt:   v.create_time ? new Date(v.create_time * 1000).toISOString() : normalizeTimestamp(null),
       isExternal:  true,
       mediaType:   'video',
@@ -4891,10 +5004,36 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
       )
     );
 
-    const posts = perChannelVideos.flat()
-      .filter(({ item }) => item.snippet?.resourceId?.videoId)
+    const rawVideos = perChannelVideos.flat().filter(({ item }) => item.snippet?.resourceId?.videoId);
+
+    // Real like/comment counts — subscriptions/channels/playlistItems above
+    // have no engagement numbers at all (every post rendered "0 likes, 0
+    // comments" regardless of the video's actual popularity). One more
+    // batched call (up to 50 ids each, ~1 unit/call, same cheap-list-endpoint
+    // pattern as the rest of this fetcher) gets real statistics for every
+    // video in this page at once. Best-effort: a failure here still leaves
+    // the videos themselves fully playable, just without real counts.
+    const statsById = new Map();
+    try {
+      const ids = rawVideos.map(({ item }) => item.snippet.resourceId.videoId);
+      for (let i = 0; i < ids.length; i += 50) {
+        const batch = ids.slice(i, i + 50);
+        const stats = await fetchJSON(
+          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${batch.join(',')}`,
+          auth
+        );
+        for (const v of stats?.items || []) {
+          statsById.set(v.id, { likeCount: parseInt(v.statistics?.likeCount, 10) || 0, commentCount: parseInt(v.statistics?.commentCount, 10) || 0 });
+        }
+      }
+    } catch (e) {
+      console.warn('YouTube subscription feed stats fetch:', e.message);
+    }
+
+    const posts = rawVideos
       .map(({ item, channelTitle }) => {
         const videoId = item.snippet.resourceId.videoId;
+        const stats = statsById.get(videoId);
         return {
           id:          `youtube_sub_${videoId}`,
           authorId:    `youtube_channel_${item.snippet.channelId || channelTitle}`,
@@ -4910,7 +5049,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
           embedId:     videoId,
           topic:       null,
           author:      { name: channelTitle, title: 'YouTube' },
-          likes: [], likesCount: 0, commentsCount: 0,
+          likes: [], likesCount: stats?.likeCount || 0, commentsCount: stats?.commentCount || 0,
           createdAt:   normalizeTimestamp(item.snippet.publishedAt),
           isExternal:  true,
           mediaType:   'video',
@@ -5831,11 +5970,58 @@ const MAIN_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
 // re-querying, so there's no window mismatch to begin with.
 const MAIN_FEED_SNAPSHOT_POOL_SIZE = 300;
 const mainFeedSnapshots = new Map();
-// Keyed by sortMode alone would silently ignore a user's timeRange filter
-// (e.g. "This Week") — whichever request happened to build the snapshot
-// first wins that dimension for everyone else until the next recompute.
-function mainFeedSnapshotKey(sortMode, timeRange) {
-  return `${sortMode}::${timeRange || 'all'}`;
+// Keyed by userId first (was sortMode/timeRange alone, shared by every
+// user) — the default "Personal Feed" view used to read one pool computed
+// generically across all 206 FEED_TOPICS, with only rotateForUser's
+// deterministic offset and buildTwoPhaseMix's topic filter making it *look*
+// different per user; the underlying supply was identical for everyone.
+// Keying by userId too means each user's snapshot is genuinely built from
+// their own real interests (see the personalized-pool computation below),
+// not a shared array with a different starting slice.
+function mainFeedSnapshotKey(userId, sortMode, timeRange) {
+  return `${userId}::${sortMode}::${timeRange || 'all'}`;
+}
+
+// Per-user pacing guards for the personalized pool below. The per-tag fetch
+// cache every individual fetcher already uses (getCached/postCache, keyed by
+// source+tag, no userId) still protects raw external request volume
+// regardless of how many users' interests overlap on the same tag — that
+// doesn't change. Two gaps opened up once the pool itself became per-user
+// instead of one shared 5-minute snapshot, though: (1) one active user
+// forcing repeated fresh computations of their own pool (mashing refresh)
+// shouldn't be able to re-trigger a live fetch for their own tag combination
+// faster than reasonable, and (2) a burst of many *different* users all
+// needing a fresh computation at the same instant (a traffic spike, a wave
+// of new signups) shouldn't all fire fetchAllTopicPosts concurrently.
+const PERSONAL_FEED_COMPUTE_COOLDOWN_MS = 60 * 1000;
+const lastPersonalFeedComputeAt = new Map(); // userId -> timestamp
+const MAX_CONCURRENT_PERSONAL_FEED_COMPUTES = 8;
+let activePersonalFeedComputes = 0;
+
+// Builds this one user's own candidate supply from their real profile
+// (fetchAllTopicPosts, previously only ever called with one shared generic
+// interest list or from a dead code path — see its own comment) instead of
+// reading the same shared globalFeedCache pool every other user also reads.
+// Returns null on cooldown/capacity/timeout — the caller treats that as "no
+// personalized layer this round," falling back to the existing DB-backed
+// supply rather than blocking the response.
+async function computePersonalizedFeedPool(userId, prefs, skills, title, organization) {
+  const now = Date.now();
+  const last = lastPersonalFeedComputeAt.get(userId) || 0;
+  if (now - last < PERSONAL_FEED_COMPUTE_COOLDOWN_MS) return null;
+  if (activePersonalFeedComputes >= MAX_CONCURRENT_PERSONAL_FEED_COMPUTES) return null;
+  activePersonalFeedComputes++;
+  lastPersonalFeedComputeAt.set(userId, now);
+  try {
+    return await Promise.race([
+      fetchAllTopicPosts(prefs.interests || [], prefs.role || '', skills || [], prefs.goals || [], title || '', organization || ''),
+      new Promise((resolve) => setTimeout(() => resolve(null), 4500)),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    activePersonalFeedComputes--;
+  }
 }
 
 // Same snapshot-caching rationale as mainFeedSnapshots above, applied to the
@@ -6880,7 +7066,20 @@ async function getJobCandidatePool() {
   if (!db.isConnected()) return _jobCandidatePool || [];
   try {
     const rows = await getPostsFromDB([], 90, 0, JOB_LISTING_SOURCES, { timeRange: '30d' });
-    const pool = realFeedPosts(rows).map(p => mapExternalPost(p, p.source));
+    // mapExternalPost only exists as a closure inside handleFeedRequest
+    // (it reads that request's own `groups`/`joined` for per-user fields) —
+    // this pool is shared across users/requests via _jobCandidatePool, so
+    // it needs its own mapping without the per-user-only fields
+    // (likedByMe/fromJoinedGroup), which applyResumeMatchedJobs's callers
+    // don't read off of these candidates anyway. Confirmed live: calling
+    // the closure version here threw "mapExternalPost is not defined" on
+    // every single call, silently swallowed by this function's own
+    // catch — resume-matched job suggestions had never actually worked.
+    const pool = realFeedPosts(rows).map(p => {
+      const post = normalizeFeedPost(p);
+      const group = groups.find(g => g.id === post.groupId);
+      return { ...post, group: group ? { id: group.id, name: group.name, category: group.category, externalUrl: group.externalUrl } : post.group };
+    });
     _jobCandidatePool = pool;
     _jobCandidatePoolExpiry = Date.now() + JOB_CANDIDATE_POOL_TTL;
     return pool;
@@ -10512,6 +10711,17 @@ const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
 // what's fetched in a 6-week window was never realistically going to be
 // seen by anyone, just sitting in Render's Postgres storage costing space.
 const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
+// A high-volume source (Reddit, Bluesky, GitHub, Mastodon, ...) produces
+// more than enough real content within just a few days that keeping a full
+// 20 days of its backlog around is pure storage cost with no real depth
+// benefit — a low-volume source (IndieHackers, VentureBeat, ...) is the
+// opposite: even 20 days barely clears a handful of posts, so it needs the
+// full window just to have any real depth to page through at all (see
+// UNSEEN_POST_MAX_AGE_MS's own history). Threshold-based per source rather
+// than a static source list, so it keeps adjusting itself as any given
+// source's real posting rate changes over time instead of going stale.
+const HIGH_VOLUME_SOURCE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
+const HIGH_VOLUME_SOURCE_THRESHOLD  = 50; // posts within HIGH_VOLUME_SOURCE_MAX_AGE_MS
 // Used to be a separate, shorter rule (7 days) pruning any post nobody had
 // ever been shown yet, ahead of the hard 20-day ceiling above — but that
 // quietly punished exactly the lower-volume sources (fewer viewers to ever
@@ -10549,8 +10759,25 @@ function trimFeedPostsCache() {
        WHERE global_rank > $1 AND source_rank > $2
      )`, [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
   ).catch(() => {});
+  // Replaces the old flat 20-day-for-everyone rule — recent_count is
+  // recomputed fresh every trim pass, so a source crossing the threshold
+  // in either direction (a normally-quiet source having a busy week, or a
+  // usually-busy one going quiet) gets reclassified automatically on the
+  // next pass rather than being stuck with whichever bucket it started in.
   db.query(
-    `DELETE FROM feed_posts_cache WHERE post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds'`
+    `WITH source_counts AS (
+       SELECT source, COUNT(*) FILTER (WHERE post_created_at >= NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds') AS recent_count
+       FROM feed_posts_cache
+       GROUP BY source
+     )
+     DELETE FROM feed_posts_cache fp
+     USING source_counts sc
+     WHERE fp.source = sc.source
+       AND (
+         (sc.recent_count > $1 AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+         OR
+         (sc.recent_count <= $1 AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+       )`, [HIGH_VOLUME_SOURCE_THRESHOLD]
   ).catch(() => {});
   db.query(
     `DELETE FROM feed_posts_cache fp
@@ -12433,13 +12660,20 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
 // live external fetch. See shouldFetchLive below.
 async function handleFeedRequest(req, res) {
   try {
-  // Manual refresh pulls only from what Sort & Rank has already produced
-  // (globalFeedCache/agentSourceCache) — it never reaches out to the source
-  // workers itself. The continuous background workers already keep those
-  // pools fresh on their own schedule; a pull-to-refresh just clears the
-  // shared snapshot so the next computation re-sorts/re-rotates from the
-  // current sort-and-rank pool instead of serving a stale snapshot.
-  if (req.query.bust === '1') mainFeedSnapshots.clear();
+  // Manual refresh clears only *this* user's own personalized snapshot —
+  // mainFeedSnapshots is keyed per-user now (see mainFeedSnapshotKey), so
+  // clearing the whole map on any one person's refresh tap would force every
+  // other concurrently-active user's pool to recompute too, for no reason.
+  // computePersonalizedFeedPool's own per-user cooldown still gates how
+  // often this can actually trigger a fresh live fetch versus just re-
+  // shuffling/re-serving what's already cached (see the refresh-shuffle fix
+  // in getCursorFeedPage for the equivalent on the newest-sort pathway).
+  if (req.query.bust === '1') {
+    const prefix = `${req.user.id}::`;
+    for (const key of mainFeedSnapshots.keys()) {
+      if (key.startsWith(prefix)) mainFeedSnapshots.delete(key);
+    }
+  }
 
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
@@ -12853,7 +13087,7 @@ async function handleFeedRequest(req, res) {
       // was returning near-duplicate content on page 2+, which the client's
       // dedup then collapsed down to almost nothing, making infinite scroll
       // look like it stopped after page 1.
-      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
+      const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
       if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
         // Rotate first (per-user starting point into the shared pool — see
         // rotateForUser), then personalize — both are deterministic given
@@ -13017,7 +13251,7 @@ async function handleFeedRequest(req, res) {
   // snapshot instead of resorting hundreds of posts on every request.
   const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   if (isDefaultAggregateView) {
-    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(sortMode, timeRange));
+    const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
     if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
       // Page 1 only here — reqPage > 1 already returned earlier in this
       // function, and slices from the same snapshot pool there too (see
@@ -13291,8 +13525,20 @@ async function handleFeedRequest(req, res) {
     dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
   }
 
-  // Background-cached global posts — unfiltered, same shared all-in-one pool.
-  const cachedMapped = realFeedPosts(globalFeedCache.posts).map(p => mapExternalPost(p, p.source || 'reddit'));
+  // This user's own personalized supply — built from their real interests/
+  // skills/role via fetchAllTopicPosts (see computePersonalizedFeedPool's own
+  // comment), not the same shared globalFeedCache pool every other user also
+  // reads. Only computed for the default aggregate view (the one that gets
+  // cached as this user's own snapshot below) — a source-filtered/narrower
+  // request has nothing to gain from it. null (cooldown/capacity/timeout)
+  // just means no personalized layer this round; dbPosts above still
+  // supplies generic depth so the response is never empty over this alone.
+  const personalRaw = isDefaultAggregateView
+    ? await computePersonalizedFeedPool(req.user.id, prefs, user?.skills, user?.title, user?.organization)
+    : null;
+  const cachedMapped = personalRaw
+    ? realFeedPosts(Object.values(personalRaw).flat()).map(p => mapExternalPost(p, p.source || 'reddit'))
+    : [];
 
   // Connected Twitter/LinkedIn/Instagram/Facebook content used to be fetched
   // live here and dropped into the main feed as a raw, undiversified block —
@@ -13440,7 +13686,7 @@ async function handleFeedRequest(req, res) {
   };
 
   if (isDefaultAggregateView) {
-    mainFeedSnapshots.set(mainFeedSnapshotKey(sortMode, timeRange), {
+    mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange), {
       computedAt: Date.now(),
       posts: externalDiversified,
       hasMore: externalDiversified.length > 0,
@@ -14265,9 +14511,14 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
         const match = repoUrl.match(/github\.com\/([^/]+\/[^/?#]+)/);
         if (!match) return [];
         const fullName = match[1].replace(/\.git$/, '');
+        // Shares the same guard as fetchGitHubByKeyword (see its own
+        // comment) — a burst of per-post comment views isn't paced by the
+        // continuous worker's own cadence at all, same reasoning as the
+        // equivalent StackExchange guard.
+        if (githubBlocked()) return [];
         const [commitsData, issuesData] = await Promise.all([
-          fetchJSON(`https://api.github.com/repos/${fullName}/commits?per_page=30`, GITHUB_HEADERS).catch(() => []),
-          fetchJSON(`https://api.github.com/repos/${fullName}/issues?state=open&per_page=20&sort=created&direction=desc`, GITHUB_HEADERS).catch(() => []),
+          fetchJSONWithHeaders(`https://api.github.com/repos/${fullName}/commits?per_page=30`, GITHUB_HEADERS).then(r => { recordGitHubRateLimitHeaders(r.headers); return r.data; }).catch(e => { recordGitHubRateLimitHeaders(e?.headers); return []; }),
+          fetchJSONWithHeaders(`https://api.github.com/repos/${fullName}/issues?state=open&per_page=20&sort=created&direction=desc`, GITHUB_HEADERS).then(r => { recordGitHubRateLimitHeaders(r.headers); return r.data; }).catch(e => { recordGitHubRateLimitHeaders(e?.headers); return []; }),
         ]);
         const commitComments = (Array.isArray(commitsData) ? commitsData : []).map(c => ({
           id:      c.sha?.slice(0, 8) || `commit_${Date.now()}`,
@@ -14299,6 +14550,46 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
     }
   }
 
+  // ── YouTube: top comments ─────────────────────────────────────────────────────
+  // commentThreads.list is a public-data endpoint — works with the app-level
+  // YOUTUBE_API_KEY same as every other public YouTube lookup in this file,
+  // no per-user OAuth token needed even for a Following-tab subscription
+  // post (the video itself is public regardless of whose subscription
+  // surfaced it). Both id conventions used across this app map here:
+  // youtube_sub_<id> (fetchYouTubeSubscriptionFeed, Following) and
+  // youtube_<id> (fetchYouTubeByKeyword/mapYouTubePost, the general feed).
+  if (postId.startsWith('youtube_')) {
+    const videoId = postId.replace(/^youtube_sub_/, '').replace(/^youtube_/, '');
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    if (!apiKey) return res.json({ comments: [], hasMore: false, source: 'youtube', live: false });
+    try {
+      const { comments, hasMore, total } = await paginateComments(`comments_youtube_${videoId}`, async () => {
+        const data = await fetchJSON(
+          `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${encodeURIComponent(videoId)}&order=relevance&maxResults=50&textFormat=plainText&key=${encodeURIComponent(apiKey)}`
+        );
+        return (data?.items || []).map(t => {
+          const c = t.snippet?.topLevelComment?.snippet;
+          return {
+            id:      t.id,
+            author:  c?.authorDisplayName || 'anonymous',
+            body:    (c?.textDisplay || '').slice(0, 500),
+            score:   c?.likeCount || 0,
+            created: c?.publishedAt,
+            url:     `https://www.youtube.com/watch?v=${videoId}&lc=${t.id}`,
+          };
+        });
+      }, offset, limit);
+      return res.json({ comments, hasMore, total, source: 'youtube', live: true });
+    } catch (e) {
+      // Comments disabled on the video is the common, expected case here
+      // (a 403 from YouTube), not a real error — same graceful "no comments
+      // available" response either way, just logged for the genuine-failure
+      // cases (bad key, quota) to stay visible.
+      console.warn('YouTube comments fetch:', e.message);
+      return res.json({ comments: [], hasMore: false, source: 'youtube', live: false });
+    }
+  }
+
   // ── Stack Overflow: top answers ──────────────────────────────────────────────
   if (postId.startsWith('so_')) {
     const qId = postId.replace(/^so_/, '');
@@ -14325,6 +14616,7 @@ app.get('/feed/:postId/comments', authenticate, async (req, res) => {
       }, offset, limit);
       return res.json({ comments, hasMore, total, source: 'stackoverflow', live: true });
     } catch (e) {
+      recordStackExchangeErrorMessage(e.message);
       console.warn('Stack Overflow comments fetch:', e.message);
       return res.json({ comments: [], hasMore: false, source: 'stackoverflow', live: false });
     }
