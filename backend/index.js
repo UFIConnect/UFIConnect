@@ -737,18 +737,9 @@ const SOCIAL_CFG = {
     scope: 'threads_basic,threads_read_replies',
     pkce: false,
   },
-  pinterest: {
-    authUrl:  'https://www.pinterest.com/oauth/',
-    tokenUrl: 'https://api.pinterest.com/v5/oauth/token',
-    clientId:     () => process.env.PINTEREST_CLIENT_ID,
-    clientSecret: () => process.env.PINTEREST_CLIENT_SECRET,
-    scope: 'boards:read,pins:read,user_accounts:read',
-    pkce: false,
-    // Confirmed against Pinterest's own docs: token exchange is HTTP Basic
-    // Auth (client_id:client_secret, base64), same shape as Twitter/Reddit/
-    // Figma above.
-    basicAuth: true,
-  },
+  // pinterest removed — trial access got denied and the app got locked
+  // with no self-serve resubmit (a known Pinterest developer-console pain
+  // point), so there was no working path to real credentials.
   // bluesky deliberately absent — AT Protocol OAuth doesn't fit this shape
   // at all (no client_id/secret pair, no fixed authorization server). See
   // the dedicated Bluesky OAuth section below instead.
@@ -768,7 +759,6 @@ const SOCIAL_ENV_KEYS = {
   figma:     ['FIGMA_CLIENT_ID', 'FIGMA_CLIENT_SECRET'],
   twitch:    ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'],
   threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
-  pinterest: ['PINTEREST_CLIENT_ID', 'PINTEREST_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
@@ -4760,54 +4750,6 @@ async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
     return posts;
   } catch (e) {
     console.warn('Dribbble own shots fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
-    throw e;
-  }
-}
-
-// Pinterest: the member's own pins, via API v5's GET /pins (requires
-// pins:read — Pinterest's own "list the requesting user's pins" endpoint,
-// same own-content shape as Dribbble's /user/shots above). Every v5 list
-// endpoint wraps results in { items, bookmark }, not a bare array.
-async function fetchPinterestOwnPins(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `pinterest_own_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  try {
-    const data = await fetchJSON(
-      'https://api.pinterest.com/v5/pins?page_size=50',
-      { Authorization: `Bearer ${token}` }
-    );
-    const posts = (Array.isArray(data?.items) ? data.items : [])
-      .filter(p => p?.id)
-      .map(p => {
-        const images = p.media?.images || {};
-        const image = images['600x'] || images['400x300'] || images.originals
-          || images['150x150'] || Object.values(images)[0] || null;
-        return {
-          id:          `pinterest_${p.id}`,
-          authorId:    'pinterest_member',
-          groupId:     'ext_pinterest',
-          content:     p.description || p.title || 'Pinterest pin',
-          title:       p.title || 'Pinterest pin',
-          source:      'pinterest', sourceLabel: 'Pinterest',
-          sourceUrl:   `https://www.pinterest.com/pin/${p.id}/`,
-          topic:       null,
-          author:      { name: 'Pinterest', title: 'Creator' },
-          likes: [], likesCount: 0, commentsCount: 0,
-          createdAt:   normalizeTimestamp(p.created_at),
-          isExternal:  true,
-          mediaType:   'image',
-          mediaUrl:    image?.url || null,
-          group:       { id: 'ext_pinterest', name: 'Pinterest', category: 'Design' },
-        };
-      });
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('Pinterest own pins fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -9771,16 +9713,6 @@ const PLATFORMS = {
     reviewRequired: false,
     note: 'Uses a Meta developer app with the Threads API product added.',
   },
-  pinterest: {
-    name: 'Pinterest', color: '#E60023', icon: 'pinterest',
-    description: 'Surface boards and pins matching your interests.',
-    scopes: ['boards:read', 'pins:read', 'user_accounts:read'],
-    authUrl: 'https://www.pinterest.com/oauth/',
-    loginUrl: 'https://www.pinterest.com/login',
-    setupUrl: 'https://developers.pinterest.com/apps',
-    reviewRequired: false,
-    note: null,
-  },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
     description: 'Get job recommendations matched to your profile and groups.',
@@ -9814,7 +9746,7 @@ const PLATFORMS = {
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'pinterest', 'bluesky',
+  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -10295,7 +10227,6 @@ const FOLLOWING_SOURCE_FETCHERS = {
   gitlab:   fetchGitLabFollowingActivity,     // GET /events — the member's own GitLab dashboard activity feed
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
   dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
-  pinterest: fetchPinterestOwnPins,           // GET /v5/pins — the member's own pins, see its own comment
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
@@ -12654,7 +12585,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       );
       accessToken = raw.access_token;
     } else if (cfg.basicAuth) {
-      // Basic-auth token exchange (Twitter, Reddit, Figma, Pinterest)
+      // Basic-auth token exchange (Twitter, Reddit, Figma)
       const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
       raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
