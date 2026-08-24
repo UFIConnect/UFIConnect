@@ -4699,10 +4699,10 @@ async function fetchFacebook(keyword, userToken = null) {
 // slot Bluesky/Mastodon's real home-timeline fetchers are meant for once
 // their own OAuth lands, just backed by a different kind of "my own content"
 // API instead of a following-timeline one.
-async function fetchTikTokUserVideos(token) {
+async function fetchTikTokUserVideos(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `tiktok_own_${token.slice(-12)}`;
-  const cached = getCached(key);
+  const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
     const fields = 'id,title,video_description,duration,cover_image_url,embed_link,share_url,create_time';
@@ -4782,10 +4782,10 @@ async function fetchTikTokUserVideos(token) {
 // 15-subscription member, not ~1,500.
 const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 15;
 const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 3;
-async function fetchYouTubeSubscriptionFeed(token) {
+async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `youtube_subfeed_${token.slice(-12)}`;
-  const cached = getCached(key);
+  const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
     const auth = { Authorization: `Bearer ${token}` };
@@ -9520,7 +9520,7 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
 // discarding its results after) and which internal posts pass through —
 // this is what the Following tab's own filter chips call into, mirroring
 // the aggregate Feed's source tabs but over this narrower, per-user pool.
-async function getFollowingFeedPosts(userId, sourceFilter = null) {
+async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const wantsSource = (src) => !wanted || wanted.has(src);
 
@@ -9544,13 +9544,20 @@ async function getFollowingFeedPosts(userId, sourceFilter = null) {
       // call on every single request — falls back to fetching live only when
       // the cache hasn't been warmed yet (e.g. right after connecting, before
       // the next refresh cycle) or has gone stale past two missed cycles.
-      const cached = followingSourceCache.get(`${userId}::${source}`);
+      // bust (the same manual-refresh signal the main Feed's "Refresh now"
+      // already sends as ?bust=1) skips this outer cache entirely — without
+      // it, a manual refresh had no way to ever get past either this cache
+      // or the fetcher's own inner one below, so a bad/empty result cached
+      // right after first connecting an account could sit there for the
+      // full cache window with "Refresh now" doing nothing at all —
+      // confirmed live as a genuinely stuck-empty YouTube Following tab.
+      const cached = !bust && followingSourceCache.get(`${userId}::${source}`);
       if (cached && Date.now() - cached.fetchedAt < FOLLOWING_SOURCE_CACHE_MAX_AGE_MS) {
         externalPosts.push(...cached.posts);
         continue;
       }
       try {
-        const raw = await fetcher(token);
+        const raw = await fetcher(token, { bust });
         const fresh = realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }));
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
@@ -12469,7 +12476,7 @@ async function handleFeedRequest(req, res) {
     const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const allFollowing = await getFollowingFeedPosts(req.user.id, followingSourceFilter);
+    const allFollowing = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1' });
     const pageRows = allFollowing.slice(offset, offset + feedLimit);
     return res.json({
       posts: pageRows,
@@ -13499,7 +13506,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
-    const all = await getFollowingFeedPosts(req.user.id, sourceFilter);
+    const all = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1' });
     const videos = all.filter(isPlayableVideoPost);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = videos.slice(offset, offset + feedLimit);

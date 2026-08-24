@@ -912,8 +912,14 @@ export default function VideoFeedView({ onExit }) {
       if (mode === 'following') {
         if (reset) followingPageRef.current = 1;
         params += `&page=${followingPageRef.current}`;
-        // Following's pool is a live per-user query (see getFollowingFeedPosts
-        // backend-side) — bust=1 doesn't apply to it, there's nothing to bust.
+        // getFollowingFeedPosts backend-side now has its own caching per
+        // connected source (TikTok's own uploads, YouTube's subscription
+        // feed) — bust=1 does apply here, same as the main feed: without
+        // it, a manual refresh had no way to get past that cache, so a
+        // bad/empty result cached right after first connecting an account
+        // could sit there for the full cache window regardless of how many
+        // times "Refresh now" was tapped.
+        if (bust) params += `&bust=1`;
         endpoint = '/office/feed/videos/following';
       } else {
         if (reset) cursorRef.current = null;
