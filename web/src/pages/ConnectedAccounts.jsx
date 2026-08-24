@@ -33,6 +33,12 @@ export default function ConnectedAccounts() {
   const [flash,     setFlash]           = useState(null);
   const [connecting, setConnecting]     = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  // null = modal closed; '' or partial text = open, mid-typing. Bluesky is
+  // the one platform with no fixed authorization URL (AT Protocol is
+  // federated — the handle is how we find which server to route to), so it
+  // gets its own in-app prompt instead of the plain click-to-connect every
+  // other platform uses.
+  const [blueskyHandle, setBlueskyHandle] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -75,17 +81,17 @@ export default function ConnectedAccounts() {
   }
 
   async function handleConnect(platform) {
-    // Bluesky has no fixed authorization URL to redirect straight to —
-    // AT Protocol is federated, so the real authorization server first has
-    // to be discovered from whichever handle the member actually uses (see
+    // Bluesky has no fixed authorization URL to redirect straight to — AT
+    // Protocol is federated, so the real authorization server first has to
+    // be discovered from whichever handle the member actually uses (see
     // /auth/social/bluesky/start server-side). Every other platform here
     // needs nothing beyond the click itself.
-    let handleParam = '';
-    if (platform === 'bluesky') {
-      const handle = window.prompt('Enter your Bluesky handle (e.g. alice.bsky.social):');
-      if (!handle?.trim()) return;
-      handleParam = `?handle=${encodeURIComponent(handle.trim())}`;
-    }
+    if (platform === 'bluesky') { setBlueskyHandle(''); return; }
+    startConnect(platform);
+  }
+
+  async function startConnect(platform, handle) {
+    const handleParam = handle ? `?handle=${encodeURIComponent(handle.trim())}` : '';
     setConnecting(platform);
     try {
       const { data } = await client.get(`/auth/social/${platform}/start${handleParam}`);
@@ -96,6 +102,14 @@ export default function ConnectedAccounts() {
       flash_('error', detail || 'Could not start this connection.', 7000);
       setConnecting(null);
     }
+  }
+
+  function handleBlueskySubmit(e) {
+    e.preventDefault();
+    const handle = blueskyHandle.trim();
+    if (!handle) return;
+    setBlueskyHandle(null);
+    startConnect('bluesky', handle);
   }
 
   async function handleDisconnect(platform) {
@@ -244,6 +258,49 @@ export default function ConnectedAccounts() {
           )}
 
         </>
+      )}
+
+      {blueskyHandle !== null && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,.45)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}
+          onClick={() => setBlueskyHandle(null)}
+        >
+          <form
+            className="card"
+            onClick={e => e.stopPropagation()}
+            onSubmit={handleBlueskySubmit}
+            style={{ width: '100%', maxWidth: 360, padding: 20 }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              {hasBrandIcon('bluesky') && <BrandIcon platform="bluesky" size={20} />}
+              <span style={{ fontWeight: 700, fontSize: '.95rem' }}>Connect Bluesky</span>
+            </div>
+            <p style={{ fontSize: '.78rem', color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+              Bluesky is decentralised — every account lives on its own server, so we need
+              your handle to route you to the right one.
+            </p>
+            <input
+              className="form-input"
+              autoFocus
+              value={blueskyHandle}
+              onChange={e => setBlueskyHandle(e.target.value)}
+              placeholder="alice.bsky.social"
+              style={{ marginBottom: 16 }}
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBlueskyHandle(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>
+                Continue
+              </button>
+            </div>
+          </form>
+        </div>
       )}
     </Layout>
   );
