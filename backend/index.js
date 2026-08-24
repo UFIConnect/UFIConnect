@@ -3286,6 +3286,24 @@ function parseISO8601DurationSeconds(iso) {
 // the older, now-inaccurate 60s figure.
 const YOUTUBE_SHORTS_MAX_SECONDS = 183;
 
+// The official Data API v3 search tier is shared across every one of
+// SOURCE_CONFIG.youtube's shards (14 independent parallel topic-cycling
+// loops, each firing its own main+shorts search pair) with no coordination
+// between them — confirmed live as HTTP 429 ("too many requests"), a burst/
+// QPS rejection distinct from the documented daily-quota 403, meaning
+// several shards landing on a topic within the same moment is enough to
+// trip it well before the day's 10,000-unit budget is anywhere near spent.
+// This isn't a per-key quota problem the RSS-fallback comment above already
+// accounts for — it's concurrency, fixed by serializing attempts instead of
+// letting every shard fire independently. Set synchronously, before the
+// fetch starts, so two shards racing in the same tick can't both slip
+// through before either updates it.
+let youtubeApiLastCallAt = 0;
+const YOUTUBE_API_MIN_SPACING_MS = 1100;
+function youtubeApiBlocked() {
+  return Date.now() - youtubeApiLastCallAt < YOUTUBE_API_MIN_SPACING_MS;
+}
+
 // Reels/Shorts content for a topic — searches with the same "#shorts"-
 // biasing convention every third-party YouTube tool uses (there's no
 // official Shorts search filter in the public API), then confirms each
@@ -3337,7 +3355,8 @@ async function fetchYouTubeByKeyword(keyword) {
     // through to the RSS tier below instead of skipping it entirely, same
     // cascading-fallback shape as fetchRedditSub's OAuth→anon→RSS chain.
     const apiKey = process.env.YOUTUBE_API_KEY;
-    if (apiKey) {
+    if (apiKey && !youtubeApiBlocked()) {
+      youtubeApiLastCallAt = Date.now();
       try {
         const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(keyword)}&type=video&maxResults=50&key=${encodeURIComponent(apiKey)}&order=date&relevanceLanguage=en`;
         const [data, shortsPosts] = await Promise.all([
