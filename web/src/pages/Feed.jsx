@@ -1450,6 +1450,11 @@ export default function Feed() {
   const [lockedPlatform, setLockedPlatform] = useState(null);
   const _cache = readFeedCache();
   const [posts,         setPosts]        = useState(_cache?.posts || []);
+  // Following mode's per-source fetch failures (bad scope, API not
+  // enabled, expired token) — see getFollowingFeedPosts's own comment
+  // server-side. Surfaced in the empty state below instead of a real
+  // failure reading identically to "this account just has nothing new."
+  const [sourceErrors,  setSourceErrors]  = useState({});
   const [loading,       setLoading]      = useState(!_cache);
   const [refreshing,    setRefreshing]   = useState(false);
   const [loadingMore,   setLoadingMore]  = useState(false);
@@ -1635,6 +1640,7 @@ export default function Feed() {
       }
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date(refreshTimestamp));
+      setSourceErrors(data.sourceErrors || {});
     } catch (e) { console.error(e); }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
@@ -2469,6 +2475,19 @@ export default function Feed() {
                 <button className="btn btn-ghost btn-sm" onClick={() => applyFilters(DEFAULT_FILTERS)}>
                   Reset filters
                 </button>
+              </>
+            ) : activeTabs.length === 1 && sourceErrors[activeTabs[0]] ? (
+              <>
+                <p style={{ marginBottom: 4, color: 'var(--danger, #DC2626)' }}>
+                  Couldn't load {selectedSourceLabel}: {sourceErrors[activeTabs[0]]}
+                </p>
+                <p style={{ marginBottom: 12, fontSize: '.85rem', color: 'var(--muted)' }}>
+                  This is a real error, not just "nothing new yet" — reconnecting the account under Connected Accounts is usually the fix.
+                </p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connected accounts</Link>
+                  <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: true })}>Try again</button>
+                </div>
               </>
             ) : activeTabs.length > 0 ? (
               <>

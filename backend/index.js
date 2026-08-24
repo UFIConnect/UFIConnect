@@ -9532,6 +9532,14 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     : [];
 
   const externalPosts = [];
+  // Every per-source fetch failure used to just log server-side (console.warn,
+  // no client visibility at all) and fall through to an empty result
+  // indistinguishable from "this account genuinely has nothing new" — a
+  // connected account that's actually broken (bad scope, API not enabled,
+  // expired token) looked exactly like a quiet one, with no way to tell
+  // which from the UI. Collected here and returned alongside posts so a
+  // real failure can actually be diagnosed instead of guessed at.
+  const sourceErrors = {};
   const user = await getUser(userId);
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
@@ -9563,6 +9571,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         externalPosts.push(...fresh);
       } catch (e) {
         console.warn(`following feed ${source}:`, e.message);
+        sourceErrors[source] = e.message;
       }
     }
   }
@@ -9591,7 +9600,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     }
   }
 
-  return interleaveByAuthor([...internalPosts, ...externalPosts]);
+  return { posts: interleaveByAuthor([...internalPosts, ...externalPosts]), sourceErrors };
 }
 
 // True mix for Following, same idea as getBalancedFeedPosts/enforceFeedDiversity
@@ -12476,7 +12485,7 @@ async function handleFeedRequest(req, res) {
     const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const allFollowing = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1' });
+    const { posts: allFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1' });
     const pageRows = allFollowing.slice(offset, offset + feedLimit);
     return res.json({
       posts: pageRows,
@@ -12485,6 +12494,7 @@ async function handleFeedRequest(req, res) {
       hasMore: allFollowing.length > offset + feedLimit,
       totalAvailable: allFollowing.length,
       followingCount: followingIds.size,
+      sourceErrors,
     });
   }
 
@@ -13506,7 +13516,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
-    const all = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1' });
+    const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1' });
     const videos = all.filter(isPlayableVideoPost);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = videos.slice(offset, offset + feedLimit);
@@ -13517,6 +13527,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       hasMore: videos.length > offset + feedLimit,
       totalAvailable: videos.length,
       followingCount: followingIds.size,
+      sourceErrors,
     });
   } catch (e) {
     console.error('[/feed/videos/following] error:', e.message);
