@@ -4874,6 +4874,16 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
     if (/HTTP 429/.test(e.message)) {
       throw new Error('YouTube API quota exceeded for today (shared with the app\'s own YouTube content fetcher) — try again after the daily quota resets, or move this OAuth client to its own Google Cloud project.');
     }
+    // subscriptions.list?mine=true 403s even for a fully-consented account
+    // owner if their YouTube privacy setting "Keep all my subscriptions
+    // private" (the default on every account) is still on — confirmed live.
+    // No app-side workaround exists; this is the account's own YouTube
+    // privacy setting, not anything OAuth-scope or Google-Cloud-project
+    // related, so every member connecting YouTube will hit this exact wall
+    // until they turn it off themselves.
+    if (/HTTP 403/.test(e.message) && /\/subscriptions\?/.test(e.message)) {
+      throw new Error('Your YouTube subscriptions are set to private. Turn off "Keep all my subscriptions private" at youtube.com → your profile → Settings → Privacy, then reconnect.');
+    }
     throw e;
   }
 }
