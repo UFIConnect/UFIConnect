@@ -16,7 +16,9 @@ const PLATFORM_BENEFITS = {
   reddit:    ['Follow relevant subreddits', 'Surface top posts in your feed', 'Find niche communities'],
   medium:    ['Import your published articles', 'Share writing with your network', 'Discover great long-form reads'],
   dribbble:  ['Display your design shots', 'Get discovered by hiring managers', 'Connect with top designers'],
-  behance:   ['Showcase your full portfolio', 'Import case studies to profile', 'Get design feedback'],
+  figma:     ['Showcase your files & projects', 'Import case studies to profile', 'Get design feedback'],
+  twitch:    ['Surface streams from channels you follow', 'Share live content with your network', 'Connect with fellow streamers'],
+  threads:   ['Import your Threads posts', 'Surface conversations in your feed', 'Cross-post to your network'],
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 

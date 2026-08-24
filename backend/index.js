@@ -698,12 +698,43 @@ const SOCIAL_CFG = {
     scope: 'public',
     pkce: false,
   },
-  behance: {
-    authUrl:  'https://www.behance.net/v2/oauth/authenticate',
-    tokenUrl: 'https://www.behance.net/v2/oauth/token',
-    clientId:     () => process.env.BEHANCE_CLIENT_ID,
-    clientSecret: () => process.env.BEHANCE_CLIENT_SECRET,
-    scope: 'activity_read project_read',
+  // Behance removed — Adobe shut down the entire developer portal (both
+  // behance.net/dev and /dev/register 404, and Behance isn't listed as a
+  // product in Adobe's current unified developer console either), no
+  // working registration path left, self-serve or otherwise. Replaced with
+  // Figma below for the same "showcase your design work" audience.
+  figma: {
+    authUrl:  'https://www.figma.com/oauth',
+    tokenUrl: 'https://api.figma.com/v1/oauth/token',
+    clientId:     () => process.env.FIGMA_CLIENT_ID,
+    clientSecret: () => process.env.FIGMA_CLIENT_SECRET,
+    scope: 'current_user:read file_content:read',
+    pkce: false,
+    // Same HTTP Basic Authentication (client_id:client_secret, base64,
+    // Authorization header) token-exchange shape Twitter/Reddit already
+    // use below — confirmed against Figma's own OAuth docs.
+    basicAuth: true,
+  },
+  // Twitch and Threads replace TikTok's (video/entertainment) and
+  // Instagram's (visual/social) removed slots — both are genuinely popular
+  // platforms with a real, working OAuth + content API (unlike TikTok/old
+  // Instagram, which had no legitimate discovery endpoint left).
+  twitch: {
+    authUrl:  'https://id.twitch.tv/oauth2/authorize',
+    tokenUrl: 'https://id.twitch.tv/oauth2/token',
+    clientId:     () => process.env.TWITCH_CLIENT_ID,
+    clientSecret: () => process.env.TWITCH_CLIENT_SECRET,
+    // Lets a following-fetcher pull the member's own followed channels
+    // later, same pattern as the GitHub/GitLab/Reddit/Dribbble fetchers.
+    scope: 'user:read:follows',
+    pkce: false,
+  },
+  threads: {
+    authUrl:  'https://threads.net/oauth/authorize',
+    tokenUrl: 'https://graph.threads.net/oauth/access_token',
+    clientId:     () => process.env.THREADS_CLIENT_ID,
+    clientSecret: () => process.env.THREADS_CLIENT_SECRET,
+    scope: 'threads_basic,threads_read_replies',
     pkce: false,
   },
   // bluesky deliberately absent — AT Protocol OAuth doesn't fit this shape
@@ -722,7 +753,9 @@ const SOCIAL_ENV_KEYS = {
   reddit:    ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
   medium:    ['MEDIUM_CLIENT_ID', 'MEDIUM_CLIENT_SECRET'],
   dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
-  behance:   ['BEHANCE_CLIENT_ID', 'BEHANCE_CLIENT_SECRET'],
+  figma:     ['FIGMA_CLIENT_ID', 'FIGMA_CLIENT_SECRET'],
+  twitch:    ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'],
+  threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
@@ -9644,15 +9677,35 @@ const PLATFORMS = {
     reviewRequired: false,
     note: null,
   },
-  behance: {
-    name: 'Behance', color: '#1769FF', icon: 'behance',
+  figma: {
+    name: 'Figma', color: '#F24E1E', icon: 'figma',
     description: 'Display your creative portfolio and discover design projects.',
-    scopes: ['activity_read', 'project_read'],
-    authUrl: 'https://www.behance.net/v2/oauth/authenticate',
-    loginUrl: 'https://www.behance.net/signin',
-    setupUrl: 'https://www.adobe.io/',
+    scopes: ['current_user:read', 'file_content:read'],
+    authUrl: 'https://www.figma.com/oauth',
+    loginUrl: 'https://www.figma.com/login',
+    setupUrl: 'https://www.figma.com/developers/apps',
     reviewRequired: false,
     note: null,
+  },
+  twitch: {
+    name: 'Twitch', color: '#9146FF', icon: 'twitch',
+    description: 'Surface streams and updates from channels you follow.',
+    scopes: ['user:read:follows'],
+    authUrl: 'https://id.twitch.tv/oauth2/authorize',
+    loginUrl: 'https://www.twitch.tv/login',
+    setupUrl: 'https://dev.twitch.tv/console/apps',
+    reviewRequired: false,
+    note: null,
+  },
+  threads: {
+    name: 'Threads', color: '#000000', icon: 'threads',
+    description: 'Pull in your Threads posts and conversations.',
+    scopes: ['threads_basic', 'threads_read_replies'],
+    authUrl: 'https://threads.net/oauth/authorize',
+    loginUrl: 'https://www.threads.net/login',
+    setupUrl: 'https://developers.facebook.com/apps',
+    reviewRequired: false,
+    note: 'Uses a Meta developer app with the Threads API product added.',
   },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
@@ -9687,7 +9740,7 @@ const PLATFORMS = {
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'behance', 'bluesky',
+  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -12547,7 +12600,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       });
       accessToken = raw.data?.access_token || raw.access_token;
     } else {
-      // Standard POST form (LinkedIn, Instagram, GitHub, Discord, YouTube, Reddit, Medium, Dribbble, Behance, Bluesky)
+      // Standard POST form (LinkedIn, GitHub, Discord, YouTube, Medium, Dribbble, Twitch, Threads)
       raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,

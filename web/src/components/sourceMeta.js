@@ -37,6 +37,9 @@ export const SOURCE_META = {
   crunchbase:    { label: 'Crunchbase',      color: '#146AFF', icon: 'CB' },
   behance:       { label: 'Behance',         color: '#053EFF', icon: 'Be' },
   designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
+  figma:         { label: 'Figma',           color: '#F24E1E', icon: 'Fi' },
+  twitch:        { label: 'Twitch',          color: '#9146FF', icon: '🕹' },
+  threads:       { label: 'Threads',         color: '#000000', icon: '🧵' },
   uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
@@ -54,5 +57,5 @@ export const SOURCE_META = {
 export const CONNECTED_SOCIAL_PLATFORMS = [
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'behance', 'bluesky',
+  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
 ];
