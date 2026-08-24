@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, userWantsSound } from '../components/videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, useGlobalMuted } from '../components/videoMedia';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -42,6 +42,61 @@ export default function PostDetail() {
   const [commentsLoadingMore, setCommentsLoadingMore] = useState(false);
   const [commentDraft, setCommentDraft] = useState('');
   const [commentSending, setCommentSending] = useState(false);
+
+  // Shared across every video surface in the app (Feed, the Videos swipe
+  // list, the lightbox) via useGlobalMuted — muting/unmuting here also
+  // mutes/unmutes everything else, live, the same as everywhere else.
+  // Called unconditionally, ahead of the loading/not-found early returns
+  // below, same reason youtubeId is computed with optional chaining next:
+  // React's hook order can't change between renders.
+  const [muted, toggleMuted] = useGlobalMuted();
+  const youtubeId = post?.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : null;
+  const ytMountRef = useRef(null);
+  const ytPlayerRef = useRef(null);
+  const fileVideoRef = useRef(null);
+
+  // Real IFrame Player API, not a raw <iframe src="..."> — needed so the
+  // mute button here can imperatively call mute()/unMute(), and so this
+  // player can react when muted changes because of a click on some other
+  // video elsewhere. Same pattern as ImageLightbox/VideoFeedView.
+  useEffect(() => {
+    if (!youtubeId) return;
+    let cancelled = false;
+    const startUnmuted = !muted;
+    loadYouTubeIframeApi().then((YT) => {
+      if (cancelled || !ytMountRef.current) return;
+      const player = new YT.Player(ytMountRef.current, {
+        videoId: youtubeId,
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, modestbranding: 1, rel: 0, origin: window.location.origin },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return;
+            ytPlayerRef.current = e.target;
+            if (startUnmuted) e.target.unMute();
+            e.target.playVideo();
+          },
+        },
+      });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+      try { ytPlayerRef.current?.destroy(); } catch {}
+      ytPlayerRef.current = null;
+    };
+  }, [youtubeId]);
+
+  useEffect(() => {
+    if (!youtubeId || !ytPlayerRef.current) return;
+    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+  }, [muted, youtubeId]);
+
+  // Same live-sync gap HlsVideoPlayer's own comment explains: the `muted`
+  // JSX prop on a <video> element doesn't reliably keep the *live* element
+  // in sync with prop changes after mount, so this page's own direct-file
+  // <video> needs the same imperative correction on every muted change.
+  useEffect(() => {
+    if (fileVideoRef.current) fileVideoRef.current.muted = muted;
+  }, [muted]);
 
   const loadPost = useCallback(async () => {
     setLoading(true);
@@ -146,7 +201,6 @@ export default function PostDetail() {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: '🌐', label: 'UFconnect', color: 'var(--primary)' };
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
-  const youtubeId = post.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : null;
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
   const canComment = !post.isExternal;
@@ -192,34 +246,39 @@ export default function PostDetail() {
           )}
 
           {youtubeId && (
-            // No in-app mute button here (this is a raw iframe, not the
-            // real IFrame Player API YouTubeEmbedBlock uses elsewhere) —
-            // native controls stay enabled (no controls=0 in the URL) so
-            // YouTube's own volume control handles anything past the
-            // initial state, which at least respects the stored
-            // preference instead of always forcing muted.
-            <div style={{ borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 12 }}>
-              <iframe width="100%" height="100%" src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}`}
-                title={post.title} frameBorder="0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen style={{ display: 'block' }} />
+            // Real IFrame Player API (see the effects above), not a raw
+            // <iframe src="...">, so this button can actually mute/unmute
+            // it, and so an unmute anywhere else in the app (Feed, Videos,
+            // the lightbox) is reflected here live too.
+            <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', aspectRatio: '16/9', marginBottom: 12, background: '#000' }}>
+              <div ref={ytMountRef} style={{ width: '100%', height: '100%' }} />
+              <button
+                onClick={() => toggleMuted()}
+                aria-label={muted ? 'Unmute' : 'Mute'}
+                style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
+              >{muted ? '🔇' : '🔊'}</button>
             </div>
           )}
           {!youtubeId && (playlistUrl || directVideoUrl) && (
             // This is the single dedicated post page, not a scrolling
-            // preview — real native controls (including volume) make more
-            // sense here than InlineAutoplayVideo's silent, always-muted
-            // loop (which exists for feed-card previews that open a
-            // lightbox for real playback elsewhere; this page has no such
-            // lightbox to fall back on).
-            <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 12, background: '#000' }}>
+            // preview, so native controls stay on for seek/fullscreen — but
+            // mute now goes through the same shared toggle every other
+            // video surface uses (see useGlobalMuted above), not a one-time
+            // read of the stored preference, so it both reacts to an
+            // unmute elsewhere and broadcasts its own.
+            <div style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', marginBottom: 12, background: '#000' }}>
               {playlistUrl ? (
-                <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={!userWantsSound()}
+                <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={muted}
                   style={{ width: '100%', display: 'block', maxHeight: 480 }} />
               ) : (
-                <video src={directVideoUrl} poster={post.mediaUrl} controls autoPlay playsInline
-                  muted={!userWantsSound()} style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
+                <video ref={fileVideoRef} src={directVideoUrl} poster={post.mediaUrl} controls autoPlay playsInline
+                  muted={muted} style={{ width: '100%', display: 'block', maxHeight: 480, background: '#000' }} />
               )}
+              <button
+                onClick={() => toggleMuted()}
+                aria-label={muted ? 'Unmute' : 'Mute'}
+                style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
+              >{muted ? '🔇' : '🔊'}</button>
             </div>
           )}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
