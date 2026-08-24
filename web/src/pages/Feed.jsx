@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, rememberSoundPreference } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -455,8 +455,8 @@ function MaximizeButton({ onClick }) {
   );
 }
 
-function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
-  const [playing, setPlaying] = useState(false);
+function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
+  const [inView, setInView] = useState(false);
   // Whether the real YT.Player has actually been constructed yet — separate
   // from `playing`/`effectivelyPlaying` (see below) because construction
   // happens at most once per embedId and is never redone just because
@@ -468,14 +468,10 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // (Twitter, Instagram) follows. The mute button below is what actually
   // lets someone opt in.
   //
-  // Every card in the Feed is its own independent instance, though —
-  // without userWantsSound, that meant a real click was needed on every
-  // single video card scrolled to, forever, each one starting fresh with
-  // no memory of the click on the last one. Once the user has directly
-  // clicked unmute at all this browser, new cards start already unmuted
-  // instead (see userWantsSound's own comment for why that's not the same
-  // class of bug as an automatic reveal).
-  const [muted, setMuted] = useState(() => !userWantsSound());
+  // Shared across every card in the Feed (and the Videos swipe list, and
+  // the lightbox) via useGlobalMuted — muting or unmuting any single video
+  // mutes/unmutes all the others too, live, not just future ones.
+  const [muted, toggleMuted] = useGlobalMuted();
   const containerRef = useRef(null);
   const ytMountRef = useRef(null);
   const ytPlayerRef = useRef(null);
@@ -489,7 +485,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
     const el = containerRef.current;
     if (!el) return;
     const observer = new IntersectionObserver(
-      ([entry]) => setPlaying(entry.isIntersecting),
+      ([entry]) => setInView(entry.isIntersecting),
       { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
     );
     observer.observe(el);
@@ -502,8 +498,11 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
   // lightbox opens over it (IntersectionObserver tracks geometric
   // intersection only, not z-index occlusion), so `playing` alone would
   // leave this copy running behind it — two players decoding, and audibly
-  // doubled if the user has sound on.
-  const effectivelyPlaying = playing && !forcePause;
+  // doubled if the user has sound on. Excluded from the solo-playback
+  // arbiter too (not just gated after it wins) so it can't hold the "now
+  // playing" slot hostage while paused for the lightbox.
+  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause);
+  const effectivelyPlaying = isSolo && !forcePause;
 
   // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
   // had no programmatic control once mounted at all — every inline video in
@@ -581,7 +580,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
     <div
       ref={containerRef}
       style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: 'var(--border)', cursor: showPoster ? 'pointer' : 'default' }}
-      onClick={showPoster ? () => setPlaying(true) : undefined}
+      onClick={showPoster ? () => setInView(true) : undefined}
     >
       {/* Always in the DOM once rendered, and — critically — always
           display:'block' from the very first render, never toggled by
@@ -624,7 +623,7 @@ function YouTubeEmbedBlock({ embedId, poster, title, maxHeight = 280, autoPlayOn
       )}
       {!showPoster && (
         <button
-          onClick={e => { e.stopPropagation(); setMuted(m => { rememberSoundPreference(m); return !m; }); }}
+          onClick={e => { e.stopPropagation(); toggleMuted(); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{
             // Bottom-left — bottom-right is already the source-label badge
@@ -660,7 +659,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
-          <YouTubeEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
+          <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl ? (
@@ -711,7 +710,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
 // YouTubeEmbedBlock needs, since that one built a custom minimal UI on top
 // via the real IFrame Player API instead), so there's no separate mute
 // button needed here either.
-function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
+function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
 
@@ -726,7 +725,9 @@ function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
     return () => observer.disconnect();
   }, []);
 
-  const playing = inView && !forcePause;
+  // See useSoloVideoPlayback — only the most-recently-scrolled-to video
+  // across the whole Feed (any embed type) actually plays at once.
+  const playing = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause) && !forcePause;
 
   return (
     <div ref={containerRef} style={{
@@ -760,7 +761,7 @@ function VimeoEmbedBlock({ embedId, poster, title, forcePause = false }) {
   );
 }
 
-function TikTokEmbedBlock({ embedId, poster, title, forcePause = false }) {
+function TikTokEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
 
@@ -778,8 +779,10 @@ function TikTokEmbedBlock({ embedId, poster, title, forcePause = false }) {
   // forcePause: this exact post's media is open in ImageLightbox — same
   // "don't play two copies of the same thing at once" reasoning as
   // YouTubeEmbedBlock's own forcePause, simpler to honor here since
-  // unmounting this iframe is always safe.
-  const playing = inView && !forcePause;
+  // unmounting this iframe is always safe. Also gated through the shared
+  // solo-playback arbiter (see useSoloVideoPlayback) so only the
+  // most-recently-scrolled-to video across the whole Feed plays at once.
+  const playing = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause) && !forcePause;
 
   return (
     <div ref={containerRef} style={{
@@ -822,7 +825,7 @@ function TikTokCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
       <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 10px', lineHeight: 1.4 }}>{post.title}</p>
       {embedId ? (
         <div style={{ marginBottom: 10, position: 'relative' }}>
-          <TikTokEmbedBlock embedId={embedId} poster={post.mediaUrl} title={post.title} forcePause={isMediaOpen} />
+          <TikTokEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} forcePause={isMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
       ) : post.mediaUrl ? (
@@ -1154,6 +1157,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
         <div style={{ marginTop: 12, position: 'relative' }}>
           <YouTubeEmbedBlock
             embedId={videoYouTubeId}
+            videoKey={post.id}
             poster={`https://i.ytimg.com/vi/${videoYouTubeId}/hqdefault.jpg`}
             title={post.title}
             maxHeight={360}
@@ -1172,6 +1176,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
         <div style={{ marginTop: 12, position: 'relative' }}>
           <VimeoEmbedBlock
             embedId={videoVimeoId}
+            videoKey={post.id}
             poster={null}
             title={post.title}
             forcePause={isMediaOpen}
@@ -1193,6 +1198,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
               <InlineAutoplayVideo
                 kind={videoPlaylistUrl ? 'hls' : 'file'}
                 src={videoPlaylistUrl || post.mediaUrl}
+                videoKey={post.id}
                 poster={videoPlaylistUrl ? post.mediaUrl : undefined}
                 style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
                 forcePause={isMediaOpen}

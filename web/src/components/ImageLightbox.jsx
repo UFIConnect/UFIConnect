@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer, userWantsSound, rememberSoundPreference } from './videoMedia';
+import { deriveBlueskyPlaylistUrl, isDirectVideoUrl, extractYouTubeId, loadYouTubeIframeApi, HlsVideoPlayer, userWantsSound, useGlobalMuted } from './videoMedia';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 
 // Same floating-control look as VideoFeedView's overlay buttons (back/
@@ -92,11 +92,10 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   // unmutes now, since a direct click handler is a gesture every browser
   // honors, same fix applied to VideoFeedView's swipe feed.
   //
-  // Starting *every* video muted-until-clicked, taken alone, meant a real
-  // click was needed on every single one, forever — see userWantsSound's
-  // own comment. Once the user has directly clicked unmute at all, this
-  // starts already unmuted instead.
-  const [muted, setMuted] = useState(() => !userWantsSound());
+  // Shared globally (see useGlobalMuted) so muting/unmuting here also
+  // mutes/unmutes every other currently-mounted video — a Feed card behind
+  // it, the Videos swipe feed — instead of only ever affecting this one.
+  const [muted, toggleMuted] = useGlobalMuted();
   const [paused, setPaused] = useState(false);
   // See VideoFeedView's identical ytFailed — the IFrame Player API script
   // doesn't load on some devices/networks; falls back to a plain embed
@@ -471,7 +470,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           mute/pause behave differently on mobile and tablet than desktop. */}
       {playableVideo && (
         <button
-          onClick={e => { e.stopPropagation(); setMuted(m => { rememberSoundPreference(m); return !m; }); }}
+          onClick={e => { e.stopPropagation(); toggleMuted(); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{ position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE, fontSize: '1.05rem' }}
         >{muted ? '🔇' : '🔊'}</button>
@@ -510,7 +509,6 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
               <HlsVideoPlayer key={item.url} src={playlistUrl} poster={item.url} autoPlay muted={muted}
                 videoRef={hlsVideoRef} onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-                onMutedFallback={() => setMuted(true)}
                 onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
                 style={{ maxWidth: '92vw', maxHeight: '72vh', borderRadius: 10 }} />

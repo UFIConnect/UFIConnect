@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, rememberSoundPreference } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -850,7 +850,7 @@ export default function VideoFeedView({ onExit }) {
   // tap was needed on every single slide scrolled to, forever — see
   // userWantsSound's own comment. Once the user has directly tapped unmute
   // at all this browser, slides start already unmuted instead.
-  const [muted, setMuted] = useState(() => !userWantsSound());
+  const [muted, toggleMuted] = useGlobalMuted();
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -1145,7 +1145,7 @@ export default function VideoFeedView({ onExit }) {
         <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
       </button>
       <button
-        onClick={() => { if (!muteControllable) return; setMuted(m => { rememberSoundPreference(m); return !m; }); }}
+        onClick={() => { if (!muteControllable) return; toggleMuted(); }}
         disabled={!muteControllable}
         aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
         style={{
@@ -1323,7 +1323,7 @@ export default function VideoFeedView({ onExit }) {
               data-idx={idx}
               style={{ height: '100dvh', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
-              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={() => setMuted(m => !m)} isScrolling={isScrolling} onOpenComments={setCommentsPost} />
+              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost} />
             </div>
           ))}
         </div>

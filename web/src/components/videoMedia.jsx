@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 // demanding the same click over and over. Symmetric: explicitly muting
 // again is remembered the same way.
 const SOUND_PREF_KEY = 'ufc_wants_sound';
+const SOUND_PREF_EVENT = 'ufc-sound-pref-change';
 export function userWantsSound() {
   try { return localStorage.getItem(SOUND_PREF_KEY) === '1'; } catch { return false; }
 }
@@ -24,6 +25,71 @@ export function rememberSoundPreference(wantsSound) {
     if (wantsSound) localStorage.setItem(SOUND_PREF_KEY, '1');
     else localStorage.removeItem(SOUND_PREF_KEY);
   } catch {}
+  // Broadcast so every other mounted video on the page — a different card
+  // in the Feed, a slide in the Videos swipe list, an open lightbox — picks
+  // up the change in the same tick a real click happens on any one of them,
+  // instead of only ever affecting videos that mount fresh afterward.
+  window.dispatchEvent(new CustomEvent(SOUND_PREF_EVENT, { detail: wantsSound }));
+}
+
+// One on/off switch shared by every video surface at once: muting or
+// unmuting any single video mutes/unmutes every other currently-mounted
+// video too (Feed cards, the Videos swipe feed, the lightbox), matching
+// how a single hardware mute button would behave. Plain per-component
+// useState can't do that across independent instances, so this subscribes
+// to the same broadcast rememberSoundPreference fires.
+export function useGlobalMuted() {
+  const [muted, setMutedState] = useState(() => !userWantsSound());
+  useEffect(() => {
+    const onChange = (e) => setMutedState(!e.detail);
+    window.addEventListener(SOUND_PREF_EVENT, onChange);
+    return () => window.removeEventListener(SOUND_PREF_EVENT, onChange);
+  }, []);
+  const toggleMuted = () => {
+    const next = !muted;
+    rememberSoundPreference(!next);
+    setMutedState(next);
+  };
+  return [muted, toggleMuted];
+}
+
+// Feed cards (YouTube/Vimeo/TikTok embeds, inline autoplay previews) each
+// run their own IntersectionObserver to know when they've scrolled into
+// view, but did so entirely independently of one another. On a normal card
+// height (unlike the Videos swipe feed, where each slide fills the whole
+// screen so only one can ever cross a >60% threshold at a time), two or
+// more video cards can genuinely be >25% visible on screen simultaneously —
+// so multiple were autoplaying, and for YouTube/Vimeo, audibly playing, at
+// once. This makes only the most-recently-scrolled-to candidate eligible:
+// every inView card registers itself in arrival order, and the last one to
+// arrive wins, so scrolling to a new video pauses whatever was playing
+// before it the same way the Videos feed's single activeIndex does.
+const soloPlaybackOrder = [];
+const SOLO_PLAYBACK_EVENT = 'ufc-solo-video-change';
+function broadcastSoloWinner() {
+  const winner = soloPlaybackOrder.length ? soloPlaybackOrder[soloPlaybackOrder.length - 1] : null;
+  window.dispatchEvent(new CustomEvent(SOLO_PLAYBACK_EVENT, { detail: winner }));
+}
+export function useSoloVideoPlayback(id, inView) {
+  const [isSolo, setIsSolo] = useState(false);
+  useEffect(() => {
+    const onChange = (e) => setIsSolo(e.detail === id);
+    window.addEventListener(SOLO_PLAYBACK_EVENT, onChange);
+    return () => window.removeEventListener(SOLO_PLAYBACK_EVENT, onChange);
+  }, [id]);
+
+  useEffect(() => {
+    const existingIdx = soloPlaybackOrder.indexOf(id);
+    if (existingIdx !== -1) soloPlaybackOrder.splice(existingIdx, 1);
+    if (inView) soloPlaybackOrder.push(id);
+    broadcastSoloWinner();
+    return () => {
+      const idx = soloPlaybackOrder.indexOf(id);
+      if (idx !== -1) { soloPlaybackOrder.splice(idx, 1); broadcastSoloWinner(); }
+    };
+  }, [id, inView]);
+
+  return isSolo;
 }
 
 // embedId (the YouTube video ID used for in-app iframe playback) only ever
@@ -196,7 +262,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
 // once — matches the "only the active slide actually plays" behavior
 // VideoFeedView already uses, just triggered by real scroll position
 // instead of a swipe-snap container.
-export function InlineAutoplayVideo({ kind, src, poster, style, forcePause = false }) {
+export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forcePause = false }) {
   const containerRef = useRef(null);
   const fileRef = useRef(null);
   const [inView, setInView] = useState(false);
@@ -224,8 +290,11 @@ export function InlineAutoplayVideo({ kind, src, poster, style, forcePause = fal
   // z-index occlusion), so inView alone would keep this copy playing too —
   // audibly doubled if the user has sound on. Kept separate from inView
   // itself so scroll-based visibility and "something else is showing this
-  // right now" stay independent, composable signals.
-  const shouldPlay = inView && !forcePause;
+  // right now" stay independent, composable signals. Also gated through the
+  // shared solo-playback arbiter (see useSoloVideoPlayback) so only the
+  // most-recently-scrolled-to video across the whole Feed plays at once.
+  const isSolo = useSoloVideoPlayback(videoKey || src, inView && !forcePause);
+  const shouldPlay = isSolo && !forcePause;
 
   // Direct-file case drives its own <video> element here; the HLS case
   // (below, in the render) hands autoplay off to HlsVideoPlayer instead,
