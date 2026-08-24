@@ -4965,7 +4965,7 @@ async function fetchTikTokUserVideos(token, { bust = false } = {}) {
 // deeper pool (up to 500) while staying trivially inside quota.
 const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 50;
 const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 10;
-async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
+async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null, _retried = false } = {}) {
   if (!token) return [];
   const key = `youtube_subfeed_${token.slice(-12)}`;
   const cached = !bust && getCached(key);
@@ -5062,6 +5062,18 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false } = {}) {
     setCached(key, posts);
     return posts;
   } catch (e) {
+    // A 401 here means the access token itself has expired — Google's own
+    // tokens last ~1 hour, so any connection older than that would fail
+    // every single request from then on with no way to recover short of
+    // disconnecting and reconnecting, confirmed live as exactly this.
+    // refreshGoogleAccessToken exchanges the stored refresh_token (offline
+    // access, granted at connect time) for a new one — _retried guards
+    // against looping if the refresh itself doesn't actually fix it (e.g.
+    // the refresh token was itself revoked).
+    if (/HTTP 401/.test(e.message) && userId && !_retried) {
+      const newToken = await refreshGoogleAccessToken(userId);
+      if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, _retried: true });
+    }
     console.warn('YouTube subscription feed fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale; // graceful degradation — a transient blip shouldn't wipe out an already-working feed
@@ -9764,7 +9776,7 @@ async function refreshFollowingSourceCaches() {
       const token = tokens[source];
       if (!token) continue;
       try {
-        const raw = await fetcher(token);
+        const raw = await fetcher(token, { userId: user.id });
         followingSourceCache.set(`${user.id}::${source}`, {
           posts: realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })),
           fetchedAt: Date.now(),
@@ -9876,7 +9888,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         continue;
       }
       try {
-        const raw = await fetcher(token, { bust });
+        const raw = await fetcher(token, { bust, userId });
         const fresh = realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }));
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
@@ -10173,6 +10185,7 @@ function dbRowToMemUser(row) {
     links: row.links || {},
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
+    socialRefreshTokens: row.social_refresh_tokens || {},
     plan: row.plan || 'free',
     stripeCustomerId: row.stripe_customer_id || null,
     stripeSubscriptionId: row.stripe_subscription_id || null,
@@ -10346,7 +10359,8 @@ async function migrateDB() {
         interests           TEXT[] DEFAULT '{}',
         links               JSONB DEFAULT '{}',
         role_settings       JSONB DEFAULT '{}',
-        social_tokens       JSONB DEFAULT '{}',
+        social_tokens          JSONB DEFAULT '{}',
+        social_refresh_tokens  JSONB DEFAULT '{}',
         plan                VARCHAR(20) DEFAULT 'free',
         created_at          TIMESTAMPTZ DEFAULT NOW()
       )
@@ -10358,6 +10372,15 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_tokens JSONB DEFAULT '{}'`);
+    // Refresh tokens, kept separate from social_tokens rather than nested
+    // inside it — every existing call site (~70+) reads
+    // user.socialTokens[platform] expecting a bare access-token string
+    // directly usable as `Bearer ${token}`; changing that shape would mean
+    // touching all of them. A sibling map instead. Only providers whose
+    // OAuth flow actually requests offline access (currently just
+    // YouTube/Google — see SOCIAL_CFG.youtube's access_type:'offline') ever
+    // populate this; everyone else's entry stays absent.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_refresh_tokens JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
@@ -10764,6 +10787,19 @@ function trimFeedPostsCache() {
   // in either direction (a normally-quiet source having a busy week, or a
   // usually-busy one going quiet) gets reclassified automatically on the
   // next pass rather than being stuck with whichever bucket it started in.
+  // Job-listing sources exempted from the high-volume 4-day cap regardless
+  // of their own pull volume — confirmed live as a real regression the
+  // instant this rule shipped: Indeed/RemoteOK/USAJobs easily clear 50
+  // posts within 4 days (fetched across all 206 FEED_TOPICS), so they
+  // qualified as "high volume" same as a busy social source, and got capped
+  // to 4 days — but Opportunities/resume-matching (getJobCandidatePool)
+  // wants maximum historical breadth to match against, not freshness the
+  // way a social feed does. Job listings don't go stale the way a social
+  // post does; cutting them to 4 days just shrank the real candidate pool
+  // down to a handful of postings, which is what made "same jobs every
+  // time" and "doesn't match my resume" show up together — too few
+  // candidates left for applyResumeMatchedJobs/scoreJobResumeMatch to ever
+  // find a real match among.
   db.query(
     `WITH source_counts AS (
        SELECT source, COUNT(*) FILTER (WHERE post_created_at >= NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds') AS recent_count
@@ -10774,10 +10810,10 @@ function trimFeedPostsCache() {
      USING source_counts sc
      WHERE fp.source = sc.source
        AND (
-         (sc.recent_count > $1 AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+         (sc.recent_count > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
          OR
-         (sc.recent_count <= $1 AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
-       )`, [HIGH_VOLUME_SOURCE_THRESHOLD]
+         ((sc.recent_count <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+       )`, [HIGH_VOLUME_SOURCE_THRESHOLD, JOB_LISTING_SOURCES]
   ).catch(() => {});
   db.query(
     `DELETE FROM feed_posts_cache fp
@@ -11908,16 +11944,58 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
 });
 
 // ─── Social token helpers ─────────────────────────────────────────────────────
-async function saveSocialToken(userId, platform, token) {
+// refreshToken is optional — only Google/YouTube's OAuth flow currently
+// requests offline access (see SOCIAL_CFG.youtube), so every other provider
+// calls this with refreshToken undefined and socialRefreshTokens[platform]
+// simply never gets set for them, same as today.
+async function saveSocialToken(userId, platform, token, refreshToken) {
   const user = await getUser(userId);
   if (!user) throw new Error('User not found');
   if (!user.socialTokens) user.socialTokens = {};
   user.socialTokens[platform] = token;
+  if (refreshToken) {
+    if (!user.socialRefreshTokens) user.socialRefreshTokens = {};
+    user.socialRefreshTokens[platform] = refreshToken;
+  }
   if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
-      [JSON.stringify(user.socialTokens), userId]);
+    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2 WHERE id=$3',
+      [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), userId]);
   } else {
     filestore.saveUsers(users);
+  }
+}
+
+// Google access tokens expire in ~1 hour; the refresh_token captured at
+// connect time (offline access — see SOCIAL_CFG.youtube) lets this exchange
+// it for a new access token without requiring the user to reconnect.
+// Returns the new access token, or null if there's no refresh token stored
+// (connected before this fix shipped, or offline access was never granted)
+// or the exchange itself fails (refresh token revoked/expired — genuinely
+// requires reconnecting at that point).
+async function refreshGoogleAccessToken(userId) {
+  const user = await getUser(userId);
+  const refreshToken = user?.socialRefreshTokens?.youtube;
+  if (!refreshToken) return null;
+  const cfg = SOCIAL_CFG.youtube;
+  try {
+    const raw = await postForm(cfg.tokenUrl, {
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: cfg.clientId(),
+      client_secret: cfg.clientSecret(),
+    });
+    if (!raw.access_token) {
+      console.warn('[YouTube] refresh token exchange failed:', raw.error || JSON.stringify(raw).slice(0, 200));
+      return null;
+    }
+    // Google only returns a new refresh_token on rare re-consent flows —
+    // the original keeps working indefinitely otherwise, so it's kept
+    // unless a new one actually comes back.
+    await saveSocialToken(userId, 'youtube', raw.access_token, raw.refresh_token || refreshToken);
+    return raw.access_token;
+  } catch (e) {
+    console.warn('[YouTube] refresh token exchange error:', e.message);
+    return null;
   }
 }
 
@@ -11925,9 +12003,10 @@ async function removeSocialToken(userId, platform) {
   const user = await getUser(userId);
   if (!user) return;
   if (user.socialTokens) delete user.socialTokens[platform];
+  if (user.socialRefreshTokens) delete user.socialRefreshTokens[platform];
   if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1 WHERE id=$2',
-      [JSON.stringify(user.socialTokens || {}), userId]);
+    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2 WHERE id=$3',
+      [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), userId]);
   } else {
     filestore.saveUsers(users);
   }
@@ -12074,7 +12153,15 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       throw Object.assign(new Error(`No access_token in response — provider said: ${providerErrorCode}`), { providerErrorCode });
     }
 
-    await saveSocialToken(entry.userId, platform, accessToken);
+    // Google access tokens expire in ~1 hour — YouTube's Following-tab
+    // subscription feed (the only consumer of a long-lived connection here)
+    // would otherwise start failing with a 401 an hour after connecting,
+    // with no way to recover short of disconnecting and reconnecting.
+    // raw.refresh_token only ever arrives here because SOCIAL_CFG.youtube
+    // requests access_type:'offline'+prompt:'consent' — every other
+    // provider's raw.refresh_token is simply undefined, so this is a no-op
+    // for them, same as before.
+    await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token);
     logAgentAction('cache_helper', '🔗', `User connected ${platform} — social feed now active`, '#6366F1');
     res.redirect(`${frontendProfile}?social_connected=${platform}`);
   } catch (e) {
