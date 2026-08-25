@@ -775,7 +775,7 @@ input, textarea, select { font-family: inherit; }
   .profile-mobile-logout { color: var(--danger); }
 }
 
-/* ── Videos (full-bleed vertical feed) on a real desktop viewport ──
+/* ── Videos (full-bleed vertical feed) above phone width ──
    Built mobile-first for a phone-width, edge-to-edge experience. Above the
    phone breakpoint, cap it to a phone-like column and give it a "theater"
    card treatment (rounded corners, a shadow, a bit of vertical breathing
@@ -787,11 +787,20 @@ input, textarea, select { font-family: inherit; }
    unstyled. height needs !important since the element also carries an
    inline height:100% (the correct value on an actual phone, which this
    query never matches). See the JSX comment on .video-feed-frame for the
-   full reasoning. */
+   full reasoning.
+   Width is a fluid clamp(), not a fixed number: a hard breakpoint jump
+   (one width for a 768px tablet, a different fixed width for a 2560px
+   monitor) either looks cramped on a tablet's own real estate or leaves a
+   desktop window mostly empty. clamp() grows the card smoothly with the
+   viewport between those two ends instead — around 420px near the phone
+   boundary, up to 560px on a full desktop window, tablet widths landing
+   proportionately in between — so there's no single "tablet" vs "desktop"
+   number to get wrong, just one continuous, appropriately-sized card
+   across every width above a phone's. */
 @media (min-width: 769px) {
   .video-feed-frame {
-    max-width: 480px;
-    height: min(860px, calc(100vh - 64px)) !important;
+    max-width: clamp(420px, 46vw, 560px);
+    height: min(900px, calc(100vh - 64px)) !important;
     margin: 0 auto;
     border-radius: 20px;
     overflow: hidden;

@@ -587,25 +587,32 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
       {/* Scrub tracker — click or drag anywhere on the bar to skip to that
           point in the video. Widens slightly while actively dragging so
-          it's easier to hit on touch. */}
+          it's easier to hit on touch. Black track/fill/thumb (not the
+          previous white) to sit quietly against the video instead of a
+          bright white bar cutting across it — the thumb keeps a thin light
+          ring so it's still visible/grabbable against genuinely black
+          video content, widening along with the dot itself while seeking. */}
       {src && effectiveDuration > 0 && (
         <div
           ref={progressBarRef}
           onPointerDown={handleBarPointerDown}
           style={{
             position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: 12,
-            height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(255,255,255,.28)',
+            height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(0,0,0,.45)',
             cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
           }}
         >
           <div style={{
             position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 4,
-            width: `${progressFraction * 100}%`, background: '#fff',
+            width: `${progressFraction * 100}%`, background: '#000',
           }} />
           <div style={{
             position: 'absolute', top: '50%', left: `${progressFraction * 100}%`,
             transform: 'translate(-50%, -50%)', width: seeking ? 16 : 11, height: seeking ? 16 : 11,
-            borderRadius: '50%', background: '#fff', boxShadow: '0 1px 4px rgba(0,0,0,.5)',
+            borderRadius: '50%', background: '#000',
+            boxShadow: seeking
+              ? '0 0 0 2px rgba(255,255,255,.85), 0 2px 8px rgba(0,0,0,.6)'
+              : '0 0 0 1.5px rgba(255,255,255,.7), 0 1px 4px rgba(0,0,0,.5)',
             transition: 'width .12s, height .12s',
           }} />
         </div>
@@ -1596,8 +1603,25 @@ export default function VideoFeedView({ onExit }) {
           transition: 'opacity .15s ease-out',
         }}>
           <div
+            // width/height:auto (not width:100%) is what makes this
+            // actually fit inside BOTH constraints at once. With an
+            // explicit width:100% + maxHeight:100%, a 9:16 video whose
+            // derived height (from 100% width) exceeds the box's available
+            // height gets its height clamped by maxHeight while the width
+            // stays put — the box ends up wider, relative to its height,
+            // than the real 9:16 ratio, visibly stretching the video. Now
+            // that the frame itself is width *and* height capped on
+            // desktop/tablet (see index.css), height is often the tighter
+            // constraint, not width, so this wasn't just a theoretical
+            // edge case. auto/auto + max-width/max-height lets the browser
+            // pick the largest size that satisfies both limits while
+            // holding the real aspect ratio, the same guarantee object-fit:
+            // contain gives a native <video> (which a cross-origin YouTube
+            // iframe can't use directly, hence needing this on its wrapper
+            // instead).
             style={{
-              width: '100%', aspectRatio: activeSrc?.vertical ? '9/16' : '16/9', maxHeight: '100%',
+              width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%',
+              aspectRatio: activeSrc?.vertical ? '9/16' : '16/9',
               position: 'relative', pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
             }}
             onClick={sharedYtTogglePlay}
