@@ -12468,16 +12468,24 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = jwt.sign({ id: mem.id, email: mem.email }, JWT_SECRET, { expiresIn: '7d' });
       return res.status(201).json({ token, profile: fullProfile(mem) });
-    } catch (err) { console.error('register DB error:', err.message); }
+    } catch (err) {
+      console.error('register DB error:', err.message);
+      // Distinguish a real DB failure from something the retry loop below
+      // can't fix (bad input, a constraint violation) — those should still
+      // surface as whatever they actually are, not a misleading 503.
+      return res.status(500).json({ message: 'Could not create account. Please try again.' });
+    }
   }
 
-  // In-memory + filestore fallback
-  if (users.find((u) => u.email === emailLc)) return res.status(409).json({ message: 'Email already registered.' });
-  const newUser = { id: `u${Date.now()}`, name, email: emailLc, passwordHash: bcrypt.hashSync(password, 10), authProvider: 'local', authSubject: null, avatarUrl: '', title: title || '', bio: '', skills: [], organization: '', joinedGroups: [], onboardingComplete: false, preferences: null, socialAccounts: {}, links: {}, socialTokens: {}, plan: 'free' };
-  users.push(newUser);
-  filestore.saveUsers(users);
-  const token = jwt.sign({ id: newUser.id, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
-  res.status(201).json({ token, profile: fullProfile(newUser) });
+  // Used to silently fall through to an in-memory + local-file account
+  // here instead — looked completely successful (real token, real login)
+  // but only ever existed in that one server process's memory. The next
+  // deploy wipes it for good, with no error, no trace, nothing to debug:
+  // confirmed live as the actual cause of real signups that "worked" then
+  // permanently vanished. A DB outage is rare and self-recovering; losing
+  // an account forever is not an acceptable trade for staying up through
+  // it, so this refuses instead of pretending to succeed.
+  res.status(503).json({ message: 'Sign-up is temporarily unavailable — please try again in a moment.' });
 });
 
 app.post('/auth/login', authLimiter, async (req, res) => {
