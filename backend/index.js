@@ -3285,7 +3285,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
   return posts;
 }
 
-function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword) {
+function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false) {
   return {
     id:          `youtube_${videoId}`,
     authorId:    `youtube_${channelId || 'unknown'}`,
@@ -3294,7 +3294,12 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     title,
     source:      'youtube',
     sourceLabel: channelTitle || 'YouTube',
-    sourceUrl:   `https://www.youtube.com/watch?v=${videoId}`,
+    // /shorts/ vs /watch?v= specifically (not just a URL-format choice) —
+    // this is how the vertical (9:16) vs landscape (16:9) player container
+    // is told apart client-side (see isYouTubeShortsUrl), since embedId
+    // doesn't survive the DB round-trip and there's no dedicated column for
+    // it — sourceUrl is the one thing about this classification that does.
+    sourceUrl:   isShort ? `https://www.youtube.com/shorts/${videoId}` : `https://www.youtube.com/watch?v=${videoId}`,
     embedId:     videoId,
     topic:       keyword,
     author:      { id: `youtube_${channelId || 'unknown'}`, name: channelTitle || null, title: channelTitle || 'YouTube', organization: 'YouTube' },
@@ -3368,7 +3373,7 @@ async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
       .map(v => mapYouTubePost(
         v.id.videoId, v.snippet.title, v.snippet.description,
         v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-        v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
+        v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, true
       ));
   } catch {
     return []; // best-effort supplement to the main fetch below — never worth failing that over

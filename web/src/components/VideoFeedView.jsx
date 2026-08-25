@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -70,7 +70,15 @@ function resolveVideoSource(post) {
   const ytId = post.source === 'youtube'
     ? (post.embedId || extractYouTubeId(post.sourceUrl))
     : extractYouTubeId(post.mediaUrl);
-  if (ytId) return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` };
+  if (ytId) {
+    // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
+    // this survives the DB round-trip (see isYouTubeShortsUrl's own
+    // comment) — a vertical (9:16) video forced into VideoSlide's default
+    // 16:9 container renders squeezed, with the video's own thumbnail/
+    // title cropped, confirmed live as a Short looking visibly cut off.
+    const vertical = isYouTubeShortsUrl(post.source === 'youtube' ? post.sourceUrl : post.mediaUrl);
+    return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`, vertical };
+  }
   // Same idea for an article embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
   // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
@@ -445,10 +453,14 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           // internally for regular 16:9 uploads — solid pixels, not empty
           // space, so the blurred backdrop above can never show through
           // it. Constraining this div to the video's real aspect ratio
-          // instead means the iframe itself comes out 16:9-shaped with no
-          // internal letterboxing, and the backdrop fills the now-real
-          // gap around it (centered by the root's flex layout).
-          <div style={{ width: '100%', aspectRatio: '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
+          // instead means the iframe itself comes out correctly shaped with
+          // no internal letterboxing, and the backdrop fills the now-real
+          // gap around it (centered by the root's flex layout). Real
+          // Shorts (src.vertical — see resolveVideoSource) use 9/16 instead
+          // of the 16/9 default — forcing a vertical video into a landscape
+          // box squeezed it, cropping the video's own thumbnail/title,
+          // confirmed live as a Short looking visibly cut off.
+          <div style={{ width: '100%', aspectRatio: src.vertical ? '9/16' : '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
             <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }} />
             {ytFailed && (
               // The IFrame Player API script (youtube.com/iframe_api) never

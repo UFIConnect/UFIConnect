@@ -100,8 +100,20 @@ export function useSoloVideoPlayback(id, inView) {
 // (watch?v=... or youtu.be/...), which is always persisted.
 export function extractYouTubeId(url) {
   if (!url) return null;
-  const m = String(url).match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([\w-]{11})/);
+  const m = String(url).match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/);
   return m ? m[1] : null;
+}
+
+// Real Shorts (server-verified by actual video duration — see
+// fetchYouTubeShortsByKeyword backend-side) are persisted with a
+// youtube.com/shorts/... sourceUrl specifically so this classification
+// survives the DB round-trip without needing its own column — a regular
+// video's sourceUrl is always .../watch?v=... A vertical (9:16) video
+// forced into a fixed 16:9 landscape container renders squeezed with its
+// own thumbnail/title cropped, confirmed live as a Short's video looking
+// visibly cut off in the Videos feed.
+export function isYouTubeShortsUrl(url) {
+  return /youtube\.com\/shorts\//.test(String(url || ''));
 }
 
 // Same idea as extractYouTubeId, for RSS articles that embed a Vimeo player
