@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
 const API = import.meta.env.VITE_API_URL || '';
+// uficonnect-pipeline's own URL (see render.yaml) — the service that
+// actually runs the ~30 continuous source-fetchers post-split (see
+// SERVICE_ROLE in backend/index.js). Falls back to API when unset so a
+// dashboard build from before uficonnect-pipeline exists (or a local dev
+// setup running everything in one process) keeps working exactly as before —
+// every dual-source fetch/merge below degrades to "both requests hit the
+// same place," not a broken one.
+const PIPELINE_API = import.meta.env.VITE_PIPELINE_API_URL || API;
 const OFFICE_TOKEN_KEY = 'ufi_office_token';
 
 // ─── office auth ────────────────────────────────────────────────────────────
@@ -32,9 +40,9 @@ async function officeFetch(url, opts = {}) {
   }
   return res;
 }
-function officeStreamUrl(path) {
+function officeStreamUrl(path, base = API) {
   const token = getOfficeToken();
-  return token ? `${API}${path}?token=${encodeURIComponent(token)}` : `${API}${path}`;
+  return token ? `${base}${path}?token=${encodeURIComponent(token)}` : `${base}${path}`;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -580,6 +588,134 @@ function DeployView({ triggerDeploy, deploying, log }) {
           </Card>
         </>
       )}
+    </>
+  );
+}
+
+// ─── Autofix view ─────────────────────────────────────────────────────────────
+
+const AUTOFIX_STATUS_COLOR = {
+  detected: '#94a3b8', rejected: '#64748b', deploying: '#38bdf8',
+  verifying: '#fbbf24', verified: '#4ade80', reverted: '#f87171',
+};
+
+function AutofixView() {
+  const [data, setData] = useState(null);
+  const [toggling, setToggling] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await officeFetch(`${API}/office/autofix/attempts`);
+      setData(await r.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const toggle = async () => {
+    setToggling(true);
+    try {
+      const r = await officeFetch(`${API}/office/autofix/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !data?.enabled }),
+      });
+      setData(await r.json());
+    } catch {}
+    setToggling(false);
+    load();
+  };
+
+  if (!data) return (<><h1 style={H1}>Autofix</h1><p style={SUBTITLE}>Loading…</p></>);
+
+  const attempts = data.attempts || [];
+
+  return (
+    <>
+      <h1 style={H1}>Autofix</h1>
+      <p style={SUBTITLE}>
+        Groups server errors by signature; once the same bug clears a distinct-session
+        threshold, a single narrow fix category (null-guard) is checked against a hard
+        scope/denylist gate, syntax- and boot-smoke-tested, then committed via GitHub —
+        with an automatic revert if health regresses afterward. Detection always runs;
+        committing anything requires the switch below.
+      </p>
+
+      <Card style={{ display: 'flex', alignItems: 'center', gap: 16, maxWidth: 680, marginBottom: 20 }}>
+        <span style={{ fontSize: 30, flexShrink: 0 }}>🩹</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>
+            Autofix is {data.enabled ? 'ENABLED' : 'disabled'}
+          </div>
+          <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+            {data.enabled
+              ? 'Eligible candidates can be committed and auto-deployed.'
+              : 'Detection and logging still run — nothing gets committed while off.'}
+          </div>
+        </div>
+        <Btn onClick={toggle} disabled={toggling} variant={data.enabled ? 'danger' : 'primary'}>
+          {toggling ? 'Working…' : data.enabled ? 'Disable' : 'Enable'}
+        </Btn>
+      </Card>
+
+      <div style={{ display: 'flex', gap: 13, maxWidth: 680, marginBottom: 24 }}>
+        <Card style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>Deploys today</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', marginTop: 4 }}>{data.deploysToday ?? 0} / {data.maxPerDay}</div>
+        </Card>
+        <Card style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>Deploys this week</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#f1f5f9', marginTop: 4 }}>{data.deploysThisWeek ?? 0} / {data.maxPerWeek}</div>
+        </Card>
+        <Card style={{ flex: 1 }}>
+          <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.6 }}>Reverts (all time)</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: data.totalReverts ? '#f87171' : '#f1f5f9', marginTop: 4 }}>{data.totalReverts ?? 0}</div>
+        </Card>
+      </div>
+
+      <Label color="#475569">Recent Attempts</Label>
+      <div style={{ maxWidth: 680, marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {attempts.length === 0 && (
+          <Card style={{ color: '#64748b', fontSize: 13 }}>No attempts yet — nothing has cleared the detection threshold.</Card>
+        )}
+        {attempts.map(a => (
+          <Card key={a.id} style={{ padding: '12px 16px', cursor: 'pointer' }} onClick={() => setExpanded(expanded === a.id ? null : a.id)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{
+                fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.5,
+                color: AUTOFIX_STATUS_COLOR[a.status] || '#94a3b8',
+                border: `1px solid ${AUTOFIX_STATUS_COLOR[a.status] || '#94a3b8'}`,
+                borderRadius: 4, padding: '2px 6px', flexShrink: 0,
+              }}>{a.status}</span>
+              <code style={{ ...CODE, fontSize: 11 }}>{a.signature}</code>
+              <span style={{ fontSize: 12, color: '#64748b' }}>{a.session_count} session(s)</span>
+              <span style={{ fontSize: 11, color: '#334155', marginLeft: 'auto' }}>
+                {a.source_file}{a.source_line ? `:${a.source_line}` : ''}
+              </span>
+            </div>
+            {expanded === a.id && (
+              <div style={{ marginTop: 10, fontSize: 12, color: '#94a3b8', lineHeight: 1.7 }}>
+                {a.reject_reason && <div>Reject reason: <span style={{ color: '#e2e8f0' }}>{a.reject_reason}</span></div>}
+                {a.revert_reason && <div>Revert reason: <span style={{ color: '#f87171' }}>{a.revert_reason}</span></div>}
+                {a.commit_sha && (
+                  <div>Commit: <code style={{ ...CODE, fontSize: 10 }}>{String(a.commit_sha).slice(0, 10)}</code></div>
+                )}
+                {a.revert_commit_sha && (
+                  <div>Revert commit: <code style={{ ...CODE, fontSize: 10 }}>{String(a.revert_commit_sha).slice(0, 10)}</code></div>
+                )}
+                {a.diff_text && (
+                  <pre style={{ background: '#0a0a12', border: '1px solid rgba(255,255,255,.06)', borderRadius: 6, padding: 10, marginTop: 6, overflowX: 'auto', fontSize: 11, whiteSpace: 'pre-wrap' }}>{a.diff_text}</pre>
+                )}
+              </div>
+            )}
+          </Card>
+        ))}
+      </div>
     </>
   );
 }
@@ -1310,7 +1446,19 @@ function TransferRing({ pct, active }) {
   );
 }
 
-function PipelineView({ status }) {
+// Post-split (see SERVICE_ROLE, backend/index.js), this view's own stages
+// genuinely span both services, not just one status object read two ways:
+// - pipelineStatus: everything upstream of a post existing in the DB at all
+//   (Sources, Equalizer, Filter, Sort & Rank's in-memory globalFeedCache,
+//   and the Refetch Queue that nudges a stale source to fetch again) — all
+//   of this only ever has real data on the pipeline role now, since
+//   startContinuousWorkers/enqueueSourceRefresh are gated there.
+// - status (api): Staging → Cache (transferStagedPosts runs on api only)
+//   and Topic Filter (per-request, served live by whichever role answers
+//   the request — always api, since pipeline has no public traffic).
+// Viewed stays its own independent fetch either way (DB-backed analytics,
+// correct regardless of which service answers it).
+function PipelineView({ status, pipelineStatus }) {
   const [pageviews, setPageviews] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1319,15 +1467,20 @@ function PipelineView({ status }) {
     return () => { cancelled = true; };
   }, []);
 
-  const workers = (status?.sources?.workers || []).slice().sort((a, b) => (b.postCount || 0) - (a.postCount || 0));
+  const workers = (pipelineStatus?.sources?.workers || []).slice().sort((a, b) => (b.postCount || 0) - (a.postCount || 0));
   const healthyCount = workers.filter(w => ['healthy', 'ready', 'fallback', 'pro'].includes(w.status)).length;
-  const composition  = status?.feed?.composition || [];
-  const equalizer    = status?.equalizer;
-  const filterAgent  = status?.filterAgent;
-  const sortAgent    = status?.sortAgent;
+  const composition  = pipelineStatus?.feed?.composition || [];
+  const equalizer    = pipelineStatus?.equalizer;
+  const filterAgent  = pipelineStatus?.filterAgent;
+  const sortAgent    = pipelineStatus?.sortAgent;
+  const staging      = status?.staging;
   const topicFilterAgent = status?.topicFilterAgent;
-  const topicComposition = status?.sortRankTopicComposition || [];
-  const q            = status?.refreshQueue;
+  // Computed from globalFeedCache.posts server-side (see its own comment) —
+  // only real on the pipeline role, same as composition/sortAgent above,
+  // unlike topicFilterAgent just above (a genuinely per-request, api-role
+  // stat) — these two look like they'd share a source but don't.
+  const topicComposition = pipelineStatus?.sortRankTopicComposition || [];
+  const q            = pipelineStatus?.refreshQueue;
   const running      = !!q?.running;
   const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
 
@@ -1335,7 +1488,9 @@ function PipelineView({ status }) {
     <>
       <h1 style={H1}>Pipeline</h1>
       <p style={SUBTITLE}>
-        Every platform, live — from fetch through filtering, sorting, transfer, per-user topic narrowing, and onto the site. Moves in real time as it actually happens, nothing staged for the screenshot.
+        Every platform, live — from fetch through filtering, sorting, staging, transfer to cache, per-user topic
+        narrowing, and onto the site. Sources through Sort &amp; Rank run on the pipeline service now; Staging → Cache
+        and onward run on api. Moves in real time as it actually happens, nothing staged for the screenshot.
       </p>
 
       <Card style={{ overflowX: 'auto' }}>
@@ -1460,16 +1615,20 @@ function PipelineView({ status }) {
 
           <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} />
 
-          {/* Stage 4 — Transfer. The ring still genuinely reflects the
-              current batch (batches are mostly small self-healing refills
-              now, not one sustained sweep — see AUTO_TRANSFER_INTERVAL_MS's
-              own comment server-side), so it's honest for it to sit at 0%
-              right as a fresh tiny batch starts. What it doesn't do on its
-              own is convey that anything's actually happening overall — a
-              rolling count underneath does that regardless of whether a
-              batch happens to be running at this exact instant. */}
+          {/* Stage 4 — Refetch Queue (was labeled "Transfer" — renamed to
+              avoid colliding with the actual Staging → Cache transfer added
+              right after it, a genuinely different mechanism: this one
+              nudges a stale external source to fetch again, pipeline-side
+              only now). The ring still genuinely reflects the current batch
+              (batches are mostly small self-healing refills now, not one
+              sustained sweep — see AUTO_TRANSFER_INTERVAL_MS's own comment
+              server-side), so it's honest for it to sit at 0% right as a
+              fresh tiny batch starts. What it doesn't do on its own is
+              convey that anything's actually happening overall — a rolling
+              count underneath does that regardless of whether a batch
+              happens to be running at this exact instant. */}
           <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#38bdf8">Transfer</Label>
+            <Label color="#38bdf8">Refetch Queue</Label>
             <div style={{ margin: '14px 0' }}>
               <TransferRing pct={pct} active={running} />
             </div>
@@ -1484,7 +1643,34 @@ function PipelineView({ status }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#38bdf8', '#f472b6']} />
+          <FlowConnector colors={['#38bdf8', '#00d4aa']} />
+
+          {/* Stage 4.5 — Staging → Cache. The mechanism that actually moves
+              content to where users can see it post-split — everything
+              before this point (Sources through Refetch Queue) only ever
+              gets content as far as feed_posts_staging; this is what
+              promotes it into feed_posts_cache, the table every real
+              request actually reads from. Runs on the api role, not
+              pipeline — see staging above (status.staging, not
+              pipelineStatus). */}
+          <PipelineNode glow="#00d4aa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+            <Label color="#00d4aa">Staging → Cache</Label>
+            <div style={{
+              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(0,212,170,.28), rgba(0,212,170,.03))',
+              border: '1px solid rgba(0,212,170,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: 'glowPulse 2.4s ease-in-out infinite',
+            }}>📦</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
+              {(staging?.pendingCount ?? 0).toLocaleString()} pending
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b' }}>
+              {staging?.lastRun ? `Moved ${staging.lastCount ?? 0} · ${fmtAgo(staging.lastRun)}` : 'Not run yet'}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#00d4aa', '#f472b6']} />
 
           {/* Stage 5 — Topic Filter: the one genuinely per-user step in this
               pipeline — every stage before this is shared/global, the same
@@ -1547,8 +1733,9 @@ function PipelineView({ status }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
         <EqualizerDetailCard equalizer={equalizer} workers={workers} />
         <FilterDetailCard filterAgent={filterAgent} />
-        <SortRankDetailCard sortAgent={sortAgent} distrib={status?.sortDistributionAgent} composition={composition} />
+        <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} workers={workers} />
+        <StagingTransferDetailCard staging={staging} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <TransferByTopicCard topicComposition={topicComposition} />
         <ViewedDetailCard pageviews={pageviews} />
@@ -1792,10 +1979,12 @@ function TransferDetailCard({ q, workers = [] }) {
 
   return (
     <Card>
-      <Label color="#38bdf8">Transfer — detail</Label>
+      <Label color="#38bdf8">Refetch Queue — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Queues every source worker, then drains 4 at a time in parallel — paced deliberately so a full refresh
-        can't spike load the way firing every source at once used to.
+        Nudges a stale external source to fetch again — pipeline-side only now (see SERVICE_ROLE). Not the same
+        thing as the Staging → Cache card: this re-fetches from the outside world; that one moves already-fetched
+        posts to where users can see them. Queues every source worker, then drains 4 at a time in parallel — paced
+        deliberately so a full refresh can't spike load the way firing every source at once used to.
       </p>
 
       {running && (
@@ -1845,6 +2034,33 @@ function TransferDetailCard({ q, workers = [] }) {
         <div>Last full run took: <span style={{ color: '#94a3b8' }}>{lastFullRunS != null ? `${lastFullRunS}s` : '—'}</span></div>
         <div>Reason: <span style={{ color: '#94a3b8' }}>{q?.lastReason || '—'}</span></div>
         {q?.lastError && <div style={{ color: '#f87171' }}>⚠ {q.lastError}</div>}
+      </div>
+    </Card>
+  );
+}
+
+// The mechanism that actually moves content to where users can see it
+// post-split (see SERVICE_ROLE/transferStagedPosts server-side) — pulls
+// whatever the pipeline role has staged into feed_posts_cache every 15min.
+// Runs on the api role only; staging (the object this reads) comes from
+// that role's own /office/status response.
+function StagingTransferDetailCard({ staging }) {
+  return (
+    <Card>
+      <Label color="#38bdf8">Staging → Cache — detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Every 15 minutes, copies whatever the pipeline service has fetched since the last run out of
+        feed_posts_staging and into feed_posts_cache — the table every real user's feed is actually served from.
+        Runs on the api role, not pipeline.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="pending in staging" value={staging?.pendingCount != null ? staging.pendingCount.toLocaleString() : '—'} color="#38bdf8" />
+        <DetailStat label="last run moved" value={(staging?.lastCount ?? 0).toLocaleString()} />
+        <DetailStat label="total transferred" value={(staging?.totalTransferred ?? 0).toLocaleString()} color="#4ade80" />
+      </div>
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
+        <div>Last run: <span style={{ color: '#94a3b8' }}>{staging?.lastRun ? fmtAgo(staging.lastRun) : 'not run yet'}</span></div>
+        {staging?.lastError && <div style={{ color: '#f87171' }}>⚠ {staging.lastError}</div>}
       </div>
     </Card>
   );
@@ -2230,9 +2446,37 @@ function TopicsView() {
 
 // ─── App (root) ───────────────────────────────────────────────────────────────
 
+// Post-split (see SERVICE_ROLE, backend/index.js), api and pipeline are two
+// separate processes with two separate in-memory states — a single
+// AGENT_DEFS-keyed agents map merged from both, preferring whichever side
+// actually has real activity for a given id, so a source-fetcher id (only
+// ever real on pipeline) and an operational id (only ever real on api)
+// don't stomp on each other, and a genuinely dual-role id (crash_guard,
+// stability — both roles run these) shows whichever is more recent.
+function mergeAgentMaps(base, incoming) {
+  const merged = { ...base };
+  for (const [id, entry] of Object.entries(incoming || {})) {
+    // logAgentAction's ts is new Date().toISOString() — a string, not a
+    // number. Explicit Date parsing here (not a raw string/number `>`
+    // comparison, which silently coerces to NaN and never overwrites) is
+    // what makes "prefer whichever side has more recent real activity"
+    // actually correct, including the "existing entry has no lastAction
+    // yet" case (parses to 0, so any real incoming timestamp wins).
+    const existingTs = merged[id]?.lastAction?.ts ? new Date(merged[id].lastAction.ts).getTime() : 0;
+    const incomingTs = entry?.lastAction?.ts ? new Date(entry.lastAction.ts).getTime() : 0;
+    if (!merged[id] || incomingTs > existingTs) merged[id] = entry;
+  }
+  return merged;
+}
+
 export default function App() {
   const [view, setView] = useState('overview');
   const [status, setStatus] = useState(null);
+  // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
+  // data on the pipeline role now — SourcesView/PipelineView read this
+  // instead of `status`. Falls back to the same value as `status` when
+  // PIPELINE_API isn't configured yet (see its own comment).
+  const [pipelineStatus, setPipelineStatus] = useState(null);
   const [agents, setAgents] = useState({});
   const [log, setLog] = useState([]);
   const [deploying, setDeploying] = useState({});
@@ -2240,6 +2484,7 @@ export default function App() {
   const [versions, setVersions] = useState(null);
   const [connected, setConnected] = useState(false);
   const sseRef = useRef(null);
+  const pipelineSseRef = useRef(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -2248,10 +2493,29 @@ export default function App() {
     } catch {}
   }, []);
 
+  // Always a real fetch, even when PIPELINE_API === API (the fallback case,
+  // e.g. before uficonnect-pipeline is configured) — hitting the same URL
+  // twice on that fallback path is a trivial extra request, and avoids
+  // needing to read `status` from inside this closure (a stale-closure risk
+  // otherwise, since this callback is deliberately deps-stable for its own
+  // setInterval below).
+  const fetchPipelineStatus = useCallback(async () => {
+    try {
+      const r = await officeFetch(`${PIPELINE_API}/office/status`);
+      if (r.ok) setPipelineStatus(await r.json());
+    } catch {}
+  }, []);
+
   const fetchAgents = useCallback(async () => {
     try {
-      const r = await officeFetch(`${API}/office/agents`);
-      if (r.ok) { const d = await r.json(); setAgents(d.agents); }
+      const [apiRes, pipelineRes] = await Promise.all([
+        officeFetch(`${API}/office/agents`),
+        PIPELINE_API === API ? null : officeFetch(`${PIPELINE_API}/office/agents`).catch(() => null),
+      ]);
+      let merged = {};
+      if (apiRes?.ok) merged = { ...(await apiRes.json()).agents };
+      if (pipelineRes?.ok) merged = mergeAgentMaps(merged, (await pipelineRes.json()).agents);
+      setAgents(merged);
     } catch {}
   }, []);
 
@@ -2264,34 +2528,47 @@ export default function App() {
 
   useEffect(() => {
     fetchStatus();
+    fetchPipelineStatus();
     fetchAgents();
     fetchVersions();
     const t1 = setInterval(fetchStatus,  8000);
-    const t2 = setInterval(fetchAgents, 15000);
-    return () => { clearInterval(t1); clearInterval(t2); };
-  }, [fetchStatus, fetchAgents, fetchVersions]);
+    const t2 = setInterval(fetchPipelineStatus, 8000);
+    const t3 = setInterval(fetchAgents, 15000);
+    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
+  }, [fetchStatus, fetchPipelineStatus, fetchAgents, fetchVersions]);
 
-  // SSE: real-time agent activity pushed from backend
+  // SSE: real-time agent activity pushed from backend. Connects to both
+  // services when PIPELINE_API is actually configured as a distinct URL —
+  // each stream only ever carries that service's own activity (source
+  // fetchers exclusively on pipeline, operational agents exclusively on
+  // api, a handful like crash_guard/stability on both), and both funnel
+  // into the same log/agents state via the shared handler below so
+  // OverviewView's activity feed and Agents view show one unified picture
+  // instead of a dashboard split in two.
   useEffect(() => {
-    let retryTimeout;
-    const connect = () => {
-      const es = new EventSource(officeStreamUrl('/office/agents/stream'));
-      sseRef.current = es;
+    const timeouts = [];
+    const sources = [officeStreamUrl('/office/agents/stream')];
+    if (PIPELINE_API !== API) sources.push(officeStreamUrl('/office/agents/stream', PIPELINE_API));
+
+    function connectOne(url, ref) {
+      const es = new EventSource(url);
+      ref.current = es;
       es.onopen = () => setConnected(true);
       es.onerror = () => {
-        setConnected(false);
         es.close();
-        retryTimeout = setTimeout(connect, 4000);
+        timeouts.push(setTimeout(() => connectOne(url, ref), 4000));
       };
       es.onmessage = (evt) => {
         const data = JSON.parse(evt.data);
         if (data.backlog) {
-          setLog(data.backlog);
-          // Seed each agent's lastAction from backlog
+          // ts is an ISO string (see logAgentAction) — Date-parsed here for
+          // the same reason as mergeAgentMaps above, not compared as raw
+          // strings/numbers.
+          setLog(prev => [...data.backlog, ...prev].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime()).slice(0, 300));
           setAgents(prev => {
             const next = { ...prev };
             for (const entry of data.backlog) {
-              if (next[entry.agentId] && !next[entry.agentId].lastAction) {
+              if (!next[entry.agentId]?.lastAction || entry.ts > next[entry.agentId].lastAction.ts) {
                 next[entry.agentId] = { ...next[entry.agentId], lastAction: entry };
               }
             }
@@ -2312,22 +2589,31 @@ export default function App() {
           });
         }
       };
+    }
+    connectOne(sources[0], sseRef);
+    if (sources[1]) connectOne(sources[1], pipelineSseRef);
+    return () => {
+      timeouts.forEach(clearTimeout);
+      sseRef.current?.close();
+      pipelineSseRef.current?.close();
     };
-    connect();
-    return () => { clearTimeout(retryTimeout); sseRef.current?.close(); };
   }, []);
 
+  // Fires at both services and lets whichever one actually owns this id's
+  // trigger key handle it (the office UI has no reliable client-side way to
+  // know in advance whether a given id is a source-fetcher — pipeline-only
+  // post-split — or an operational agent — api-only — without duplicating
+  // AGENT_DEFS' own categorization here). The other side 404s harmlessly,
+  // same as an unknown id already did before this split existed.
   const triggerAgent = async (id) => {
     setTriggering(prev => ({ ...prev, [id]: true }));
-    try {
-      const r = await officeFetch(`${API}/office/agents/${id}/trigger`, { method: 'POST' });
-      // A 404 here means this id isn't a key in the backend's trigger map (or
-      // a live SOURCE_FETCHERS entry) — a silent no-op otherwise. Surface it
-      // in the console so a future button/id mismatch like this is visible
-      // to whoever's driving the dashboard, instead of just looking like the
-      // agent quietly did nothing.
-      if (!r.ok) console.error(`Trigger failed for "${id}": HTTP ${r.status}`);
-    } catch (e) { console.error(`Trigger failed for "${id}":`, e); }
+    const targets = PIPELINE_API === API ? [API] : [API, PIPELINE_API];
+    const results = await Promise.all(targets.map(base =>
+      officeFetch(`${base}/office/agents/${id}/trigger`, { method: 'POST' }).catch(() => null)
+    ));
+    if (!results.some(r => r?.ok)) {
+      console.error(`Trigger failed for "${id}": no service recognized this agent id`);
+    }
     setTimeout(() => setTriggering(prev => ({ ...prev, [id]: false })), 2000);
   };
 
@@ -2346,6 +2632,7 @@ export default function App() {
     { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
     { id: 'analytics',label: 'Analytics',    icon: '📈' },
     { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
+    { id: 'autofix',  label: 'Autofix',       icon: '🩹' },
     { id: 'versions', label: 'Versions',      icon: '≡' },
   ];
 
@@ -2438,13 +2725,21 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
-          {view === 'sources'  && <SourcesView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
-          {view === 'pipeline' && <PipelineView status={status} />}
+          {/* Source health (workerHealth/agentSourceCache) only has real
+              data on the pipeline role now — see pipelineStatus above. */}
+          {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
+          {/* Genuinely spans both roles internally now — see PipelineView's
+              own top-of-function comment for exactly which stage reads
+              from which status object (Sources/Equalizer/Filter/Sort&Rank/
+              Refetch Queue from pipelineStatus; the new Staging→Cache stage
+              and Topic Filter from status). */}
+          {view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} />}
           {view === 'topics'   && <TopicsView />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
+          {view === 'autofix'  && <AutofixView />}
           {view === 'versions' && <VersionsView versions={versions} />}
         </main>
       </div>

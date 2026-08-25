@@ -8,6 +8,10 @@ const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
 const crypto = require('crypto');
+const fs     = require('fs');
+const os     = require('os');
+const path   = require('path');
+const { execFile, fork } = require('child_process');
 const nodemailer = require('nodemailer');
 const multer = require('multer');
 const v8 = require('v8');
@@ -15,6 +19,19 @@ const db        = require('./db');
 const filestore  = require('./filestore');
 
 dotenv.config();
+
+// ─── Pipeline/api role split ────────────────────────────────────────────────
+// Same codebase runs as two separate Render services now: 'pipeline' does
+// all real external-source fetching (the ~30 continuous workers, plus
+// anything else that talks to an external API — see every
+// SERVICE_ROLE-gated call site below) and writes to feed_posts_staging;
+// 'api' serves real user traffic, never fetches externally on its own
+// anymore, and periodically transfers newly-staged rows into the live
+// feed_posts_cache (see the transfer job replacing AUTO_TRANSFER_INTERVAL_MS's
+// old body). Defaults to 'api' — the safer failure mode if this env var is
+// ever unset on a service is "don't fetch," not "silently double-fetch."
+const SERVICE_ROLE = process.env.SERVICE_ROLE === 'pipeline' ? 'pipeline' : 'api';
+const IS_PIPELINE_ROLE = SERVICE_ROLE === 'pipeline';
 
 // Same "idle until configured, never crash" pattern as every other
 // credential-gated integration in this file (USAJobs, Reddit OAuth,
@@ -26,11 +43,17 @@ const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STR
 // Prevent crashes from unhandled exceptions
 process.on('uncaughtException', (err) => {
   console.error('❌ Uncaught Exception:', err.message);
+  // recordServerError is a hoisted function declaration defined later in
+  // this file — safe to call here since nothing above actually invokes it
+  // before the module finishes loading (same forward-reference pattern
+  // already used throughout this file, e.g. isAppIdle from makeTopicCycler).
+  recordServerError(err, { route: null });
   // Don't exit - try to keep running
 });
 
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  recordServerError(reason instanceof Error ? reason : new Error(String(reason)), { route: null });
   // Don't exit - try to keep running
 });
 
@@ -190,6 +213,22 @@ const generalApiLimiter = rateLimit({
   message: { message: 'Too many requests — please slow down and try again shortly.' },
 });
 app.use(generalApiLimiter);
+
+// Tighter than generalApiLimiter specifically because this data can trigger
+// an autonomous deploy (see runAutofixCheck) — without a real per-account
+// cap here, one authenticated client looping a fake error could manufacture
+// "N distinct sessions hit the same signature" almost on its own, or just
+// burn the whole autofix audit log with noise. Keyed by user id (routes
+// using this always sit behind `authenticate`, registered first), not IP —
+// this is specifically about one account's own report volume.
+const clientErrorLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || rateLimitKey(req),
+  message: { message: 'Too many error reports from this account — please try again later.' },
+});
 
 // Holomine brain service (simulated or external via HOLOMINE_URL)
 try {
@@ -6171,7 +6210,11 @@ function addAndBroadcast(incoming) {
   });
   globalFeedCache.refreshedAt = Date.now();
   broadcastSSE(fresh);
-  if (db.isConnected()) savePostsToDB(fresh).catch(() => {});
+  // Pipeline role writes to the staging table (promoted to feed_posts_cache
+  // by the transfer job); api role keeps writing feed_posts_cache directly —
+  // relevant for the Deploy A overlap window and any api-role code path not
+  // yet gated (see SERVICE_ROLE), so a save never lands somewhere unexpected.
+  if (db.isConnected()) savePostsToDB(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache').catch(() => {});
   return fresh.length;
 }
 
@@ -6712,6 +6755,13 @@ let activePersonalFeedComputes = 0;
 // personalized layer this round," falling back to the existing DB-backed
 // supply rather than blocking the response.
 async function computePersonalizedFeedPool(userId, prefs, skills, title, organization) {
+  // Highest-priority SERVICE_ROLE gate in this file — this was live in the
+  // *default* /feed response path for every user, the one external-call
+  // surface most likely to be missed since it's reached through a cache-
+  // miss, not an obviously-named "fetch" trigger. api role always falls
+  // back to the existing DB-backed supply, exactly the same as a cooldown/
+  // capacity/timeout miss already does — no new fallback behavior needed.
+  if (!IS_PIPELINE_ROLE) return null;
   const now = Date.now();
   const last = lastPersonalFeedComputeAt.get(userId) || 0;
   if (now - last < PERSONAL_FEED_COMPUTE_COOLDOWN_MS) return null;
@@ -7184,6 +7234,93 @@ function recordEngagementSignal(userId, { source, topic, watchMs, commentsViewMs
       ).catch(e => console.warn('recordEngagementSignal:', e.message));
     }
   }
+}
+
+// ─── Autofix agent: signal capture ──────────────────────────────────────────
+// Normalizes an error message + its first real stack frame into a stable
+// signature so the same bug reported from different post IDs/users/request
+// params collapses to one row in autofix_signatures instead of looking like
+// N distinct one-off errors. Deliberately coarse (message shape + function
+// name + file), not the full raw message/stack — a raw message almost never
+// repeats verbatim across two different real occurrences of the same bug.
+function computeErrorSignature(message, stack, sourceFile) {
+  const normalizedMessage = String(message || '')
+    .replace(/'[^']*'|"[^"]*"/g, '<str>')
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>')
+    .replace(/\d+/g, '#')
+    .trim();
+  const frameMatch = String(stack || '').match(/at (\S+) \(/);
+  const frameFn = frameMatch ? frameMatch[1] : '';
+  return crypto.createHash('sha256').update(`${normalizedMessage}|${frameFn}|${sourceFile || ''}`).digest('hex').slice(0, 16);
+}
+
+// Parses "/path/to/backend/index.js:12345:6" out of the first real (non-
+// node-internal) frame of an Error's own stack — used to point autofix's
+// scope gate at a concrete source_line, and to filter out frames from
+// node_modules/node:internal before the file/line even matters.
+function parseFirstStackFrame(stack) {
+  const lines = String(stack || '').split('\n').slice(1);
+  for (const line of lines) {
+    const m = line.match(/\(?([^()\s]+):(\d+):(\d+)\)?\s*$/);
+    if (!m) continue;
+    const [, file, lineNo, colNo] = m;
+    if (file.includes('node_modules') || file.startsWith('node:internal')) continue;
+    return { file: file.split(/[\\/]/).pop(), line: Number(lineNo), col: Number(colNo) };
+  }
+  return { file: null, line: null, col: null };
+}
+
+async function upsertAutofixSignature(signature) {
+  if (!db.isConnected()) return;
+  try {
+    await db.query(
+      `INSERT INTO autofix_signatures (signature, total_reports)
+       VALUES ($1, 1)
+       ON CONFLICT (signature) DO UPDATE SET
+         total_reports = autofix_signatures.total_reports + 1,
+         last_seen_at  = NOW()`,
+      [signature]
+    );
+  } catch (e) { console.warn('upsertAutofixSignature:', e.message); }
+}
+
+// Server errors are the only signal runAutofixCheck ever targets (see its
+// own comment) — client signatures are detection/audit-only since production
+// JS is minified with no verified source-map pipeline to trust a line number
+// from. Both still feed the exact same signature registry so the office
+// dashboard shows one unified picture of "what's actually breaking."
+function recordServerError(err, { route } = {}) {
+  if (!db.isConnected() || !err) return;
+  const { file, line, col } = parseFirstStackFrame(err.stack);
+  const signature = computeErrorSignature(err.message, err.stack, file);
+  db.query(
+    `INSERT INTO server_error_events (signature, message, stack, source_file, source_line, source_col, route)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [signature, String(err.message || '').slice(0, 500), String(err.stack || '').slice(0, 2000), file, line, col, route || null]
+  ).then(() => upsertAutofixSignature(signature)).catch(e => console.warn('recordServerError:', e.message));
+}
+
+function recordClientError(userId, { message, stack, componentStack, urlPath, visitorId, appVersion } = {}) {
+  if (!db.isConnected()) return;
+  // component_stack (React's own, e.g. "in VideoSlide") is unminified even
+  // in a production build — used for the signature here in place of a real
+  // stack frame, which a minified bundle can't offer reliably.
+  const frameMatch = String(componentStack || '').match(/in (\S+)/);
+  const signature = computeErrorSignature(message, null, frameMatch ? frameMatch[1] : appVersion);
+  db.query(
+    `INSERT INTO client_error_reports (signature, message, stack, component_stack, url_path, visitor_id, user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [signature, String(message || '').slice(0, 500), String(stack || '').slice(0, 2000), String(componentStack || '').slice(0, 2000), urlPath || null, visitorId || null, userId || null]
+  ).catch(e => console.warn('recordClientError:', e.message));
+}
+
+function recordNegativeSignal(userId, { signalType, source, topic, postId, visitorId, context } = {}) {
+  if (!db.isConnected() || !signalType) return;
+  db.query(
+    `INSERT INTO negative_usage_signals (signal_type, source, topic, post_id, visitor_id, user_id, context)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [String(signalType).slice(0, 60), source || null, topic || null, postId || null, visitorId || null, userId || null, JSON.stringify(context || {})]
+  ).catch(e => console.warn('recordNegativeSignal:', e.message));
 }
 
 function feedWorkerKey(source) {
@@ -8288,6 +8425,7 @@ function installCrashGuard() {
     refreshControl.unhandledRejections += 1;
     const msg = reason?.message || String(reason);
     logAgentAction('crash_guard', '⚠️', `Unhandled rejection contained: ${msg.slice(0, 140)}`, '#FBBF24');
+    recordServerError(reason instanceof Error ? reason : new Error(msg), { route: null });
   });
 
   process.on('uncaughtException', (err) => {
@@ -8298,6 +8436,7 @@ function installCrashGuard() {
     console.error('uncaughtException:', err);
     const msg = err?.message || String(err);
     logAgentAction('crash_guard', '🚨', `Uncaught exception contained; emergency throttle active: ${msg.slice(0, 140)}`, '#F87171');
+    recordServerError(err, { route: null });
   });
 
   process.on('warning', (warning) => {
@@ -8378,7 +8517,18 @@ async function refreshDbFeedPostCount() {
     console.warn('[refreshDbFeedPostCount] query failed:', e.message);
   }
 }
+// Every caller of this (runSortDistribCheck, runFeedOptimizer,
+// runWebStorageSubAgent, POST /feed/refresh, POST /office/agents/:id/trigger,
+// POST /hq/trigger/:agentId) ultimately depends on SOURCE_FETCHERS, which is
+// only ever populated inside makeTopicCycler — itself only ever called from
+// startContinuousWorkers(), gated to IS_PIPELINE_ROLE at its one call site.
+// On the api role SOURCE_FETCHERS stays genuinely empty, so the existing
+// filter below already reduces every one of those callers to a no-op
+// without needing its own separate gate — this explicit check just makes
+// that fact obvious to a future reader instead of relying on three levels
+// of indirection to notice it.
 function enqueueSourceRefresh(ids, reason = 'manual') {
+  if (!IS_PIPELINE_ROLE) return;
   const requestedIds = (Array.isArray(ids) ? ids : [ids]).filter(id => typeof SOURCE_FETCHERS[id] === 'function');
   if (!requestedIds.length) return;
 
@@ -9792,7 +9942,20 @@ if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
 }
 // Start rolling workers immediately; warm the larger cache after the server has had
 // a moment to come online so cold starts and Office health checks stay responsive.
-startContinuousWorkers();
+// Skipped under AUTOFIX_SMOKE_TEST=1 — runBootSmokeTest only needs to prove
+// the patched file loads and /health responds, not that it also opens real
+// connections to every external source API in the ~15s the test runs for.
+// Also gated on SERVICE_ROLE now — only the pipeline role runs the
+// continuous fetchers at all; api never talks to external sources directly
+// anymore (see feed_posts_staging + transferStagedPosts above).
+if (process.env.AUTOFIX_SMOKE_TEST !== '1' && IS_PIPELINE_ROLE) {
+  startContinuousWorkers();
+  // Remotive/Muse — category-taxonomy sources that don't fit
+  // startContinuousWorkers' own FEED_TOPICS-keyed SOURCES array (see
+  // startJobBoardSweeps' own comment), so they're started separately here,
+  // same pipeline-only gate.
+  startJobBoardSweeps();
+}
 
 // Pre-seed agentSourceCache with curated posts so office cards and health status
 // reflect real content immediately — workers accumulate live posts on top over time.
@@ -9800,7 +9963,11 @@ setImmediate(() => {
   // Live workers populate source caches.
 });
 
-if (process.env.STARTUP_FULL_FEED_WARMUP === '1') {
+// Code-level gate on top of the env var — never set STARTUP_FULL_FEED_WARMUP=1
+// on the api service, but env-var hygiene alone is fragile across service
+// configs, and refreshGlobalFeedCache calls fetchAllTopicPosts directly
+// (real external calls), so this stays belt-and-suspenders.
+if (process.env.STARTUP_FULL_FEED_WARMUP === '1' && IS_PIPELINE_ROLE) {
   setTimeout(() => {
     refreshGlobalFeedCache()
       .then(() => realFeedPosts(globalFeedCache.posts).forEach(p => p?.id && seenPostIds.add(p.id)))
@@ -9817,6 +9984,13 @@ setTimeout(runDataCheck,      25000);
 setTimeout(runDeployCheckAll, 30000);
 setTimeout(runWebsiteOptimizerCheck, 35000);
 setTimeout(runWebStorageSubAgent,    45000);
+// User explicitly confirmed running this unattended (see AskUserQuestion in
+// the session this was built) after the auto-mode classifier initially
+// blocked wiring it into the automatic schedule. AUTOFIX_ENABLED still
+// defaults to false regardless — this only starts the DETECTION loop
+// running on its own; fix generation through deploy/revert stay gated by
+// that separate flag, off until explicitly turned on.
+setTimeout(runAutofixCheck,          50000);
 
 // Frequent intervals — each function now logs 2 entries per run (staggered internally)
 setInterval(runSecurityScan,   2.5 * 60 * 1000); // every 2.5 min
@@ -9828,6 +10002,7 @@ setInterval(runDataCheck,        4 * 60 * 1000); // every 4 min
 setInterval(runDeployCheckAll,   5 * 60 * 1000); // every 5 min (pings all 3 services)
 setInterval(runWebsiteOptimizerCheck, WEB_OPTIMIZER_INTERVAL_MS);
 setInterval(runWebStorageSubAgent,    WEB_STORAGE_INTERVAL_MS);
+setInterval(runAutofixCheck,          AUTOFIX_CHECK_INTERVAL_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
@@ -11454,6 +11629,41 @@ async function migrateDB() {
     // location); never inferred or guessed for sources that don't have it.
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
 
+    // ─── Pipeline/staging split (SERVICE_ROLE) ────────────────────────────
+    // Exact schema clone of feed_posts_cache above, not a status flag on
+    // that same table — dozens of raw SQL queries elsewhere in this file
+    // (getCursorFeedPage, getBalancedFeedPosts, getPostsFromDB, ...) already
+    // read feed_posts_cache directly; a shared-table-plus-flag design would
+    // need every one of those retrofitted with a new WHERE clause, and one
+    // missed call site would leak unvetted content straight to real users.
+    // A separate table means none of that existing serving code needs to
+    // change at all. Written to only by SERVICE_ROLE=pipeline
+    // (savePostsToDB/savePostsToDBFast's targetTable param); read only by
+    // the transfer job below, which copies promoted rows into
+    // feed_posts_cache proper.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS feed_posts_staging (
+        id              TEXT PRIMARY KEY,
+        source          TEXT NOT NULL,
+        title           TEXT,
+        content         TEXT,
+        author_name     TEXT,
+        source_url      TEXT,
+        media_url       TEXT,
+        media_type      TEXT,
+        topic           TEXT,
+        likes_count     INTEGER DEFAULT 0,
+        comments_count  INTEGER DEFAULT 0,
+        post_created_at TIMESTAMPTZ,
+        fetched_at      TIMESTAMPTZ DEFAULT NOW(),
+        location        TEXT
+      )
+    `);
+    // fetched_at is what the transfer job's own cursor filters on
+    // (WHERE fetched_at > $lastTransferCursor) — this is the one index this
+    // table actually needs for its one real access pattern.
+    await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
+
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
     await db.query(`
       CREATE TABLE IF NOT EXISTS website_optimization_runs (
@@ -11486,6 +11696,106 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_created_idx ON page_views(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_path_idx    ON page_views(path)`);
+
+    // ─── Autofix agent tables ──────────────────────────────────────────────
+    // Raw client-side error reports (React error boundary + window.onerror/
+    // unhandledrejection). Detection/audit only — no verified source-map
+    // pipeline exists to map a minified prod stack back to a real source
+    // line, so client signatures never become autofix-eligible (see
+    // runAutofixCheck below, which only ever reads server_error_events).
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS client_error_reports (
+        id              BIGSERIAL PRIMARY KEY,
+        signature       TEXT NOT NULL,
+        message         TEXT,
+        stack           TEXT,
+        component_stack TEXT,
+        url_path        TEXT,
+        visitor_id      TEXT,
+        user_id         TEXT,
+        created_at      TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS cer_sig_time_idx ON client_error_reports(signature, created_at DESC)`);
+
+    // Raw server-side error events — what runAutofixCheck actually targets.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS server_error_events (
+        id           BIGSERIAL PRIMARY KEY,
+        signature    TEXT NOT NULL,
+        message      TEXT,
+        stack        TEXT,
+        source_file  TEXT,
+        source_line  INTEGER,
+        source_col   INTEGER,
+        route        TEXT,
+        visitor_id   TEXT,
+        user_id      TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS see_sig_time_idx ON server_error_events(signature, created_at DESC)`);
+
+    // Negative usage signals — the inverse of reportEngaged/seen_posts.
+    // engaged_at (see markPostsEngaged): a failure or an abandoned action,
+    // which today generates no signal at all (indistinguishable from "wasn't
+    // interested").
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS negative_usage_signals (
+        id          BIGSERIAL PRIMARY KEY,
+        signal_type TEXT NOT NULL,
+        source      TEXT,
+        topic       TEXT,
+        post_id     TEXT,
+        visitor_id  TEXT,
+        user_id     TEXT,
+        context     JSONB DEFAULT '{}',
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS nus_type_time_idx ON negative_usage_signals(signal_type, created_at DESC)`);
+
+    // One row per unique bug signature — the "have we seen/fixed/
+    // blacklisted this already" registry runAutofixCheck consults so the
+    // same bug isn't re-attempted every cycle.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS autofix_signatures (
+        signature         TEXT PRIMARY KEY,
+        first_seen_at     TIMESTAMPTZ DEFAULT NOW(),
+        last_seen_at      TIMESTAMPTZ DEFAULT NOW(),
+        total_reports     INTEGER DEFAULT 0,
+        distinct_sessions INTEGER DEFAULT 0,
+        status            TEXT DEFAULT 'new',
+        last_attempt_id   BIGINT
+      )
+    `);
+
+    // Full audit trail of every autofix attempt, detection through deploy/
+    // verify/revert — durable so it survives a restart, unlike
+    // agentActionLog's 120-entry in-memory ring buffer.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS bugfix_attempts (
+        id                BIGSERIAL PRIMARY KEY,
+        signature         TEXT NOT NULL REFERENCES autofix_signatures(signature),
+        detected_at       TIMESTAMPTZ DEFAULT NOW(),
+        session_count     INTEGER,
+        source_file       TEXT,
+        source_line       INTEGER,
+        fix_category      TEXT,
+        diff_text         TEXT,
+        previous_blob_sha TEXT,
+        new_blob_sha      TEXT,
+        commit_sha        TEXT,
+        status            TEXT DEFAULT 'detected',
+        reject_reason     TEXT,
+        deployed_at       TIMESTAMPTZ,
+        verified_at       TIMESTAMPTZ,
+        reverted_at       TIMESTAMPTZ,
+        revert_reason     TEXT,
+        revert_commit_sha TEXT
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS bfa_sig_idx ON bugfix_attempts(signature, detected_at DESC)`);
 
     const { rows } = await db.query('SELECT COUNT(*) FROM users');
     console.log(`✅ DB migration applied — ${rows[0].count} registered user(s) in DB`);
@@ -11603,14 +11913,19 @@ function trimFeedPostsCache() {
   ).catch(() => {});
 }
 
-async function savePostsToDB(posts) {
+// targetTable defaults to the live production table (today's behavior,
+// unchanged for the api role) — SERVICE_ROLE=pipeline callers pass
+// 'feed_posts_staging' instead. Always one of these two hardcoded internal
+// constants, never request input, so safe to interpolate directly into the
+// query text (a table name can't be a $N placeholder).
+async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
   for (const rawPost of realFeedPosts(posts)) {
     const p = normalizeFeedPost(rawPost);
     try {
       await db.query(
-        `INSERT INTO feed_posts_cache
+        `INSERT INTO ${targetTable}
            (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
          ON CONFLICT (id) DO UPDATE SET
@@ -11648,7 +11963,8 @@ async function savePostsToDB(posts) {
   return saved;
 }
 
-async function savePostsToDBFast(posts) {
+// Same targetTable convention as savePostsToDB above.
+async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
   if (!db.isConnected() || !posts.length) return 0;
   const clean = (value, max = null) => {
     const text = (value ?? '').toString()
@@ -11699,7 +12015,7 @@ async function savePostsToDBFast(posts) {
          location TEXT
        )
      )
-     INSERT INTO feed_posts_cache
+     INSERT INTO ${targetTable}
        (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
      SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location
      FROM incoming
@@ -13702,7 +14018,8 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
 // Shared by /feed (legacy — used by the mobile app) and /office/feed (web feed
 // tab): posts only ever come from what the office source-agent pipeline has
 // already fetched into globalFeedCache/agentSourceCache/DB — no per-request
-// live external fetch. See shouldFetchLive below.
+// live external fetch (the one sanctioned exception, computePersonalizedFeedPool,
+// is gated to the pipeline role only — see SERVICE_ROLE).
 async function handleFeedRequest(req, res) {
   try {
   // Manual refresh clears only *this* user's own personalized snapshot —
@@ -14387,19 +14704,13 @@ async function handleFeedRequest(req, res) {
 
   // Posts always come from the office source-agent pipeline (globalFeedCache /
   // agentSourceCache / DB) — no per-request live external fetch. Use
-  // ?bust=1 (above) to nudge the agents to refresh sooner instead.
-  const shouldFetchLive = false;
-  const liveResult = shouldFetchLive
-    ? await Promise.race([
-        fetchAllTopicPosts(
-          prefs.interests || [], prefs.role || '',
-          user?.skills || [], prefs.goals || [],
-          user?.title || '', user?.organization || '',
-          sourceFilter
-        ).catch(e => { console.warn('fetchAllTopicPosts error:', e.message); return emptyLiveResult; }),
-        new Promise((resolve) => setTimeout(() => resolve(emptyLiveResult), 4500)),
-      ])
-    : emptyLiveResult;
+  // ?bust=1 (above) to nudge the agents to refresh sooner instead. Used to
+  // be a shouldFetchLive=false flag gating a real fetchAllTopicPosts call —
+  // removed outright (not just left hardcoded off) so a future change can't
+  // silently flip it back on and reintroduce a live external-call surface
+  // on the api role (see SERVICE_ROLE — computePersonalizedFeedPool is the
+  // one sanctioned per-user live-fetch path now, and it's already gated).
+  const liveResult = emptyLiveResult;
 
   // ── Connected social tabs (Twitter, LinkedIn, Instagram, Facebook) ──────────
   if (sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter)) {
@@ -14480,7 +14791,7 @@ async function handleFeedRequest(req, res) {
       hasMore: rotated.length > 0,
       totalAvailable: rotated.length,
       refresh: {
-        live: shouldFetchLive,
+        live: false,
         liveCount: 0,
         cacheRefreshedAt: globalFeedCache.refreshedAt || null,
       },
@@ -14505,7 +14816,7 @@ async function handleFeedRequest(req, res) {
       hasMore: rotated.length > 0,
       totalAvailable: rotated.length,
       refresh: {
-        live: shouldFetchLive,
+        live: false,
         liveCount: 0,
         cacheRefreshedAt: globalFeedCache.refreshedAt || null,
       },
@@ -14532,15 +14843,17 @@ async function handleFeedRequest(req, res) {
     ...arsRaw, ...wiredRaw, ...regRaw, ...vbRaw, ...smashingRaw, ...phoronixRaw, ...infoqRaw, ...mittrRaw,
     ...gitlabRaw, ...remoteokRaw, ...ycRaw, ...crunchbaseRaw, ...behanceRaw, ...designwebRaw,
   ]);
-  const liveFreshCount = shouldFetchLive && allLive.length ? addAndBroadcast(allLive) : 0;
+  // allLive is always [] now (liveResult is hardcoded to emptyLiveResult
+  // above), so this was already unconditionally 0 even before shouldFetchLive
+  // was removed — written directly instead of a dead addAndBroadcast(allLive)
+  // call that could never actually run.
+  const liveFreshCount = 0;
 
-  // Fetch live posts from all joined Reddit groups only for explicit live requests.
-  const joinedRedditGroups = groups.filter(g => joined.has(g.id) && g.subreddit);
-  const joinedGroupPostsRaw = shouldFetchLive
-    ? (await Promise.all(
-        joinedRedditGroups.map(g => fetchRedditByKeyword(g.subreddit).catch(() => []))
-      )).flat()
-    : [];
+  // Used to live-fetch every joined Reddit group's subreddit on each
+  // request when shouldFetchLive was true — dead since that flag was
+  // hardcoded false, removed outright rather than left as an unreachable
+  // fetchRedditByKeyword call.
+  const joinedGroupPostsRaw = [];
   const joinedGroupPostsReal = realFeedPosts(joinedGroupPostsRaw);
 
   const redditPosts    = redditRaw.map(p => mapExternalPost(p, 'reddit'));
@@ -14754,7 +15067,7 @@ async function handleFeedRequest(req, res) {
     internal:     internal.length,
   };
   const refreshMeta = {
-    live: shouldFetchLive,
+    live: false,
     liveCount: allLive.length,
     freshCount: liveFreshCount,
     cacheRefreshedAt: globalFeedCache.refreshedAt || null,
@@ -15208,6 +15521,37 @@ app.post('/posts/engagement-signal', authenticate, (req, res) => {
     watchMs: Number.isFinite(watchMs) ? watchMs : 0,
     commentsViewMs: Number.isFinite(commentsViewMs) ? commentsViewMs : 0,
     linkClick: !!linkClick,
+  });
+  res.status(204).end();
+});
+
+// Client-side error/negative-signal ingestion for the autofix agent (see
+// recordClientError/recordNegativeSignal, and runAutofixCheck which reads
+// the aggregated autofix_signatures registry these feed). Same fire-and-
+// forget 204 shape as /posts/engagement-signal above; every free-text field
+// truncated the same way that endpoint already does.
+app.post('/client-error', authenticate, clientErrorLimiter, (req, res) => {
+  const { message, stack, componentStack, urlPath, visitorId, appVersion } = req.body || {};
+  recordClientError(req.user.id, {
+    message: typeof message === 'string' ? message.slice(0, 500) : null,
+    stack: typeof stack === 'string' ? stack.slice(0, 2000) : null,
+    componentStack: typeof componentStack === 'string' ? componentStack.slice(0, 2000) : null,
+    urlPath: typeof urlPath === 'string' ? urlPath.slice(0, 300) : null,
+    visitorId: typeof visitorId === 'string' ? visitorId.slice(0, 100) : null,
+    appVersion: typeof appVersion === 'string' ? appVersion.slice(0, 40) : null,
+  });
+  res.status(204).end();
+});
+
+app.post('/negative-signal', authenticate, clientErrorLimiter, (req, res) => {
+  const { signalType, source, topic, postId, visitorId, context } = req.body || {};
+  recordNegativeSignal(req.user.id, {
+    signalType: typeof signalType === 'string' ? signalType.slice(0, 60) : null,
+    source: typeof source === 'string' ? source.slice(0, 40) : null,
+    topic: typeof topic === 'string' ? topic.slice(0, 80) : null,
+    postId: typeof postId === 'string' ? postId.slice(0, 120) : null,
+    visitorId: typeof visitorId === 'string' ? visitorId.slice(0, 100) : null,
+    context: context && typeof context === 'object' ? context : {},
   });
   res.status(204).end();
 });
@@ -16030,6 +16374,14 @@ const AGENT_DEFS = {
     name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8',
     description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, and Facebook require.',
   },
+  remotive: {
+    name: 'Remotive Agent', emoji: '🛰️', color: '#00A876', interval: '20s, category sweep',
+    description: 'Sweeps Remotive’s own job categories (not a keyword search — see ROLE_TO_REMOTIVE) on a dedicated timer, one category per tick. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
+  },
+  muse: {
+    name: 'The Muse Agent', emoji: '🎭', color: '#8A2BE2', interval: '20s, category+level sweep',
+    description: 'Sweeps every The Muse category/experience-level pair (ROLE_TO_MUSE × MUSE_LEVELS) on a dedicated timer. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
+  },
   optimizer: {
     name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '5min',
     description: 'Monitors all source workers every 5 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources while respecting stability throttle mode.',
@@ -16150,6 +16502,10 @@ const AGENT_DEFS = {
   sort_optimizer: {
     name: 'Sort Optimizer Agent', emoji: '🧭', color: '#A78BFA', interval: '7min',
     description: 'Samples the live feed cache every 7 minutes to verify ranked order is actually distinct from chronological order and that rank scores have real spread, catching a degenerated ranking algorithm Sort Agent alone would miss.',
+  },
+  autofix: {
+    name: 'Autofix Agent', emoji: '🩹', color: '#F472B6', interval: '10min',
+    description: 'Groups server errors by signature; once the same bug clears a distinct-session threshold, a narrow null-guard fix category is checked against a hard scope/denylist gate, syntax- and boot-smoke-tested, then committed via GitHub — with an automatic revert if health regresses afterward. Detection always runs; committing anything requires AUTOFIX_ENABLED=true, off by default.',
   },
 };
 
@@ -16282,12 +16638,441 @@ function getRuntimeHealthForAgent(id) {
       lastSuccess: lastLogForAgent(id)?.ts || null,
     };
   }
+  if (id === 'autofix') {
+    return {
+      status: !autofixState.enabled ? 'disabled' : autofixState.lastError ? 'degraded' : 'healthy',
+      enabled: autofixState.enabled,
+      totalAttempts: autofixState.totalAttempts,
+      totalDeploys: autofixState.totalDeploys,
+      totalReverts: autofixState.totalReverts,
+      lastRun: autofixState.lastRun,
+      lastError: autofixState.lastError,
+    };
+  }
   return {
     status: 'healthy',
     fetchCount: agentActionLog.filter(e => e.agentId === id).length,
     totalErrors: 0,
     lastSuccess: lastLogForAgent(id)?.ts || null,
   };
+}
+
+// ─── Autofix agent ───────────────────────────────────────────────────────────
+// Detects a recurring server error, mechanically generates a narrow fix,
+// validates it, and — only when AUTOFIX_ENABLED=true — commits it via
+// GitHub's Contents API, letting Render's existing auto-deploy-on-push ship
+// it, then watches health and reverts automatically if anything regresses.
+// Detection and logging always run regardless of the switch; only fix
+// generation through deploy/revert are gated by it. See the plan this was
+// built from (autofix agent design) for the full reasoning — the short
+// version: this is deliberately narrow (one fix category, one file, hard
+// rate limits, mandatory revert-on-regression) because "no human review" is
+// only defensible with real safety engineering under it, not despite
+// skipping it.
+const autofixState = {
+  enabled: process.env.AUTOFIX_ENABLED === 'true', // fails CLOSED — inverse of requireOfficeToken's fail-open default; unset means off
+  lastRun: null,
+  lastError: null,
+  totalAttempts: 0,
+  totalDeploys: 0,
+  totalReverts: 0,
+};
+const AUTOFIX_MIN_DISTINCT_SESSIONS = envNumber('AUTOFIX_MIN_DISTINCT_SESSIONS', 5, 2, 1000);
+const AUTOFIX_WINDOW_MS = envNumber('AUTOFIX_WINDOW_MS', 6 * 60 * 60 * 1000, 10 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
+const AUTOFIX_MAX_PER_DAY = envNumber('AUTOFIX_MAX_PER_DAY', 1, 0, 10);
+const AUTOFIX_MAX_PER_WEEK = envNumber('AUTOFIX_MAX_PER_WEEK', 3, 0, 30);
+const AUTOFIX_VERIFY_WINDOW_MS = envNumber('AUTOFIX_VERIFY_WINDOW_MS', 15 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const AUTOFIX_CHECK_INTERVAL_MS = envNumber('AUTOFIX_CHECK_INTERVAL_MS', 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const AUTOFIX_GITHUB_OWNER = process.env.AUTOFIX_GITHUB_OWNER || 'yosufkaka99-alt';
+const AUTOFIX_GITHUB_REPO = process.env.AUTOFIX_GITHUB_REPO || 'UFConnect';
+// Sole v1-allowlisted file — the scope gate below rejects anything whose
+// source_file doesn't match this before a patch is even attempted.
+const AUTOFIX_TARGET_PATH = 'backend/index.js';
+
+// Deliberately over-broad — a false rejection just falls back to
+// flagged_only for a human to look at later; under-blocking is the real
+// risk given this can autonomously ship to production. Checked against the
+// exact line being changed, case-sensitive substring match.
+const AUTOFIX_DENYLIST = [
+  'jwt', 'jsonwebtoken', 'bcrypt', 'authenticate(', 'requireOfficeToken',
+  'password_hash', 'stripe', 'STRIPE_', 'CREATE TABLE', 'ALTER TABLE',
+  'migrateDB', 'DROP', 'CIRCUIT_EMPTY_CYCLES', 'CIRCUIT_PAUSE_MS',
+  'rateLimit(', 'refreshControl.mode', 'AGENT_DEFS', 'RENDER_',
+  'triggerRenderServiceDeploy', "logAgentAction('deploy'", 'AUTOFIX_',
+];
+function autofixDenylistHit(text) {
+  return AUTOFIX_DENYLIST.find(term => text.includes(term)) || null;
+}
+
+function githubApiRequest(pathAndQuery, method, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const request = https.request({
+      hostname: 'api.github.com',
+      path: pathAndQuery,
+      method,
+      headers: {
+        'Authorization': `Bearer ${process.env.AUTOFIX_GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'UFconnect-Autofix/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+      },
+    }, (response) => {
+      let raw = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { raw += chunk; });
+      response.on('end', () => {
+        let data = raw;
+        try { data = raw ? JSON.parse(raw) : null; } catch {}
+        resolve({ statusCode: response.statusCode || 0, data });
+      });
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('GitHub API request timed out')));
+    request.on('error', reject);
+    if (payload) request.write(payload);
+    request.end();
+  });
+}
+
+async function getGitHubFileContent(filePath) {
+  const { statusCode, data } = await githubApiRequest(
+    `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/contents/${encodeURIComponent(filePath)}?ref=main`,
+    'GET'
+  );
+  if (statusCode !== 200 || !data?.content) throw new Error(`GitHub GET ${filePath} failed: HTTP ${statusCode}`);
+  return { content: Buffer.from(data.content, 'base64').toString('utf8'), sha: data.sha };
+}
+
+// Not shelling out to local git — no confirmed evidence the running Render
+// process has a writable checkout or push-scoped credentials, whereas the
+// Contents API only needs this one HTTPS call. Deliberately uses a SEPARATE
+// token (AUTOFIX_GITHUB_TOKEN) from the existing read-only GITHUB_TOKEN
+// used elsewhere in this file, scoped to contents:write on this one repo
+// only, so the broader read-only integration never gains write power.
+async function commitFileToGitHub(filePath, newContent, message, expectedSha) {
+  const { statusCode, data } = await githubApiRequest(
+    `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/contents/${encodeURIComponent(filePath)}`,
+    'PUT',
+    { message, content: Buffer.from(newContent, 'utf8').toString('base64'), sha: expectedSha, branch: 'main' }
+  );
+  if (statusCode < 200 || statusCode >= 300) throw new Error(`GitHub PUT ${filePath} failed: HTTP ${statusCode} ${JSON.stringify(data).slice(0, 300)}`);
+  return { newSha: data.content?.sha, commitSha: data.commit?.sha };
+}
+
+// The only fix category in v1. Deliberately narrower than "insert a new if
+// guard mirroring a sibling pattern" (the original design sketch) — this
+// just wraps the exact failing property/method-access chain the crash's own
+// stack trace pointed at in optional chaining (foo.bar.baz -> foo?.bar?.baz),
+// which never changes control flow, never adds a new statement, and can't
+// introduce a bracket-matching/scope bug the way inserting a fresh `if`
+// block could. Returns null (not eligible — falls back to flagged_only)
+// rather than guessing whenever the line doesn't cleanly match a plain
+// chain, it's already optional-chained, or it looks like an assignment
+// target.
+function attemptNullGuardPatch(fileContent, sourceLine, message) {
+  if (!/Cannot read propert(y|ies) of (undefined|null)|is not a function/.test(message || '')) return null;
+  const lines = fileContent.split('\n');
+  const idx = sourceLine - 1;
+  if (idx < 0 || idx >= lines.length) return null;
+  const original = lines[idx];
+  if (autofixDenylistHit(original)) return null;
+  const chainMatch = original.match(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[[^\[\]]+\])+/);
+  if (!chainMatch) return null;
+  const chain = chainMatch[0];
+  const before = original.slice(0, chainMatch.index);
+  if (chain.includes('?.') || /=(?!=)\s*$/.test(before)) return null;
+  const guarded = chain.replace(/\.(?=[A-Za-z_$])/g, '?.').replace(/\[(?=[^\[\]]+\])/g, '?.[');
+  if (guarded === chain) return null;
+  const newLine = original.slice(0, chainMatch.index) + guarded + original.slice(chainMatch.index + chain.length);
+  if (newLine === original) return null;
+  const diffText = `--- a/${AUTOFIX_TARGET_PATH}\n+++ b/${AUTOFIX_TARGET_PATH}\n@@ line ${sourceLine} @@\n-${original}\n+${newLine}`;
+  return { lineIndex: idx, original, patched: newLine, diffText };
+}
+
+function runNodeCheckOnContent(content) {
+  return new Promise((resolve) => {
+    const tmpFile = path.join(os.tmpdir(), `autofix-check-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.js`);
+    fs.writeFileSync(tmpFile, content);
+    execFile(process.execPath, ['--check', tmpFile], { timeout: 15000 }, (err) => {
+      fs.unlink(tmpFile, () => {});
+      resolve(!err);
+    });
+  });
+}
+
+// No test suite exists in this repo — node --check alone doesn't catch a
+// load-time ReferenceError or a patch that silently breaks startup. Forks
+// the patched file as a real child process (empty DATABASE_URL — same
+// in-memory fallback mode this session's own local load test already
+// confirmed works — and AUTOFIX_SMOKE_TEST=1 to also skip starting the ~30
+// background source workers, since this only needs to prove the file loads
+// and /health responds, not that it also opens real external connections)
+// and waits up to 15s for a real 200 from /health before killing it.
+async function runBootSmokeTest(content) {
+  const tmpFile = path.join(os.tmpdir(), `autofix-boot-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.js`);
+  fs.writeFileSync(tmpFile, content);
+  const port = 20000 + Math.floor(Math.random() * 10000);
+  return new Promise((resolve) => {
+    let settled = false;
+    let child;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      try { child?.kill(); } catch {}
+      fs.unlink(tmpFile, () => {});
+      resolve(ok);
+    };
+    try {
+      child = fork(tmpFile, [], {
+        cwd: path.dirname(__filename),
+        env: {
+          ...process.env,
+          DATABASE_URL: '', DATABASE_URL_BACKUP: '',
+          PORT: String(port),
+          JWT_SECRET: 'autofix-smoke-test-secret',
+          AUTOFIX_ENABLED: 'false',
+          AUTOFIX_SMOKE_TEST: '1',
+          STARTUP_FULL_FEED_WARMUP: '',
+        },
+        stdio: 'ignore',
+        silent: true,
+      });
+    } catch { return finish(false); }
+    child.on('error', () => finish(false));
+    child.on('exit', () => finish(false));
+    const deadline = Date.now() + 15000;
+    (function poll() {
+      if (settled) return;
+      if (Date.now() > deadline) return finish(false);
+      const req = http.get({ hostname: '127.0.0.1', port, path: '/health', timeout: 2000 }, (res) => {
+        if (res.statusCode === 200) finish(true);
+        else setTimeout(poll, 1000);
+        res.resume();
+      });
+      req.on('error', () => setTimeout(poll, 1000));
+      req.on('timeout', () => { req.destroy(); setTimeout(poll, 1000); });
+    })();
+  });
+}
+
+async function recordAutofixAttempt(fields) {
+  if (!db.isConnected()) return null;
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO bugfix_attempts (signature, session_count, source_file, source_line, fix_category, diff_text, status, reject_reason)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [fields.signature, fields.sessionCount, fields.sourceFile, fields.sourceLine, fields.fixCategory, fields.diffText || null, fields.status, fields.rejectReason || null]
+    );
+    await db.query(`UPDATE autofix_signatures SET status = $2, last_attempt_id = $3 WHERE signature = $1`,
+      [fields.signature, fields.signatureStatus, rows[0].id]);
+    return rows[0].id;
+  } catch (e) { console.warn('recordAutofixAttempt:', e.message); return null; }
+}
+
+async function runAutofixCheck() {
+  if (!db.isConnected()) return;
+  autofixState.lastRun = new Date().toISOString();
+  try {
+    // ── Detection: group unresolved server errors by signature over the
+    // rolling window, requiring real distinct-session breadth (anonymous
+    // rows excluded from the count so one flaky IP can't look like many
+    // users), skipping anything already attempted/fixed/blacklisted.
+    const { rows: candidates } = await db.query(
+      `SELECT see.signature,
+              COUNT(DISTINCT COALESCE(see.visitor_id, see.user_id)) AS distinct_sessions,
+              (ARRAY_AGG(see.message ORDER BY see.created_at DESC))[1] AS message,
+              (ARRAY_AGG(see.source_file ORDER BY see.created_at DESC))[1] AS source_file,
+              (ARRAY_AGG(see.source_line ORDER BY see.created_at DESC))[1] AS source_line
+       FROM server_error_events see
+       LEFT JOIN autofix_signatures afs ON afs.signature = see.signature
+       WHERE see.created_at >= NOW() - INTERVAL '${AUTOFIX_WINDOW_MS / 1000} seconds'
+         AND (afs.status IS NULL OR afs.status NOT IN ('attempted', 'fixed', 'blacklisted'))
+       GROUP BY see.signature
+       HAVING COUNT(DISTINCT COALESCE(see.visitor_id, see.user_id)) >= $1`,
+      [AUTOFIX_MIN_DISTINCT_SESSIONS]
+    );
+
+    for (const c of candidates) {
+      autofixState.totalAttempts += 1;
+      const base = { signature: c.signature, sessionCount: Number(c.distinct_sessions), sourceFile: c.source_file, sourceLine: c.source_line, fixCategory: 'null_guard' };
+
+      // ── Scope gate: file allowlist first (cheapest check).
+      if (c.source_file !== 'index.js') {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: `source file "${c.source_file}" not in v1 allowlist (backend/index.js only)` });
+        logAgentAction('autofix', '🚩', `Flagged (out of scope): ${c.signature} in ${c.source_file} — ${c.distinct_sessions} sessions`, '#FBBF24');
+        continue;
+      }
+      if (!c.source_line) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: 'no source line captured' });
+        continue;
+      }
+
+      // ── Rate limits, checked before any fix-generation work.
+      const { rows: rateRows } = await db.query(
+        `SELECT COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '1 day')  AS today,
+                COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '7 days') AS this_week
+         FROM bugfix_attempts WHERE status IN ('verified', 'verifying', 'deploying')`
+      );
+      if (Number(rateRows[0].today) >= AUTOFIX_MAX_PER_DAY || Number(rateRows[0].this_week) >= AUTOFIX_MAX_PER_WEEK) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: 'daily/weekly autofix deploy cap reached' });
+        logAgentAction('autofix', '🚩', `Flagged (rate cap): ${c.signature} — ${c.distinct_sessions} sessions`, '#FBBF24');
+        continue;
+      }
+
+      // ── Fix generation: fetch the CURRENT live file from GitHub (not a
+      // local copy — this process's own on-disk file may already differ
+      // from what's actually deployed) and attempt the one v1 category.
+      if (!autofixState.enabled || !process.env.AUTOFIX_GITHUB_TOKEN) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: autofixState.enabled ? 'AUTOFIX_GITHUB_TOKEN not configured' : 'autofix disabled' });
+        logAgentAction('autofix', '🚩', `Flagged (autofix off): ${c.signature} — ${c.distinct_sessions} sessions, would target index.js:${c.source_line}`, '#94A3B8');
+        continue;
+      }
+
+      let liveFile;
+      try { liveFile = await getGitHubFileContent(AUTOFIX_TARGET_PATH); }
+      catch (e) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: `GitHub fetch failed: ${e.message}` });
+        continue;
+      }
+
+      const patch = attemptNullGuardPatch(liveFile.content, c.source_line, c.message);
+      if (!patch) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: 'no eligible null_guard pattern at this line' });
+        continue;
+      }
+      if (autofixDenylistHit(patch.original) || autofixDenylistHit(patch.patched)) {
+        await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', diffText: patch.diffText, rejectReason: 'denylist match' });
+        logAgentAction('autofix', '🚩', `Flagged (denylist): ${c.signature}`, '#FBBF24');
+        continue;
+      }
+
+      const attemptId = await recordAutofixAttempt({ ...base, status: 'detected', signatureStatus: 'attempted', diffText: patch.diffText });
+      logAgentAction('autofix', '🔍', `Candidate: ${c.signature} — ${c.distinct_sessions} sessions, index.js:${c.source_line}`, '#F472B6');
+
+      // ── Validation gate: both required.
+      const newContent = liveFile.content.split('\n').map((l, i) => i === patch.lineIndex ? patch.patched : l).join('\n');
+      const syntaxOk = await runNodeCheckOnContent(newContent);
+      if (!syntaxOk) {
+        await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason='node --check failed' WHERE id=$1`, [attemptId]).catch(() => {});
+        await db.query(`UPDATE autofix_signatures SET status='flagged_only' WHERE signature=$1`, [c.signature]).catch(() => {});
+        logAgentAction('autofix', '🚩', `Rejected (syntax): ${c.signature}`, '#F87171');
+        continue;
+      }
+      const bootOk = await runBootSmokeTest(newContent);
+      if (!bootOk) {
+        await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason='boot smoke test failed' WHERE id=$1`, [attemptId]).catch(() => {});
+        await db.query(`UPDATE autofix_signatures SET status='flagged_only' WHERE signature=$1`, [c.signature]).catch(() => {});
+        logAgentAction('autofix', '🚩', `Rejected (boot smoke test): ${c.signature}`, '#F87171');
+        continue;
+      }
+
+      // ── Deploy: commit via GitHub Contents API, Render auto-deploys on
+      // push. Baseline captured immediately before the commit for the
+      // verify step below.
+      const baseline = {
+        crashEvents: refreshControl.crashEvents,
+        unhandledRejections: refreshControl.unhandledRejections,
+      };
+      const { rows: baseRateRows } = await db.query(
+        `SELECT COUNT(*) FROM server_error_events WHERE created_at >= NOW() - INTERVAL '1 hour'`
+      );
+      const baselineErrorRate = Number(baseRateRows[0].count);
+
+      let commitResult;
+      try {
+        commitResult = await commitFileToGitHub(
+          AUTOFIX_TARGET_PATH, newContent,
+          `autofix: null-guard for ${c.signature} (${c.distinct_sessions} sessions) [autofix:${attemptId}]`,
+          liveFile.sha
+        );
+      } catch (e) {
+        await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason=$2 WHERE id=$1`, [attemptId, `GitHub commit failed: ${e.message}`.slice(0, 300)]).catch(() => {});
+        logAgentAction('autofix', '🔴', `Deploy failed for ${c.signature}: ${e.message}`, '#F87171');
+        continue;
+      }
+
+      await db.query(
+        `UPDATE bugfix_attempts SET status='verifying', previous_blob_sha=$2, new_blob_sha=$3, commit_sha=$4, deployed_at=NOW() WHERE id=$1`,
+        [attemptId, liveFile.sha, commitResult.newSha, commitResult.commitSha]
+      ).catch(() => {});
+      autofixState.totalDeploys += 1;
+      logAgentAction('autofix', '🚀', `Deployed fix for ${c.signature} (commit ${String(commitResult.commitSha || '').slice(0, 7)}) — verifying for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min`, '#38BDF8');
+
+      // ── Post-deploy verify + auto-revert — production is the canary here
+      // (no staging environment exists), which is the honest framing given
+      // the constraint, not a euphemism. Runs after a delay long enough to
+      // cover Render's own build+deploy time before the first health poll.
+      setTimeout(() => {
+        verifyAutofixDeploy(attemptId, c.signature, liveFile.sha, baseline, baselineErrorRate).catch(e => console.warn('verifyAutofixDeploy:', e.message));
+      }, 90 * 1000);
+
+      // One deploy per cycle — re-check the rest of the candidate list next
+      // interval, after this one's had a chance to verify or revert.
+      break;
+    }
+  } catch (e) {
+    autofixState.lastError = e.message;
+    console.warn('runAutofixCheck:', e.message);
+  }
+}
+
+async function verifyAutofixDeploy(attemptId, signature, previousSha, baseline, baselineErrorRate) {
+  const deadline = Date.now() + AUTOFIX_VERIFY_WINDOW_MS;
+  let consecutiveHealthFailures = 0;
+  let regressed = false;
+  let regressionReason = '';
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 20000));
+    const healthy = await new Promise((resolve) => {
+      const req = http.get({ hostname: '127.0.0.1', port: process.env.PORT || 3000, path: '/health', timeout: 5000 }, (res) => { res.resume(); resolve(res.statusCode === 200); });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => { req.destroy(); resolve(false); });
+    });
+    consecutiveHealthFailures = healthy ? 0 : consecutiveHealthFailures + 1;
+    if (consecutiveHealthFailures > 2) { regressed = true; regressionReason = '/health failing'; break; }
+    if (refreshControl.crashEvents > baseline.crashEvents || refreshControl.unhandledRejections > baseline.unhandledRejections) {
+      regressed = true; regressionReason = 'new crash-guard event since deploy'; break;
+    }
+    if (db.isConnected()) {
+      const { rows } = await db.query(`SELECT COUNT(*) FROM server_error_events WHERE created_at >= NOW() - INTERVAL '1 hour'`).catch(() => ({ rows: [{ count: baselineErrorRate }] }));
+      if (Number(rows[0].count) > baselineErrorRate * 1.5 + 5) { regressed = true; regressionReason = 'overall server error rate spiked'; break; }
+    }
+  }
+
+  if (!regressed) {
+    await db.query(`UPDATE bugfix_attempts SET status='verified', verified_at=NOW() WHERE id=$1`, [attemptId]).catch(() => {});
+    await db.query(`UPDATE autofix_signatures SET status='fixed' WHERE signature=$1`, [signature]).catch(() => {});
+    logAgentAction('autofix', '✅', `Verified: ${signature} clean for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min post-deploy`, '#4ADE80');
+    return;
+  }
+
+  // Regression — revert. Re-fetch the file's CURRENT sha (may have moved
+  // since the fix commit) and PUT the pre-fix content back, which triggers
+  // another real auto-deploy of the reverted code.
+  try {
+    const current = await getGitHubFileContent(AUTOFIX_TARGET_PATH);
+    const preFix = await githubApiRequest(`/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/git/blobs/${previousSha}`, 'GET');
+    const preFixContent = Buffer.from(preFix.data.content, preFix.data.encoding || 'base64').toString('utf8');
+    const revertResult = await commitFileToGitHub(
+      AUTOFIX_TARGET_PATH, preFixContent,
+      `revert: autofix for ${signature} — ${regressionReason} [autofix:${attemptId}]`,
+      current.sha
+    );
+    await db.query(
+      `UPDATE bugfix_attempts SET status='reverted', reverted_at=NOW(), revert_reason=$2, revert_commit_sha=$3 WHERE id=$1`,
+      [attemptId, regressionReason, revertResult.commitSha]
+    ).catch(() => {});
+    // Permanently blacklisted, not just flagged_only — a bad fix shouldn't
+    // be able to flap in a retry loop; a human has to reset this deliberately.
+    await db.query(`UPDATE autofix_signatures SET status='blacklisted' WHERE signature=$1`, [signature]).catch(() => {});
+    autofixState.totalReverts += 1;
+    logAgentAction('autofix', '🔴', `Reverted fix for ${signature}: ${regressionReason}`, '#F87171');
+  } catch (e) {
+    autofixState.lastError = `revert failed for ${signature}: ${e.message}`;
+    logAgentAction('autofix', '🚨', `REVERT FAILED for ${signature} (${regressionReason}) — needs manual intervention: ${e.message}`, '#F87171');
+  }
 }
 
 function getAgentPostCount(id, cache) {
@@ -16437,6 +17222,25 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // their own they read as the pipeline "resetting to zero" constantly.
       processedLastHour: getRecentTransferCount(),
       dbPostCount: dbFeedPostCount,
+    },
+    // Separate from refreshQueue above, and easy to conflate with it —
+    // refreshQueue is the pipeline-only *re-fetch* mechanism (nudging a
+    // stale external source to fetch again); this is the api-only mechanism
+    // that actually promotes what's already been fetched from
+    // feed_posts_staging into feed_posts_cache, i.e. the one place real
+    // content actually becomes visible to users post-SERVICE_ROLE-split.
+    // pendingCount reflects whatever this process's own staging-count
+    // refresh last saw — meaningful only on the api role, where
+    // transferStagedPosts actually runs (see IS_PIPELINE_ROLE gate above);
+    // stays at whatever it was last set to on the pipeline role, which
+    // never updates it, same "not this role's concern" convention as
+    // sources.workers being empty there.
+    staging: {
+      pendingCount: stagingPostCount,
+      lastRun: stagingTransferState.lastRun,
+      lastCount: stagingTransferState.lastCount,
+      totalTransferred: stagingTransferState.totalTransferred,
+      lastError: stagingTransferState.lastError,
     },
     // Sits before Filter in the real pipeline — see runEqualizerDrain's own
     // comment. bufferedBySource is live (computed on read, same pattern as
@@ -16689,6 +17493,7 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
     optimizer:    () => runFeedOptimizer(),
     mix_optimizer: () => runMixOptimizerCheck(),
     sort_optimizer: () => runSortOptimizerCheck(),
+    autofix:        () => runAutofixCheck(),
     // Source agents — resolved from SOURCE_FETCHERS map registered at startup
     ...(sourceFn ? { [req.params.id]: sourceFn } : {}),
   };
@@ -16698,48 +17503,139 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
   res.json({ ok: true, triggered: req.params.id });
 });
 
-// This used to queue every source worker for a full external refetch on
-// this same timer (the "Transfer content to website" office button's own
-// enqueueSourceRefresh call, run automatically instead of requiring a
-// manual click) — real, but genuinely redundant work: the continuous
-// background workers (see makeTopicCycler/startContinuousWorkers) already
-// refetch every source independently, forever, on each source's own
-// SOURCE_CONFIG ttl/shard schedule, and most of the highest-volume sources
-// (reddit/hn/mastodon/bluesky) already cycle faster than every 8 minutes —
-// well inside this 15-minute window on their own. A blind full external
-// re-fetch of all 203 topics × 36 sources every 15 minutes wasn't buying
-// meaningfully fresher content, just doubling real API load for no benefit.
-//
-// What this does now is the two cheap, no-external-call halves of the
-// pipeline, back to back: re-sort/re-rank globalFeedCache (same
-// runSortAgentCheck this already shares with its own independent 3-minute
-// SORT_AGENT_INTERVAL_MS timer — a harmless second nudge, not wasted work),
-// then bulk-upsert that freshly-sorted pool into feed_posts_cache
-// (savePostsToDBFast, one batched query) so the DB is explicitly resynced
-// with whatever's actually in memory right now — a real "transfer," not
-// just trusting that every individual fetch's own incremental
-// addAndBroadcast→savePostsToDB call already landed. A real user's manual
-// refresh (bust=1, see handleFeedRequest/handleVideoFeedRequest) never
-// reaches out to source workers either — it only re-sorts/re-rotates from
-// this same already-fetched pool, same as this timer's own re-sort half.
-// The continuous background workers are the only thing that ever talks to
-// the external sources on their own regular schedule; the manual "Transfer
-// content to website" office button is still there for an explicit,
-// on-demand full sweep (e.g. right after adding new sources).
+// Instant runtime kill switch, separate from the AUTOFIX_ENABLED env var
+// (a restart-based off-switch) — this flips autofixState.enabled directly
+// so it takes effect immediately without a deploy. Detection/logging keep
+// running either way (see runAutofixCheck); only fix generation through
+// deploy/revert are gated by this flag.
+app.post('/office/autofix/toggle', requireOfficeToken, (req, res) => {
+  autofixState.enabled = !!req.body?.enabled;
+  logAgentAction('autofix', autofixState.enabled ? '🟢' : '⚪',
+    `Autofix ${autofixState.enabled ? 'enabled' : 'disabled'} from office dashboard`,
+    autofixState.enabled ? '#4ADE80' : '#94A3B8');
+  res.json({ ok: true, enabled: autofixState.enabled });
+});
+
+// Recent attempts for the office AutofixView — status, signature, diff,
+// session count, commit links. bugfix_attempts is the durable audit trail
+// (see migrateDB), unlike agentActionLog's 120-entry in-memory ring buffer.
+app.get('/office/autofix/attempts', requireOfficeToken, async (req, res) => {
+  if (!db.isConnected()) return res.json({ attempts: [], enabled: autofixState.enabled });
+  try {
+    const { rows } = await db.query(
+      `SELECT id, signature, detected_at, session_count, source_file, source_line, fix_category,
+              diff_text, commit_sha, status, reject_reason, deployed_at, verified_at, reverted_at, revert_reason, revert_commit_sha
+       FROM bugfix_attempts ORDER BY detected_at DESC LIMIT 100`
+    );
+    const { rows: rateRows } = await db.query(
+      `SELECT COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '1 day')  AS today,
+              COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '7 days') AS this_week
+       FROM bugfix_attempts WHERE status IN ('verified', 'verifying', 'deploying')`
+    );
+    res.json({
+      attempts: rows,
+      enabled: autofixState.enabled,
+      totalAttempts: autofixState.totalAttempts,
+      totalDeploys: autofixState.totalDeploys,
+      totalReverts: autofixState.totalReverts,
+      deploysToday: Number(rateRows[0].today),
+      deploysThisWeek: Number(rateRows[0].this_week),
+      maxPerDay: AUTOFIX_MAX_PER_DAY,
+      maxPerWeek: AUTOFIX_MAX_PER_WEEK,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Staging → cache transfer (api role only) ──────────────────────────────
+// Used to bulk-upsert this same process's own in-memory globalFeedCache
+// (built by its own fetchers) into feed_posts_cache — that made sense when
+// one process did both fetching and serving. Post-split (see SERVICE_ROLE),
+// the pipeline role is the only thing fetching, and it writes to
+// feed_posts_staging on a separate service, not this process's own
+// in-memory cache (which stays empty on the api role now — nothing feeds
+// it anymore, see the gated startContinuousWorkers() call at boot). This is
+// the one place real fetched content actually reaches what users are served
+// from: pull whatever pipeline has staged since the last run, upsert it
+// into feed_posts_cache, then remove exactly those rows from staging so it
+// stays a small rolling buffer rather than an ever-growing duplicate of the
+// real table.
+let lastTransferCursor = new Date(0).toISOString();
+// Surfaced via /office/status' new `staging` key (api role only — see its
+// own comment) so the office Pipeline view has something real to show for
+// this stage. Before this, the ONLY mechanism that actually moves fetched
+// content to where real users can see it had zero dashboard visibility.
+const stagingTransferState = {
+  lastRun: null, lastCount: 0, totalTransferred: 0, lastError: null,
+};
+let stagingPostCount = null;
+async function refreshStagingPostCount() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.readQuery('SELECT COUNT(*)::int AS n FROM feed_posts_staging', []);
+    stagingPostCount = rows[0]?.n ?? stagingPostCount;
+  } catch (e) {
+    console.warn('[refreshStagingPostCount] query failed:', e.message);
+  }
+}
+async function transferStagedPosts() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM feed_posts_staging WHERE fetched_at > $1 ORDER BY fetched_at ASC LIMIT 5000`,
+      [lastTransferCursor]
+    );
+    stagingTransferState.lastRun = new Date().toISOString();
+    if (!rows.length) { stagingTransferState.lastCount = 0; return; }
+    const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache');
+    // Only the exact rows just read, by id — not a blanket "everything
+    // older than the new cursor" sweep, so a row re-staged by a fast-
+    // cycling source between the SELECT above and this DELETE can't be
+    // silently dropped just because its fetched_at briefly overlapped.
+    await db.query(`DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`, [rows.map(r => r.id)]).catch(() => {});
+    lastTransferCursor = rows[rows.length - 1].fetched_at;
+    const count = saved || rows.length;
+    stagingTransferState.lastCount = count;
+    stagingTransferState.totalTransferred += count;
+    logAgentAction('feed', '📦', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
+  } catch (e) {
+    stagingTransferState.lastError = e.message;
+    console.warn('[transfer] failed:', e.message);
+  }
+}
+
 const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
 setInterval(() => {
+  // runSortAgentCheck stays unconditional — harmless and still useful for
+  // whichever role's own in-memory cache actually has content (pipeline's
+  // own globalFeedCache, built from its own fetches, is what its own
+  // /office/* views read for monitoring; api's stays empty post-split, so
+  // this is just a no-op there).
   runSortAgentCheck();
-  savePostsToDBFast(globalFeedCache.posts).catch(e => console.warn('[auto-transfer] savePostsToDBFast:', e.message));
+  if (!IS_PIPELINE_ROLE) transferStagedPosts().catch(e => console.warn('[auto-transfer]', e.message));
   refreshDbFeedPostCount();
+  refreshStagingPostCount();
 }, AUTO_TRANSFER_INTERVAL_MS);
 refreshDbFeedPostCount();
+refreshStagingPostCount();
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
 // per-user-connected-account equivalent of the app-level transfer just
 // above, on the same 5-minute rate the rest of the sources use.
-setInterval(() => {
-  refreshFollowingSourceCaches().catch(e => console.warn('refreshFollowingSourceCaches:', e.message));
-}, FOLLOWING_SOURCE_REFRESH_MS);
+// api-only, not pipeline — followingSourceCache (10711) is a plain
+// in-memory Map, per-process, not DB-backed. Warming it on the pipeline
+// role would sit in a process that never serves a Following request and is
+// therefore never read, while the api role (the only one that actually
+// calls getFollowingFeedPosts per-request) would never get its own copy
+// pre-warmed at all — the opposite of every other gate in this file, which
+// disables background work on api; this one specifically needs to stay on
+// api because the thing it maintains only has a reader there.
+if (!IS_PIPELINE_ROLE) {
+  setInterval(() => {
+    refreshFollowingSourceCaches().catch(e => console.warn('refreshFollowingSourceCaches:', e.message));
+  }, FOLLOWING_SOURCE_REFRESH_MS);
+}
 
 // Trigger a Render deploy hook — set RENDER_HOOK_API / RENDER_HOOK_WEB / RENDER_HOOK_OFFICE
 function requestRenderDeploy(options, body = null) {
@@ -16952,7 +17848,12 @@ app.get('/office/sources', requireOfficeToken, (_req, res) => {
 });
 
 // ─── HQ manual agent trigger (internal use) ──────────────────────────────────
-app.post('/hq/trigger/:agentId', (req, res) => {
+// Was missing auth entirely — this exposes the same full trigger map as its
+// sibling POST /office/agents/:id/trigger (including a full external-source
+// sweep via 'feed'/'refresh_queue'), so anyone who found this URL could
+// force real external-API load against shared rate limits with no token at
+// all. requireOfficeToken matches the sibling route exactly.
+app.post('/hq/trigger/:agentId', requireOfficeToken, (req, res) => {
   const { agentId } = req.params;
   const sourceFn = SOURCE_FETCHERS[agentId];
   const triggers = {
@@ -18145,11 +19046,22 @@ function getPlatformSearchUrls(role, title, resumeKeywords) {
   };
 }
 
-// ─── Remotive live job fetching ───────────────────────────────────────────────
-const remotiveCache = new Map(); // category → { jobs, fetchedAt }
-const REMOTIVE_TTL  = 15 * 60 * 1000; // 15 minutes
+// ─── Remotive/Muse: dedicated pipeline sweeps, not a per-request live fetch ──
+// Both APIs are category-taxonomy-based (Remotive: ROLE_TO_REMOTIVE,
+// Muse: ROLE_TO_MUSE), not free-text keyword search, so neither fits
+// makeTopicCycler's FEED_TOPICS-keyed model the other ~30 sources use — a
+// small dedicated sweep over each source's own real category list instead
+// (see startJobBoardSweeps). Used to be a live fetch inside /opportunities
+// on every single request; now reads from feed_posts_cache like every other
+// job board (fetchRemotiveOpportunities/fetchMuseOpportunities below), same
+// move RemoteOK/Indeed/USAJobs already made for the same reason — see the
+// comment on fetchJobBoardListings just below for why that's an improvement,
+// not just a refactor. Gated to the pipeline role only (see
+// startJobBoardSweeps' own call site) — api never fetches either of these
+// live anymore.
 
-// Role → Remotive job categories (all 16 roles mapped)
+// Role → Remotive job categories (all 16 roles mapped), deduped into a flat
+// sweep list since several roles share a category.
 const ROLE_TO_REMOTIVE = {
   'Engineer / Developer':    ['software-dev', 'devops-sysadmin'],
   'Designer / Creative':     ['design'],
@@ -18168,48 +19080,39 @@ const ROLE_TO_REMOTIVE = {
   'Chef / Food Creator':     ['all-others'],
   'Real Estate Pro':         ['finance-legal'],
 };
+const REMOTIVE_CATEGORIES = [...new Set(Object.values(ROLE_TO_REMOTIVE).flat())];
 
-async function fetchRemotiveJobs(category) {
-  const cached = remotiveCache.get(category);
-  if (cached && Date.now() - cached.fetchedAt < REMOTIVE_TTL) return cached.jobs;
+async function fetchRemotiveByCategory(category) {
   try {
-    const data = await fetchJSON(
-      // Was capped at 20 per category — Remotive's API supports far more per
-      // request, and Engineer/Developer alone spans 2 categories, so this
-      // was one of the tighter ceilings on total supply.
-      `https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=50`
-    );
-    const jobs = (data?.jobs || [])
+    // Was capped at 20 per category — Remotive's API supports far more per
+    // request, and Engineer/Developer alone spans 2 categories, so this
+    // was one of the tighter ceilings on total supply.
+    const data = await fetchJSON(`https://remotive.com/api/remote-jobs?category=${encodeURIComponent(category)}&limit=50`);
+    return (data?.jobs || [])
       // A listing with no real per-posting URL used to fall back to the bare
       // remotive.com homepage — a "View" link that doesn't actually lead to
       // the job it claims to, which isn't a listing worth showing at all.
       .filter(j => j.url && /^https?:\/\//i.test(j.url))
-      .map((j) => ({
-        id:        `remotive_${j.id}`,
-        type:      'job',
-        title:     j.title,
-        org:       j.company_name || 'Unknown',
-        location:  j.candidate_required_location || 'Remote',
-        pay:       j.salary || '',
-        tags:      (j.tags || []).slice(0, 5),
-        source:    'Remotive',
-        sourceUrl: j.url,
-        posted:    j.publication_date || new Date().toISOString(),
-        remote:    true,
-        isLive:    true,
-        logo:      j.company_logo || null,
+      .map(j => ({
+        id:          `remotive_${j.id}`,
+        source:      'remotive', sourceLabel: 'Remotive',
+        sourceUrl:   j.url,
+        topic:       category,
+        title:       j.title,
+        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), POST_CONTENT_MAX_CHARS),
+        author:      { name: j.company_name || 'Company' },
+        likesCount: 0, commentsCount: 0,
+        createdAt:   normalizeTimestamp(j.publication_date),
+        isExternal:  true,
+        mediaUrl:    j.company_logo || null,
+        mediaType:   j.company_logo ? 'image' : null,
+        location:    j.candidate_required_location || 'Remote',
       }));
-    remotiveCache.set(category, { jobs, fetchedAt: Date.now() });
-    return jobs;
   } catch (e) {
-    console.warn(`Remotive fetch [${category}]:`, e.message);
-    return remotiveCache.get(category)?.jobs || [];
+    console.warn(`Remotive [${category}]:`, e.message);
+    return [];
   }
 }
-
-// ─── The Muse API live job fetching ──────────────────────────────────────────
-const museCache = new Map(); // cacheKey → { jobs, fetchedAt }
-const MUSE_TTL  = 30 * 60 * 1000; // 30 minutes
 
 const ROLE_TO_MUSE = {
   'Engineer / Developer':    'Software Engineering',
@@ -18226,49 +19129,91 @@ const ROLE_TO_MUSE = {
   'Healthcare Professional': 'Healthcare and Medicine',
   'Real Estate Pro':         'Real Estate',
 };
+const MUSE_CATEGORIES = [...new Set(Object.values(ROLE_TO_MUSE))];
+// Swept across every category regardless of a real viewer's own experience
+// level, unlike the old per-request version (which only ever queried the
+// one level matching that viewer) — this is what actually gives
+// fetchMuseOpportunities real breadth to filter/rank from afterward, same
+// "accumulate wide, then match narrow per-request" shape as every other
+// pipeline source.
+const MUSE_LEVELS = ['Entry Level', 'Mid Level', 'Senior Level'];
+const MUSE_SWEEP_PAIRS = MUSE_CATEGORIES.flatMap(cat => MUSE_LEVELS.map(lvl => [cat, lvl]));
 
-const EXP_TO_MUSE = {
-  student: 'Entry Level', junior: 'Entry Level',
-  mid: 'Mid Level', senior: 'Senior Level', exec: 'Management',
-};
-
-async function fetchMuseJobs(role, experience) {
-  const category = ROLE_TO_MUSE[role];
-  if (!category) return [];
-  const level    = EXP_TO_MUSE[experience] || 'Mid Level';
-  const cacheKey = `${category}|${level}`;
-  const cached   = museCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < MUSE_TTL) return cached.jobs;
+async function fetchMuseByCategoryLevel(category, level) {
   try {
-    const url  = `https://www.themuse.com/api/public/jobs?category=${encodeURIComponent(category)}&level=${encodeURIComponent(level)}&page=0&descending=true`;
+    const url = `https://www.themuse.com/api/public/jobs?category=${encodeURIComponent(category)}&level=${encodeURIComponent(level)}&page=0&descending=true`;
     const data = await fetchJSON(url);
-    const jobs = (data?.results || [])
+    return (data?.results || [])
       // Same reasoning as Remotive: a fallback to the generic /jobs listing
       // page isn't a link to the posting it's presented alongside, so a
       // result with no real landing_page is excluded rather than shown with
       // a link that doesn't actually go where it claims to.
       .filter(j => j.refs?.landing_page && /^https?:\/\//i.test(j.refs.landing_page))
-      .map((j) => ({
-        id:        `muse_${j.id}`,
-        type:      'job',
-        title:     j.name || 'Open Role',
-        org:       j.company?.name || 'Company',
-        location:  (j.locations || []).map(l => l.name).join(', ') || 'Multiple Locations',
-        pay:       '',
-        tags:      (j.categories || []).map(c => c.name).slice(0, 3),
-        source:    'The Muse',
-        sourceUrl: j.refs.landing_page,
-        posted:    j.publication_date || new Date().toISOString(),
-        remote:    (j.locations || []).some(l => l.name.toLowerCase().includes('remote')),
-        isLive:    true,
-        logo:      j.company?.refs?.landing_page ? null : null,
+      .map(j => ({
+        id:          `muse_${j.id}`,
+        source:      'muse', sourceLabel: 'The Muse',
+        sourceUrl:   j.refs.landing_page,
+        topic:       category,
+        title:       j.name || 'Open Role',
+        content:     truncateWithEllipsis(stripAndDecodeHTML(j.contents || ''), POST_CONTENT_MAX_CHARS),
+        author:      { name: j.company?.name || 'Company' },
+        likesCount: 0, commentsCount: 0,
+        createdAt:   normalizeTimestamp(j.publication_date),
+        isExternal:  true,
+        mediaUrl:    null,
+        mediaType:   null,
+        location:    (j.locations || []).map(l => l.name).join(', ') || 'Multiple Locations',
       }));
-    museCache.set(cacheKey, { jobs, fetchedAt: Date.now() });
-    return jobs;
   } catch (e) {
-    console.warn(`Muse fetch [${cacheKey}]:`, e.message);
-    return museCache.get(cacheKey)?.jobs || [];
+    console.warn(`Muse [${category}/${level}]:`, e.message);
+    return [];
   }
+}
+
+// One category (Remotive) or category+level pair (Muse) per tick — same
+// isStabilityCritical/isAppIdle courtesy checks the shared topic-cycling
+// shards already apply, just without the circuit-breaker/shard machinery
+// built for a 203-topic list, since 16 and 39 items respectively are small
+// enough a full sweep finishes in minutes without it. Registered directly
+// as its own pair of intervals (not through startContinuousWorkers'
+// SOURCES array/makeTopicCycler) since there's no per-topic keyword here to
+// cycle through — see this function's own call site for the SERVICE_ROLE gate.
+const JOB_BOARD_SWEEP_INTERVAL_MS = 20 * 1000;
+let remotiveSweepIdx = 0;
+let museSweepIdx = 0;
+// Lightweight health entries (not the full circuit-breaker/shard state
+// makeTopicCycler seeds — these two sweeps are simple enough not to need
+// it) so /office/agents and getRuntimeHealthForAgent's default branch have
+// something real to report against, same as every other agent card.
+workerHealth.set('remotive', { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0, lastSuccess: null, paused: false, pauseUntil: 0 });
+workerHealth.set('muse',     { consecutiveErrors: 0, totalErrors: 0, fetchCount: 0, lastSuccess: null, paused: false, pauseUntil: 0 });
+function startJobBoardSweeps() {
+  setInterval(async () => {
+    if (isStabilityCritical() || isAppIdle()) return;
+    const category = REMOTIVE_CATEGORIES[remotiveSweepIdx % REMOTIVE_CATEGORIES.length];
+    remotiveSweepIdx++;
+    const posts = await fetchRemotiveByCategory(category);
+    const health = workerHealth.get('remotive');
+    health.fetchCount++;
+    if (posts.length) {
+      health.lastSuccess = Date.now();
+      addAndBroadcast(posts);
+      logAgentAction('remotive', '🛰️', `${category}: ${posts.length} listing(s)`, '#00A876');
+    }
+  }, JOB_BOARD_SWEEP_INTERVAL_MS);
+  setInterval(async () => {
+    if (isStabilityCritical() || isAppIdle()) return;
+    const [category, level] = MUSE_SWEEP_PAIRS[museSweepIdx % MUSE_SWEEP_PAIRS.length];
+    museSweepIdx++;
+    const posts = await fetchMuseByCategoryLevel(category, level);
+    const health = workerHealth.get('muse');
+    health.fetchCount++;
+    if (posts.length) {
+      health.lastSuccess = Date.now();
+      addAndBroadcast(posts);
+      logAgentAction('muse', '🎭', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
+    }
+  }, JOB_BOARD_SWEEP_INTERVAL_MS);
 }
 
 // RemoteOK/Indeed/USAJobs used to each run their OWN separate live query
@@ -18358,6 +19303,17 @@ async function fetchUSAJobsOpportunities() {
   return fetchJobBoardListings('usajobs', 'USAJobs', { excludeUrl: 'https://www.usajobs.gov' });
 }
 
+// Same move as RemoteOK/Indeed/USAJobs above, now applied to the two
+// sources that used to live-fetch on every /opportunities request (see
+// startJobBoardSweeps) — reads whatever the pipeline has already
+// accumulated instead.
+async function fetchRemotiveOpportunities() {
+  return fetchJobBoardListings('remotive', 'Remotive');
+}
+async function fetchMuseOpportunities() {
+  return fetchJobBoardListings('muse', 'The Muse');
+}
+
 // Baseline legitimacy bar every live job listing has to clear regardless of
 // source, on top of each fetcher's own per-source accuracy filtering above
 // (real per-posting URL, not a generic homepage fallback). A listing with no
@@ -18384,12 +19340,17 @@ function isLegitimateJobListing(j) {
   return true;
 }
 
+// role/experience params kept for call-site compatibility even though
+// Remotive/Muse no longer use them to scope their own fetch (see
+// startJobBoardSweeps' comment — both now read the full pipeline-
+// accumulated pool across every category/level, same as RemoteOK/Indeed/
+// USAJobs already did) — any real per-viewer relevance still comes from
+// this function's own scoring pass further down, same as it always did for
+// those three sources.
 async function getLiveJobs(role, experience) {
-  const cats    = ROLE_TO_REMOTIVE[role] || ['software-dev'];
-  const uniqCats = [...new Set(cats)];
   const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
-    Promise.all(uniqCats.map(fetchRemotiveJobs)).then(r => r.flat()),
-    fetchMuseJobs(role, experience),
+    fetchRemotiveOpportunities(),
+    fetchMuseOpportunities(),
     fetchRemoteOKOpportunities(),
     fetchUSAJobsOpportunities(),
     fetchIndeedOpportunities(),

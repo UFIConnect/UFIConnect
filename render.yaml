@@ -19,6 +19,12 @@ services:
         value: production
       - key: NODE_OPTIONS
         value: --max-old-space-size=768
+      # 'api' (the default if unset) serves real user traffic and never
+      # fetches external sources on its own — see the SERVICE_ROLE gates in
+      # backend/index.js. uficonnect-pipeline below sets this to 'pipeline'
+      # instead and does all the actual fetching.
+      - key: SERVICE_ROLE
+        value: api
       - key: JWT_SECRET
         sync: false
       - key: DATABASE_URL
@@ -150,6 +156,130 @@ services:
         sync: false
       - key: BLUESKY_CLIENT_SECRET
         sync: false
+      # Read-only — repo search/commits/issues (see GITHUB_HEADERS). Separate
+      # from AUTOFIX_GITHUB_TOKEN below, which needs write access.
+      - key: GITHUB_TOKEN
+        sync: false
+      # ── Office dashboard: Autofix agent ──────────────────────────────────
+      # Off by default (AUTOFIX_ENABLED unset). Detection/logging always run
+      # regardless; only committing a generated fix is gated by this. See
+      # backend/.env.example and office/src's Autofix view.
+      - key: AUTOFIX_ENABLED
+        value: 'false'
+      # A NEW, separate PAT scoped to contents:write on this one repo only —
+      # do not reuse GITHUB_TOKEN above, which stays read-only.
+      - key: AUTOFIX_GITHUB_TOKEN
+        sync: false
+      - key: AUTOFIX_GITHUB_OWNER
+        value: yosufkaka99-alt
+      - key: AUTOFIX_GITHUB_REPO
+        value: UFConnect
+
+  # ── Pipeline (same codebase as uficonnect-api, SERVICE_ROLE=pipeline) ───
+  # Does all real external-source fetching — the ~30 continuous background
+  # workers — and writes to feed_posts_staging instead of feed_posts_cache.
+  # uficonnect-api reads the promoted result via its own transfer job
+  # (transferStagedPosts) instead of fetching anything itself. type: web
+  # (not worker) so it can still serve its own /office/* endpoints for the
+  # dashboard's Pipeline/Live Sources/Topics views to reach directly — see
+  # office's VITE_PIPELINE_API_URL. No public domain routing: nothing
+  # user-facing should ever call this service directly.
+  - type: web
+    name: uficonnect-pipeline
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node --max-old-space-size=768 index.js
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=768
+      - key: SERVICE_ROLE
+        value: pipeline
+      - key: JWT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: uficonnect-db
+          property: connectionString
+      - key: DATABASE_URL_BACKUP
+        sync: false
+      # Not user-facing, but /office/* still needs a CORS allowance for the
+      # dashboard's own browser requests.
+      - key: ALLOWED_ORIGINS
+        value: https://office.uficonnect.org,https://uficonnect-office.onrender.com
+      # Same office-token gate as uficonnect-api's /office/* routes.
+      - key: OFFICE_TOKEN
+        sync: false
+      # ── Source credentials — same values as uficonnect-api above, entered
+      # separately since Render env vars aren't shared across services.
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+      - key: TWITTER_CLIENT_ID
+        sync: false
+      - key: TWITTER_CLIENT_SECRET
+        sync: false
+      - key: INSTAGRAM_APP_ID
+        sync: false
+      - key: INSTAGRAM_APP_SECRET
+        sync: false
+      - key: FACEBOOK_APP_ID
+        sync: false
+      - key: FACEBOOK_APP_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: GITLAB_CLIENT_ID
+        sync: false
+      - key: GITLAB_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: MEDIUM_CLIENT_ID
+        sync: false
+      - key: MEDIUM_CLIENT_SECRET
+        sync: false
+      - key: DRIBBBLE_CLIENT_ID
+        sync: false
+      - key: DRIBBBLE_CLIENT_SECRET
+        sync: false
+      - key: BEHANCE_CLIENT_ID
+        sync: false
+      - key: BEHANCE_CLIENT_SECRET
+        sync: false
+      - key: TIKTOK_CLIENT_KEY
+        sync: false
+      - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: BLUESKY_CLIENT_ID
+        sync: false
+      - key: BLUESKY_CLIENT_SECRET
+        sync: false
+      - key: USAJOBS_API_KEY
+        sync: false
+      - key: USAJOBS_USER_AGENT
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
 
   # ── Web Frontend (React static site) ───────────────────────
   - type: web
@@ -244,5 +374,13 @@ services:
     envVars:
       - key: VITE_API_URL
         value: https://uficonnect-api-708r.onrender.com
+      # uficonnect-pipeline's own URL — Live Sources/Pipeline/Topics/agent
+      # cards for source-fetchers point here now instead, since that's the
+      # service actually doing the fetching post-split. Update this to the
+      # real Render-assigned URL once uficonnect-pipeline is created (Render
+      # generates it; not knowable ahead of the first deploy the way the
+      # long-lived api/web/office URLs already are).
+      - key: VITE_PIPELINE_API_URL
+        sync: false
       - key: NODE_OPTIONS
         value: --max-old-space-size=6144
