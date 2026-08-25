@@ -125,13 +125,16 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments }) {
+// sharedYt: { paused, duration, currentTime, failed, togglePlay, seekTo } —
+// the one YouTube player VideoFeedView keeps alive across every slide (see
+// its own top comment) instead of each slide owning/destroying its own.
+// Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
+// existing fully-local state below, untouched.
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
-  const ytPlayerRef = useRef(null);
-  const ytMountRef = useRef(null);
   const seekingRef = useRef(false);
   const progressBarRef = useRef(null);
   // Caption starts clamped (see the overlay below) — the video is the point
@@ -142,23 +145,24 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const hasExtraCaption = (post.title?.length || 0) > 80
     || (post.content && post.content.trim() && post.content.trim() !== post.title?.trim());
 
+  // file/hls/vimeo's own fully-local playback state — youtube reads
+  // sharedYt instead (see effectivePaused/effectiveDuration/
+  // effectiveCurrentTime below), since its player lives in the parent now.
   const [paused, setPaused] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [seeking, setSeeking] = useState(false);
-  // A raw <iframe src="youtube.com/embed/...">  would at least always paint
-  // something even if scripting failed; the IFrame Player API's own iframe
-  // only appears once YT.Player() actually constructs it, which depends on
-  // youtube.com/iframe_api loading and executing — an ad blocker or privacy
-  // DNS filter blocking that one script (common; YouTube embeds are a
-  // frequent blocklist target even when a plain video tag or a Vimeo/TikTok
-  // iframe on the same page would load fine) previously left this slide
-  // silently blank forever, with no visible video and no way to tell why.
-  // ytFailed flips true if the player hasn't gone ready within a few
-  // seconds of becoming active, and swaps in a real clickable fallback.
-  const [ytFailed, setYtFailed] = useState(false);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
+
+  // What the render/scrub-bar/engagement-tracking below actually read —
+  // youtube's real values live on the shared player (see sharedYt, owned
+  // by VideoFeedView), everything else keeps reading this slide's own
+  // local state exactly as before.
+  const isYoutube = src?.kind === 'youtube';
+  const effectivePaused = isYoutube ? !!sharedYt?.paused : paused;
+  const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
+  const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
 
   // Genuine-watch engagement signal (see api/engagement.js) — currentTime
   // already updates continuously during real playback (onTimeUpdate/the
@@ -169,10 +173,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // accident.
   useEffect(() => {
     if (!active || !post?.id) return;
-    if (currentTime >= VIDEO_ENGAGED_SECONDS || (duration > 0 && currentTime / duration >= VIDEO_ENGAGED_FRACTION)) {
+    if (effectiveCurrentTime >= VIDEO_ENGAGED_SECONDS || (effectiveDuration > 0 && effectiveCurrentTime / effectiveDuration >= VIDEO_ENGAGED_FRACTION)) {
       reportEngaged(post.id);
     }
-  }, [active, post?.id, currentTime, duration]);
+  }, [active, post?.id, effectiveCurrentTime, effectiveDuration]);
 
   // Feeds the feed's own ranking (see recordEngagementSignal server-side),
   // separate from the yes/no reportEngaged above — wall-clock time this
@@ -226,142 +230,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted]);
 
-  // youtube: the real IFrame Player API — a raw <iframe src="..."> embed has
-  // no programmatic control at all, so pause + a scrub tracker need this
-  // instead. Only constructed while active; destroyed on scroll-away.
-  //
-  // The player always mounts muted (playerVars.mute stays 1 — the one
-  // autoplay policy every browser reliably allows), but if `muted` was
-  // already false when this effect ran — the user has directly tapped
-  // unmute on an earlier slide this session, see userWantsSound — it's
-  // unmuted right away in onReady instead of demanding a fresh tap on this
-  // slide too. Unlike the "shows unmuted but no voice is playing" bug this
-  // replaced, this isn't a blind reveal after an unrelated autoplay: it's
-  // only reached because of real, prior, direct engagement, which is the
-  // same signal browsers themselves use to judge autoplay-with-sound more
-  // leniently going forward.
-  useEffect(() => {
-    if (src?.kind !== 'youtube' || !active) return;
-    let cancelled = false;
-    let pollId;
-    let autoplayRetryId;
-    const startUnmuted = !muted;
-    setYtFailed(false);
-    // If onReady hasn't fired by the time this fires, either the iframe_api
-    // script itself never loaded (blocked, offline, slow network) or the
-    // player construction otherwise silently stalled — either way, sitting
-    // on a blank mount indefinitely is worse than surfacing a real fallback.
-    const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
-    loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current) return;
-      const player = new YT.Player(ytMountRef.current, {
-        videoId: src.id,
-        playerVars: {
-          autoplay: 1, mute: 1, playsinline: 1, loop: 1,
-          controls: 0, modestbranding: 1, rel: 0, playlist: src.id,
-          // Without this, the IFrame Player API's postMessage bridge back
-          // to this page can silently fail ("Unable to post message to
-          // https://www.youtube.com. Recipient has origin ...") — confirmed
-          // live on mobile WebKit: the iframe itself loads and autoplays
-          // fine (autoplay=1 works independent of postMessage), but every
-          // JS-API call this file makes through it — playVideo/pauseVideo,
-          // getDuration, the onReady/onStateChange callbacks the scrub bar
-          // and play/pause button depend on — goes nowhere, which is
-          // exactly what "the play button doesn't do anything" looks like
-          // from the outside even though the video is visibly playing.
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return;
-            clearTimeout(readyTimeout);
-            ytPlayerRef.current = e.target;
-            setDuration(e.target.getDuration() || 0);
-            if (startUnmuted) e.target.unMute();
-            // playerVars.autoplay:1 alone reliably started playback on a
-            // slide's first-ever activation, but not on re-activation
-            // (scroll away and back to the same video) — confirmed live:
-            // the reconstructed player's iframe carried autoplay=1 in its
-            // src the same as the first time, yet getCurrentTime() stayed
-            // frozen at its starting value for 12+ seconds with nothing
-            // ever calling playVideo(). The separate isScrolling-driven
-            // pause/resume effect below only re-fires when isScrolling
-            // itself changes — if scrolling had already settled to false
-            // before this async ready callback landed (the common case for
-            // a quick scroll-and-release), nothing was left to actually
-            // start it. Calling playVideo() explicitly here removes the
-            // dependency on implicit autoplay working across every
-            // re-construction — a harmless no-op on the runs where it was
-            // already playing.
-            e.target.playVideo();
-            // Mobile browsers can block this playVideo() call entirely —
-            // no error, and in practice often no onStateChange event
-            // either, so `paused` (defaults to false) stayed permanently
-            // wrong and the center ▶ indicator never appeared, leaving no
-            // visible cue that a tap was needed at all — confirmed live as
-            // "can't watch videos" on mobile: playback silently never
-            // started and nothing on screen said so. Retries playVideo()
-            // itself a few times before giving up — a single blocked/timed-
-            // out attempt isn't necessarily final (the player can still be
-            // settling internally right after onReady fires), so hitting it
-            // again a couple of times over ~1.5s recovers autoplay in cases
-            // where one call alone wouldn't have. Only once every retry
-            // still shows it not actually playing does this fall back to
-            // setPaused(true) — surfacing the tap-to-play UI instead of
-            // silently doing nothing.
-            let autoplayAttempts = 0;
-            autoplayRetryId = setInterval(() => {
-              if (cancelled || !ytPlayerRef.current) { clearInterval(autoplayRetryId); return; }
-              autoplayAttempts++;
-              try {
-                if (ytPlayerRef.current.getPlayerState() === 1) { clearInterval(autoplayRetryId); return; }
-                if (autoplayAttempts >= 3) {
-                  clearInterval(autoplayRetryId);
-                  setPaused(true);
-                  return;
-                }
-                ytPlayerRef.current.playVideo();
-              } catch { clearInterval(autoplayRetryId); }
-            }, 500);
-          },
-          onStateChange: (e) => {
-            if (cancelled) return;
-            setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
-            const d = e.target.getDuration();
-            if (d) setDuration(d);
-          },
-          // Covers embed-disabled/removed/private videos — these fire
-          // onError instead of onReady, so without this the timeout above
-          // was the only thing that ever caught them, several seconds late.
-          onError: () => { if (!cancelled) setYtFailed(true); },
-        },
-      });
-      pollId = setInterval(() => {
-        if (ytPlayerRef.current && !seekingRef.current) {
-          try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
-        }
-      }, 250);
-    }).catch(() => { if (!cancelled) setYtFailed(true); });
-    return () => {
-      cancelled = true;
-      clearTimeout(readyTimeout);
-      clearInterval(pollId);
-      clearInterval(autoplayRetryId);
-      try { ytPlayerRef.current?.destroy(); } catch {}
-      ytPlayerRef.current = null;
-      setCurrentTime(0);
-      setDuration(0);
-      setPaused(false);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, src?.kind, src?.id]);
-
-  // Keep an active YouTube player's mute state in sync with the top-bar
-  // mute toggle (file/hls just re-render the <video muted> attribute).
-  useEffect(() => {
-    if (src?.kind !== 'youtube' || !ytPlayerRef.current) return;
-    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
-  }, [muted, src?.kind]);
+  // youtube's player construction/autoplay-retry/mute-sync all live in
+  // VideoFeedView now (see sharedYt/sharedYtPlayerRef there) — one player
+  // reused across every slide instead of destroyed and rebuilt per slide.
 
   // Pause for the duration of an active scroll gesture, deliberately kept
   // separate from the active/inactive effect above: that one owns real
@@ -396,24 +267,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
-    if (src?.kind === 'youtube') {
-      const p = ytPlayerRef.current;
-      if (!p) return;
-      // Queries the player's real live state instead of trusting this
-      // component's own `paused` — that only ever updates via
-      // onStateChange, which never fires at all if autoplay silently
-      // failed to start in the first place (common on mobile: the
-      // playerVars.autoplay:1/explicit playVideo() call in onReady can
-      // both be blocked with no error, no event, nothing). `paused`
-      // defaulting to false then meant a tap on a video that never
-      // actually started called pauseVideo() instead of playVideo() — a
-      // no-op, since nothing was playing to pause — leaving no way to
-      // ever start it manually. Confirmed live as "can't watch videos" on
-      // mobile. 1 is YT.PlayerState.PLAYING, a stable documented value in
-      // YouTube's own API (no need for the YT global to be in scope here).
-      try {
-        if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo();
-      } catch {}
+    if (isYoutube) {
+      sharedYt?.togglePlay?.();
     } else {
       const v = getNativeEl();
       if (!v) return;
@@ -430,11 +285,11 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }
 
   function seekToFraction(fraction) {
-    const time = fraction * (duration || 0);
-    setCurrentTime(time);
-    if (src?.kind === 'youtube') {
-      ytPlayerRef.current?.seekTo(time, true);
+    const time = fraction * (effectiveDuration || 0);
+    if (isYoutube) {
+      sharedYt?.seekTo?.(time);
     } else {
+      setCurrentTime(time);
       const v = getNativeEl();
       if (v) v.currentTime = time;
     }
@@ -442,13 +297,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
   function handleBarPointerDown(e) {
     e.stopPropagation();
-    if (!duration) return;
+    if (!effectiveDuration) return;
     seekingRef.current = true;
+    // Also flips the shared player's own seeking guard (see sharedYt.
+    // seekingRef in VideoFeedView) — that guard is what stops its polling
+    // interval from overwriting the scrub bar's position mid-drag with a
+    // stale getCurrentTime() read, same idea seekingRef already serves for
+    // file/hls, just needs to reach the parent's poll instead of a local one.
+    if (isYoutube && sharedYt?.seekingRef) sharedYt.seekingRef.current = true;
     setSeeking(true);
     seekToFraction(computeFraction(e.clientX));
     const handleMove = (ev) => seekToFraction(computeFraction(ev.clientX));
     const handleUp = () => {
       seekingRef.current = false;
+      if (isYoutube && sharedYt?.seekingRef) sharedYt.seekingRef.current = false;
       setSeeking(false);
       document.removeEventListener('pointermove', handleMove);
       document.removeEventListener('pointerup', handleUp);
@@ -457,7 +319,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     document.addEventListener('pointerup', handleUp);
   }
 
-  const progressFraction = duration > 0 ? Math.min(1, currentTime / duration) : 0;
+  const progressFraction = effectiveDuration > 0 ? Math.min(1, effectiveCurrentTime / effectiveDuration) : 0;
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden' }}>
@@ -490,43 +352,15 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Video unavailable</div>
       ) : src.kind === 'youtube' ? (
         active ? (
-          // Deliberately NOT inset:0/full-bleed like the other kinds: the
-          // YouTube IFrame API sizes its iframe off this div's own
-          // dimensions (no width/height passed to YT.Player — see the
-          // constructor below), and a cross-origin iframe stretched to
-          // fill a portrait box paints its own opaque black letterbox
-          // internally for regular 16:9 uploads — solid pixels, not empty
-          // space, so the blurred backdrop above can never show through
-          // it. Constraining this div to the video's real aspect ratio
-          // instead means the iframe itself comes out correctly shaped with
-          // no internal letterboxing, and the backdrop fills the now-real
-          // gap around it (centered by the root's flex layout). Real
-          // Shorts (src.vertical — see resolveVideoSource) use 9/16 instead
-          // of the 16/9 default — forcing a vertical video into a landscape
-          // box squeezed it, cropping the video's own thumbnail/title,
-          // confirmed live as a Short looking visibly cut off.
-          <div style={{ width: '100%', aspectRatio: src.vertical ? '9/16' : '16/9', maxHeight: '100%', position: 'relative' }} onClick={togglePlay}>
-            <div ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }} />
-            {ytFailed && (
-              // The IFrame Player API script (youtube.com/iframe_api) never
-              // went ready — confirmed live as a real, reproducible failure
-              // on some mobile devices/networks even though the YouTube
-              // embed itself isn't blocked there (same class of thing that
-              // makes some ad/privacy blockers target tracking-adjacent
-              // scripts specifically, not core video content). A plain
-              // embed iframe doesn't load that script at all and still
-              // autoplays muted on its own — same approach the Vimeo branch
-              // above already uses successfully, just without this app's
-              // own pause/mute/scrub control layer on top. Real playback
-              // beats a "click to leave the app" link.
-              <iframe
-                src={`https://www.youtube.com/embed/${src.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${src.id}&controls=1&modestbranding=1&rel=0`}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
-                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-                title={post.title}
-              />
-            )}
-          </div>
+          // The actual video pixels render via VideoFeedView's own shared
+          // overlay now (see sharedYtMountRef there), positioned to match
+          // this exact same centered/aspect-ratio box independently — this
+          // slide only needs to *not* render anything competing in that
+          // spot, letting the backdrop above and the parent's overlay
+          // beneath the caption/scrub UI below show through. See
+          // VideoFeedView's own top-of-file comment for why the player
+          // itself isn't owned per-slide anymore.
+          null
         ) : (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
@@ -597,9 +431,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           reads as a broken/half-loaded video; with it, it reads as an
           intentional "tap to start" design, the same pattern Instagram/
           TikTok use for some embedded content. */}
-      {src && paused && (
+      {src && effectivePaused && (
         <div style={{
-          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          position: 'absolute', inset: 0, zIndex: 2, display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center', gap: 10, pointerEvents: 'none',
         }}>
           <button
@@ -626,7 +460,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
       {/* Bottom caption overlay */}
       <div style={{
-        position: 'absolute', left: 16, right: 76, bottom: 40, color: '#fff',
+        position: 'absolute', zIndex: 2, left: 16, right: 76, bottom: 40, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
         maxHeight: captionExpanded ? '55dvh' : undefined,
         overflowY: captionExpanded ? 'auto' : undefined,
@@ -668,12 +502,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       {/* Scrub tracker — click or drag anywhere on the bar to skip to that
           point in the video. Widens slightly while actively dragging so
           it's easier to hit on touch. */}
-      {src && duration > 0 && (
+      {src && effectiveDuration > 0 && (
         <div
           ref={progressBarRef}
           onPointerDown={handleBarPointerDown}
           style={{
-            position: 'absolute', left: 12, right: 12, bottom: 12,
+            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: 12,
             height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(255,255,255,.28)',
             cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
           }}
@@ -690,17 +524,17 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           }} />
         </div>
       )}
-      {src && duration > 0 && (
+      {src && effectiveDuration > 0 && (
         <div style={{
-          position: 'absolute', right: 14, bottom: 20, color: '#fff', fontSize: '.65rem',
+          position: 'absolute', zIndex: 2, right: 14, bottom: 20, color: '#fff', fontSize: '.65rem',
           fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
         }}>
-          {formatTime(currentTime)} / {formatTime(duration)}
+          {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
         </div>
       )}
 
       {/* Right-side action rail */}
-      <div style={{ position: 'absolute', right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+      <div style={{ position: 'absolute', zIndex: 2, right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
         <button
           onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
           style={{
@@ -1135,6 +969,159 @@ export default function VideoFeedView({ onExit }) {
 
   useLockBodyScroll();
 
+  // Vimeo is a plain iframe with no postMessage control layer (see
+  // VideoSlide's own vimeo render branch) — this shared button can't
+  // actually change its audio once mounted, only the `muted` state
+  // file/hls/youtube slides read. Toggling it while looking at a Vimeo
+  // slide would silently do nothing but still look like it worked, which
+  // is worse than being upfront that it's not controllable here — dimmed
+  // and inert instead, rather than a false control. Computed here (moved
+  // up from just above the render) since the shared YouTube player effect
+  // below needs it too.
+  const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
+  const muteControllable = activeSrc?.kind !== 'vimeo';
+
+  // ─── Shared YouTube player ──────────────────────────────────────────────
+  // One YT.Player instance for the whole session instead of one per slide,
+  // destroyed and reconstructed on every scroll. Browsers grant autoplay
+  // leniency per *iframe*, not per site — recreating a fresh iframe every
+  // slide switch threw away any "this frame has real user engagement"
+  // trust the moment a user's first manual tap earned it, so every single
+  // video started back at zero trust and needed its own tap. Confirmed
+  // live: Bluesky/direct-file videos (native <video> elements, no iframe)
+  // autoplay reliably in this same view; YouTube's routinely don't. Keeping
+  // one iframe alive and swapping its video via loadVideoById() lets
+  // engagement earned on an earlier video actually carry forward instead
+  // of resetting every time.
+  const sharedYtMountRef = useRef(null);
+  const sharedYtPlayerRef = useRef(null);
+  const sharedYtLoadedIdRef = useRef(null);
+  const sharedYtSeekingRef = useRef(false);
+  const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
+
+  useEffect(() => {
+    if (activeSrc?.kind !== 'youtube') {
+      // Not the one on screen right now — pause it in place (don't
+      // destroy) so it isn't still decoding/audible off-screen, but stays
+      // ready to resume instantly if the user scrolls back to it.
+      try { sharedYtPlayerRef.current?.pauseVideo(); } catch {}
+      return;
+    }
+    let cancelled = false;
+    let pollId, autoplayRetryId, readyTimeout;
+    const videoId = activeSrc.id;
+    const startUnmuted = !muted;
+    setSharedYt(s => ({ ...s, failed: false }));
+
+    // Retries playVideo() a few times before giving up — a single blocked/
+    // timed-out attempt isn't necessarily final (the player can still be
+    // settling internally right after onReady/loadVideoById), so hitting
+    // it again a couple of times over ~1.5s recovers autoplay in cases
+    // where one call alone wouldn't have. Only once every retry still
+    // shows it not actually playing does this surface the tap-to-play UI.
+    function startAutoplayRetry(player) {
+      let attempts = 0;
+      autoplayRetryId = setInterval(() => {
+        if (cancelled) { clearInterval(autoplayRetryId); return; }
+        attempts++;
+        try {
+          if (player.getPlayerState() === 1) { clearInterval(autoplayRetryId); return; }
+          if (attempts >= 3) {
+            clearInterval(autoplayRetryId);
+            setSharedYt(s => ({ ...s, paused: true }));
+            return;
+          }
+          player.playVideo();
+        } catch { clearInterval(autoplayRetryId); }
+      }, 500);
+    }
+
+    if (sharedYtPlayerRef.current) {
+      // Player already exists (from an earlier slide) — reuse the same
+      // iframe instead of destroying and rebuilding it, whether this is a
+      // genuinely new video or scrolling back to one already loaded.
+      const player = sharedYtPlayerRef.current;
+      try {
+        if (sharedYtLoadedIdRef.current !== videoId) {
+          sharedYtLoadedIdRef.current = videoId;
+          player.loadVideoById(videoId);
+          if (startUnmuted) player.unMute(); else player.mute();
+        }
+        player.playVideo();
+        startAutoplayRetry(player);
+      } catch {}
+    } else {
+      // First time this session actually needing a YouTube player.
+      readyTimeout = setTimeout(() => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); }, 6000);
+      loadYouTubeIframeApi().then((YT) => {
+        if (cancelled || !sharedYtMountRef.current) return;
+        new YT.Player(sharedYtMountRef.current, {
+          videoId,
+          playerVars: {
+            autoplay: 1, mute: 1, playsinline: 1, loop: 1,
+            controls: 0, modestbranding: 1, rel: 0, playlist: videoId,
+            origin: window.location.origin,
+          },
+          events: {
+            onReady: (e) => {
+              if (cancelled) return;
+              clearTimeout(readyTimeout);
+              sharedYtPlayerRef.current = e.target;
+              sharedYtLoadedIdRef.current = videoId;
+              setSharedYt(s => ({ ...s, duration: e.target.getDuration() || 0 }));
+              if (startUnmuted) e.target.unMute();
+              e.target.playVideo();
+              startAutoplayRetry(e.target);
+            },
+            onStateChange: (e) => {
+              if (cancelled) return;
+              setSharedYt(s => ({ ...s, paused: e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED }));
+              const d = e.target.getDuration();
+              if (d) setSharedYt(s => ({ ...s, duration: d }));
+            },
+            onError: () => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); },
+          },
+        });
+      }).catch(() => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); });
+    }
+
+    pollId = setInterval(() => {
+      if (sharedYtPlayerRef.current && !sharedYtSeekingRef.current) {
+        try { setSharedYt(s => ({ ...s, currentTime: sharedYtPlayerRef.current.getCurrentTime() || 0 })); } catch {}
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(readyTimeout);
+      clearInterval(pollId);
+      clearInterval(autoplayRetryId);
+      // Deliberately NOT destroying sharedYtPlayerRef.current — see this
+      // effect's own top comment. Pausing (the early-return branch above)
+      // is the only thing that actually stops it; staying alive across
+      // switches is the entire point.
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndex, activeSrc?.kind, activeSrc?.id]);
+
+  // Keep the shared player's mute state in sync with the top-bar toggle —
+  // file/hls slides each do their own equivalent sync locally.
+  useEffect(() => {
+    if (!sharedYtPlayerRef.current) return;
+    try { if (muted) sharedYtPlayerRef.current.mute(); else sharedYtPlayerRef.current.unMute(); } catch {}
+  }, [muted]);
+
+  const sharedYtTogglePlay = useCallback(() => {
+    const p = sharedYtPlayerRef.current;
+    if (!p) return;
+    try { if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo(); } catch {}
+  }, []);
+
+  const sharedYtSeekTo = useCallback((time) => {
+    setSharedYt(s => ({ ...s, currentTime: time }));
+    try { sharedYtPlayerRef.current?.seekTo(time, true); } catch {}
+  }, []);
+
   // Safety net for the page background showing through as a light strip
   // anywhere this full-bleed view doesn't perfectly cover the real
   // viewport (confirmed live as a persistent white/grey gap on some mobile
@@ -1161,16 +1148,6 @@ export default function VideoFeedView({ onExit }) {
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
   }, [onExit]);
-
-  // Vimeo is a plain iframe with no postMessage control layer (see
-  // VideoSlide's own vimeo render branch) — this shared button can't
-  // actually change its audio once mounted, only the `muted` state
-  // file/hls/youtube slides read. Toggling it while looking at a Vimeo
-  // slide would silently do nothing but still look like it worked, which
-  // is worse than being upfront that it's not controllable here — dimmed
-  // and inert instead, rather than a false control.
-  const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
-  const muteControllable = activeSrc?.kind !== 'vimeo';
 
   // Standalone/installed-PWA mobile ("app view") renders under a real
   // status bar/notch that a plain mobile-browser tab doesn't have — index.html
@@ -1375,6 +1352,7 @@ export default function VideoFeedView({ onExit }) {
           <button onClick={onExit} className="btn btn-primary btn-sm">Back to Feed</button>
         </div>
       ) : (
+        <>
         <div
           ref={containerRef}
           style={{ height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch' }}
@@ -1403,10 +1381,76 @@ export default function VideoFeedView({ onExit }) {
               // that can disagree with it.
               style={{ height: '100%', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
-              <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost} />
+              <VideoSlide
+                post={post}
+                active={idx === activeIndex}
+                muted={muted}
+                onToggleMute={toggleMuted}
+                isScrolling={isScrolling}
+                onOpenComments={setCommentsPost}
+                // Only the active slide ever reads this — see VideoSlide's
+                // own effectivePaused/effectiveDuration/effectiveCurrentTime,
+                // which fall back to 0/false when it's undefined, correctly
+                // hiding the pause indicator/scrub bar on every inactive
+                // slide exactly like before this refactor.
+                sharedYt={idx === activeIndex ? {
+                  paused: sharedYt.paused,
+                  duration: sharedYt.duration,
+                  currentTime: sharedYt.currentTime,
+                  failed: sharedYt.failed,
+                  togglePlay: sharedYtTogglePlay,
+                  seekTo: sharedYtSeekTo,
+                  seekingRef: sharedYtSeekingRef,
+                } : undefined}
+              />
             </div>
           ))}
         </div>
+
+        {/* Shared YouTube player overlay (see sharedYt/sharedYtPlayerRef
+            above) — positioned independently of any individual slide,
+            matching the exact same centered/aspect-ratio box a per-slide
+            player would have used, so it always lines up with the active
+            slide (which, scroll-snapped, always fills this same viewport).
+            z-index sits above the scrolling slide list itself (default
+            stacking) but below every per-slide UI element (caption/scrub
+            bar/action rail/pause indicator, all bumped to z-index 2 — see
+            VideoSlide) and well below the top controls (z-index 10) and
+            any modal (comments sheet, filter sheet). Outer wrapper is
+            non-interactive so it never blocks taps meant for the caption/
+            action rail sitting in the letterboxed margins around it; the
+            inner box re-enables pointer events so tapping the video itself
+            still toggles play. */}
+        {activeSrc?.kind === 'youtube' && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 1,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            pointerEvents: 'none',
+          }}>
+            <div
+              style={{
+                width: '100%', aspectRatio: activeSrc.vertical ? '9/16' : '16/9', maxHeight: '100%',
+                position: 'relative', pointerEvents: 'auto',
+              }}
+              onClick={sharedYtTogglePlay}
+            >
+              <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
+              {sharedYt.failed && (
+                // Same reasoning as the old per-slide fallback: the IFrame
+                // Player API script never went ready (blocked, offline,
+                // slow network) — a plain embed iframe doesn't load that
+                // script at all and still autoplays muted on its own.
+                <iframe
+                  src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=1&modestbranding=1&rel=0`}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+                  allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                  title={videoPosts[activeIndex]?.title}
+                />
+              )}
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
