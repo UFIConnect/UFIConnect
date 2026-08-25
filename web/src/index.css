@@ -777,16 +777,25 @@ input, textarea, select { font-family: inherit; }
 
 /* ── Videos (full-bleed vertical feed) on a real desktop viewport ──
    Built mobile-first for a phone-width, edge-to-edge experience. Above the
-   phone breakpoint, cap it to a phone-like column and center it — otherwise
-   the top controls (positioned off the viewport edges) spread across the
-   whole browser window while the actual 9:16 video box, capped by its own
-   max-height, gets squashed to match, so the two visibly disagree with
-   each other. See the JSX comment on .video-feed-frame for the full
-   reasoning. */
+   phone breakpoint, cap it to a phone-like column and give it a "theater"
+   card treatment (rounded corners, a shadow, a bit of vertical breathing
+   room) instead of stretching it edge-to-edge across the browser window —
+   otherwise the top controls (positioned off the viewport edges) spread
+   across the whole window while the actual 9:16 video box, capped by its
+   own max-height, gets squashed to match, and a flat full-bleed black
+   rectangle floating on an equally flat black backdrop just reads as
+   unstyled. height needs !important since the element also carries an
+   inline height:100% (the correct value on an actual phone, which this
+   query never matches). See the JSX comment on .video-feed-frame for the
+   full reasoning. */
 @media (min-width: 769px) {
   .video-feed-frame {
     max-width: 480px;
+    height: min(860px, calc(100vh - 64px)) !important;
     margin: 0 auto;
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09);
   }
 }
 

@@ -1165,7 +1165,11 @@ export default function VideoFeedView({ onExit }) {
   const row2Safe = 'calc(64px + env(safe-area-inset-top, 0px))';
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 3000,
+      background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
       {/* Everything but the comments sheet lives inside this frame. Built
           for a phone screen (full-bleed controls, a 9:16 video box) — on a
           wide desktop browser the outer root above is the whole browser
@@ -1173,12 +1177,16 @@ export default function VideoFeedView({ onExit }) {
           edge (disconnected from the actual video) and the video box itself
           would get squashed (aspect-ratio kept, but its width stays 100% of
           a very wide parent while max-height clips it, distorting the
-          frame). See the `.video-feed-frame` media-query rule in
-          index.css — it caps this at a phone-like width and centers it on
-          wider viewports, so every absolutely-positioned child below (which
-          all key off THIS div, now the nearest positioned ancestor) lines
-          up together instead of each spreading to its own edge of the
-          window. Full-bleed on an actual phone width is unaffected. */}
+          frame). Full-bleed edge-to-edge also just reads as unstyled once
+          it's not filling the whole screen anymore — see the
+          `.video-feed-frame` media-query rule in index.css, which caps this
+          at a phone-like width *and* height, centers it (the flex on the
+          root above), and gives it rounded corners + a shadow so it reads
+          as a deliberate "theater" card sitting on the page rather than a
+          mobile layout stretched into a black void. Every absolutely-
+          positioned child below keys off THIS div (the nearest positioned
+          ancestor), so they all move and scale with the card together.
+          Full-bleed edge-to-edge on an actual phone width is unaffected. */}
       <div className="video-feed-frame" style={{ position: 'relative', height: '100%', width: '100%' }}>
       {/* Row 1 is icon buttons ONLY (back / refresh / mute) — the
           Feed/Following toggle used to sit in this same row, centered, and
@@ -1398,7 +1406,19 @@ export default function VideoFeedView({ onExit }) {
               // instead ties this directly to the same already-correctly-
               // sized ancestor rather than an independently-computed unit
               // that can disagree with it.
-              style={{ height: '100%', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
+              // scrollSnapStop:'always' used to sit here too, to stop a fast
+              // fling from skipping past more than one video at a time — but
+              // on WebKit it also disables real-time finger-tracking during
+              // the drag itself: instead of the slide moving 1:1 with the
+              // touch the way native scrolling normally does, the browser
+              // holds it still for the whole gesture and only animates it to
+              // the decided snap target on release, confirmed live as
+              // "video stays stationary for a second then jumps." Dropping
+              // it restores normal drag-tracking (scrollSnapType alone still
+              // snaps cleanly on release) at the cost of a very hard flick
+              // occasionally advancing two slides instead of one — the same
+              // tradeoff TikTok's own web player makes.
+              style={{ height: '100%', scrollSnapAlign: 'start' }}
             >
               <VideoSlide
                 post={post}
