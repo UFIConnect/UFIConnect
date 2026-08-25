@@ -2086,7 +2086,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
     // img/a markup) sitting unstripped in the post content shown on
     // PostDetail, confirmed live as the raw "<table><tr><td>..." markup
     // rendering as literal text on the post page.
-    const content = truncateWithEllipsis(decodeAndStripHTML(rawContent), 400);
+    const content = truncateWithEllipsis(decodeAndStripHTML(rawContent), POST_CONTENT_MAX_CHARS);
     const idMatch = link.match(/comments\/([a-z0-9]+)/i);
     if (!idMatch || !title) continue;
     const matchedGroup = groups.find(g => g.subreddit?.toLowerCase() === sub.toLowerCase());
@@ -2168,7 +2168,7 @@ function parseRedditJSON(data, topicKeyword) {
         id:          `reddit_${d.id}`,
         authorId:    `reddit_${d.author}`,
         groupId:     matchedGroup?.id || `ext_${sub.toLowerCase()}`,
-        content:     truncateWithEllipsis(decodeHTMLEntities(d.selftext || d.title), 400),
+        content:     truncateWithEllipsis(decodeHTMLEntities(d.selftext || d.title), POST_CONTENT_MAX_CHARS),
         title:       decodeHTMLEntities(d.title || ''),
         source:      'reddit',
         sourceLabel: `r/${sub}`,
@@ -2364,7 +2364,7 @@ async function fetchHNByKeyword(keyword) {
         // <p>/<a>/<code> tags, entities escaped inside them) — was rendering
         // literal "<p>...</p>" markup on PostDetail, same class of bug
         // already fixed for Reddit's Atom content field.
-        content:       h.story_text ? truncateWithEllipsis(stripAndDecodeHTML(h.story_text), 400) : h.title,
+        content:       h.story_text ? truncateWithEllipsis(stripAndDecodeHTML(h.story_text), POST_CONTENT_MAX_CHARS) : h.title,
         title:         h.title,
         source:        'hackernews',
         sourceLabel:   'News',
@@ -2688,6 +2688,22 @@ function truncateWithEllipsis(text, maxLen) {
   if (!text) return text;
   return text.length > maxLen ? text.slice(0, maxLen).trim() + '…' : text;
 }
+
+// The DB's own content column caps at 2000 chars per post (see
+// savePostsToDB/savePostsToDBFast's own .slice(0, 2000)/clean(p.content,
+// 2000)) — but most source fetchers below were independently truncating to
+// 400-500 chars well before that, discarding the back half of a real post's
+// text long before it ever reached the database. The frontend's own
+// "Show more" expand only ever reveals whatever content actually made it
+// this far, so a post genuinely longer than ~400 chars looked cut off
+// mid-sentence no matter how far a reader expanded it — confirmed live as
+// "shows half the writing instead of the full post," across Reddit, HN,
+// Mastodon, Stack Overflow, and both job description sources. Matches the
+// DB's own ceiling so nothing gets double-truncated inconsistently between
+// here and there. Comment bodies (a different UI surface — a scrollable
+// list of many short replies, not one focused post) intentionally keep
+// their own shorter, unrelated caps.
+const POST_CONTENT_MAX_CHARS = 2000;
 
 // ─── Medium: fetch articles by tag via RSS feed ───────────────────────────────
 function decodeHTMLEntities(str) {
@@ -3697,7 +3713,7 @@ function mapMastodonPosts(data, tag) {
   return (data || [])
     .filter(t => t.content && t.account && !t.sensitive && t.visibility === 'public')
     .map(t => {
-      const text = truncateWithEllipsis(stripAndDecodeHTML(t.content), 500);
+      const text = truncateWithEllipsis(stripAndDecodeHTML(t.content), POST_CONTENT_MAX_CHARS);
       return {
         id:          `mastodon_${t.id}`,
         authorId:    `mastodon_${t.account.id}`,
@@ -3808,7 +3824,7 @@ async function fetchLobstersByTag(tag) {
         // Lobsters' API runs description through their own Markdown-to-HTML
         // renderer server-side — a real <p>/<a> markup string, not plain
         // text, same as Reddit's Atom content and HN's story_text above.
-        content:     s.description ? truncateWithEllipsis(stripAndDecodeHTML(s.description), 400) : s.title,
+        content:     s.description ? truncateWithEllipsis(stripAndDecodeHTML(s.description), POST_CONTENT_MAX_CHARS) : s.title,
         title:       s.title,
         source:      'lobsters',
         sourceLabel: 'Lobsters',
@@ -4153,7 +4169,7 @@ async function fetchIndeedJobs(keyword) {
       id:          `indeed_${crypto.createHash('md5').update(String(j.id || j.url || Date.now())).digest('hex').slice(0, 20)}`,
       authorId:    'indeed_jobs',
       groupId:     'ext_indeed',
-      content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || j.company_name || ''), 400),
+      content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || j.company_name || ''), POST_CONTENT_MAX_CHARS),
       title:       j.title,
       source:      'indeed', sourceLabel: 'Indeed',
       sourceUrl:   j.url,
@@ -4925,7 +4941,7 @@ async function fetchRemoteOKJobs(keyword) {
         id:          `remoteok_${j.id}`,
         authorId:    'remoteok_jobs',
         groupId:     'ext_remoteok',
-        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), 400),
+        content:     truncateWithEllipsis(stripAndDecodeHTML(j.description || ''), POST_CONTENT_MAX_CHARS),
         title:       j.position,
         source:      'remoteok', sourceLabel: 'Remote OK',
         sourceUrl:   j.url || j.apply_url,
@@ -5242,7 +5258,7 @@ async function fetchBlueskyByKeyword(keyword) {
   if (cached) return cached;
   // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFconnect/1.0 which bsky rate-limits)
   const mapPost = (p) => {
-    const text   = truncateWithEllipsis(p.record?.text || '', 500);
+    const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
     const handle = p.author?.handle || p.author?.did || 'unknown';
     // Bluesky (AT Protocol) video posts stream via HLS — embed.video#view
     // gives a .m3u8 playlist plus a thumbnail, and they always share the
@@ -18034,7 +18050,7 @@ function mapSharedJobPost(p, label) {
     // interest matching instead of tags alone. Truncated — this is only
     // ever read for keyword matching server-side, not rendered, so there's
     // no reason to ship a full job description in the response payload.
-    content:   truncateWithEllipsis(p.content || '', 500),
+    content:   truncateWithEllipsis(p.content || '', POST_CONTENT_MAX_CHARS),
     org:       p.author?.name || p.author?.organization || 'Company',
     location:  p.location || (label === 'USAJobs' ? 'United States' : 'Remote'),
     pay:       '',
