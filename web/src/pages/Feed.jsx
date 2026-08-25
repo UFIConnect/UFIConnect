@@ -295,6 +295,22 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
         right: 'clamp(12px, calc(50vw - 150px), 0px)',
       }}
     >
+      {/* Actions — pinned to the top of the panel (was at the bottom, past
+          Sort/Time/Sources/Topic) so Reset/Apply filters stay reachable
+          without scrolling past ~230 topic chips first. Sticky within the
+          panel's own scroll so it stays visible while scrolling further
+          down too; negative margins cancel the panel's own padding so the
+          bar spans full width and sits flush with the true top edge. */}
+      <div style={{
+        display: 'flex', gap: 8, position: 'sticky', top: -18,
+        marginTop: -18, marginLeft: -20, marginRight: -20, marginBottom: 16,
+        padding: '14px 20px 12px', background: 'var(--surface)', zIndex: 1,
+        borderBottom: '1.5px solid var(--border)',
+      }}>
+        <button onClick={reset} className="btn btn-ghost btn-sm" style={{ flex: 1 }}>Reset</button>
+        <button onClick={apply} className="btn btn-primary btn-sm" style={{ flex: 2 }}>Apply filters</button>
+      </div>
+
       {/* Sort */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Sort</div>
@@ -384,10 +400,10 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
           confirmed live as genuinely hard to use: unclear which region a
           scroll gesture was even going to, and the box itself was so short
           it took many small scrolls to get through ~230 topics. Topic is
-          already the last section before Actions, so letting it flow as
-          part of the panel's single outer scroll instead doesn't block
-          reaching anything — Reset/Apply are still right below it either
-          way. */}
+          already the last section, so letting it flow as part of the
+          panel's single outer scroll instead doesn't block reaching
+          anything — Reset/Apply filters are pinned to the top of the
+          panel now, not down here. */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
           Topic {local.topics.length > 0 && `(${local.topics.length} selected)`}
@@ -411,12 +427,6 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
             );
           })}
         </div>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={reset} className="btn btn-ghost btn-sm" style={{ flex: 1 }}>Reset</button>
-        <button onClick={apply} className="btn btn-primary btn-sm" style={{ flex: 2 }}>Apply filters</button>
       </div>
     </div>
   );

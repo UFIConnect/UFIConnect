@@ -14910,6 +14910,41 @@ async function handleVideoFeedRequest(req, res) {
     const matchesSearch = p => !searchQuery || `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase().includes(searchQuery);
     const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
 
+    // ── Full-text search across every cached video post, not just whatever
+    // a single getCursorFeedPage page happened to return — the comment
+    // above (matchesSearch) used to be the *whole* search story here: fine
+    // for volume, but a real gap for reach, since the word you searched
+    // might not appear anywhere in that one page's worth of cursor results
+    // even when plenty of matches exist further back in the DB. Mirrors the
+    // main Feed's own "Full-text search across all sources" branch (see
+    // handleFeedRequest) — same getPostsFromDB q+mediaType support, same
+    // sortFeedBatch(diversify:true) so one prolific source can't dominate a
+    // wide ILIKE match. Topic is deliberately NOT passed into
+    // getPostsFromDB's own topics param (exact-match there, not case-
+    // insensitive) — matchesTopic below does that filtering instead, same
+    // reasoning the main Feed's search branch already uses.
+    if (searchQuery && db.isConnected()) {
+      const searchSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
+      let rows = [];
+      try {
+        rows = await getPostsFromDB([], feedLimit * 4, 0, searchSources, {
+          q: searchQuery,
+          mediaType: 'video',
+          timeRange: req.query.timeRange || null,
+          sort: 'newest',
+        });
+      } catch {}
+      const ranked = sortFeedBatch(realFeedPosts(rows), 'video-search', {
+        limit: feedLimit * 4,
+        sort: 'newest',
+        diversify: true,
+      });
+      const playable = filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic);
+      const pageRows = playable.slice(0, feedLimit);
+      markPostsSeen(req.user.id, pageRows, 'videos');
+      return res.json({ posts: pageRows, hasMore: playable.length > pageRows.length, search: searchQuery });
+    }
+
     // "Balanced" — an even share per active source (getBalancedFeedPosts'
     // own PARTITION BY source ROW_NUMBER, page-based) instead of the
     // default cursor/round-robin mix above, same distinction the main
