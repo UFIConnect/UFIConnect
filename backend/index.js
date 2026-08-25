@@ -17019,7 +17019,15 @@ app.get('/users/search', authenticate, (req, res) => {
       (u.bio || '').toLowerCase().includes(q) ||
       asArray(u.skills).some(s => typeof s === 'string' && s.toLowerCase().includes(q)) ||
       (u.preferences?.role || '').toLowerCase().includes(q) ||
-      (u.preferences?.interests || []).some(i => i.toLowerCase().includes(q))
+      (u.preferences?.interests || []).some(i => i.toLowerCase().includes(q)) ||
+      // Exact match only, unlike every field above — two people who just
+      // met and don't know exactly how the other typed their display name
+      // naturally try searching by email first (confirmed live: two fresh
+      // accounts found each other fine by name, but email search returned
+      // nothing at all). Partial/substring email matching would let
+      // someone enumerate accounts by domain (e.g. searching "@gmail.com"),
+      // so this only ever returns a hit on the complete address.
+      (u.email || '').toLowerCase() === q
     );
   }
   if (role) {
@@ -17043,6 +17051,9 @@ app.get('/users/search', authenticate, (req, res) => {
       if (uName === q)           score += 100;
       else if (uName.startsWith(q)) score += 60;
       else if (uName.includes(q))   score += 25;
+      // Found by exact email rather than name — this is the specific
+      // person being looked for, same confidence as an exact name match.
+      else if ((u.email || '').toLowerCase() === q) score += 100;
     }
 
     // Shared interests (most impactful relevance signal)
