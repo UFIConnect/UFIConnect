@@ -1547,6 +1547,17 @@ export default function VideoFeedView({ onExit }) {
         <>
         <div
           ref={containerRef}
+          // video-feed-scroll: hides this element's own native scrollbar
+          // (see index.css) — on desktop that scrollbar renders right at
+          // the frame's edge, easy to mistake for some kind of cursor.
+          // scrollbar-width/::-webkit-scrollbar together cover every
+          // browser, since no single property does; a real OS scrollbar's
+          // color isn't reliably stylable across all of them either
+          // (::-webkit-scrollbar-thumb only works in Chromium/WebKit, not
+          // Firefox), so hiding it outright is the one fix that's actually
+          // consistent everywhere. Purely visual — scrolling (wheel,
+          // drag, touch, keyboard) all still work exactly the same.
+          className="video-feed-scroll"
           // userSelect:'none' is also what actually answers "get rid of the
           // text cursor" (a real OS text-caret icon can't be recolored from
           // CSS) — with nothing in this view selectable, the browser has no

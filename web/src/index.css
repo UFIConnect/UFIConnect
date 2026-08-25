@@ -809,13 +809,27 @@ input, textarea, select { font-family: inherit; }
    different position/size per breakpoint. */
 @media (min-width: 769px) {
   .video-feed-frame {
-    max-width: clamp(420px, 46vw, 560px);
-    height: min(900px, calc(100vh - 64px)) !important;
+    max-width: clamp(460px, 50vw, 640px);
+    height: min(960px, calc(100vh - 64px)) !important;
     margin: 0 auto;
     border-radius: 20px;
     overflow: hidden;
     box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09);
   }
+}
+
+/* Hides the scroll container's own native scrollbar (see video-feed-scroll
+   in VideoFeedView.jsx for why) — scrollbar-width covers Firefox,
+   -ms-overflow-style covers legacy Edge/IE, ::-webkit-scrollbar covers
+   Chrome/Safari/every other Chromium browser; no single property does all
+   three, so all three are here. Purely visual — the element underneath is
+   still fully scrollable by every input method. */
+.video-feed-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.video-feed-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* No visible cursor anywhere in Videos, on every element (top controls,
