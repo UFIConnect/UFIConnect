@@ -832,19 +832,6 @@ input, textarea, select { font-family: inherit; }
   display: none;
 }
 
-/* No visible cursor anywhere in Videos, on every element (top controls,
-   scrub bar, buttons, comments sheet, filter sheet) — every one of them
-   sets its own inline cursor value (pointer/default/grab...), so this is
-   the one place able to override all of them at once rather than editing
-   each individually and risking missing one. !important because it's
-   fighting those specific inline values, not a peer stylesheet rule.
-   Purely cosmetic: cursor never affects click-ability, so every control
-   here stays fully functional — clicking, dragging to scroll, seeking —
-   with the pointer simply not rendered while it's over any of it. */
-.video-feed-root, .video-feed-root * {
-  cursor: none !important;
-}
-
 /* ── PWA / App optimisations ──────────────────────────────── */
 /* Eliminate 300ms tap delay everywhere */
 * { touch-action: manipulation; }

@@ -1081,6 +1081,7 @@ export default function VideoFeedView({ onExit }) {
       function handleUp() {
         document.removeEventListener('pointermove', handleMove);
         document.removeEventListener('pointerup', handleUp);
+        container.style.cursor = 'grab';
         // Set back to 'none' rather than removeProperty()'d away: this
         // element's JSX also declares userSelect:'none' as its permanent
         // default, and React only re-touches a style property on render
@@ -1090,6 +1091,7 @@ export default function VideoFeedView({ onExit }) {
         // to selectable text after the very first drag.
         container.style.userSelect = 'none';
       }
+      container.style.cursor = 'grabbing';
       container.style.userSelect = 'none';
       document.addEventListener('pointermove', handleMove);
       document.addEventListener('pointerup', handleUp, { once: true });
@@ -1322,15 +1324,7 @@ export default function VideoFeedView({ onExit }) {
   const row2Safe = 'calc(64px + env(safe-area-inset-top, 0px))';
 
   return (
-    // video-feed-root: see the matching "cursor: none !important" rule in
-    // index.css — every button/link/scrub-bar/etc in this view sets its
-    // own cursor value inline (pointer, default, grab...), so hiding it
-    // everywhere without one rule per element (14+ of them, easy to miss
-    // one) needs a single blanket override at the root instead. Purely
-    // cosmetic either way — cursor never affects click-ability, so
-    // everything here stays fully functional with the pointer just not
-    // rendered while it's over any of it.
-    <div className="video-feed-root" style={{
+    <div style={{
       position: 'fixed', inset: 0, zIndex: 3000,
       background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1563,14 +1557,13 @@ export default function VideoFeedView({ onExit }) {
           // CSS) — with nothing in this view selectable, the browser has no
           // reason to ever show it over the likes count/source label/
           // caption text, so it never appears in the first place rather
-          // than needing to be hidden after the fact. The cursor itself is
-          // hidden entirely now (see video-feed-root in index.css), so
-          // there's no grab/grabbing affordance to show here either —
-          // click-and-drag scrolling below still works the same, just with
-          // no visible pointer over any of it.
+          // than needing to be hidden after the fact. cursor:'grab' hints
+          // the click-and-drag scrolling below on desktop (a no-op on
+          // touch, nothing renders a cursor there); the drag handler swaps
+          // it to 'grabbing' for the duration of an actual drag.
           style={{
             height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch',
-            userSelect: 'none',
+            userSelect: 'none', cursor: 'grab',
           }}
         >
           {videoPosts.map((post, idx) => (
