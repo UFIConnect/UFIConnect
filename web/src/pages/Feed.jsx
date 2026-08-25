@@ -1490,8 +1490,17 @@ export default function Feed() {
       // accurate for that case.
       const refreshTimestamp = data.snapshotAt || Date.now();
       const shouldMerge = (manual || live) && !replace;
+      // previous first, incoming second — mergeFeedPosts' dedup keeps
+      // whichever copy of a post it sees *last* on a createdAt tie (its
+      // `>=` comparison), and a post's createdAt never changes between
+      // fetches, only its counts do. With incoming first (the old order),
+      // every periodic refresh's fresh comment/like counts got silently
+      // overwritten by the stale copy already on screen the moment
+      // `previous` was processed second — confirmed live as the actual
+      // reason counts never appeared to update no matter how long a post
+      // sat in the feed. This order makes the fresh copy win instead.
       const nextPosts = shouldMerge
-        ? mergeFeedPosts([...incoming, ...previous], activeFilters.sort)
+        ? mergeFeedPosts([...previous, ...incoming], activeFilters.sort)
         : mergeFeedPosts(incoming, activeFilters.sort);
 
       if (shouldMerge) {
