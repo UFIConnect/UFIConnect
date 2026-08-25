@@ -293,6 +293,21 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             // re-construction — a harmless no-op on the runs where it was
             // already playing.
             e.target.playVideo();
+            // Mobile browsers can block this playVideo() call entirely —
+            // no error, and in practice often no onStateChange event
+            // either, so `paused` (defaults to false) stayed permanently
+            // wrong and the center ▶ indicator never appeared, leaving no
+            // visible cue that a tap was needed at all — confirmed live as
+            // "can't watch videos" on mobile: playback silently never
+            // started and nothing on screen said so. A short delayed check
+            // against the player's real state (not another event
+            // subscription, since the whole problem is that blocked
+            // autoplay doesn't reliably fire one) corrects `paused` if
+            // playback genuinely never began.
+            setTimeout(() => {
+              if (cancelled || !ytPlayerRef.current) return;
+              try { if (ytPlayerRef.current.getPlayerState() !== 1) setPaused(true); } catch {}
+            }, 1200);
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -368,7 +383,21 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     if (src?.kind === 'youtube') {
       const p = ytPlayerRef.current;
       if (!p) return;
-      if (paused) p.playVideo(); else p.pauseVideo();
+      // Queries the player's real live state instead of trusting this
+      // component's own `paused` — that only ever updates via
+      // onStateChange, which never fires at all if autoplay silently
+      // failed to start in the first place (common on mobile: the
+      // playerVars.autoplay:1/explicit playVideo() call in onReady can
+      // both be blocked with no error, no event, nothing). `paused`
+      // defaulting to false then meant a tap on a video that never
+      // actually started called pauseVideo() instead of playVideo() — a
+      // no-op, since nothing was playing to pause — leaving no way to
+      // ever start it manually. Confirmed live as "can't watch videos" on
+      // mobile. 1 is YT.PlayerState.PLAYING, a stable documented value in
+      // YouTube's own API (no need for the YT global to be in scope here).
+      try {
+        if (p.getPlayerState() === 1) p.pauseVideo(); else p.playVideo();
+      } catch {}
     } else {
       const v = getNativeEl();
       if (!v) return;
@@ -1297,7 +1326,21 @@ export default function VideoFeedView({ onExit }) {
               key={`${post.id || 'v'}-${idx}`}
               ref={el => { slideRefs.current[idx] = el; }}
               data-idx={idx}
-              style={{ height: '100dvh', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
+              // Was 100dvh — an absolute viewport unit computed independently
+              // of this slide's own ancestor chain (the root is pinned to the
+              // real viewport via position:fixed + inset:0, then height:100%
+              // down to this scroll container). 100dvh and inset:0 are
+              // *supposed* to resolve to the same value, but on some mobile
+              // browsers they can drift apart slightly as the browser's own
+              // UI chrome (address bar, etc.) animates open/closed — leaving
+              // a thin gap at the bottom of every slide where the page's own
+              // light background (#F8FAFC) shows through behind the video,
+              // confirmed live as a persistent white/grey strip at the
+              // bottom of every video regardless of which post. height:100%
+              // instead ties this directly to the same already-correctly-
+              // sized ancestor rather than an independently-computed unit
+              // that can disagree with it.
+              style={{ height: '100%', scrollSnapAlign: 'start', scrollSnapStop: 'always' }}
             >
               <VideoSlide post={post} active={idx === activeIndex} muted={muted} onToggleMute={toggleMuted} isScrolling={isScrolling} onOpenComments={setCommentsPost} />
             </div>

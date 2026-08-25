@@ -3405,7 +3405,19 @@ async function fetchYouTubeByKeyword(keyword) {
           fetchYouTubeShortsByKeyword(keyword, apiKey),
         ]);
         const seenIds = new Set();
+        // shortsPosts first — the dedup below keeps whichever copy of a
+        // video it sees first when the same id appears in both result
+        // sets (common: nothing stops a genuine Short from also matching
+        // the plain, non-shorts-biased search). shortsPosts carries a
+        // real, verified classification (see fetchYouTubeShortsByKeyword's
+        // own duration check); the plain search's copy of the same video
+        // has none. Main-search-first order meant that verified
+        // classification was silently discarded in favor of the
+        // unclassified duplicate whenever both tiers turned up the same
+        // video — confirmed as the reason Shorts kept rendering squeezed
+        // even after the classification itself was added.
         const posts = [
+          ...shortsPosts,
           ...(data?.items || [])
             .filter(v => v.id?.videoId && v.snippet?.title)
             .map(v => mapYouTubePost(
@@ -3413,7 +3425,6 @@ async function fetchYouTubeByKeyword(keyword) {
               v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
               v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
             )),
-          ...shortsPosts,
         ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
         if (posts.length) { setCached(cacheKey, posts); return posts; }
       } catch (e) {
