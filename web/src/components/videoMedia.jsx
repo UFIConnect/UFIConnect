@@ -199,7 +199,7 @@ export function loadYouTubeIframeApi() {
 // browser already supports it (Safari/iOS). Used for Bluesky video — a
 // simple <video src="...m3u8"> only works in Safari; everywhere else needs
 // hls.js to actually decode the stream.
-export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, style }) {
+export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, loop = false, onClick, videoRef: externalRef, onTimeUpdate, onLoadedMetadata, onPlay, onPause, onError, style }) {
   const videoRef = useRef(null);
   // Callback ref so the caller (VideoFeedView's custom pause/seek controls)
   // can drive the underlying <video> element directly — hls.js attaches to
@@ -250,18 +250,19 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
       // statically pulled it into every visitor's Feed download (~140KB
       // gzipped extra) whether or not they ever see a video post. Only
       // fetched now when a stream actually needs decoding.
+      const fail = () => { setErrored(true); onError?.(); };
       import('hls.js').then(({ default: Hls }) => {
         if (cancelled || !videoRef.current) return;
-        if (!Hls.isSupported()) { setErrored(true); return; }
+        if (!Hls.isSupported()) { fail(); return; }
         hls = new Hls();
         hls.loadSource(src);
         hls.attachMedia(videoRef.current);
-        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) setErrored(true); });
+        hls.on(Hls.Events.ERROR, (_evt, data) => { if (data?.fatal) fail(); });
         if (autoPlay) hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (!videoRef.current) return;
           startMuted();
         });
-      }).catch(() => setErrored(true));
+      }).catch(() => fail());
     }
     return () => { cancelled = true; hls?.destroy(); };
   }, [src, autoPlay]);
@@ -289,6 +290,10 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
     <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
       playsInline draggable={true} poster={poster} onClick={onClick}
       onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause}
+      // Catches the Safari-native path (no hls.js involved at all — see the
+      // canPlayType branch above) plus any real network/decode error hls.js
+      // itself doesn't surface through its own event system.
+      onError={() => { setErrored(true); onError?.(); }}
       style={{ width: '100%', display: 'block', background: '#000', ...style }} />
   );
 }

@@ -8,6 +8,22 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { auth0AuthorizationParams, auth0Config, isAuth0Configured } from './auth/auth0Config';
 import './index.css';
+import { reportClientError } from './api/errorReporting';
+
+// Feeds the autofix agent's detection pipeline (backend recordClientError/
+// runAutofixCheck) — catches errors React's own per-tree error boundaries
+// (see Feed.jsx's FeedErrorBoundary) never see: anything outside a React
+// render (an event handler, a timer, a raw DOM API) or a rejected promise
+// nobody awaited. Silently no-ops for a signed-out visitor (POST /client-
+// error requires auth) — same fire-and-forget swallow reportClientError
+// itself already does, not something to special-case here.
+window.addEventListener('error', (e) => {
+  reportClientError({ message: e.message, stack: e.error?.stack });
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  reportClientError({ message: reason?.message || String(reason), stack: reason?.stack });
+});
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {

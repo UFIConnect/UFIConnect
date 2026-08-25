@@ -9,6 +9,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMet
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
+import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
 
 // Utility: debounce function for search input
@@ -1351,7 +1352,10 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
 class FeedErrorBoundary extends Component {
   state = { error: null };
   static getDerivedStateFromError(err) { return { error: err }; }
-  componentDidCatch(err, info) { console.error('[Feed] render error:', err, info?.componentStack); }
+  componentDidCatch(err, info) {
+    console.error('[Feed] render error:', err, info?.componentStack);
+    reportClientError({ message: err?.message, stack: err?.stack, componentStack: info?.componentStack });
+  }
   render() {
     if (this.state.error) {
       return (

@@ -5,7 +5,7 @@
 // page_view event on every SPA route change, since gtag's own automatic
 // page_view only fires once, on initial script load.
 
-function getVisitorId() {
+export function getVisitorId() {
   try {
     let id = localStorage.getItem('ufi_visitor_id');
     if (!id) {

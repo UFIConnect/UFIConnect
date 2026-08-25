@@ -5,6 +5,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
+import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
@@ -497,6 +498,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
+            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
           <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
@@ -528,6 +530,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
+          onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id })}
           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
       )}
