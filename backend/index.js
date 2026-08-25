@@ -14869,6 +14869,36 @@ async function handleVideoFeedRequest(req, res) {
     const topicFilter = (req.query.topic || '').trim();
     const searchQuery = (req.query.q || '').trim().toLowerCase();
     const matchesSearch = p => !searchQuery || `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase().includes(searchQuery);
+    const matchesTopic = p => !topicFilter || p.topic === topicFilter;
+
+    // "Balanced" — an even share per active source (getBalancedFeedPosts'
+    // own PARTITION BY source ROW_NUMBER, page-based) instead of the
+    // default cursor/round-robin mix above, same distinction the main
+    // Feed's own Ranked/Newest/Popular/Balanced sort already draws (see
+    // dbFeedOrder — 'balanced' and 'ranked' actually share the same
+    // within-source ORDER BY; what makes Balanced "balanced" is the equal-
+    // per-source partitioning itself, not a different row ordering).
+    // mediaType:'video' is already supported by getBalancedFeedPosts (used
+    // unchanged by the main Feed's own Balanced sort), so this reuses it
+    // directly rather than needing a video-specific variant. Paginated by
+    // page number, not cursor — VideoFeedView's loadPage already has a
+    // page-based path for Following mode; this reuses that same idea for
+    // a second, independent counter.
+    if (req.query.sort === 'balanced') {
+      const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
+      const balancedSource = sourcesParam.length > 1 ? sourcesParam : sourceFilter || null;
+      const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 8));
+      const { posts: balancedRaw } = await getBalancedFeedPosts({
+        sortMode: 'balanced', mediaType: 'video', source: balancedSource,
+        timeRange: videoTimeRange || 'all', page: reqPage, perSourcePageSize,
+      });
+      const playable = filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
+        .filter(matchesTopic).filter(matchesSearch);
+      const pageRows = playable.slice(0, feedLimit);
+      const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
+      markPostsSeen(req.user.id, pageRows, 'videos');
+      return res.json({ posts: pageRows, page: reqPage, hasMore });
+    }
 
     // Same two-phase shape as the main Feed's buildTwoPhaseMix, only applied
     // when nothing's explicitly filtered by source — an explicit platform

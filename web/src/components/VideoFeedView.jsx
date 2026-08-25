@@ -881,30 +881,41 @@ export default function VideoFeedView({ onExit }) {
   // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
   // single-value toggle could never combine sources in the first place.
   const [sourceFilter, setSourceFilter] = useState([]);
-  // Search text and topic both live in the same sheet as the platform
-  // filter (see filterOpen below) rather than their own always-visible
-  // controls — a permanent search bar/topic row floating over a full-
-  // bleed swipe feed would compete with the video for the very top of
-  // the screen, exactly the "look ugly" this was asked to avoid. Applied
-  // together with the platform selection on the sheet's existing "Done"
-  // tap rather than live — a debounced live search doesn't make much
-  // sense tucked inside a sheet the user has to deliberately open anyway.
-  // Each has an uncommitted "input" value (what's shown/highlighted while
-  // the sheet is still open — searchInput textbox, topicInput chip) and a
-  // committed "applied" value (searchQuery/topicFilter, mirrored into refs
-  // for loadPage) that only updates when Done is actually tapped — so
-  // reopening the sheet and changing your mind before confirming never
-  // triggers a fetch, and applySearchAndTopic can tell whether anything
-  // actually changed since the last apply.
+  // Search and topic each have their own small floating button (searchOpen/
+  // filterOpen below) rather than a single always-visible bar/row — a
+  // permanent search bar floating over a full-bleed swipe feed would
+  // compete with the video for the very top of the screen, exactly the
+  // "look ugly" this was asked to avoid. Topic (single-select) and Platform
+  // apply immediately on tap, same as before — no separate "uncommitted"
+  // state needed for either. Search is the one exception: searchInput is
+  // the raw, uncommitted textbox value, searchQuery/searchQueryRef is
+  // what's actually been applied and sent to loadPage, only updated on the
+  // search sheet's own Done/Enter (applySearch) — live-as-you-type doesn't
+  // make much sense tucked inside a sheet the user has to deliberately
+  // open anyway.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [topicInput, setTopicInput] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
   const searchQueryRef = useRef('');
   const topicFilterRef = useRef('');
-  // Whether the platform-filter sheet (opened from the "Filters" button) is
-  // showing — see its render block below for why this replaced an
-  // always-visible chip row.
+  // 'newest' (default — the cursor/round-robin mix below) or 'balanced'
+  // (an even share per active source instead — see handleVideoFeedRequest's
+  // getBalancedFeedPosts branch server-side, the exact distinction the
+  // main Feed's own Ranked/Newest/Popular/Balanced sort already draws).
+  // Applied immediately on tap rather than deferred to Done, same as the
+  // platform chips — unlike search/topic there's no text/selection state
+  // to "commit," just a straight toggle.
+  const [sortMode, setSortMode] = useState('newest');
+  const sortModeRef = useRef('newest');
+  // Balanced pagination is page-number-based (getBalancedFeedPosts, like
+  // Following mode below), not cursor-based — its own counter so switching
+  // back to Newest doesn't inherit a stale page number, and vice versa.
+  const balancedPageRef = useRef(1);
+  // Whether the search sheet (just the text input) or the filter sheet
+  // (topic/platform/sort) is open — two separate buttons/sheets rather
+  // than one combined one, so each stays focused and quick to scan
+  // instead of a single sheet trying to do three different jobs at once.
+  const [searchOpen, setSearchOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   // Mirrors state into refs so loadPage (called from effects/callbacks that
   // don't want to be redeclared on every mode/filter change) always reads
@@ -962,6 +973,11 @@ export default function VideoFeedView({ onExit }) {
         // times "Refresh now" was tapped.
         if (bust) params += `&bust=1`;
         endpoint = '/office/feed/videos/following';
+      } else if (sortModeRef.current === 'balanced') {
+        if (reset) balancedPageRef.current = 1;
+        params += `&sort=balanced&page=${balancedPageRef.current}`;
+        if (bust) params += `&bust=1`;
+        endpoint = '/office/feed/videos';
       } else {
         if (reset) cursorRef.current = null;
         if (cursorRef.current) params += `&cursor=${encodeURIComponent(cursorRef.current)}`;
@@ -999,6 +1015,7 @@ export default function VideoFeedView({ onExit }) {
         return reset ? fresh : [...prev, ...fresh];
       });
       if (mode === 'following') followingPageRef.current += 1;
+      else if (sortModeRef.current === 'balanced') balancedPageRef.current += 1;
       else if (data.cursor) cursorRef.current = data.cursor;
       setHasMore(data.hasMore !== false && incoming.length > 0);
       setError(false);
@@ -1036,6 +1053,14 @@ export default function VideoFeedView({ onExit }) {
     setViewMode(next);
     sourceFilterRef.current = [];
     setSourceFilter([]);
+    // Following has no Balanced-sort support of its own (getFollowingFeedPosts
+    // is a separate, per-user live query, not getBalancedFeedPosts) — reset
+    // to Newest so switching modes never silently sends ?sort=balanced=&page=
+    // to an endpoint that doesn't do anything with it.
+    if (next === 'following') {
+      sortModeRef.current = 'newest';
+      setSortMode('newest');
+    }
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
@@ -1057,6 +1082,19 @@ export default function VideoFeedView({ onExit }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
+  // Applies immediately, same as the platform chips — no text/selection
+  // state to defer to a Done tap, just a straight toggle between the two
+  // modes. No-op in Following (see switchViewMode's own comment).
+  const toggleSortMode = useCallback((mode) => {
+    if (viewModeRef.current === 'following' || mode === sortModeRef.current) return;
+    sortModeRef.current = mode;
+    setSortMode(mode);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [loadPage]);
+
   const clearSourceFilter = useCallback(() => {
     if (!sourceFilterRef.current.length) return;
     sourceFilterRef.current = [];
@@ -1067,42 +1105,69 @@ export default function VideoFeedView({ onExit }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
-  // Single-select and uncommitted (see the state block above) — the
-  // backend does an exact match against one topic (see
-  // handleVideoFeedRequest's topicFilter), not a set, unlike the platform
-  // filter above. Tapping the already-selected chip clears it. Doesn't
-  // touch topicFilter/topicFilterRef or reload anything by itself — that
-  // only happens once Done is tapped, via applySearchAndTopic below.
-  const toggleTopicInput = useCallback((topic) => {
-    setTopicInput(current => current === topic ? '' : topic);
-  }, []);
-
-  // Applies whatever's currently typed/picked in the sheet (search text +
-  // topic — platform chips already apply immediately on tap, same as
-  // before) — called from the sheet's "Done" button. Doesn't touch
-  // sourceFilter at all, so a platform selection made earlier in the same
-  // sheet visit isn't re-triggered a second time here.
-  const applySearchAndTopic = useCallback(() => {
-    const trimmed = searchInput.trim();
-    if (trimmed === searchQueryRef.current && topicInput === topicFilterRef.current) return;
-    searchQueryRef.current = trimmed;
-    setSearchQuery(trimmed);
-    topicFilterRef.current = topicInput;
-    setTopicFilter(topicInput);
+  // Single-select, applies immediately — same pattern as toggleSourceFilter
+  // and toggleSortMode above, now that Topic lives in the same
+  // immediate-apply Filter sheet as Platform/Sort rather than paired with
+  // Search's own text input (which does need to defer to a Done tap —
+  // fetching on every keystroke isn't reasonable, but a topic pick isn't
+  // keystroke-driven, so there's no reason to defer this one anymore
+  // either). Tapping the already-selected chip clears it. The backend does
+  // an exact match against one topic (see handleVideoFeedRequest's
+  // topicFilter), not a set, unlike the platform filter.
+  const toggleTopicFilter = useCallback((topic) => {
+    const next = topicFilterRef.current === topic ? '' : topic;
+    topicFilterRef.current = next;
+    setTopicFilter(next);
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
     loadPage({ reset: true });
-  }, [searchInput, topicInput, loadPage]);
+  }, [loadPage]);
 
-  const clearSearchAndTopic = useCallback(() => {
+  // Filter sheet's "Clear all" — source, topic, and sort together (not
+  // search, which is its own separate button/sheet now with its own
+  // Clear). Sort resets to 'newest' rather than being left at 'balanced'
+  // with nothing else filtered.
+  const clearFilters = useCallback(() => {
+    if (!sourceFilterRef.current.length && !topicFilterRef.current && sortModeRef.current === 'newest') return;
+    sourceFilterRef.current = [];
+    setSourceFilter([]);
+    topicFilterRef.current = '';
+    setTopicFilter('');
+    sortModeRef.current = 'newest';
+    setSortMode('newest');
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [loadPage]);
+
+  // Search sheet's own Done/Enter — uncommitted searchInput (the textbox)
+  // vs. committed searchQuery/searchQueryRef (what's actually applied and
+  // sent to loadPage), same reasoning as before: deferred rather than
+  // live-as-you-type, since a debounced live search doesn't make much
+  // sense tucked inside a sheet the user has to deliberately open anyway.
+  const applySearch = useCallback(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === searchQueryRef.current) return;
+    searchQueryRef.current = trimmed;
+    setSearchQuery(trimmed);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [searchInput, loadPage]);
+
+  const clearSearch = useCallback(() => {
+    if (!searchInput && !searchQueryRef.current) return;
     setSearchInput('');
     searchQueryRef.current = '';
     setSearchQuery('');
-    setTopicInput('');
-    topicFilterRef.current = '';
-    setTopicFilter('');
-  }, []);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [searchInput, loadPage]);
 
   // Scrolling back up to video 1 after having scrolled further in acts as
   // pull-to-refresh, same mechanism as every other list on the site — no
@@ -1655,46 +1720,138 @@ export default function VideoFeedView({ onExit }) {
         })}
       </div>
 
-      {/* Row 3: Platform filter — used to be a permanently-visible row of
-          every publicly-aggregated source (FEED_VIDEO_SOURCES, ~30 of them)
-          floating over the video at all times, which read as visual
-          overload on top of an already-full-bleed video. Collapsed into a
-          single button that opens a sheet with the full picker instead —
-          same set of sources/multi-select behavior (toggleSourceFilter),
-          just not permanently on-screen. Following mode uses its own,
-          separate source list (FOLLOWING_VIDEO_SOURCES) — an entirely
-          different pool from Feed mode's (see getFollowingFeedPosts
-          server-side) — the sheet below switches between them based on
-          viewMode. Own row below the toggle (was row 2, sharing space with
-          it) for the same no-overlap reasoning as above. */}
-      <button
-        onClick={() => {
-          // Sync the sheet's uncommitted inputs from whatever's actually
-          // applied right now, every time it opens — otherwise reopening
-          // after a Cancel-via-backdrop-tap could show stale text/topic
-          // left over from an edit that was never actually applied.
-          setSearchInput(searchQuery);
-          setTopicInput(topicFilter);
-          setFilterOpen(true);
-        }}
-        aria-label="Search and filter videos"
-        style={{
-          position: 'absolute', top: `calc(${row2Safe} + 46px)`, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
-          padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-          fontWeight: 700, fontSize: '.78rem',
-          border: `1px solid ${(sourceFilter.length || searchQuery || topicFilter) ? '#fff' : 'rgba(255,255,255,.25)'}`,
-          background: (sourceFilter.length || searchQuery || topicFilter) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
-          backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-          color: '#fff',
-        }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        Search{(sourceFilter.length + (topicFilter ? 1 : 0) + (searchQuery ? 1 : 0)) > 0
-          ? ` · ${sourceFilter.length + (topicFilter ? 1 : 0) + (searchQuery ? 1 : 0)}` : ''}
-      </button>
+      {/* Row 3: Search + Filter — two separate buttons/sheets, each doing
+          one job, rather than one combined sheet trying to do three
+          (search/topic/platform/sort) at once. Filters used to be a
+          permanently-visible row of every publicly-aggregated source
+          (FEED_VIDEO_SOURCES, ~30 of them) floating over the video at all
+          times, which read as visual overload on top of an already-full-
+          bleed video — collapsed into buttons that open sheets instead,
+          same underlying behavior, just not permanently on-screen. */}
+      <div style={{
+        position: 'absolute', top: `calc(${row2Safe} + 46px)`, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 10, display: 'flex', gap: 8,
+      }}>
+        <button
+          onClick={() => { setSearchInput(searchQuery); setSearchOpen(true); }}
+          aria-label="Search videos"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
+            fontWeight: 700, fontSize: '.78rem',
+            border: `1px solid ${searchQuery ? '#fff' : 'rgba(255,255,255,.25)'}`,
+            background: searchQuery ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+            color: '#fff',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          Search
+        </button>
+        {/* Following mode uses its own, separate source list
+            (FOLLOWING_VIDEO_SOURCES) — an entirely different pool from Feed
+            mode's (see getFollowingFeedPosts server-side) — the sheet below
+            switches between them based on viewMode. No Sort section shown
+            in Following (see toggleSortMode/switchViewMode's own comments
+            on why Balanced doesn't apply there). */}
+        <button
+          onClick={() => setFilterOpen(true)}
+          aria-label="Filter videos"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
+            fontWeight: 700, fontSize: '.78rem',
+            border: `1px solid ${(sourceFilter.length || topicFilter || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.25)'}`,
+            background: (sourceFilter.length || topicFilter || sortMode !== 'newest') ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+            color: '#fff',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+            <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
+            <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
+          </svg>
+          Filter{(sourceFilter.length + (topicFilter ? 1 : 0) + (sortMode !== 'newest' ? 1 : 0)) > 0
+            ? ` · ${sourceFilter.length + (topicFilter ? 1 : 0) + (sortMode !== 'newest' ? 1 : 0)}` : ''}
+        </button>
+      </div>
+
+      {searchOpen && (
+        <div
+          onClick={e => { if (e.target === e.currentTarget) setSearchOpen(false); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,.55)', display: 'flex',
+            alignItems: 'flex-end', justifyContent: 'center',
+          }}
+        >
+          <div style={{
+            background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
+            width: '100%', maxWidth: 540,
+            display: 'flex', flexDirection: 'column',
+            boxShadow: '0 -4px 32px rgba(0,0,0,.4)',
+          }}>
+            <div style={{ padding: '12px 20px 0', textAlign: 'center', flexShrink: 0 }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Search</h2>
+                <button
+                  onClick={() => setSearchOpen(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'rgba(255,255,255,.6)', lineHeight: 1 }}
+                >×</button>
+              </div>
+            </div>
+            <div style={{ padding: '4px 20px 16px' }}>
+              {/* Same pill/icon convention as pages/Search.jsx, dark-themed
+                  to match this sheet. Uncommitted until Done/Enter — see
+                  applySearch. */}
+              <div style={{ position: 'relative' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }}>
+                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  autoFocus
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { applySearch(); setSearchOpen(false); } }}
+                  placeholder="Search videos…"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 40px',
+                    borderRadius: 24, border: '1px solid rgba(255,255,255,.18)',
+                    background: 'rgba(255,255,255,.08)', color: '#fff', fontSize: '.88rem', outline: 'none',
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
+              <button
+                onClick={() => clearSearch()}
+                disabled={!searchInput && !searchQuery}
+                style={{
+                  flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
+                  border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
+                  color: (!searchInput && !searchQuery) ? 'rgba(255,255,255,.35)' : '#fff',
+                  fontWeight: 700, fontSize: '.85rem',
+                  cursor: (!searchInput && !searchQuery) ? 'default' : 'pointer',
+                }}
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => { applySearch(); setSearchOpen(false); }}
+                style={{ flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10, border: 'none', background: '#fff', color: '#000', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer' }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {filterOpen && (
         <div
@@ -1714,7 +1871,7 @@ export default function VideoFeedView({ onExit }) {
             <div style={{ padding: '12px 20px 0', textAlign: 'center', flexShrink: 0 }}>
               <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Search & filter</h2>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter</h2>
                 <button
                   onClick={() => setFilterOpen(false)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'rgba(255,255,255,.6)', lineHeight: 1 }}
@@ -1722,27 +1879,34 @@ export default function VideoFeedView({ onExit }) {
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
-              {/* Search — same pill/icon convention as pages/Search.jsx, just
-                  dark-themed to match this sheet. Uncommitted (searchInput)
-                  until Done is tapped — see applySearchAndTopic. */}
-              <div style={{ position: 'relative', margin: '4px 0 18px' }}>
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }}>
-                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-                <input
-                  type="text"
-                  value={searchInput}
-                  onChange={e => setSearchInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { applySearchAndTopic(); setFilterOpen(false); } }}
-                  placeholder="Search videos…"
-                  style={{
-                    width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 40px',
-                    borderRadius: 24, border: '1px solid rgba(255,255,255,.18)',
-                    background: 'rgba(255,255,255,.08)', color: '#fff', fontSize: '.88rem', outline: 'none',
-                  }}
-                />
-              </div>
+              {/* Sort — Following has no Balanced-sort support of its own
+                  (see toggleSortMode/switchViewMode), so this section is
+                  hidden there entirely rather than shown disabled. */}
+              {viewMode !== 'following' && (
+                <>
+                  <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, margin: '4px 0 8px', textTransform: 'uppercase' }}>Sort</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+                    {[{ key: 'newest', label: 'Newest' }, { key: 'balanced', label: 'Balanced' }].map(({ key, label }) => {
+                      const active = sortMode === key;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => toggleSortMode(key)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 16, cursor: 'pointer',
+                            fontWeight: 700, fontSize: '.78rem',
+                            border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
+                            background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
+                            color: '#fff',
+                          }}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
 
               <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
               {/* Own bounded scroll box (not the sheet's outer one) — ~230
@@ -1751,17 +1915,17 @@ export default function VideoFeedView({ onExit }) {
                   same reasoning Onboarding's own topic picker already
                   applies to this identical list. Single-select: picking a
                   new topic swaps out whichever was picked before, matching
-                  the exact-match the backend does (see toggleTopicInput). */}
+                  the exact-match the backend does (see toggleTopicFilter). */}
               <div style={{
                 display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 130, overflowY: 'auto',
                 padding: '2px 2px 12px', marginBottom: 6, borderBottom: '1px solid rgba(255,255,255,.12)',
               }}>
                 {ALL_INTERESTS.map(topic => {
-                  const active = topicInput === topic;
+                  const active = topicFilter === topic;
                   return (
                     <button
                       key={topic}
-                      onClick={() => toggleTopicInput(topic)}
+                      onClick={() => toggleTopicFilter(topic)}
                       style={{
                         padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
                         fontWeight: 600, fontSize: '.75rem',
@@ -1803,20 +1967,20 @@ export default function VideoFeedView({ onExit }) {
             </div>
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
-                onClick={() => { clearSourceFilter(); clearSearchAndTopic(); }}
-                disabled={sourceFilter.length === 0 && !searchInput && !topicInput}
+                onClick={() => clearFilters()}
+                disabled={sourceFilter.length === 0 && !topicFilter && sortMode === 'newest'}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
                   border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (sourceFilter.length === 0 && !searchInput && !topicInput) ? 'rgba(255,255,255,.35)' : '#fff',
+                  color: (sourceFilter.length === 0 && !topicFilter && sortMode === 'newest') ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
-                  cursor: (sourceFilter.length === 0 && !searchInput && !topicInput) ? 'default' : 'pointer',
+                  cursor: (sourceFilter.length === 0 && !topicFilter && sortMode === 'newest') ? 'default' : 'pointer',
                 }}
               >
                 Clear all
               </button>
               <button
-                onClick={() => { applySearchAndTopic(); setFilterOpen(false); }}
+                onClick={() => setFilterOpen(false)}
                 style={{ flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10, border: 'none', background: '#fff', color: '#000', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer' }}
               >
                 Done
