@@ -1327,7 +1327,12 @@ export default function VideoFeedView({ onExit }) {
     <div style={{
       position: 'fixed', inset: 0, zIndex: 3000,
       background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      // justifyContent:'flex-end' (not 'center') pins the card to the right
+      // edge on desktop/tablet instead of the middle of the window — a
+      // no-op on an actual phone, where the frame is width:100% and fills
+      // this flex row completely, leaving no free space for alignment to
+      // move it either way.
+      display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
     }}>
       {/* Everything but the comments sheet lives inside this frame. Built
           for a phone screen (full-bleed controls, a 9:16 video box) — on a
