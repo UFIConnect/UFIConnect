@@ -59,7 +59,6 @@ const ROLE_PREVIEWS = [
 // with the "14+ Content Sources Aggregated" stat below.
 const CONTENT_PLATFORMS = [
   { icon: '🔵', label: 'Facebook',        color: '#1877F2' },
-  { icon: '📸', label: 'Instagram',       color: '#E1306C' },
   { icon: '💼', label: 'LinkedIn',        color: '#0A66C2' },
   { icon: '𝕏',  label: 'X (Twitter)',     color: '#000000' },
   { icon: '💼', label: 'Indeed',          color: '#2557A7' },
