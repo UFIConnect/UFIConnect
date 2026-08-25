@@ -6454,7 +6454,8 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
     }
 
     function scheduleNext() {
-      const delay = adaptiveDelay(SOURCE_CONFIG[agentId]?.delay ?? 10000);
+      const baseDelay = adaptiveDelay(SOURCE_CONFIG[agentId]?.delay ?? 10000);
+      const delay = isInCatchUpBurst() ? Math.max(2000, Math.round(baseDelay / CATCH_UP_BURST_DIVISOR)) : baseDelay;
       setTimeout(fetchNextTopic, delay);
     }
 
@@ -7532,6 +7533,25 @@ const USER_INACTIVITY_PAUSE_MS = 30 * 60 * 1000;
 // spam the office Pipeline log on every single tick for the entire idle
 // window instead of once per real state change.
 let appIdleLoggedAt = 0;
+// Catch-up burst — a bounded window of faster per-topic cadence (see
+// isInCatchUpBurst/makeTopicCycler's own scheduleNext) that kicks in right
+// when the idle→active transition below fires. While genuinely idle,
+// nothing gets fetched at all (that's the whole point of the pause above),
+// so whoever shows up first sees content exactly as fresh as it was when
+// the *previous* real user left, however long ago that was — and the
+// normal per-topic cadence alone would take a while to work back through
+// every topic and restore real freshness. This doesn't touch the pause
+// itself (still 30 real min of zero users before it engages, same cost-
+// saving as before) or any of fetchNextTopic's own safety checks
+// (isStabilityCritical, a source's own circuit breaker) — it only shortens
+// the delay between attempts once those checks have already passed, for a
+// short, explicitly bounded window, not a permanent cadence change.
+let catchUpBurstUntil = 0;
+const CATCH_UP_BURST_MS = 5 * 60 * 1000;
+const CATCH_UP_BURST_DIVISOR = 3;
+function isInCatchUpBurst() {
+  return Date.now() < catchUpBurstUntil;
+}
 function isAppIdle() {
   const idle = Date.now() - lastRealUserActivityAt > USER_INACTIVITY_PAUSE_MS;
   if (idle && !appIdleLoggedAt) {
@@ -7539,7 +7559,8 @@ function isAppIdle() {
     logAgentAction('feed', '💤', `No active users for ${Math.round(USER_INACTIVITY_PAUSE_MS / 60000)}+ min — pausing source fetching so the DB doesn't keep growing with nobody around to see it`, '#94A3B8');
   } else if (!idle && appIdleLoggedAt) {
     appIdleLoggedAt = 0;
-    logAgentAction('feed', '🔄', 'A user showed up — resuming source fetching', '#4ADE80');
+    catchUpBurstUntil = Date.now() + CATCH_UP_BURST_MS;
+    logAgentAction('feed', '🔄', `A user showed up — resuming source fetching, faster than usual for ${Math.round(CATCH_UP_BURST_MS / 60000)}min to catch back up`, '#4ADE80');
   }
   return idle;
 }
