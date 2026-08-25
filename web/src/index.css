@@ -815,6 +815,25 @@ input, textarea, select { font-family: inherit; }
     border-radius: 20px;
     overflow: hidden;
     box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09);
+    transition: max-width .25s ease, height .25s ease;
+  }
+  /* DEV Community's own tutorial videos, most Reddit clips, and design-blog
+     Vimeo showcase reels are landscape (16:9) — none of them ever carry a
+     vertical:true flag (only confirmed YouTube Shorts do), so they were
+     letterboxing inside the same tall card built for native vertical
+     content, filling only its top ~35% and reading as noticeably smaller
+     than everything else. When the active video is one of these (see
+     activeIsWideVideo in VideoFeedView.jsx), the card itself goes wider
+     and less tall instead — sized for a 16:9 video at a generous scale
+     plus room for the top controls/caption/scrub-bar chrome — so a
+     landscape video gets to actually be *large*, the same way the portrait
+     card already makes native vertical content large, rather than one
+     shape being treated as the "correct" size and the other left small.
+     More specific than the bare .video-feed-frame selector above (class +
+     attribute vs class alone), so it wins regardless of source order. */
+  .video-feed-frame[data-orientation="landscape"] {
+    max-width: min(85vw, 960px);
+    height: min(680px, calc(100vh - 64px)) !important;
   }
 }
 

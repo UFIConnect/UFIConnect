@@ -1122,6 +1122,20 @@ export default function VideoFeedView({ onExit }) {
   // below needs it too.
   const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
   const muteControllable = activeSrc?.kind !== 'vimeo';
+  // Landscape (16:9) YouTube/Vimeo content — the norm for DEV Community's
+  // own tutorial videos, most Reddit clips, and any design-blog Vimeo
+  // showcase reel, none of which are ever tagged vertical:true (that flag
+  // only exists for confirmed Shorts) — letterboxes inside the same tall,
+  // portrait-shaped card built for native vertical content, filling only
+  // its top ~35% and reading as "smaller than everything else." Only
+  // youtube carries a real vertical flag either way (Shorts detection);
+  // vimeo never does, but this pipeline's vimeo embeds are themselves
+  // design/blog showcase reels — same landscape assumption, reasonably
+  // safe absent a real signal either way. See the matching
+  // [data-orientation="landscape"] rule in index.css for the actual size
+  // change, gated to the same desktop/tablet breakpoint as the rest of
+  // the card so mobile (already full-bleed either way) is untouched.
+  const activeIsWideVideo = activeSrc?.kind === 'youtube' ? activeSrc.vertical === false : activeSrc?.kind === 'vimeo';
 
   // ─── Shared YouTube player ──────────────────────────────────────────────
   // One YT.Player instance for the whole session instead of one per slide,
@@ -1346,7 +1360,11 @@ export default function VideoFeedView({ onExit }) {
           positioned child below keys off THIS div (the nearest positioned
           ancestor), so they all move and scale with the card together.
           Full-bleed edge-to-edge on an actual phone width is unaffected. */}
-      <div className="video-feed-frame" style={{ position: 'relative', height: '100%', width: '100%' }}>
+      <div
+        className="video-feed-frame"
+        data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}
+        style={{ position: 'relative', height: '100%', width: '100%' }}
+      >
       {/* Row 1 is icon buttons ONLY (back / refresh / mute) — the
           Feed/Following toggle used to sit in this same row, centered, and
           on real mobile widths its pill was wide enough to visually and
