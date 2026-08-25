@@ -140,6 +140,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
+  const vimeoIframeRef = useRef(null);
   const seekingRef = useRef(false);
   const progressBarRef = useRef(null);
   // Caption starts clamped (see the overlay below) — the video is the point
@@ -235,6 +236,61 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muted]);
 
+  // Vimeo: a cross-origin iframe with no DOM <video> to attach onPlay/
+  // onPause/onTimeUpdate to, so paused/duration/currentTime — and with
+  // them the scrub bar, time readout, and "tap to play" affordance every
+  // other kind here already gets — previously never updated for this kind
+  // at all. paused's useState(false) default meant a silently-blocked
+  // autoplay just looked like a frozen video with nothing tappable, and
+  // togglePlay()/seekToFraction() had no element to act on either.
+  // Vimeo's embed exposes its own postMessage event protocol instead: it
+  // pushes an unprompted {event:'ready'} once loaded, then after
+  // subscribing with {method:'addEventListener', value:'play'|'pause'|
+  // 'timeupdate'} it pushes {event:'play'|'pause'|'timeupdate', data} on
+  // every change — wiring that into the exact same paused/duration/
+  // currentTime state file/hls populate via real DOM events means the
+  // rest of this component needs no further kind-specific branching for
+  // any of that UI to also work correctly here.
+  useEffect(() => {
+    if (!active || src?.kind !== 'vimeo') return;
+    let ready = false;
+    function post(msg) {
+      try { vimeoIframeRef.current?.contentWindow?.postMessage(JSON.stringify(msg), 'https://player.vimeo.com'); } catch {}
+    }
+    function handleMessage(event) {
+      if (event.origin !== 'https://player.vimeo.com') return;
+      if (event.source !== vimeoIframeRef.current?.contentWindow) return;
+      let msg;
+      try { msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch { return; }
+      if (msg?.event === 'ready' && !ready) {
+        ready = true;
+        post({ method: 'addEventListener', value: 'play' });
+        post({ method: 'addEventListener', value: 'pause' });
+        post({ method: 'addEventListener', value: 'timeupdate' });
+      } else if (msg?.event === 'play') {
+        setPaused(false);
+      } else if (msg?.event === 'pause' || msg?.event === 'finish') {
+        setPaused(true);
+      } else if (msg?.event === 'timeupdate' && msg.data) {
+        if (!seekingRef.current) setCurrentTime(msg.data.seconds || 0);
+        if (msg.data.duration) setDuration(msg.data.duration);
+      }
+    }
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [active, src?.kind]);
+
+  // Same "every slide starts fresh" reset file/hls gets on becoming
+  // inactive (above) — the iframe itself already fully unmounts when
+  // inactive (see the vimeo render branch) so playback genuinely stops,
+  // but this slide's own local paused/duration/currentTime state would
+  // otherwise still hold whatever it last saw next time this exact post
+  // becomes active again.
+  useEffect(() => {
+    if (src?.kind !== 'vimeo' || active) return;
+    setCurrentTime(0); setPaused(false); setDuration(0);
+  }, [active, src?.kind]);
+
   // youtube's player construction/autoplay-retry/mute-sync all live in
   // VideoFeedView now (see sharedYt/sharedYtPlayerRef there) — one player
   // reused across every slide instead of destroyed and rebuilt per slide.
@@ -274,6 +330,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   function togglePlay() {
     if (isYoutube) {
       sharedYt?.togglePlay?.();
+    } else if (src?.kind === 'vimeo') {
+      try {
+        vimeoIframeRef.current?.contentWindow?.postMessage(
+          JSON.stringify({ method: paused ? 'play' : 'pause' }), 'https://player.vimeo.com'
+        );
+      } catch {}
     } else {
       const v = getNativeEl();
       if (!v) return;
@@ -293,6 +355,13 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     const time = fraction * (effectiveDuration || 0);
     if (isYoutube) {
       sharedYt?.seekTo?.(time);
+    } else if (src?.kind === 'vimeo') {
+      setCurrentTime(time);
+      try {
+        vimeoIframeRef.current?.contentWindow?.postMessage(
+          JSON.stringify({ method: 'setCurrentTime', value: time }), 'https://player.vimeo.com'
+        );
+      } catch {}
     } else {
       setCurrentTime(time);
       const v = getNativeEl();
@@ -370,20 +439,32 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
       ) : src.kind === 'vimeo' ? (
-        // A raw Vimeo iframe embed exposes no programmatic control, so
-        // there's nothing for the scrub bar below to attach to, and the
-        // shared mute button (below) can't affect it post-mount — see its
-        // own kind check. Best-effort respects the stored preference at
-        // mount time instead: if this browser already earned "unmuted"
-        // elsewhere, start here unmuted too rather than forcing yet
-        // another mute cycle the app can't itself unwind.
+        // Play/pause/duration/currentTime now come from Vimeo's postMessage
+        // event protocol (see the effect above) instead of being untracked
+        // — api=1 is what turns that protocol on for this embed. The
+        // shared mute button still can't affect it post-mount (see its own
+        // kind check) — unlike play state, wiring mute wasn't part of this
+        // fix. Best-effort respects the stored preference at mount time
+        // instead: if this browser already earned "unmuted" elsewhere,
+        // start here unmuted too rather than forcing yet another mute
+        // cycle the app can't itself unwind.
         active ? (
-          <iframe
-            src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0`}
-            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            allow="autoplay; fullscreen; picture-in-picture"
-            title={post.title}
-          />
+          // pointerEvents:'none' on the iframe itself makes a tap fall
+          // through to this wrapping div's onClick instead of being
+          // captured inside the iframe's own document (a click landing on
+          // an iframe never bubbles out to the parent page at all) — same
+          // click-through technique the shared YouTube overlay already
+          // uses, needed here for the same reason: without it, tapping a
+          // stalled/blocked Vimeo video to resume it would do nothing.
+          <div onClick={togglePlay} style={{ width: '100%', height: '100%' }}>
+            <iframe
+              ref={vimeoIframeRef}
+              src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0&api=1`}
+              style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
+              allow="autoplay; fullscreen; picture-in-picture"
+              title={post.title}
+            />
+          </div>
         ) : src.poster ? (
           <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         ) : (
@@ -426,8 +507,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
       {/* Center pause indicator — only visible while actually paused, tap
           anywhere on the video (outside the progress bar) to resume.
-          YouTube specifically gets an explicit "Tap to play" label —
-          cross-origin embedded YouTube video is subject to stricter mobile
+          YouTube and Vimeo specifically get an explicit "Tap to play"
+          label — cross-origin embedded video is subject to stricter mobile
           autoplay policy than a native <video> element (confirmed live:
           Bluesky/direct-file videos in this same view autoplay reliably,
           YouTube's often don't, especially for a viewer with no prior
@@ -451,7 +532,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
               color: '#fff', fontSize: '1.6rem', cursor: 'pointer', pointerEvents: 'none',
             }}
           >▶</button>
-          {src.kind === 'youtube' && (
+          {(src.kind === 'youtube' || src.kind === 'vimeo') && (
             <span style={{
               color: '#fff', fontSize: '.78rem', fontWeight: 700,
               textShadow: '0 1px 6px rgba(0,0,0,.7)', background: 'rgba(0,0,0,.45)',
@@ -1049,6 +1130,17 @@ export default function VideoFeedView({ onExit }) {
       try {
         if (sharedYtLoadedIdRef.current !== videoId) {
           sharedYtLoadedIdRef.current = videoId;
+          // Duration/currentTime otherwise keep showing the PREVIOUS
+          // video's values until the next onStateChange event happens to
+          // fire — confirmed live as the scrub bar/time readout briefly
+          // (sometimes for a couple seconds) reporting the wrong length
+          // right after scrolling to a new YouTube video. Zeroing here
+          // hides the scrub bar/time text for that split second instead
+          // (see effectiveDuration > 0 guards below) rather than show a
+          // number that's flat wrong; the poll below repopulates the real
+          // value continuously once it's available, not just on the next
+          // state-change event.
+          setSharedYt(s => ({ ...s, duration: 0, currentTime: 0 }));
           player.loadVideoById(videoId);
           if (startUnmuted) player.unMute(); else player.mute();
         }
@@ -1092,7 +1184,18 @@ export default function VideoFeedView({ onExit }) {
 
     pollId = setInterval(() => {
       if (sharedYtPlayerRef.current && !sharedYtSeekingRef.current) {
-        try { setSharedYt(s => ({ ...s, currentTime: sharedYtPlayerRef.current.getCurrentTime() || 0 })); } catch {}
+        try {
+          const p = sharedYtPlayerRef.current;
+          const ct = p.getCurrentTime() || 0;
+          // Polled alongside currentTime, not just read once in onReady/
+          // onStateChange — getDuration() can lag right after
+          // loadVideoById() (metadata not parsed yet) or that event can be
+          // slow/skipped in edge cases, and unlike currentTime it had no
+          // other path back to a correct value. Polling makes it self-
+          // correcting on the same cadence currentTime already relies on.
+          const d = p.getDuration() || 0;
+          setSharedYt(s => (s.currentTime === ct && s.duration === d) ? s : { ...s, currentTime: ct, duration: d });
+        } catch {}
       }
     }, 250);
 
