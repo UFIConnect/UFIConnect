@@ -59,7 +59,7 @@ const ROLE_PREVIEWS = [
 // with the "14+ Content Sources Aggregated" stat below.
 const CONTENT_PLATFORMS = [
   { icon: '🔵', label: 'Facebook',        color: '#1877F2' },
-  { icon: '💼', label: 'LinkedIn',        color: '#0A66C2' },
+  { icon: '🏛️', label: 'USAJobs',         color: '#005EA8' },
   { icon: '𝕏',  label: 'X (Twitter)',     color: '#000000' },
   { icon: '💼', label: 'Indeed',          color: '#2557A7' },
   { icon: '🟠', label: 'Reddit',          color: '#FF4500' },
@@ -205,21 +205,43 @@ export default function Landing() {
                   what the copy — or the Play Store listing, built from these
                   same screenshots — promises. */}
               <div className="landing-hero-art" style={{ position: 'relative', height: 460, justifySelf: 'center' }}>
+                {/* Was a plain rounded-rect border — reads as a generic
+                    rounded card, not specifically a phone. A notch/dynamic-
+                    island cutout at the top and a home-indicator bar at the
+                    bottom are the two details that actually read as "this is
+                    a phone" at a glance, without needing new screenshots —
+                    same trick real device-mockup generators use. */}
                 <div className="landing-hero-shot landing-hero-shot-back" style={{
                   position: 'absolute', top: 30, left: -10, width: 240,
-                  transform: 'rotate(-9deg)', borderRadius: 22, overflow: 'hidden',
-                  border: '6px solid #0F172A', boxShadow: '0 30px 60px -20px rgba(15,23,42,.35)',
+                  transform: 'rotate(-9deg)', borderRadius: 30, overflow: 'hidden',
+                  border: '7px solid #0F172A', boxShadow: '0 30px 60px -20px rgba(15,23,42,.35)',
                   background: '#0F172A',
                 }}>
                   <img src="/hero-groups-screenshot.png" alt="" aria-hidden="true" style={{ display: 'block', width: '100%' }} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    width: '34%', height: 16, background: '#0F172A', borderRadius: '0 0 12px 12px',
+                  }} />
+                  <div style={{
+                    position: 'absolute', bottom: 6, left: '50%', transform: 'translateX(-50%)',
+                    width: '32%', height: 4, borderRadius: 3, background: 'rgba(255,255,255,.55)',
+                  }} />
                 </div>
                 <div className="landing-hero-shot landing-hero-shot-front" style={{
                   position: 'absolute', top: 0, right: 0, width: 260,
-                  transform: 'rotate(6deg)', borderRadius: 24, overflow: 'hidden',
-                  border: '7px solid #0F172A', boxShadow: '0 34px 70px -16px rgba(15,23,42,.4)',
+                  transform: 'rotate(6deg)', borderRadius: 32, overflow: 'hidden',
+                  border: '8px solid #0F172A', boxShadow: '0 34px 70px -16px rgba(15,23,42,.4)',
                   background: '#0F172A',
                 }}>
                   <img src="/hero-feed-screenshot.png" alt="UFconnect's personalized feed, showing real posts pulled from GitHub" style={{ display: 'block', width: '100%' }} />
+                  <div style={{
+                    position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
+                    width: '36%', height: 18, background: '#0F172A', borderRadius: '0 0 14px 14px',
+                  }} />
+                  <div style={{
+                    position: 'absolute', bottom: 7, left: '50%', transform: 'translateX(-50%)',
+                    width: '34%', height: 4, borderRadius: 3, background: 'rgba(255,255,255,.55)',
+                  }} />
                 </div>
               </div>
             </div>
