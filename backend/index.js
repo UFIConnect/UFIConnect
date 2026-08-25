@@ -13304,6 +13304,16 @@ function optionalViewerId(req) {
   if (!authHeader) return null;
   try { return jwt.verify(authHeader.split(' ')[1], JWT_SECRET).id; } catch { return null; }
 }
+// Mirrors Groups.jsx's own origin-badge logic (platform field wins, a
+// subreddit-only external group is Reddit, anything non-external is a
+// native UFconnect group) — kept as one function so the round-robin key
+// below and the frontend's badge can never quietly drift apart again.
+function groupPlatformKey(g) {
+  if (g.platform) return g.platform;
+  if (g.subreddit) return 'reddit';
+  if (!g.isExternal) return 'uficonnect';
+  return 'other';
+}
 function canSeeGroup(group, viewerId) {
   if (!group.isPrivate) return true;
   if (!viewerId) return false;
@@ -13326,23 +13336,26 @@ app.get('/groups', async (req, res) => {
     if (!category) {
       // "All" view — same true-mix reasoning as the main Feed's
       // buildTwoPhaseMix/roundRobinMerge: `groups` is member_count-sorted
-      // (see seedAndLoadGroups' own query), so without this the top of the
-      // list is dominated by whichever categories happen to have the
-      // biggest established communities (LinkedIn's million-member
-      // Startups/Marketing groups, say) — a niche category (Gaming, Music,
-      // Space) never surfaces until a user scrolls past dozens of cards
-      // from the same few categories first. Round-robin by category — one
-      // from each, cycling, member_count order preserved *within* each
-      // category's own queue — keeps every category visible near the top
-      // instead of buried behind whichever few happen to have the largest
-      // groups.
-      const byCategory = new Map();
+      // (see seedAndLoadGroups' own query), and the seed data is ~84%
+      // Reddit by raw count (152 of 180 seeded groups — Reddit subreddits
+      // are cheap to source in bulk, everything else was added by hand),
+      // so without this the list reads as almost nothing but Reddit for
+      // page after page — confirmed live as "I only see reddit groups."
+      // Round-robin by platform (reddit/linkedin/discord/github/
+      // hackernews/devto/uficonnect) rather than by category: category
+      // mixing alone doesn't fix this, since Reddit alone already spans
+      // nearly every category and would still dominate each one's own
+      // sub-list. Member_count order preserved *within* each platform's own
+      // queue — LinkedIn's real groups (Startups, Marketing, AI & ML, ...)
+      // now surface within the first several rounds instead of needing to
+      // scroll past ~150 Reddit communities first.
+      const byPlatform = new Map();
       for (const g of result) {
-        const key = g.category || 'Other';
-        if (!byCategory.has(key)) byCategory.set(key, []);
-        byCategory.get(key).push(g);
+        const key = groupPlatformKey(g);
+        if (!byPlatform.has(key)) byPlatform.set(key, []);
+        byPlatform.get(key).push(g);
       }
-      result = roundRobinMerge([...byCategory.values()]);
+      result = roundRobinMerge([...byPlatform.values()]);
     }
     res.json({ groups: result });
   } catch (e) { console.error('GET /groups:', e); res.status(500).json({ error: 'Internal server error' }); }

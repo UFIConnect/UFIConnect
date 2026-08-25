@@ -600,9 +600,17 @@ function GroupsContent() {
                 text: '#64748B',
               };
               const isJoined = joined.has(group.id);
+              // Reddit-sourced seed groups only ever carry a `subreddit`
+              // field, never an explicit `platform: 'reddit'` — without this
+              // fallback every one of them (the large majority of seeded
+              // groups) fell through to the generic UFconnect origin badge
+              // below instead of a Reddit one, even though the name/
+              // description made the real source obvious either way.
               const platMeta = group.platform
                 ? PLATFORM_META[group.platform]
-                : null;
+                : group.subreddit
+                  ? PLATFORM_META.reddit
+                  : null;
 
               return (
                 <div
