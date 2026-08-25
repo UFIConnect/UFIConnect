@@ -814,7 +814,12 @@ input, textarea, select { font-family: inherit; }
     margin: 0 auto;
     border-radius: 20px;
     overflow: hidden;
-    box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09);
+    /* Was also a large, soft rgba(0,0,0,.55) drop-shadow — against the
+       already-dark radial-gradient root backdrop that read as a black
+       halo/glow around the card rather than a subtle lift. Just the thin
+       light edge now, enough to read as a distinct card without the dark
+       shadow. */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, .09);
     transition: max-width .25s ease, height .25s ease;
   }
   /* DEV Community's own tutorial videos, most Reddit clips, and design-blog
