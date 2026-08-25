@@ -7794,6 +7794,20 @@ async function getUserResumeKeywords(userId) {
   return new Set();
 }
 
+// Same word-boundary guard computeATSScore's own keyword extraction uses —
+// a plain text.includes(kw) matched short keywords as substrings of
+// unrelated words ("go" inside "Google", "aws" inside "draws"/"awesome"),
+// confirmed live there on a marketing resume that got tagged "go" purely
+// from "Google Analytics". Shared here so every text-fallback keyword match
+// (resume/skill/interest matching in both the main Feed's job-boosting and
+// Opportunities' own scoring) gets the same guard instead of two
+// independently-drifting implementations, one of them unguarded.
+function textMentionsKeyword(text, keyword) {
+  if (!keyword) return false;
+  const escaped = String(keyword).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i').test(text);
+}
+
 function scoreJobResumeMatch(post, resumeKeywords) {
   if (!resumeKeywords.size) return 0;
   const tagTokens = asArray(post.tags).map(t => String(t || '').toLowerCase());
@@ -7801,7 +7815,7 @@ function scoreJobResumeMatch(post, resumeKeywords) {
   let score = 0;
   for (const kw of resumeKeywords) {
     if (tagTokens.includes(kw)) score += 2;
-    else if (text.includes(kw)) score += 1;
+    else if (textMentionsKeyword(text, kw)) score += 1;
   }
   return score;
 }
@@ -16976,10 +16990,7 @@ function computeATSScore(text) {
   // legitimate matches for keywords that contain punctuation (c++, node.js,
   // ci/cd), since those are naturally guarded by their own symbols already.
   const lower = text.toLowerCase();
-  const keywords = RESUME_SKILL_KEYWORDS.filter(k => {
-    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i').test(lower);
-  });
+  const keywords = RESUME_SKILL_KEYWORDS.filter(k => textMentionsKeyword(lower, k));
 
   return { score: Math.min(100, Math.round(score)), checks, keywords };
 }
@@ -18016,6 +18027,14 @@ function mapSharedJobPost(p, label) {
     id:        `${p.source}_${p.id}`,
     type:      'job',
     title:     p.title,
+    // No tags come out of this path (Remote OK/Indeed/USAJobs listings
+    // aren't tagged the way Remotive's/Muse's API responses are — see
+    // fetchJobBoardListings), so the real posting description is what
+    // /opportunities' own match scoring falls back to for skill/resume/
+    // interest matching instead of tags alone. Truncated — this is only
+    // ever read for keyword matching server-side, not rendered, so there's
+    // no reason to ship a full job description in the response payload.
+    content:   truncateWithEllipsis(p.content || '', 500),
     org:       p.author?.name || p.author?.organization || 'Company',
     location:  p.location || (label === 'USAJobs' ? 'United States' : 'Remote'),
     pay:       '',
@@ -18323,17 +18342,29 @@ app.get('/opportunities', authenticate, async (req, res) => {
     const oppTitleLower = (o.title || '').toLowerCase();
     const tagTokens     = (o.tags || []).map(t => (t || '').toLowerCase());
     const tagStr        = tagTokens.join(' ');
+    // Remote OK/Indeed/USAJobs listings carry no tags at all (see
+    // mapSharedJobPost) and even Remotive/Muse only have a handful of
+    // short category words — tag-only matching below used to mean
+    // "Matches your skills"/"Matches your resume" could never fire for
+    // most real listings regardless of what was actually in a user's
+    // profile or resume, confirmed live as those chips never appearing no
+    // matter which resume was attached. bodyText is the same
+    // "tags, then full text" fallback scoreJobResumeMatch already uses for
+    // the main Feed's own job-boosting, applied here too.
+    const bodyText = `${o.title || ''} ${o.content || ''}`.toLowerCase();
 
-    // 1. Profile skills → exact tag match (highest weight; rare unless user filled skills section)
-    const skillMatches = tagTokens.filter(t => skills.has(t));
+    // 1. Profile skills → tag match, or a real (word-boundary-safe) mention
+    // in the title/description — highest weight; rare unless user filled
+    // skills section.
+    const skillMatches = [...skills].filter(s => tagTokens.includes(s) || textMentionsKeyword(bodyText, s));
     if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
 
-    // 1b. Resume keywords → tag match — weighted like title/role matches
-    // (5/token), between the explicit-skills-field and interest signals:
-    // a resume is more deliberate than an inferred interest, but a user
-    // hand-picking their Skills field is still the strongest possible
-    // signal, so this doesn't outrank it.
-    const resumeMatches = tagTokens.filter(t => resumeKeywords.has(t));
+    // 1b. Resume keywords → same tags-then-text fallback, weighted like
+    // title/role matches (5/token), between the explicit-skills-field and
+    // interest signals: a resume is more deliberate than an inferred
+    // interest, but a user hand-picking their Skills field is still the
+    // strongest possible signal, so this doesn't outrank it.
+    const resumeMatches = [...resumeKeywords].filter(k => tagTokens.includes(k) || textMentionsKeyword(bodyText, k));
     if (resumeMatches.length > 0) { score += resumeMatches.length * 5; reasons.push('Matches your resume'); }
 
     // 2. Specific job title keywords → opp title / tags (strong signal from onboarding)
@@ -18342,9 +18373,10 @@ app.get('/opportunities', authenticate, async (req, res) => {
     if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
     else if (roleMatchCount > 0) { score += roleMatchCount * 5; reasons.push('Matches your role'); }
 
-    // 3. Interest → expanded tags (bridges "AI & Machine Learning" → "Python","LLMs","PyTorch")
-    const interestTagMatches = tagTokens.filter(t =>
-      interestTagSet.has(t) || [...interestTagSet].some(tag => t.includes(tag) || tag.includes(t))
+    // 3. Interest → expanded tags (bridges "AI & Machine Learning" → "Python","LLMs","PyTorch"),
+    // same tags-then-text fallback as skills/resume above.
+    const interestTagMatches = [...interestTagSet].filter(tag =>
+      tagTokens.some(t => t.includes(tag) || tag.includes(t)) || textMentionsKeyword(bodyText, tag)
     ).length;
     if (interestTagMatches > 0) { score += interestTagMatches * 3; reasons.push('Matches your interests'); }
     // Also check raw interest names against opp title (e.g. interest "Data Science" hits "Data Scientist" title)
