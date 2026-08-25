@@ -502,14 +502,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
       ) : (
-        // cover, not contain: 'file' is the catch-all for an arbitrary
-        // direct-linked video URL (see isDirectVideoUrl) with no metadata
-        // and — unlike every other kind here — no poster at all
-        // (resolveVideoSource sets poster: null for it), so there's no
-        // image to build a blurred backdrop from for the letterboxed-gap
-        // trick used above. Cropping to fill trades occasional edge
-        // framing loss for a guaranteed full-bleed frame, same tradeoff
-        // every poster <img> in this file already makes with cover.
+        // contain, not cover: 'file' is the catch-all for an arbitrary
+        // direct-linked video URL (see isDirectVideoUrl), most commonly a
+        // landscape clip (e.g. Reddit-hosted video) forced into this view's
+        // tall portrait box. cover used to crop these to fill the frame —
+        // confirmed live on mobile (where the box is a full phone screen,
+        // the most extreme portrait ratio this view ever renders into) as
+        // genuinely cutting off most of the picture, not just "occasional
+        // edge framing loss." contain guarantees the whole video is always
+        // visible, same as every other kind here (hls already uses contain;
+        // youtube/vimeo effectively letterbox within their fitted box too).
+        // No poster to build a blurred backdrop from for the resulting gap
+        // (resolveVideoSource sets poster: null for 'file') — falls back to
+        // this wrapper's own plain #000 background instead, a plain letterbox
+        // rather than a broken-looking empty space.
         <video
           ref={fileVideoRef}
           src={src.src}
@@ -522,7 +528,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
-          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
       )}
 
