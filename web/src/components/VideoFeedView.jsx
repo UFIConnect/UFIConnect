@@ -1155,6 +1155,41 @@ export default function VideoFeedView({ onExit }) {
   const sharedYtSeekingRef = useRef(false);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
 
+  // The video box's own width/height:auto + max-width/max-height:100% +
+  // aspect-ratio (the usual pure-CSS way to fit a ratio inside a box) turns
+  // out not to resolve reliably here: this box is a flex item centered
+  // (not stretched) inside its parent, so neither axis ever becomes
+  // definite from layout, and with no other intrinsic size to fall back on
+  // aspect-ratio alone doesn't anchor it to the parent's real size — it
+  // collapses toward content size instead, which for an <iframe> with no
+  // explicit width/height is the browser's own ~300x150 default. Confirmed
+  // live: a landscape video rendering at roughly that exact size regardless
+  // of how large the surrounding card actually was. Measuring the wrapper
+  // directly and computing explicit pixel dimensions sidesteps the
+  // ambiguity entirely instead of relying on that CSS behavior resolving
+  // the way it's supposed to.
+  const sharedYtWrapperRef = useRef(null);
+  const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const wrapper = sharedYtWrapperRef.current;
+    if (!wrapper) return;
+    const ratio = activeSrc?.vertical ? 9 / 16 : 16 / 9;
+    function recompute(availW, availH) {
+      if (!availW || !availH) return;
+      const width = availW / ratio <= availH ? availW : availH * ratio;
+      const height = width / ratio;
+      setYtBoxSize({ width, height });
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      recompute(width, height);
+    });
+    observer.observe(wrapper);
+    const rect = wrapper.getBoundingClientRect();
+    recompute(rect.width, rect.height);
+    return () => observer.disconnect();
+  }, [activeSrc?.vertical]);
+
   useEffect(() => {
     if (activeSrc?.kind !== 'youtube') {
       // Not the one on screen right now — pause it in place (don't
@@ -1685,7 +1720,7 @@ export default function VideoFeedView({ onExit }) {
             settles (when activeIndex itself updates) reads as clean rather
             than broken; a brief transition softens the swap instead of an
             abrupt cut. */}
-        <div style={{
+        <div ref={sharedYtWrapperRef} style={{
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
@@ -1693,25 +1728,17 @@ export default function VideoFeedView({ onExit }) {
           transition: 'opacity .15s ease-out',
         }}>
           <div
-            // width/height:auto (not width:100%) is what makes this
-            // actually fit inside BOTH constraints at once. With an
-            // explicit width:100% + maxHeight:100%, a 9:16 video whose
-            // derived height (from 100% width) exceeds the box's available
-            // height gets its height clamped by maxHeight while the width
-            // stays put — the box ends up wider, relative to its height,
-            // than the real 9:16 ratio, visibly stretching the video. Now
-            // that the frame itself is width *and* height capped on
-            // desktop/tablet (see index.css), height is often the tighter
-            // constraint, not width, so this wasn't just a theoretical
-            // edge case. auto/auto + max-width/max-height lets the browser
-            // pick the largest size that satisfies both limits while
-            // holding the real aspect ratio, the same guarantee object-fit:
-            // contain gives a native <video> (which a cross-origin YouTube
-            // iframe can't use directly, hence needing this on its wrapper
-            // instead).
+            // Explicit pixel width/height from ytBoxSize (measured off this
+            // wrapper via ResizeObserver, see above) instead of width/
+            // height:auto + aspect-ratio — that CSS-only approach doesn't
+            // reliably resolve here (this box is a centered, not stretched,
+            // flex item, so neither axis ever becomes definite from layout
+            // alone), confirmed live as a video rendering at roughly a
+            // bare <iframe>'s ~300x150 browser default regardless of how
+            // large the actual card was. Falls back to 100%/100% only for
+            // the brief instant before the very first measurement lands.
             style={{
-              width: 'auto', height: 'auto', maxWidth: '100%', maxHeight: '100%',
-              aspectRatio: activeSrc?.vertical ? '9/16' : '16/9',
+              width: ytBoxSize.width || '100%', height: ytBoxSize.height || '100%',
               position: 'relative', pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
             }}
             onClick={sharedYtTogglePlay}
