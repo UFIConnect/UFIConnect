@@ -6,32 +6,32 @@ const FEATURES = [
   {
     icon: '🎯',
     title: 'Personalized from day one',
-    desc: 'Select your role and experience level during signup. Your feed, communities, and opportunities are customized automatically with no additional configuration required.',
+    desc: 'Select what you do and your experience level during signup. Your feed, communities, and opportunities are customized automatically — no extra setup required.',
   },
   {
     icon: '🌐',
-    title: '80+ Professional Communities',
-    desc: 'Communities spanning engineering, design, startups, finance, healthcare, and additional industries — organized by role and professional interests.',
+    title: '80+ Communities for Every Path',
+    desc: 'Communities spanning engineering, design, music, sports, food, startups, healthcare, and more — organized around whatever you\'re actually into.',
   },
   {
     icon: '💼',
     title: 'Curated Opportunities',
-    desc: 'Discover positions, contracts, grants, industry events, and educational resources across corporate, startup, and independent paths. All filtered to align with your career objectives.',
+    desc: 'Discover jobs, gigs, grants, events, hackathons, and learning resources across corporate, independent, and creative paths — all filtered to match what you\'re looking for.',
   },
   {
     icon: '🔍',
-    title: 'Professional Discovery',
-    desc: 'Search and connect with professionals by name, role, expertise, or industry focus. Follow industry leaders and expand your professional network strategically.',
+    title: 'Find Your People',
+    desc: 'Search and connect with people by name, role, skill, or interest. Follow the people doing work you actually care about, no matter the field.',
   },
   {
     icon: '📰',
     title: 'Content Feed',
-    desc: 'Aggregates posts from LinkedIn, GitHub, Reddit, Twitter, and other professional platforms — with balanced distribution across sources.',
+    desc: 'Aggregates posts from LinkedIn, GitHub, Reddit, Twitter, and other platforms — with balanced distribution across sources.',
   },
   {
     icon: '✏️',
     title: 'Community Publishing',
-    desc: 'Share professional insights, pose questions, and showcase your work within UFconnect communities. Engage directly with your professional peers.',
+    desc: 'Share what you know, ask questions, and showcase your work within UFconnect communities. Engage directly with people who get it.',
   },
 ];
 
@@ -78,7 +78,7 @@ const CONTENT_PLATFORMS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'UFconnect is a professional networking platform featuring personalized content feeds, vetted communities, secure messaging, professional publishing, and curated career opportunities.';
+const SHARE_TEXT = 'UFconnect is a personalized network featuring content feeds, communities, secure messaging, and curated opportunities built around whatever you do.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -114,9 +114,9 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFconnect — Professional Networking Platform</title>
-        <meta name="description" content="UFconnect is a professional networking platform offering personalized feeds, communities, messaging, and career opportunities tailored to your role and interests." />
-        <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news" />
+        <title>UFconnect — A Network Built Around What You Do</title>
+        <meta name="description" content="UFconnect is a personalized network offering feeds, communities, messaging, and opportunities tailored to whatever you do — tech, creative, business, or anything else." />
+        <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news, interest based communities, hobby communities, creator community, social network for everyone, community app for any interest, personalized social feed" />
         <meta name="author" content="UFconnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -152,13 +152,13 @@ export default function Landing() {
             <div className="landing-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 48, alignItems: 'center' }}>
               <div style={{ textAlign: 'left' }}>
                 <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
-                  All-in-one professional networking
+                  One place, whatever you do
                 </div>
                 <h1 style={{ fontSize: 'clamp(2rem, 4.4vw, 3rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-                  Professional Networking Platform
+                  The Network Built Around What You Do
                 </h1>
                 <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '520px' }}>
-                  A personalized feed, communities, messaging, and career opportunities — all tailored to your role and professional interests.
+                  A personalized feed, communities, messaging, and real opportunities — tailored to your role, whatever that is.
                 </p>
                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '44px' }}>
                   <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
@@ -169,13 +169,18 @@ export default function Landing() {
                   </a>
                 </div>
 
-                {/* Role pills preview */}
+                {/* Role pills preview — a deliberately mixed slice (not just
+                    the first 8 in ROLE_PREVIEWS, which skews tech/business)
+                    so the hero itself proves "whatever you do" instead of
+                    just claiming it. */}
                 <div style={{ marginBottom: 0 }}>
                   <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
-                    Designed for diverse professional backgrounds
+                    Built for every background — not just the office
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {ROLE_PREVIEWS.slice(0, 8).map(({ icon, label, color }) => (
+                    {['Engineer', 'Designer', 'Musician', 'Healthcare', 'Founder', 'Chef', 'Creator', 'Athlete']
+                      .map(label => ROLE_PREVIEWS.find(r => r.label === label))
+                      .map(({ icon, label, color }) => (
                       <span key={label} style={{
                         display: 'inline-flex', alignItems: 'center', gap: 6,
                         padding: '6px 14px', borderRadius: 20, background: '#fff',
@@ -250,7 +255,7 @@ export default function Landing() {
                 Key features
               </h2>
               <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
-                UFconnect combines your professional feed, network, and career discovery in one platform, tailored to your role and interests.
+                UFconnect combines your feed, network, and opportunities in one platform — tailored to your role and interests, whatever they are.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
                 {FEATURES.map(({ icon, title, desc }) => (
@@ -269,8 +274,8 @@ export default function Landing() {
             <div style={{ maxWidth: 800, margin: '0 auto' }}>
               <div style={{ display: 'flex', justifyContent: 'center', gap: '48px', flexWrap: 'wrap' }}>
                 {[
-                  { stat: '80+', label: 'Professional Communities' },
-                  { stat: '500+', label: 'Professional Roles Supported' },
+                  { stat: '80+', label: 'Communities' },
+                  { stat: '500+', label: 'Roles Supported' },
                   { stat: '14+', label: 'Content Sources Aggregated' },
                   { stat: '100%', label: 'Advertisement-Free' },
                 ].map(({ stat, label }) => (
@@ -291,10 +296,10 @@ export default function Landing() {
                   Share UFconnect
                 </div>
                 <h2 style={{ fontSize: '1.55rem', fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
-                  Invite colleagues to join the platform.
+                  Invite people to join the platform.
                 </h2>
                 <p style={{ color: '#CBD5E1', fontSize: '.95rem', lineHeight: 1.65, margin: 0, maxWidth: 650 }}>
-                  Share UFconnect with professionals in your network who would benefit from a dedicated platform for collaboration and career opportunities.
+                  Share UFconnect with people in your life who'd get value from a feed and community built around what they actually do.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -326,9 +331,9 @@ export default function Landing() {
               <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>Get started in three steps</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px', marginBottom: '44px' }}>
                 {[
-                  { step: '1', icon: '🎯', title: 'Select your professional role', desc: 'Choose from 16+ career paths. Receive customized bio templates, relevant role suggestions, and aligned professional interests.' },
-                  { step: '2', icon: '🎨', title: 'Customize your feed preferences', desc: 'Define your professional interests and career goals through our guided setup experience tailored to your selections.' },
-                  { step: '3', icon: '🚀', title: 'Begin professional engagement', desc: 'Access your personalized feed immediately. Connect with relevant professionals, explore communities, and discover career opportunities.' },
+                  { step: '1', icon: '🎯', title: 'Select what you do', desc: 'Choose from 16+ paths — tech, creative, business, and beyond. Get a bio template and interests matched to it instantly.' },
+                  { step: '2', icon: '🎨', title: 'Customize your feed preferences', desc: 'Define your interests and goals through our guided setup experience, tailored to whatever you picked.' },
+                  { step: '3', icon: '🚀', title: 'Start connecting', desc: 'Your personalized feed is ready immediately. Connect with the right people, explore communities, and discover opportunities.' },
                 ].map(({ step, icon, title, desc }) => (
                   <div key={step} style={{ background: '#fff', padding: '28px 20px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
                     <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--primary)', color: '#fff', fontWeight: 800, fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>{step}</div>
@@ -346,7 +351,7 @@ export default function Landing() {
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
               <h3 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '14px' }}>Get started</h3>
               <p style={{ fontSize: '.95rem', color: 'var(--muted)', marginBottom: '28px', lineHeight: 1.6 }}>
-                Sign up free. Select your role, customize your preferences, and start connecting with professionals in your field.
+                Sign up free. Pick what you do, set your preferences, and start connecting with people who get it.
               </p>
               <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '14px 40px', fontWeight: 700 }}>
                 Get Started Free →
