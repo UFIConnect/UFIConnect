@@ -1159,6 +1159,37 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [videoPosts.length]);
 
+  // Mouse-wheel/trackpad scrolling over the shared YouTube overlay — a
+  // separate gap from the drag-to-scroll fix right above, and the more
+  // likely explanation for "can't scroll while hovering the video": a
+  // wheel gesture doesn't go through pointerdown/pointermove at all, it's
+  // the browser's own native scroll-chaining, which walks up the DOM
+  // ancestor chain of whatever element is actually under the cursor
+  // looking for a scrollable one to apply the scroll to. Since the
+  // overlay is a sibling of the scroll container, not a descendant of it
+  // (see the drag effect's own comment for why), that walk never reaches
+  // it — neither the overlay itself nor its real ancestor (.video-feed-
+  // frame) is scrollable, so a wheel/trackpad gesture over the video finds
+  // nothing to scroll and silently does nothing, no matter what pointer-
+  // events are set to. Forwarding the wheel delta to the container's own
+  // scrollTop manually sidesteps the ancestry problem the same way the
+  // pointerdown handler above does for drags. This also covers file/hls
+  // video content that happens to be wrapped the same way DEV Community's
+  // own /api/videos content and some Reddit posts route through YouTube
+  // under the hood (see resolveVideoSource) — same underlying kind, same
+  // gap, same fix.
+  useEffect(() => {
+    const container = containerRef.current;
+    const ytOverlay = sharedYtWrapperRef.current;
+    if (!container || !ytOverlay) return;
+    function handleWheel(e) {
+      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
+      container.scrollTop += e.deltaY;
+    }
+    ytOverlay.addEventListener('wheel', handleWheel, { passive: true });
+    return () => ytOverlay.removeEventListener('wheel', handleWheel);
+  }, [videoPosts.length]);
+
   // Fetch the next page a couple of slides before actually running out.
   useEffect(() => {
     if (!hasMore || loadingMoreRef.current || loading) return;
