@@ -436,7 +436,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           // itself isn't owned per-slide anymore.
           null
         ) : (
-          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
       ) : src.kind === 'vimeo' ? (
         // Play/pause/duration/currentTime now come from Vimeo's postMessage
@@ -466,7 +466,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             />
           </div>
         ) : src.poster ? (
-          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         ) : (
           <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Vimeo video</div>
         )
@@ -479,7 +479,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
-          <img src={src.poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         )
       ) : (
         // cover, not contain: 'file' is the catch-all for an arbitrary
@@ -1051,6 +1051,55 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [videoPosts.length]);
 
+  // Mouse click-and-drag scrolling — touch already gets this for free (the
+  // browser turns a finger drag into a real scroll on a touch device), but
+  // a mouse drag over a plain overflow:auto container does nothing by
+  // default; the browser instead tries to *select text*, which is exactly
+  // what showed up as a stray text-caret cursor over the video on desktop
+  // and why nothing advanced when dragging with a mouse there. Gated to
+  // pointerType==='mouse' specifically so this never double-handles an
+  // actual touchscreen's native scroll, and skipped entirely when the drag
+  // starts on a real control (button/link) so click targets like mute/
+  // comments/back keep working normally for mouse users. scroll-snap
+  // (already on the container) takes over on release exactly like it does
+  // after a wheel scroll, settling on the nearest slide without any extra
+  // code here.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    function handlePointerDown(e) {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      if (e.target.closest('button, a, [role="button"]')) return;
+      const startY = e.clientY;
+      const startScrollTop = container.scrollTop;
+      let dragged = false;
+      function handleMove(ev) {
+        const dy = ev.clientY - startY;
+        if (Math.abs(dy) > 3) dragged = true;
+        if (dragged) container.scrollTop = startScrollTop - dy;
+      }
+      function handleUp() {
+        document.removeEventListener('pointermove', handleMove);
+        document.removeEventListener('pointerup', handleUp);
+        container.style.cursor = 'grab';
+        // Set back to 'none' rather than removeProperty()'d away: this
+        // element's JSX also declares userSelect:'none' as its permanent
+        // default, and React only re-touches a style property on render
+        // when ITS OWN last-known value for it changed — since that JSX
+        // value never changes, a later render wouldn't notice (or undo) a
+        // removeProperty() done here outside React, permanently reverting
+        // to selectable text after the very first drag.
+        container.style.userSelect = 'none';
+      }
+      container.style.cursor = 'grabbing';
+      container.style.userSelect = 'none';
+      document.addEventListener('pointermove', handleMove);
+      document.addEventListener('pointerup', handleUp, { once: true });
+    }
+    container.addEventListener('pointerdown', handlePointerDown);
+    return () => container.removeEventListener('pointerdown', handlePointerDown);
+  }, []);
+
   // Fetch the next page a couple of slides before actually running out.
   useEffect(() => {
     if (!hasMore || loadingMoreRef.current || loading) return;
@@ -1492,7 +1541,19 @@ export default function VideoFeedView({ onExit }) {
         <>
         <div
           ref={containerRef}
-          style={{ height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch' }}
+          // userSelect:'none' is also what actually answers "get rid of the
+          // text cursor" (a real OS text-caret icon can't be recolored from
+          // CSS) — with nothing in this view selectable, the browser has no
+          // reason to ever show it over the likes count/source label/
+          // caption text, so it never appears in the first place rather
+          // than needing to be hidden after the fact. cursor:'grab' is a
+          // no-op on touch (nothing renders a cursor there) and hints the
+          // click-and-drag scrolling above on desktop; the drag handler
+          // itself swaps it to 'grabbing' for the duration of an actual drag.
+          style={{
+            height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch',
+            userSelect: 'none', cursor: 'grab',
+          }}
         >
           {videoPosts.map((post, idx) => (
             <div
