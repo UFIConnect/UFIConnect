@@ -544,45 +544,82 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         </div>
       )}
 
-      {/* Bottom caption overlay */}
+      {/* Bottom caption overlay. Two big fixes here, both confirmed live:
+          (1) this whole block used to be one pointerEvents:'none' div —
+          harmless while collapsed (nothing to scroll), but once expanded
+          it meant NOTHING inside, including its own overflowY:auto, could
+          ever actually receive a scroll/drag gesture — a gesture starting
+          here just fell through to whatever's behind it instead. Now only
+          the scrollable text region below is pointerEvents:'auto' (via
+          .video-caption-scroll, which the mouse-drag-to-scroll handler
+          above also knows to skip so the two don't fight over the same
+          drag). (2) the Read more/Show less button used to live at the
+          BOTTOM of that same scrolling text — for a long post it scrolled
+          out of view along with the text, with no way to reach it (worse
+          when scrolling didn't even work at all, see fix 1), reading as
+          "Show less just disappears." Pinned in its own row up top next
+          to the source label instead, outside the scrollable region
+          entirely, so it's always reachable regardless of how far the
+          text itself is scrolled. */}
       <div style={{
         position: 'absolute', zIndex: 2, left: 16, right: 76, bottom: 40, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
-        maxHeight: captionExpanded ? '55dvh' : undefined,
-        overflowY: captionExpanded ? 'auto' : undefined,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, fontSize: '.8rem', fontWeight: 700 }}>
-          <span>{meta.icon}</span>
-          <span>{post.sourceLabel || meta.label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700, minWidth: 0 }}>
+            <span>{meta.icon}</span>
+            <span>{post.sourceLabel || meta.label}</span>
+          </div>
+          {hasExtraCaption && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
+              style={{
+                flexShrink: 0, background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
+                color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
+                cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
+              }}
+            >
+              {captionExpanded ? 'Show less' : 'Read more'}
+            </button>
+          )}
         </div>
-        {post.title && (
-          <div style={{
-            fontSize: '.9rem', fontWeight: 600, marginBottom: 4, lineHeight: 1.35,
-            display: captionExpanded ? 'block' : '-webkit-box',
-            WebkitLineClamp: captionExpanded ? 'unset' : 3, WebkitBoxOrient: 'vertical',
-            overflow: captionExpanded ? 'visible' : 'hidden', whiteSpace: 'pre-wrap',
-          }}>
-            {post.title}
-          </div>
-        )}
-        {captionExpanded && post.content && post.content.trim() !== post.title?.trim() && (
-          <div style={{ fontSize: '.82rem', lineHeight: 1.5, marginBottom: 6, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
-            {post.content}
-          </div>
-        )}
-        {hasExtraCaption && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
-            style={{
-              background: 'none', border: 'none', color: '#fff', fontWeight: 700,
-              fontSize: '.78rem', padding: 0, marginBottom: 6, cursor: 'pointer', pointerEvents: 'auto',
-              opacity: 0.9,
-            }}
-          >
-            {captionExpanded ? 'Show less' : 'Read more'}
-          </button>
-        )}
-        {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85 }}>{post.author.name}</div>}
+        {/* The actual text — a solid background only while expanded (a
+            "Read more" of just the title needs no boundary; a scrollable
+            block of real post content, potentially sitting right over a
+            bright/busy part of the video underneath, does) is the literal
+            boundary asked for, and pointerEvents:'auto' + overflowY:'auto'
+            together are what make it actually scrollable rather than the
+            gesture just passing through to the video/slide-list behind it. */}
+        <div
+          className={captionExpanded ? 'video-caption-scroll' : undefined}
+          style={{
+            maxHeight: captionExpanded ? '50dvh' : undefined,
+            overflowY: captionExpanded ? 'auto' : undefined,
+            WebkitOverflowScrolling: captionExpanded ? 'touch' : undefined,
+            pointerEvents: captionExpanded ? 'auto' : 'none',
+            background: captionExpanded ? 'rgba(0,0,0,.6)' : undefined,
+            borderRadius: captionExpanded ? 12 : undefined,
+            padding: captionExpanded ? '8px 10px' : undefined,
+            margin: captionExpanded ? '0 -10px' : undefined,
+          }}
+        >
+          {post.title && (
+            <div style={{
+              fontSize: '.9rem', fontWeight: 600, marginBottom: 4, lineHeight: 1.35,
+              display: captionExpanded ? 'block' : '-webkit-box',
+              WebkitLineClamp: captionExpanded ? 'unset' : 3, WebkitBoxOrient: 'vertical',
+              overflow: captionExpanded ? 'visible' : 'hidden', whiteSpace: 'pre-wrap',
+            }}>
+              {post.title}
+            </div>
+          )}
+          {captionExpanded && post.content && post.content.trim() !== post.title?.trim() && (
+            <div style={{ fontSize: '.82rem', lineHeight: 1.5, marginBottom: 6, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
+              {post.content}
+            </div>
+          )}
+          {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85 }}>{post.author.name}</div>}
+        </div>
       </div>
 
       {/* Scrub tracker — click or drag anywhere on the bar to skip to that
@@ -1059,17 +1096,29 @@ export default function VideoFeedView({ onExit }) {
   // and why nothing advanced when dragging with a mouse there. Gated to
   // pointerType==='mouse' specifically so this never double-handles an
   // actual touchscreen's native scroll, and skipped entirely when the drag
-  // starts on a real control (button/link) so click targets like mute/
-  // comments/back keep working normally for mouse users. scroll-snap
-  // (already on the container) takes over on release exactly like it does
-  // after a wheel scroll, settling on the nearest slide without any extra
-  // code here.
+  // starts on a real control (button/link) or the expanded caption text
+  // (its own overflowY:auto needs to own drags that start on it — see the
+  // caption's pointerEvents/className below) so those keep working
+  // normally for mouse users. scroll-snap (already on the container) takes
+  // over on release exactly like it does after a wheel scroll, settling on
+  // the nearest slide without any extra code here.
+  //
+  // Attached to BOTH the scroll container and the shared YouTube overlay
+  // (sharedYtWrapperRef, declared further below) — that overlay renders as
+  // a sibling of the scroll container in the DOM, not a descendant of it
+  // (deliberately, so it stays fixed in place across slide transitions
+  // instead of scrolling away with them — see its own top comment), so a
+  // pointerdown that lands on the actual video pixels never bubbles up to
+  // a listener on the container alone. Confirmed live as "can't drag to
+  // scroll while hovering the video specifically" — dragging anywhere else
+  // on the same slide worked, only the video's own area didn't.
   useEffect(() => {
     const container = containerRef.current;
+    const ytOverlay = sharedYtWrapperRef.current;
     if (!container) return;
     function handlePointerDown(e) {
       if (e.pointerType !== 'mouse' || e.button !== 0) return;
-      if (e.target.closest('button, a, [role="button"]')) return;
+      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
       const startY = e.clientY;
       const startScrollTop = container.scrollTop;
       let dragged = false;
@@ -1097,8 +1146,12 @@ export default function VideoFeedView({ onExit }) {
       document.addEventListener('pointerup', handleUp, { once: true });
     }
     container.addEventListener('pointerdown', handlePointerDown);
-    return () => container.removeEventListener('pointerdown', handlePointerDown);
-  }, []);
+    ytOverlay?.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      container.removeEventListener('pointerdown', handlePointerDown);
+      ytOverlay?.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [videoPosts.length]);
 
   // Fetch the next page a couple of slides before actually running out.
   useEffect(() => {
