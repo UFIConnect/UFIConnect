@@ -1908,40 +1908,24 @@ export default function VideoFeedView({ onExit }) {
                 </>
               )}
 
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
-              {/* Own bounded scroll box (not the sheet's outer one) — ~230
-                  topics would otherwise push the platform section below far
-                  out of reach without scrolling through all of them first,
-                  same reasoning Onboarding's own topic picker already
-                  applies to this identical list. Single-select: picking a
-                  new topic swaps out whichever was picked before, matching
-                  the exact-match the backend does (see toggleTopicFilter). */}
-              <div style={{
-                display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 130, overflowY: 'auto',
-                padding: '2px 2px 12px', marginBottom: 6, borderBottom: '1px solid rgba(255,255,255,.12)',
-              }}>
-                {ALL_INTERESTS.map(topic => {
-                  const active = topicFilter === topic;
-                  return (
-                    <button
-                      key={topic}
-                      onClick={() => toggleTopicFilter(topic)}
-                      style={{
-                        padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
-                        fontWeight: 600, fontSize: '.75rem',
-                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
-                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
-                        color: '#fff',
-                      }}
-                    >
-                      {active ? '✓ ' : ''}{topic}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, margin: '12px 0 8px', textTransform: 'uppercase' }}>Platform</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {/* Platform before Topic (was the reverse) — Topic's ~230
+                  chips are by far the longest list in this sheet, so with
+                  it first, Platform ended up buried below a whole
+                  separately-scrolling box for it, on top of the sheet's
+                  own outer scroll — two nested scroll regions stacked on
+                  top of each other, confirmed live as genuinely hard to
+                  use (unclear which region a scroll gesture was even going
+                  to, plus Topic's own box was so short it took many small
+                  scrolls just to get through). Platform first means it's
+                  reachable immediately with no scrolling. Topic now flows
+                  as a normal part of the SAME single outer scroll instead
+                  of its own bounded box — one predictable scroll region
+                  for the whole sheet, and since Topic is last, scrolling
+                  further into it never blocks reaching anything else
+                  (Clear all/Done sit in their own fixed footer below,
+                  outside this scrollable area entirely already). */}
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Platform</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
                 {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
                   const meta = SOURCE_META[key] || {};
                   const active = sourceFilter.includes(key);
@@ -1960,6 +1944,28 @@ export default function VideoFeedView({ onExit }) {
                       }}
                     >
                       <span>{meta.icon}</span>{meta.label || key}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {ALL_INTERESTS.map(topic => {
+                  const active = topicFilter === topic;
+                  return (
+                    <button
+                      key={topic}
+                      onClick={() => toggleTopicFilter(topic)}
+                      style={{
+                        padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
+                        fontWeight: 600, fontSize: '.75rem',
+                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
+                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
+                        color: '#fff',
+                      }}
+                    >
+                      {active ? '✓ ' : ''}{topic}
                     </button>
                   );
                 })}

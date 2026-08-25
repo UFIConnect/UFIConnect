@@ -378,13 +378,21 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       {/* Topic — single-select (the backend does an exact match against one
           topic, not a set), reusing the exact same interest vocabulary
           Onboarding already offers rather than a second list that could
-          drift out of sync with it. Own bounded scroll box: ~230 topics
-          inline here would push Actions far out of reach otherwise. */}
+          drift out of sync with it. No bounded scroll box of its own (was
+          maxHeight:130/overflowY:auto) — that made this panel two nested
+          scroll regions (this box, plus the panel's own outer scroll),
+          confirmed live as genuinely hard to use: unclear which region a
+          scroll gesture was even going to, and the box itself was so short
+          it took many small scrolls to get through ~230 topics. Topic is
+          already the last section before Actions, so letting it flow as
+          part of the panel's single outer scroll instead doesn't block
+          reaching anything — Reset/Apply are still right below it either
+          way. */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
           Topic {local.topic && '(1 selected)'}
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 130, overflowY: 'auto', padding: 2 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {ALL_INTERESTS.map(topic => {
             const active = local.topic === topic;
             return (

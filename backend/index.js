@@ -11989,8 +11989,15 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
         clauses.push(`fp.media_type = $${params.length}`);
       }
       if (topic) {
-        params.push(topic);
-        clauses.push(`fp.topic = $${params.length}`);
+        // LOWER() on both sides, not a plain = — checked live against the
+        // DB: 'React' had 21 rows stored as some other casing variant vs 0
+        // for the exact string FEED_TOPICS/ALL_INTERESTS actually use,
+        // meaning a plain equality silently missed real, matching content
+        // for any topic whose stored casing had drifted from the display
+        // string (whichever code path wrote those specific rows didn't
+        // preserve it exactly).
+        params.push(topic.toLowerCase());
+        clauses.push(`LOWER(fp.topic) = $${params.length}`);
       }
       const rangeMs = feedTimeRangeMs(timeRange);
       if (rangeMs > 0) {
@@ -13711,7 +13718,7 @@ async function handleFeedRequest(req, res) {
   // matchesTopic below and getCursorFeedPage's own topic param for the
   // SQL-level equivalent used by the newest-sort cursor branches.
   const topicFilter = (req.query.topic || '').trim();
-  const matchesTopic = p => !topicFilter || p.topic === topicFilter;
+  const matchesTopic = p => !topicFilter || (p.topic || '').toLowerCase() === topicFilter.toLowerCase();
   const feedLimit = Math.min(Math.max(
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
@@ -14869,7 +14876,7 @@ async function handleVideoFeedRequest(req, res) {
     const topicFilter = (req.query.topic || '').trim();
     const searchQuery = (req.query.q || '').trim().toLowerCase();
     const matchesSearch = p => !searchQuery || `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase().includes(searchQuery);
-    const matchesTopic = p => !topicFilter || p.topic === topicFilter;
+    const matchesTopic = p => !topicFilter || (p.topic || '').toLowerCase() === topicFilter.toLowerCase();
 
     // "Balanced" — an even share per active source (getBalancedFeedPosts'
     // own PARTITION BY source ROW_NUMBER, page-based) instead of the
