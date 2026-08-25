@@ -2764,8 +2764,28 @@ function stripAndDecodeHTML(html) {
 // confirmed live that broad version was quietly eating everything between
 // two comparison operators in any post that used them.
 function decodeAndStripHTML(escapedHtml) {
-  const decoded = decodeHTMLEntities(escapedHtml).replace(HTML_BLOCK_BOUNDARY_RE, ' ');
-  return decoded.replace(/<\/?[a-zA-Z][^<>]*>/g, '').replace(/\s+/g, ' ').trim();
+  // Reddit's Atom <content> is HTML that's been through two layers of
+  // entity-escaping: Reddit's own selftext_html render already uses
+  // numeric entities (apostrophes as &#39;, etc.), and that whole rendered
+  // HTML is then escaped *again* as the XML text content of <content>.
+  // A single decodeHTMLEntities pass only unwraps the outer XML layer
+  // (&amp;#39; → &#39;) — its own numeric-entity replace already ran
+  // earlier in that same pass and doesn't re-scan its own output —
+  // confirmed live as literal "&#39;"/"&gt;" text showing up in rendered
+  // Reddit post content instead of real apostrophes/angle brackets.
+  // Decoding twice is a safe no-op for content that was only escaped once
+  // (nothing left to match on the second pass).
+  const decoded = decodeHTMLEntities(decodeHTMLEntities(escapedHtml)).replace(HTML_BLOCK_BOUNDARY_RE, ' ');
+  return decoded
+    // Reddit always wraps rendered selftext_html in <!-- SC_OFF -->...
+    // <!-- SC_ON --> (old Reddit's syntax-coloring CSS hook, present on
+    // every self-post, not just spoiler-tagged ones) — the tag-strip regex
+    // below only matches real elements (<tag>), never HTML comments, so
+    // these leaked straight through as literal visible text.
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\/?[a-zA-Z][^<>]*>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function fetchText(url, extraHeaders = {}) {
