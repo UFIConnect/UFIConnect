@@ -6239,7 +6239,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   workerHealth.set(agentId, {
     consecutiveErrors: 0, totalErrors: 0, fetchCount: 0,
     lastSuccess: null, paused: false, pauseUntil: 0,
-    skippedForStability: 0, lastAttempt: null, lastError: null,
+    skippedForStability: 0, skippedForInactivity: 0, lastAttempt: null, lastError: null,
   });
 
   // Build one independent shard loop over a slice of FEED_TOPICS
@@ -6257,6 +6257,16 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       if (isStabilityCritical()) {
         health.skippedForStability = (health.skippedForStability || 0) + 1;
         refreshControl.skippedFetches += 1;
+        scheduleNext();
+        return;
+      }
+
+      // See isAppIdle's own comment — this is the automatic continuous loop
+      // only; a manual "Refresh now" trigger from the office dashboard
+      // (SOURCE_FETCHERS[agentId] below) is explicit intent and stays
+      // exempt regardless of user activity.
+      if (isAppIdle()) {
+        health.skippedForInactivity = (health.skippedForInactivity || 0) + 1;
         scheduleNext();
         return;
       }
@@ -7416,6 +7426,43 @@ function currentRefreshMultiplier() {
 
 function isStabilityCritical() {
   return refreshControl.mode === 'critical';
+}
+
+// ─── Zero-active-users pause ────────────────────────────────────────────────
+// Separate from isStabilityCritical above — that one is about server
+// health/memory pressure; this is "is anyone actually here to see whatever
+// gets fetched." Added after the DB reached 4M+ cached posts while
+// genuinely idle — the ~35 source cyclers (see startContinuousWorkers) ran
+// at full pace around the clock regardless of whether a single real user
+// was ever going to see the result, which is pure storage growth with no
+// payoff. lastRealUserActivityAt is updated by authenticate() on every real
+// user request (feed loads, posting, likes, profile, etc.) — deliberately
+// NOT by /office/* admin-dashboard routes, which run through the separate
+// requireOfficeToken gate instead of authenticate, so leaving the office
+// dashboard open in a browser tab can't itself keep this pause from
+// triggering. 30 minutes gives a real visiting user's whole session room to
+// keep fetching live without the pause flickering on and off between page
+// loads; a stale value at boot (nobody's hit the API yet this process) is
+// deliberately treated as "active" so a fresh deploy fetches normally
+// instead of sitting paused until someone happens by.
+let lastRealUserActivityAt = Date.now();
+const USER_INACTIVITY_PAUSE_MS = 30 * 60 * 1000;
+// 0 = not currently flagged idle. Logs exactly once on each transition
+// (idle→active / active→idle) rather than every shard's every poll — dozens
+// of shards call isAppIdle() every few seconds, so without this it would
+// spam the office Pipeline log on every single tick for the entire idle
+// window instead of once per real state change.
+let appIdleLoggedAt = 0;
+function isAppIdle() {
+  const idle = Date.now() - lastRealUserActivityAt > USER_INACTIVITY_PAUSE_MS;
+  if (idle && !appIdleLoggedAt) {
+    appIdleLoggedAt = Date.now();
+    logAgentAction('feed', '💤', `No active users for ${Math.round(USER_INACTIVITY_PAUSE_MS / 60000)}+ min — pausing source fetching so the DB doesn't keep growing with nobody around to see it`, '#94A3B8');
+  } else if (!idle && appIdleLoggedAt) {
+    appIdleLoggedAt = 0;
+    logAgentAction('feed', '🔄', 'A user showed up — resuming source fetching', '#4ADE80');
+  }
+  return idle;
 }
 
 function adaptiveDelay(baseDelay) {
@@ -12279,6 +12326,11 @@ async function authenticate(req, res, next) {
   const token = authHeader.split(' ')[1];
   try {
     req.user = jwt.verify(token, JWT_SECRET);
+    // Every real, successfully-authenticated request counts as "someone's
+    // here" — see isAppIdle's own comment. /office/* admin routes go through
+    // requireOfficeToken instead of this middleware, so they deliberately
+    // never touch this.
+    lastRealUserActivityAt = Date.now();
     return next();
   } catch {
     // Not a local UFconnect JWT; try Auth0 when configured.
@@ -12288,6 +12340,7 @@ async function authenticate(req, res, next) {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
     req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    lastRealUserActivityAt = Date.now();
     return next();
   } catch {
     return res.status(401).json({ message: 'Invalid or expired token.' });
@@ -15939,6 +15992,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
       skippedForStability: h?.skippedForStability ?? 0,
+      skippedForInactivity: h?.skippedForInactivity ?? 0,
       lastAttempt: h?.lastAttempt ?? null,
       lastError: h?.lastError ?? null,
       lastSuccess: h?.lastSuccess ?? null,
@@ -16028,6 +16082,13 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       trimmedAt: refreshControl.trimmedAt,
       crashEvents: refreshControl.crashEvents,
       unhandledRejections: refreshControl.unhandledRejections,
+    },
+    // See isAppIdle's own comment — a separate pause from `stability` above:
+    // that one is server health/memory, this is "is anyone actually here."
+    activity: {
+      idle: isAppIdle(),
+      lastRealUserActivityAt,
+      pauseAfterMs: USER_INACTIVITY_PAUSE_MS,
     },
     refreshQueue: {
       running: sourceRefreshQueue.running,
