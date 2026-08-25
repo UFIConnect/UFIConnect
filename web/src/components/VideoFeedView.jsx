@@ -1201,6 +1201,40 @@ export default function VideoFeedView({ onExit }) {
 
   useLockBodyScroll();
 
+  // 73% of everything that ever shows up in this feed (checked live
+  // against the DB: 160 of 219 cached video posts) resolves to the
+  // youtube kind — not just the dedicated YouTube source, but DEV
+  // Community's own /api/videos endpoint (100% YouTube-hosted under the
+  // hood) and a chunk of Reddit's link posts too. Whatever slide the user
+  // starts on, there's a strong chance a YouTube video is coming up soon,
+  // so this warms up everything that's on YouTube's critical path *before*
+  // it's actually needed instead of paying for it right when a video
+  // needs to start: preconnect gets the DNS/TLS handshake to YouTube's
+  // domains done ahead of time, and loadYouTubeIframeApi() kicks off
+  // fetching+parsing the IFrame API script immediately rather than
+  // waiting for the first YouTube slide to become active (previously the
+  // very first YouTube video reached in a session paid for all of that
+  // network/parse latency inline, on top of player construction). Safe to
+  // call unconditionally even if the user never actually hits a YouTube
+  // video this session — a few KB of an unused script and some idle
+  // connections, nothing that costs playback quality. loadYouTubeIframeApi
+  // itself memoizes (module-level youtubeApiPromise), so the shared-
+  // player effect's own later call just reuses this same one, no double
+  // fetch.
+  useEffect(() => {
+    const head = document.head;
+    const links = ['https://www.youtube.com', 'https://i.ytimg.com', 'https://www.google.com'].map(href => {
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = href;
+      link.crossOrigin = '';
+      head.appendChild(link);
+      return link;
+    });
+    loadYouTubeIframeApi().catch(() => {});
+    return () => links.forEach(l => l.remove());
+  }, []);
+
   // Vimeo is a plain iframe with no postMessage control layer (see
   // VideoSlide's own vimeo render branch) — this shared button can't
   // actually change its audio once mounted, only the `muted` state
