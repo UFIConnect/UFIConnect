@@ -125,8 +125,14 @@ export default function ConnectedAccounts() {
   }
 
   const connectedList   = platforms.filter(([k]) =>  connected[k]);
-  const availableList   = platforms.filter(([k, p]) => !connected[k] &&  p.configured);
-  const comingSoonList  = platforms.filter(([k, p]) => !connected[k] && !p.configured);
+  // forceComingSoon (LinkedIn) — real OAuth credentials are configured and
+  // working, but it stays in "Coming Soon" anyway: full feed integration
+  // needs LinkedIn's own Partner Program approval, a product gate, not a
+  // missing-credentials one. See PlatformCard's own message below, which
+  // shows p.note (the real reason) instead of the generic "waiting on
+  // credentials" line whenever a platform has one.
+  const availableList   = platforms.filter(([k, p]) => !connected[k] &&  p.configured && !p.forceComingSoon);
+  const comingSoonList  = platforms.filter(([k, p]) => !connected[k] && (!p.configured || p.forceComingSoon));
 
   return (
     <Layout>
@@ -384,7 +390,13 @@ function PlatformCard({
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
             {comingSoon
-              ? `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`
+              // p.note covers a real product-gated reason (LinkedIn: full
+              // feed integration pending LinkedIn's own Partner Program
+              // approval) — shown instead of the generic credentials
+              // message whenever a platform actually has one, since
+              // "waiting on server credentials" would be simply false for
+              // a platform whose OAuth is already fully configured.
+              ? (p.note || `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`)
               : `Connect opens ${p.name}'s authorization page so you can approve UFconnect access at the original source.`}
           </div>
 

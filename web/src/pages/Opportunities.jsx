@@ -32,13 +32,15 @@ const TYPE_META = {
 // signing in and then surprises whoever isn't already a member.
 // LinkedIn specifically is a plain search link only because its real Jobs
 // API sits behind LinkedIn's Talent Solutions partner program — no self-
-// serve path, unlike the OAuth app already set up for basic profile
-// login (see PLATFORMS.linkedin's own note server-side). comingSoon marks
-// that this one has a real path to becoming a genuine source once that
-// partnership is approved, unlike Glassdoor/Handshake/Wellfound, which have
-// no such path at all (a login wall isn't something a partner API fixes).
+// serve path, unlike the OAuth app already set up for basic profile login
+// (see PLATFORMS.linkedin's own note server-side). This link itself is
+// fully functional today (real search results, no account needed), so a
+// "Coming soon" label here would be misleading — that messaging lives on
+// the Connected Accounts page instead, where it actually describes
+// something incomplete (the OAuth connection only imports a profile, not
+// posts) rather than something that already works.
 const PLATFORM_META = {
-  linkedin:  { label: 'LinkedIn',  icon: '🔷', color: '#0A66C2', bg: '#E8F0FB', comingSoon: true },
+  linkedin:  { label: 'LinkedIn',  icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
   glassdoor: { label: 'Glassdoor', icon: '🟢', color: '#0CAA41', bg: '#E6F9EE', loginRequired: true },
   handshake: { label: 'Handshake', icon: '🤝', color: '#F97316', bg: '#FFF3E8', loginRequired: true },
   wellfound: { label: 'Wellfound', icon: '🚀', color: '#111827', bg: '#F3F4F6', loginRequired: true },
@@ -409,11 +411,7 @@ export default function Opportunities() {
                     href={platformSearchUrls[key]}
                     target="_blank"
                     rel="noopener noreferrer"
-                    title={
-                      meta.comingSoon ? `Real ${meta.label} job listings are coming once LinkedIn's Partner API access is approved — this searches ${meta.label} directly for now`
-                      : meta.loginRequired ? `${meta.label} requires a school or employer login to search`
-                      : undefined
-                    }
+                    title={meta.loginRequired ? `${meta.label} requires a school or employer login to search` : undefined}
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 4,
                       padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -423,15 +421,6 @@ export default function Opportunities() {
                     }}
                   >
                     {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''} ↗
-                    {meta.comingSoon && (
-                      <span style={{
-                        fontSize: '.65rem', fontWeight: 700, color: meta.color,
-                        background: '#fff', padding: '1px 6px', borderRadius: 8,
-                        border: `1px solid ${meta.color}55`,
-                      }}>
-                        Coming soon
-                      </span>
-                    )}
                   </a>
                 )
               ))}
