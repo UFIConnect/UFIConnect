@@ -1438,12 +1438,25 @@ export default function VideoFeedView({ onExit }) {
             itself (default stacking) but below every per-slide UI element
             (caption/scrub bar/action rail/pause indicator, all bumped to
             z-index 2 — see VideoSlide) and well below the top controls
-            (z-index 10) and any modal (comments sheet, filter sheet). */}
+            (z-index 10) and any modal (comments sheet, filter sheet).
+            Also hidden (not just when non-YouTube) for the duration of an
+            active scroll gesture, same as the isScrolling check every
+            file/hls slide already uses to pause in place — but for a
+            different reason here: this overlay is positioned to the fixed
+            viewport, not inside the scrolling slide list, so unlike a
+            per-slide player it doesn't move WITH the drag at all — left
+            visible, it would visually "stick" floating in place while
+            everything else (backdrop, caption, other slides) scrolls past
+            around it. Fading out for the drag and back in once scrolling
+            settles (when activeIndex itself updates) reads as clean rather
+            than broken; a brief transition softens the swap instead of an
+            abrupt cut. */}
         <div style={{
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
-          opacity: activeSrc?.kind === 'youtube' ? 1 : 0,
+          opacity: (activeSrc?.kind === 'youtube' && !isScrolling) ? 1 : 0,
+          transition: 'opacity .15s ease-out',
         }}>
           <div
             style={{
