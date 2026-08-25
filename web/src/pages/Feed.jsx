@@ -1176,8 +1176,15 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
         {post.likesCount > 0 && (
+          // GitHub/GitLab post likesCount is actually the repo/project's
+          // star count (backend/index.js resolveVideoSource-adjacent
+          // fetchers repurpose stargazers_count/star_count there, since
+          // neither platform has a real per-post "like") — a heart implies
+          // someone liked *this post*, which never happened. Star icon for
+          // just those two keeps the real number (still a genuine, useful
+          // signal) without misrepresenting what it means.
           <span style={{ fontSize: '.75rem', color: 'var(--muted)' }}>
-            {'❤️'} {post.likesCount.toLocaleString()}
+            {(post.source === 'github' || post.source === 'gitlab') ? '⭐' : '❤️'} {post.likesCount.toLocaleString()}
           </span>
         )}
         {hasComments && (

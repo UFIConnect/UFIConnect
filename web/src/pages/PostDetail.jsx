@@ -297,7 +297,10 @@ export default function PostDetail() {
                 {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
               </button>
             ) : (
-              post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>❤️ {post.likesCount.toLocaleString()}</span>
+              // Same GitHub/GitLab star-vs-like distinction as Feed.jsx's
+              // stats bar — those two sources' likesCount is really a repo/
+              // project star count, not a like on this specific post.
+              post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{(post.source === 'github' || post.source === 'gitlab') ? '⭐' : '❤️'} {post.likesCount.toLocaleString()}</span>
             )}
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"

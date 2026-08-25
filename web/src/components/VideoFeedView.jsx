@@ -2084,7 +2084,7 @@ export default function VideoFeedView({ onExit }) {
         </div>
       )}
 
-      {loading ? (
+      {loading && videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
           Loading videos…
         </div>
@@ -2102,6 +2102,31 @@ export default function VideoFeedView({ onExit }) {
         </div>
       ) : (
         <>
+        {/* loading (a filter/topic/search/sort change, or Following/Feed
+            switch — see loadPage's reset path) used to be its own branch
+            above, replacing this entire fragment — including the shared
+            YouTube player's mount div below — with the plain spinner. React
+            fully unmounted that div, but sharedYtPlayerRef.current (the
+            underlying YT.Player, deliberately never cleared — see the
+            comment on the overlay below) was never reset to match, so the
+            next video's play/pause calls silently no-op against an
+            already-detached iframe. Confirmed live as "tap to play does
+            nothing" on every filter change, and effectively "always" since
+            ~73% of this feed's content is YouTube-kind. Now the fragment
+            (and the live player inside it) stays mounted straight through a
+            reset — videoPosts still holds the pre-filter content until the
+            new page actually lands (see loadPage) — with just a dimmed
+            overlay on top for the brief gap, instead of tearing the player
+            down and rebuilding it every time. */}
+        {loading && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(0,0,0,.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: '#fff', fontSize: '.9rem', pointerEvents: 'none',
+          }}>
+            Loading videos…
+          </div>
+        )}
         <div
           ref={containerRef}
           // video-feed-scroll: hides this element's own native scrollbar
