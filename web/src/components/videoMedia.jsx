@@ -259,7 +259,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
   }
   return (
     <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
-      playsInline poster={poster} onClick={onClick}
+      playsInline draggable={true} poster={poster} onClick={onClick}
       onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause}
       style={{ width: '100%', display: 'block', background: '#000', ...style }} />
   );

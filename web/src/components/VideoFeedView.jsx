@@ -496,6 +496,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           muted={muted}
           loop
           playsInline
+          draggable={true}
           onClick={togglePlay}
           onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
@@ -544,63 +545,57 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         </div>
       )}
 
-      {/* Bottom caption overlay. Two big fixes here, both confirmed live:
-          (1) this whole block used to be one pointerEvents:'none' div —
-          harmless while collapsed (nothing to scroll), but once expanded
-          it meant NOTHING inside, including its own overflowY:auto, could
-          ever actually receive a scroll/drag gesture — a gesture starting
-          here just fell through to whatever's behind it instead. Now only
-          the scrollable text region below is pointerEvents:'auto' (via
-          .video-caption-scroll, which the mouse-drag-to-scroll handler
-          above also knows to skip so the two don't fight over the same
-          drag). (2) the Read more/Show less button used to live at the
-          BOTTOM of that same scrolling text — for a long post it scrolled
-          out of view along with the text, with no way to reach it (worse
-          when scrolling didn't even work at all, see fix 1), reading as
-          "Show less just disappears." Pinned in its own row up top next
-          to the source label instead, outside the scrollable region
-          entirely, so it's always reachable regardless of how far the
-          text itself is scrolled. */}
+      {/* Bottom vignette — one continuous gradient behind ALL the bottom UI
+          (source/author, writing, Show more, scrub bar, time, comments/
+          likes rail) instead of one-off boxed backgrounds on just some of
+          them. Reads as one deliberate treatment and keeps legibility
+          consistent regardless of what's actually playing behind it,
+          rather than some text having a boundary and some not. Grows
+          taller when the caption expands so a long post's writing —
+          capped below at 42dvh — is never left partly uncovered. */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 1,
+        height: captionExpanded ? '78%' : '40%',
+        background: 'linear-gradient(to top, rgba(0,0,0,.82) 0%, rgba(0,0,0,.5) 55%, rgba(0,0,0,0) 100%)',
+        pointerEvents: 'none', transition: 'height .2s ease',
+      }} />
+
+      {/* Bottom caption overlay. Source + author are a pinned header, the
+          actual writing comes right below them, and Show more/less is
+          pinned right after the writing — none of the three ever move
+          based on scroll/expand state, so everything stays visible and in
+          a consistent reading order. Two fixes behind this shape, both
+          confirmed live: (1) this whole block used to be one
+          pointerEvents:'none' div — harmless while collapsed, but once
+          expanded it meant nothing inside, including its own
+          overflowY:auto, could ever receive a scroll/drag gesture; it just
+          fell through to whatever's behind it. Only the scrollable writing
+          below is pointerEvents:'auto' now (via .video-caption-scroll,
+          which the mouse-drag-to-scroll handler above knows to skip so the
+          two don't fight over the same drag). (2) Show more/less used to
+          live at the very bottom of that same scrolling block — on a long
+          post it scrolled out of view with no way to reach it, reading as
+          "Show less just disappears." It's outside the scrollable region
+          entirely now, so it's always reachable regardless of how far the
+          writing itself is scrolled. */}
       <div style={{
         position: 'absolute', zIndex: 2, left: 16, right: 76, bottom: 40, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700, minWidth: 0 }}>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700 }}>
             <span>{meta.icon}</span>
             <span>{post.sourceLabel || meta.label}</span>
           </div>
-          {hasExtraCaption && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
-              style={{
-                flexShrink: 0, background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
-                color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
-                cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
-              }}
-            >
-              {captionExpanded ? 'Show less' : 'Read more'}
-            </button>
-          )}
+          {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85, marginTop: 2 }}>{post.author.name}</div>}
         </div>
-        {/* The actual text — a solid background only while expanded (a
-            "Read more" of just the title needs no boundary; a scrollable
-            block of real post content, potentially sitting right over a
-            bright/busy part of the video underneath, does) is the literal
-            boundary asked for, and pointerEvents:'auto' + overflowY:'auto'
-            together are what make it actually scrollable rather than the
-            gesture just passing through to the video/slide-list behind it. */}
         <div
           className={captionExpanded ? 'video-caption-scroll' : undefined}
           style={{
-            maxHeight: captionExpanded ? '50dvh' : undefined,
+            maxHeight: captionExpanded ? '42dvh' : undefined,
             overflowY: captionExpanded ? 'auto' : undefined,
             WebkitOverflowScrolling: captionExpanded ? 'touch' : undefined,
             pointerEvents: captionExpanded ? 'auto' : 'none',
-            background: captionExpanded ? 'rgba(0,0,0,.6)' : undefined,
-            borderRadius: captionExpanded ? 12 : undefined,
-            padding: captionExpanded ? '8px 10px' : undefined,
-            margin: captionExpanded ? '0 -10px' : undefined,
           }}
         >
           {post.title && (
@@ -614,12 +609,23 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             </div>
           )}
           {captionExpanded && post.content && post.content.trim() !== post.title?.trim() && (
-            <div style={{ fontSize: '.82rem', lineHeight: 1.5, marginBottom: 6, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
+            <div style={{ fontSize: '.82rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
               {post.content}
             </div>
           )}
-          {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85 }}>{post.author.name}</div>}
         </div>
+        {hasExtraCaption && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
+            style={{
+              marginTop: 6, background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
+              color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
+              cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
+            }}
+          >
+            {captionExpanded ? 'Show less' : 'Read more'}
+          </button>
+        )}
       </div>
 
       {/* Scrub tracker — click or drag anywhere on the bar to skip to that
