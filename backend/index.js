@@ -3315,7 +3315,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     id:          `youtube_${videoId}`,
     authorId:    `youtube_${channelId || 'unknown'}`,
     groupId:     'ext_youtube',
-    content:     (description || title).slice(0, 300),
+    content:     (description || title).slice(0, POST_CONTENT_MAX_CHARS),
     title,
     source:      'youtube',
     sourceLabel: channelTitle || 'YouTube',
@@ -3940,7 +3940,7 @@ function parseArxivAtom(xml) {
     // no real tags here (arXiv abstracts are plain text/LaTeX, not HTML), so
     // just entity-decoding, unlike the strip+decode sources above.
     const title    = decodeHTMLEntities(get(/<title>([\s\S]*?)<\/title>/)).replace(/\s+/g, ' ').trim();
-    const summary  = truncateWithEllipsis(decodeHTMLEntities(get(/<summary>([\s\S]*?)<\/summary>/)).replace(/\s+/g, ' ').trim(), 500);
+    const summary  = truncateWithEllipsis(decodeHTMLEntities(get(/<summary>([\s\S]*?)<\/summary>/)).replace(/\s+/g, ' ').trim(), POST_CONTENT_MAX_CHARS);
     const published = get(/<published>(.*?)<\/published>/);
     const link     = `https://arxiv.org/abs/${id}`;
     const authors  = [...s.matchAll(/<name>(.*?)<\/name>/g)].map(a => a[1]).slice(0, 3).join(', ');
@@ -4133,7 +4133,7 @@ function parseRSSItems(xml) {
     items.push({
       title,
       link:    link.replace(/^<!\[CDATA\[|\]\]>$/g, '').trim(),
-      desc:    (field('description') || field('summary') || field('content')).slice(0, 800),
+      desc:    (field('description') || field('summary') || field('content')).slice(0, POST_CONTENT_MAX_CHARS),
       pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
       image,
@@ -4722,7 +4722,7 @@ async function fetchGitLabByKeyword(keyword) {
         id:          `gitlab_${String(p.id || p.web_url).replace(/[^a-z0-9]/gi, '').slice(0, 24)}`,
         authorId:    `gitlab_${String(p.namespace?.id || p.namespace?.path || 'project').replace(/[^a-z0-9]/gi, '_')}`,
         groupId:     'ext_gitlab',
-        content:     (p.description || `${p.name_with_namespace || p.name} public GitLab project.`).slice(0, 600),
+        content:     (p.description || `${p.name_with_namespace || p.name} public GitLab project.`).slice(0, POST_CONTENT_MAX_CHARS),
         title:       p.name_with_namespace || p.name,
         source:      'gitlab',
         sourceLabel: 'GitLab',
@@ -5054,7 +5054,7 @@ async function fetchUSAJobsByKeyword(keyword) {
           authorId:    'usajobs_jobs',
           groupId:     'ext_usajobs',
           content:     truncateWithEllipsis((d.UserArea?.Details?.JobSummary || d.QualificationSummary || d.PositionTitle || '')
-                         .replace(/\s+/g, ' ').trim(), 400),
+                         .replace(/\s+/g, ' ').trim(), POST_CONTENT_MAX_CHARS),
           title:       d.PositionTitle,
           source:      'usajobs', sourceLabel: 'USAJobs',
           sourceUrl:   d.PositionURI || 'https://www.usajobs.gov',
