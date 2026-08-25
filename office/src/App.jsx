@@ -709,18 +709,28 @@ function AnalyticsView() {
       {data && data.available && (
         <>
           <Label color="#475569">Pageviews (anonymous)</Label>
+          {/* Raw page-load count next to distinct visitor_id count for the
+              same window — the count alone reads as "N people visited"
+              when it's really "N page loads," inflated by the same person
+              browsing multiple pages. Bot/crawler/link-preview-scraper
+              traffic is filtered out server-side before it's even logged
+              (see isLikelyBotRequest), so what's left here is real
+              browser sessions either way. */}
           <div style={{ display: 'flex', gap: 16, margin: '12px 0 28px', flexWrap: 'wrap' }}>
             <Card style={{ minWidth: 150 }}>
               <Label>Today</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} visitor{data.todayVisitors === 1 ? '' : 's'}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 7 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{data.last7}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} visitor{data.last7Visitors === 1 ? '' : 's'}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 30 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} visitor{data.last30Visitors === 1 ? '' : 's'}</div>
             </Card>
           </div>
 

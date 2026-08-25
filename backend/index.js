@@ -12478,6 +12478,23 @@ function requireOfficeToken(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
 
+// Preview-link scrapers (Slack/Twitter/Discord/Facebook/etc.) mostly never
+// execute JS at all — they just fetch the raw HTML once for its Open Graph
+// tags — so most never reach this endpoint (a client-side fetch()) in the
+// first place. What DOES reliably reach it: search-engine crawlers, which
+// increasingly run a real JS engine to render SPAs (this site's own heavy
+// SEO investment — sitemap.xml, JSON-LD, explicit crawl directives in
+// index.html — means it's actively being crawled), and some third-party
+// link-preview/scheduling tools that render via headless Chrome instead of
+// a plain HTML fetch. None of these are a real visitor; counting them
+// inflated "pageviews" against real signups/activity with traffic that
+// never had a person behind it. Matched case-insensitively against the raw
+// User-Agent string.
+const BOT_USER_AGENT_RE = /bot|crawler|spider|slurp|preview|facebookexternalhit|slackbot|twitterbot|linkedinbot|discordbot|telegrambot|whatsapp|skypeuripreview|applebot|pingdom|uptimerobot|headlesschrome|phantomjs|puppeteer|playwright|selenium|python-requests|okhttp|go-http-client|^curl|^wget|ahrefsbot|semrushbot|mj12bot|dotbot|bytespider|petalbot|yandex/i;
+function isLikelyBotRequest(req) {
+  return BOT_USER_AGENT_RE.test(req.headers['user-agent'] || '');
+}
+
 // ─── First-party pageview logging ──────────────────────────────────────────
 // No analytics of any kind was installed — there was no way to tell whether
 // the site was getting traffic separate from search-engine indexing. Public
@@ -12486,6 +12503,7 @@ function requireOfficeToken(req, res, next) {
 // id so repeat-visit counts are still meaningful.
 app.post('/analytics/pageview', async (req, res) => {
   try {
+    if (isLikelyBotRequest(req)) return res.status(204).end();
     const path      = String(req.body?.path || '').slice(0, 300);
     const referrer  = req.body?.referrer ? String(req.body.referrer).slice(0, 500) : null;
     const visitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
@@ -12506,10 +12524,18 @@ app.post('/analytics/pageview', async (req, res) => {
 app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
   try {
     if (!db.isConnected()) return res.json({ available: false });
+    // Distinct visitor_id counted alongside raw views for each window, not
+    // just the daily breakdown further down — the top-level Today/7d/30d
+    // cards only ever showed raw pageview counts, which reads as "N people
+    // visited" when it's really just "N page loads," inflated by the same
+    // person browsing multiple pages (or, before the bot filter on the
+    // logging endpoint above, by crawlers with no person behind them at
+    // all). Distinct visitors next to it gives the actually-meaningful
+    // number for "how many separate people were here."
     const [today, last7, last30, topPaths, daily] = await Promise.all([
-      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
-      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
-      db.query(`SELECT COUNT(*) FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
       db.query(`
         SELECT path, COUNT(*) AS views
         FROM page_views
@@ -12527,8 +12553,11 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     res.json({
       available: true,
       today:  Number(today.rows[0].count),
+      todayVisitors:  Number(today.rows[0].visitors),
       last7:  Number(last7.rows[0].count),
+      last7Visitors:  Number(last7.rows[0].visitors),
       last30: Number(last30.rows[0].count),
+      last30Visitors: Number(last30.rows[0].visitors),
       topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views) })),
       daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
     });
