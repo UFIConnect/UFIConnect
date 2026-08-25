@@ -775,6 +775,21 @@ input, textarea, select { font-family: inherit; }
   .profile-mobile-logout { color: var(--danger); }
 }
 
+/* ── Videos (full-bleed vertical feed) on a real desktop viewport ──
+   Built mobile-first for a phone-width, edge-to-edge experience. Above the
+   phone breakpoint, cap it to a phone-like column and center it — otherwise
+   the top controls (positioned off the viewport edges) spread across the
+   whole browser window while the actual 9:16 video box, capped by its own
+   max-height, gets squashed to match, so the two visibly disagree with
+   each other. See the JSX comment on .video-feed-frame for the full
+   reasoning. */
+@media (min-width: 769px) {
+  .video-feed-frame {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+}
+
 /* ── PWA / App optimisations ──────────────────────────────── */
 /* Eliminate 300ms tap delay everywhere */
 * { touch-action: manipulation; }

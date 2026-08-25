@@ -1166,6 +1166,20 @@ export default function VideoFeedView({ onExit }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000, background: '#000' }}>
+      {/* Everything but the comments sheet lives inside this frame. Built
+          for a phone screen (full-bleed controls, a 9:16 video box) — on a
+          wide desktop browser the outer root above is the whole browser
+          window, so without a width cap the controls would spread edge to
+          edge (disconnected from the actual video) and the video box itself
+          would get squashed (aspect-ratio kept, but its width stays 100% of
+          a very wide parent while max-height clips it, distorting the
+          frame). See the `.video-feed-frame` media-query rule in
+          index.css — it caps this at a phone-like width and centers it on
+          wider viewports, so every absolutely-positioned child below (which
+          all key off THIS div, now the nearest positioned ancestor) lines
+          up together instead of each spreading to its own edge of the
+          window. Full-bleed on an actual phone width is unaffected. */}
+      <div className="video-feed-frame" style={{ position: 'relative', height: '100%', width: '100%' }}>
       {/* Row 1 is icon buttons ONLY (back / refresh / mute) — the
           Feed/Following toggle used to sit in this same row, centered, and
           on real mobile widths its pill was wide enough to visually and
@@ -1482,6 +1496,7 @@ export default function VideoFeedView({ onExit }) {
         </div>
         </>
       )}
+      </div>
 
       {commentsPost && <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />}
     </div>
