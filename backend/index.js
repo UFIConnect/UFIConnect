@@ -11900,7 +11900,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, topic = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -11987,6 +11987,10 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
+      }
+      if (topic) {
+        params.push(topic);
+        clauses.push(`fp.topic = $${params.length}`);
       }
       const rangeMs = feedTimeRangeMs(timeRange);
       if (rangeMs > 0) {
@@ -13699,6 +13703,15 @@ async function handleFeedRequest(req, res) {
   const sourcesParam = req.query.sources
     ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
     : [];
+  // New topic selector — picks any one topic from FEED_TOPICS, distinct
+  // from userTopics above (that's the viewer's own onboarding interests,
+  // always applied to shape the personalized default mix; this is an
+  // explicit, one-off override the viewer picked themselves). Exact match
+  // against the same keyword string a fetcher stamped on each post — see
+  // matchesTopic below and getCursorFeedPage's own topic param for the
+  // SQL-level equivalent used by the newest-sort cursor branches.
+  const topicFilter = (req.query.topic || '').trim();
+  const matchesTopic = p => !topicFilter || p.topic === topicFilter;
   const feedLimit = Math.min(Math.max(
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
@@ -13796,7 +13809,7 @@ async function handleFeedRequest(req, res) {
       const beforeMs = uficonnectCursorTs ? new Date(uficonnectCursorTs).getTime() : Infinity;
       extraLists = {
         uficonnect: posts
-          .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
+          .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs && matchesTopic(p))
           .sort((a, b) => postTimestamp(b) - postTimestamp(a))
           .slice(0, feedLimit)
           .map(p => serializeCommunityPost(p, req.user.id))
@@ -13808,6 +13821,7 @@ async function handleFeedRequest(req, res) {
       sources: cursorSources,
       cursorMap,
       limit: feedLimit,
+      topic: topicFilter || null,
       timeRange: cursorTimeRange,
       extraLists,
       seenIds,
@@ -13899,7 +13913,7 @@ async function handleFeedRequest(req, res) {
         const beforeMs = uficonnectCursorTs ? new Date(uficonnectCursorTs).getTime() : Infinity;
         extraLists = {
           uficonnect: posts
-            .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs)
+            .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs && matchesTopic(p))
             .sort((a, b) => postTimestamp(b) - postTimestamp(a))
             .slice(0, feedLimit)
             .map(p => serializeCommunityPost(p, req.user.id))
@@ -13911,6 +13925,7 @@ async function handleFeedRequest(req, res) {
         sources: cursorSources,
         cursorMap,
         limit: feedLimit,
+        topic: topicFilter || null,
         timeRange: cursorTimeRange,
         extraLists,
         seenIds,
@@ -13940,7 +13955,10 @@ async function handleFeedRequest(req, res) {
     // Feed Manager: no source filter and no search means "All Collected"
     // wants a true mix — pull an equal share directly from every source
     // instead of fetching a pool and correcting it after the fact.
-    const wantsMix = !archiveSources && !searchQuery;
+    // !topicFilter too — getBalancedFeedPosts has no topic support of its
+    // own, so an explicit topic pick falls through to the dbRows path
+    // below instead, which applies matchesTopic directly.
+    const wantsMix = !archiveSources && !searchQuery && !topicFilter;
 
     if (wantsMix) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
@@ -13964,11 +13982,18 @@ async function handleFeedRequest(req, res) {
     }
 
     const dbFetchLimit = wantsMix ? feedLimit * 3 + 1 : feedLimit + 1;
-    const dbRows = filterUnseen(await getPostsFromDB([], dbFetchLimit, offset, archiveSources, {
+    // getPostsFromDB has no topic param of its own (only q/sort/timeRange) —
+    // filtered in JS afterward instead of threading a new one through its
+    // own query-building, same "filter the fetched pool" approach the
+    // rest of this handler already uses for topic. Fetching wider when a
+    // topic filter is active (matching wantsMix's own 3x-when-mixing
+    // widening) keeps a real page's worth of matches likely even though
+    // the DB query itself can't narrow to the topic ahead of time.
+    const dbRows = filterUnseen(await getPostsFromDB([], topicFilter ? dbFetchLimit * 3 : dbFetchLimit, offset, archiveSources, {
       q: searchQuery,
       sort: sortMode,
       timeRange,
-    }), seenIds);
+    }), seenIds).filter(matchesTopic);
     let pageRows = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
     let hasMore = dbRows.length > feedLimit;
 
@@ -13981,6 +14006,7 @@ async function handleFeedRequest(req, res) {
         if (Array.isArray(archiveSources) && archiveSources.length && !archiveSources.includes(p.source)) return false;
         if (archiveSources && !Array.isArray(archiveSources) && p.source !== archiveSources) return false;
         if (rangeMs && postTimestamp(p) < Date.now() - rangeMs) return false;
+        if (!matchesTopic(p)) return false;
         if (searchQuery) {
           const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.topic || ''} ${p.source || ''}`.toLowerCase();
           if (!text.includes(searchQuery)) return false;
@@ -14022,6 +14048,7 @@ async function handleFeedRequest(req, res) {
       if (Array.isArray(searchSources) && searchSources.length && !searchSources.includes(p.source)) return false;
       if (searchSources && !Array.isArray(searchSources) && p.source !== searchSources) return false;
       if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
+      if (!matchesTopic(p)) return false;
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
       return text.includes(searchQuery);
     });
@@ -14037,7 +14064,7 @@ async function handleFeedRequest(req, res) {
           ...p,
           forYou: true,
           relevance: 1,
-        })).filter(p => !isFallbackFeedPost(p));
+        })).filter(p => !isFallbackFeedPost(p)).filter(matchesTopic);
       } catch {}
     }
     // enforceFeedDiversity's own header calls it "the single place that
@@ -14831,6 +14858,17 @@ async function handleVideoFeedRequest(req, res) {
     // cursor, and without this the response could just reshow whatever this
     // user was already shown seconds ago, reading as "refresh did nothing."
     const freshOnly = req.query.bust === '1';
+    // topic filters at the SQL level (see getCursorFeedPage) — an exact
+    // match against feed_posts_cache.topic, the same keyword string
+    // whichever fetcher used to find the post (see FEED_TOPICS). q is a
+    // client-side, in-memory search instead: getCursorFeedPage has no q
+    // support of its own (unlike the main Feed's getPostsFromDB path), and
+    // video volume per request is small enough (a page at a time) that
+    // filtering the already-fetched page is simpler than threading a new
+    // parameter all the way through the shared cursor query.
+    const topicFilter = (req.query.topic || '').trim();
+    const searchQuery = (req.query.q || '').trim().toLowerCase();
+    const matchesSearch = p => !searchQuery || `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase().includes(searchQuery);
 
     // Same two-phase shape as the main Feed's buildTwoPhaseMix, only applied
     // when nothing's explicitly filtered by source — an explicit platform
@@ -14839,10 +14877,11 @@ async function handleVideoFeedRequest(req, res) {
     if (!isUnfilteredVideo) {
       const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: feedLimit,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topic: topicFilter || null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      markPostsSeen(req.user.id, playable, 'videos');
-      return res.json({ posts: playable, cursor: nextCursor, hasMore });
+      const filtered = playable.filter(matchesSearch);
+      markPostsSeen(req.user.id, filtered, 'videos');
+      return res.json({ posts: filtered, cursor: nextCursor, hasMore });
     }
 
     const user = await getUser(req.user.id);
@@ -14865,9 +14904,9 @@ async function handleVideoFeedRequest(req, res) {
     if (isFreshSession && cursorSources.length) {
       const intro = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: cursorSources.length,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topic: topicFilter || null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      introPosts = intro.posts;
+      introPosts = intro.posts.filter(matchesSearch);
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
     }
 
@@ -14877,16 +14916,23 @@ async function handleVideoFeedRequest(req, res) {
     // needed since filterByUserTopics can shrink the pool — same
     // "widen the candidate pool before filtering" tradeoff the main Feed's
     // own pool-building already accepts, rather than a precise but far
-    // more complex retry-until-full-page loop.
+    // more complex retry-until-full-page loop. An explicit topicFilter
+    // (the new topic selector, picking any one topic — not the viewer's
+    // own onboarding interests) already narrowed the SQL query itself to
+    // an exact match, so filterByUserTopics is skipped in that case —
+    // re-applying it on top could exclude every result whenever the
+    // explicitly-picked topic isn't also one of this viewer's declared
+    // interests, which defeats the point of picking it in the first place.
     const introIds = new Set(introPosts.map(p => p.id));
     const remaining = Math.max(0, feedLimit - introPosts.length);
     let mixPosts = [], nextCursor = encodeFeedCursor(cursorAfterIntro), hasMore = introPosts.length > 0;
     if (remaining > 0) {
       const mix = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
-        mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topic: topicFilter || null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id)), userTopics).slice(0, remaining);
+      const mixCandidates = mix.posts.filter(p => !introIds.has(p.id)).filter(matchesSearch);
+      mixPosts = (topicFilter ? mixCandidates : filterByUserTopics(mixCandidates, userTopics)).slice(0, remaining);
       nextCursor = mix.nextCursor;
       hasMore = mix.hasMore;
     }

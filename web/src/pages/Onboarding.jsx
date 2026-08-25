@@ -54,8 +54,14 @@ const GOALS = [
   { value: 'sideproject',  icon: '🔨', label: 'Launch a side project',   desc: 'Build something new and find early users' },
 ];
 
-// Interests shown to everyone (canonical list)
-const ALL_INTERESTS = [
+// Interests shown to everyone (canonical list) — exported so the topic
+// selectors on Feed/Videos (see FilterPanel in Feed.jsx and the Filters
+// sheet in VideoFeedView.jsx) reuse the exact same vocabulary onboarding
+// already offers, instead of a second, separately-maintained list that
+// could drift out of sync with it (or with backend/index.js's own
+// FEED_TOPICS, which a comment there notes was deliberately kept a
+// superset of this list for exactly that reason).
+export const ALL_INTERESTS = [
   // ── Tech & Engineering ───────────────────────────────────────────────────────
   'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
   'Data Science', 'Developer Tools', 'Open Source', 'Cybersecurity',

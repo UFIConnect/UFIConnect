@@ -9,6 +9,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMet
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
+import { ALL_INTERESTS } from './Onboarding';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -136,7 +137,7 @@ const FOLLOWING_SOURCE_TABS = [
   ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' })),
 ];
 
-const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all' };
+const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topic: '' };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 // Rolling dedup window for pagination — comfortably larger than the
@@ -368,6 +369,36 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
               >
                 <span style={{ fontSize: '.8rem' }}>{meta.icon}</span>
                 {meta.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Topic — single-select (the backend does an exact match against one
+          topic, not a set), reusing the exact same interest vocabulary
+          Onboarding already offers rather than a second list that could
+          drift out of sync with it. Own bounded scroll box: ~230 topics
+          inline here would push Actions far out of reach otherwise. */}
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
+          Topic {local.topic && '(1 selected)'}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, maxHeight: 130, overflowY: 'auto', padding: 2 }}>
+          {ALL_INTERESTS.map(topic => {
+            const active = local.topic === topic;
+            return (
+              <button
+                key={topic}
+                onClick={() => setLocal(f => ({ ...f, topic: f.topic === topic ? '' : topic }))}
+                style={{
+                  padding: '4px 10px', borderRadius: 16, fontSize: '.73rem', fontWeight: 600,
+                  border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                  background: active ? 'var(--primary)' : 'var(--surface)',
+                  color: active ? '#fff' : 'var(--muted)', cursor: 'pointer',
+                }}
+              >
+                {topic}
               </button>
             );
           })}
@@ -1458,6 +1489,7 @@ export default function Feed() {
         seed: refreshSeedRef.current,
       });
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
+      if (activeFilters.topic) params.set('topic', activeFilters.topic);
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
@@ -2005,7 +2037,7 @@ export default function Feed() {
     : -1;
 
   const firstName = profile?.name?.split(' ')[0] || '';
-  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0);
+  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + (filters.topic ? 1 : 0);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -2231,6 +2263,21 @@ export default function Feed() {
             }}>
               Sort: {filters.sort}
               <button onClick={() => applyFilters({ ...filtersRef.current, sort: 'newest' })} style={{
+                marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
+              }}>×</button>
+            </span>
+          )}
+
+          {filters.topic && (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 9px', borderRadius: 12,
+              background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
+              border: '1px solid var(--border)',
+            }}>
+              Topic: {filters.topic}
+              <button onClick={() => applyFilters({ ...filtersRef.current, topic: '' })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>

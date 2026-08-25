@@ -5,6 +5,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
+import { ALL_INTERESTS } from '../pages/Onboarding';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
 // see api/engagement.js for the view-vs-seen distinction) once playback
@@ -880,6 +881,27 @@ export default function VideoFeedView({ onExit }) {
   // maxSharePct comment in handleVideoFeedRequest) actually apply here; a
   // single-value toggle could never combine sources in the first place.
   const [sourceFilter, setSourceFilter] = useState([]);
+  // Search text and topic both live in the same sheet as the platform
+  // filter (see filterOpen below) rather than their own always-visible
+  // controls — a permanent search bar/topic row floating over a full-
+  // bleed swipe feed would compete with the video for the very top of
+  // the screen, exactly the "look ugly" this was asked to avoid. Applied
+  // together with the platform selection on the sheet's existing "Done"
+  // tap rather than live — a debounced live search doesn't make much
+  // sense tucked inside a sheet the user has to deliberately open anyway.
+  // Each has an uncommitted "input" value (what's shown/highlighted while
+  // the sheet is still open — searchInput textbox, topicInput chip) and a
+  // committed "applied" value (searchQuery/topicFilter, mirrored into refs
+  // for loadPage) that only updates when Done is actually tapped — so
+  // reopening the sheet and changing your mind before confirming never
+  // triggers a fetch, and applySearchAndTopic can tell whether anything
+  // actually changed since the last apply.
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [topicInput, setTopicInput] = useState('');
+  const [topicFilter, setTopicFilter] = useState('');
+  const searchQueryRef = useRef('');
+  const topicFilterRef = useRef('');
   // Whether the platform-filter sheet (opened from the "Filters" button) is
   // showing — see its render block below for why this replaced an
   // always-visible chip row.
@@ -923,6 +945,10 @@ export default function VideoFeedView({ onExit }) {
       // Same ?source= (single)/?sources= (multi) convention as the main feed.
       if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
       else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
+      // Same ?q=/?topic= convention as the main feed (see handleFeedRequest/
+      // handleVideoFeedRequest server-side).
+      if (searchQueryRef.current) params += `&q=${encodeURIComponent(searchQueryRef.current)}`;
+      if (topicFilterRef.current) params += `&topic=${encodeURIComponent(topicFilterRef.current)}`;
       let endpoint;
       if (mode === 'following') {
         if (reset) followingPageRef.current = 1;
@@ -1040,6 +1066,43 @@ export default function VideoFeedView({ onExit }) {
     setLoading(true);
     loadPage({ reset: true });
   }, [loadPage]);
+
+  // Single-select and uncommitted (see the state block above) — the
+  // backend does an exact match against one topic (see
+  // handleVideoFeedRequest's topicFilter), not a set, unlike the platform
+  // filter above. Tapping the already-selected chip clears it. Doesn't
+  // touch topicFilter/topicFilterRef or reload anything by itself — that
+  // only happens once Done is tapped, via applySearchAndTopic below.
+  const toggleTopicInput = useCallback((topic) => {
+    setTopicInput(current => current === topic ? '' : topic);
+  }, []);
+
+  // Applies whatever's currently typed/picked in the sheet (search text +
+  // topic — platform chips already apply immediately on tap, same as
+  // before) — called from the sheet's "Done" button. Doesn't touch
+  // sourceFilter at all, so a platform selection made earlier in the same
+  // sheet visit isn't re-triggered a second time here.
+  const applySearchAndTopic = useCallback(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === searchQueryRef.current && topicInput === topicFilterRef.current) return;
+    searchQueryRef.current = trimmed;
+    setSearchQuery(trimmed);
+    topicFilterRef.current = topicInput;
+    setTopicFilter(topicInput);
+    setActiveIndex(0);
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+    setLoading(true);
+    loadPage({ reset: true });
+  }, [searchInput, topicInput, loadPage]);
+
+  const clearSearchAndTopic = useCallback(() => {
+    setSearchInput('');
+    searchQueryRef.current = '';
+    setSearchQuery('');
+    setTopicInput('');
+    topicFilterRef.current = '';
+    setTopicFilter('');
+  }, []);
 
   // Scrolling back up to video 1 after having scrolled further in acts as
   // pull-to-refresh, same mechanism as every other list on the site — no
@@ -1605,25 +1668,32 @@ export default function VideoFeedView({ onExit }) {
           viewMode. Own row below the toggle (was row 2, sharing space with
           it) for the same no-overlap reasoning as above. */}
       <button
-        onClick={() => setFilterOpen(true)}
-        aria-label="Filter by platform"
+        onClick={() => {
+          // Sync the sheet's uncommitted inputs from whatever's actually
+          // applied right now, every time it opens — otherwise reopening
+          // after a Cancel-via-backdrop-tap could show stale text/topic
+          // left over from an edit that was never actually applied.
+          setSearchInput(searchQuery);
+          setTopicInput(topicFilter);
+          setFilterOpen(true);
+        }}
+        aria-label="Search and filter videos"
         style={{
           position: 'absolute', top: `calc(${row2Safe} + 46px)`, left: '50%', transform: 'translateX(-50%)',
           zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
           padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
           fontWeight: 700, fontSize: '.78rem',
-          border: `1px solid ${sourceFilter.length ? '#fff' : 'rgba(255,255,255,.25)'}`,
-          background: sourceFilter.length ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+          border: `1px solid ${(sourceFilter.length || searchQuery || topicFilter) ? '#fff' : 'rgba(255,255,255,.25)'}`,
+          background: (sourceFilter.length || searchQuery || topicFilter) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
           backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
           color: '#fff',
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
-          <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
-          <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
-        Filters{sourceFilter.length > 0 ? ` · ${sourceFilter.length}` : ''}
+        Search{(sourceFilter.length + (topicFilter ? 1 : 0) + (searchQuery ? 1 : 0)) > 0
+          ? ` · ${sourceFilter.length + (topicFilter ? 1 : 0) + (searchQuery ? 1 : 0)}` : ''}
       </button>
 
       {filterOpen && (
@@ -1637,58 +1707,116 @@ export default function VideoFeedView({ onExit }) {
         >
           <div style={{
             background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
-            width: '100%', maxWidth: 540, maxHeight: '72vh',
+            width: '100%', maxWidth: 540, maxHeight: '80vh',
             display: 'flex', flexDirection: 'column',
             boxShadow: '0 -4px 32px rgba(0,0,0,.4)',
           }}>
             <div style={{ padding: '12px 20px 0', textAlign: 'center', flexShrink: 0 }}>
               <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter by platform</h2>
+                <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Search & filter</h2>
                 <button
                   onClick={() => setFilterOpen(false)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'rgba(255,255,255,.6)', lineHeight: 1 }}
                 >×</button>
               </div>
             </div>
-            <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1, display: 'flex', flexWrap: 'wrap', gap: 8, alignContent: 'flex-start' }}>
-              {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
-                const meta = SOURCE_META[key] || {};
-                const active = sourceFilter.includes(key);
-                return (
-                  <button
-                    key={key}
-                    onClick={() => toggleSourceFilter(key)}
-                    aria-label={meta.label || key}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 5,
-                      padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-                      fontWeight: 700, fontSize: '.78rem',
-                      border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                      background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)',
-                      color: '#fff',
-                    }}
-                  >
-                    <span>{meta.icon}</span>{meta.label || key}
-                  </button>
-                );
-              })}
+            <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
+              {/* Search — same pill/icon convention as pages/Search.jsx, just
+                  dark-themed to match this sheet. Uncommitted (searchInput)
+                  until Done is tapped — see applySearchAndTopic. */}
+              <div style={{ position: 'relative', margin: '4px 0 18px' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', opacity: 0.5 }}>
+                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { applySearchAndTopic(); setFilterOpen(false); } }}
+                  placeholder="Search videos…"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '11px 14px 11px 40px',
+                    borderRadius: 24, border: '1px solid rgba(255,255,255,.18)',
+                    background: 'rgba(255,255,255,.08)', color: '#fff', fontSize: '.88rem', outline: 'none',
+                  }}
+                />
+              </div>
+
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
+              {/* Own bounded scroll box (not the sheet's outer one) — ~230
+                  topics would otherwise push the platform section below far
+                  out of reach without scrolling through all of them first,
+                  same reasoning Onboarding's own topic picker already
+                  applies to this identical list. Single-select: picking a
+                  new topic swaps out whichever was picked before, matching
+                  the exact-match the backend does (see toggleTopicInput). */}
+              <div style={{
+                display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 130, overflowY: 'auto',
+                padding: '2px 2px 12px', marginBottom: 6, borderBottom: '1px solid rgba(255,255,255,.12)',
+              }}>
+                {ALL_INTERESTS.map(topic => {
+                  const active = topicInput === topic;
+                  return (
+                    <button
+                      key={topic}
+                      onClick={() => toggleTopicInput(topic)}
+                      style={{
+                        padding: '6px 12px', borderRadius: 16, cursor: 'pointer', whiteSpace: 'nowrap',
+                        fontWeight: 600, fontSize: '.75rem',
+                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
+                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
+                        color: '#fff',
+                      }}
+                    >
+                      {active ? '✓ ' : ''}{topic}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, margin: '12px 0 8px', textTransform: 'uppercase' }}>Platform</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {(viewMode === 'following' ? FOLLOWING_VIDEO_SOURCES : FEED_VIDEO_SOURCES).map(key => {
+                  const meta = SOURCE_META[key] || {};
+                  const active = sourceFilter.includes(key);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => toggleSourceFilter(key)}
+                      aria-label={meta.label || key}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 5,
+                        padding: '7px 12px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
+                        fontWeight: 700, fontSize: '.78rem',
+                        border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.25)'}`,
+                        background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.06)',
+                        color: '#fff',
+                      }}
+                    >
+                      <span>{meta.icon}</span>{meta.label || key}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
-                onClick={clearSourceFilter}
-                disabled={sourceFilter.length === 0}
+                onClick={() => { clearSourceFilter(); clearSearchAndTopic(); }}
+                disabled={sourceFilter.length === 0 && !searchInput && !topicInput}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
                   border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: sourceFilter.length === 0 ? 'rgba(255,255,255,.35)' : '#fff',
-                  fontWeight: 700, fontSize: '.85rem', cursor: sourceFilter.length === 0 ? 'default' : 'pointer',
+                  color: (sourceFilter.length === 0 && !searchInput && !topicInput) ? 'rgba(255,255,255,.35)' : '#fff',
+                  fontWeight: 700, fontSize: '.85rem',
+                  cursor: (sourceFilter.length === 0 && !searchInput && !topicInput) ? 'default' : 'pointer',
                 }}
               >
                 Clear all
               </button>
               <button
-                onClick={() => setFilterOpen(false)}
+                onClick={() => { applySearchAndTopic(); setFilterOpen(false); }}
                 style={{ flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10, border: 'none', background: '#fff', color: '#000', fontWeight: 700, fontSize: '.85rem', cursor: 'pointer' }}
               >
                 Done
