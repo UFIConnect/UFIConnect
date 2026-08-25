@@ -819,7 +819,7 @@ function AnimatedRing({ pct, color, size = 64, stroke = 6 }) {
 }
 
 /* ─── Overview Tab ───────────────────────────────────────────────────────────── */
-function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agentCount }) {
+function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agentCount, userStats }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { const t = setTimeout(() => setMounted(true), 60); return () => clearTimeout(t); }, []);
 
@@ -974,6 +974,44 @@ function OverviewTab({ agentStates, eventsCount, sourceAgents, sessionTime, agen
           );
         })}
       </div>
+
+      {/* ── Recent signups — auto-refreshes every 30s, no manual DB pull needed ── */}
+      <div style={{ fontSize: '.68rem', fontWeight: 800, color: '#64748B', letterSpacing: '1.5px', textTransform: 'uppercase', margin: '24px 0 10px' }}>
+        ▸ Recent Signups {userStats?.available && `— ${userStats.total.toLocaleString()} total, ${userStats.today} today`}
+      </div>
+      <div style={{
+        background: '#fff', border: '1px solid #E2E8F0', borderRadius: 12,
+        padding: '16px 18px',
+      }}>
+        {!userStats && <div style={{ color: '#94A3B8', fontSize: '.8rem' }}>Loading…</div>}
+        {userStats && !userStats.available && (
+          <div style={{ color: '#94A3B8', fontSize: '.8rem' }}>Database not connected.</div>
+        )}
+        {userStats?.available && (
+          <>
+            <div style={{ display: 'flex', gap: 20, marginBottom: 14, fontSize: '.72rem', color: '#64748B' }}>
+              <span><strong style={{ color: '#0F172A' }}>{userStats.active}</strong> active</span>
+              <span><strong style={{ color: '#0F172A' }}>{userStats.onboarded}</strong> onboarded</span>
+              <span><strong style={{ color: '#0F172A' }}>{userStats.last7}</strong> last 7 days</span>
+              <span><strong style={{ color: '#0F172A' }}>{userStats.last30}</strong> last 30 days</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(userStats.recent || []).slice(0, 10).map(u => (
+                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '.75rem', paddingBottom: 8, borderBottom: '1px solid #F1F5F9' }}>
+                  <span style={{ fontWeight: 700, color: '#0F172A', width: 160, flexShrink: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name}</span>
+                  <span style={{ color: '#64748B', flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.email}</span>
+                  {u.onboarded && <span style={{ fontSize: '.6rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>ONBOARDED</span>}
+                  {u.hidden && <span style={{ fontSize: '.6rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', padding: '1px 6px', borderRadius: 4, flexShrink: 0 }}>HIDDEN</span>}
+                  <span style={{ color: '#94A3B8', flexShrink: 0, width: 90, textAlign: 'right' }}>{new Date(u.createdAt).toLocaleString()}</span>
+                </div>
+              ))}
+              {(userStats.recent || []).length === 0 && (
+                <div style={{ color: '#94A3B8', fontSize: '.8rem' }}>No signups yet.</div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -991,6 +1029,7 @@ export default function AgentDashboard() {
   const [eventsCount,    setEventsCount]    = useState(0);
   const [activeTab,      setActiveTab]      = useState('overview');
   const [sourceAgents,   setSourceAgents]   = useState([]);
+  const [userStats,      setUserStats]      = useState(null);
   const [connectedSocial, setConnectedSocial] = useState({});
   const [workerPhases,   setWorkerPhases]   = useState(
     () => Object.fromEntries(SOURCE_AGENTS.map(a => [a.id, { phase: Math.floor(Math.random() * 3), topic: Math.floor(Math.random() * 16) }]))
@@ -1133,6 +1172,18 @@ export default function AgentDashboard() {
     }
     fetchSources();
     const t = setInterval(fetchSources, 30000);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Recent signups polling — was a manual, one-off DB pull every time this
+     needed checking; now refreshes on its own so the real user count/list is
+     always current without asking for it. ─────────────────────────────────── */
+  useEffect(() => {
+    function fetchUsers() {
+      client.get('/office/users').then(({ data }) => setUserStats(data)).catch(() => {});
+    }
+    fetchUsers();
+    const t = setInterval(fetchUsers, 30000);
     return () => clearInterval(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1317,6 +1368,7 @@ export default function AgentDashboard() {
           sourceAgents={sourceAgents}
           sessionTime={sessionTime}
           agentCount={AGENT_DEFS.length + SOURCE_AGENTS.length}
+          userStats={userStats}
         />
       )}
 
