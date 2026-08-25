@@ -586,18 +586,42 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       )}
 
       {/* Center pause indicator — only visible while actually paused, tap
-          anywhere on the video (outside the progress bar) to resume. */}
+          anywhere on the video (outside the progress bar) to resume.
+          YouTube specifically gets an explicit "Tap to play" label —
+          cross-origin embedded YouTube video is subject to stricter mobile
+          autoplay policy than a native <video> element (confirmed live:
+          Bluesky/direct-file videos in this same view autoplay reliably,
+          YouTube's often don't, especially for a viewer with no prior
+          engagement with youtube.com on their device — a real browser
+          policy, not something fixable from here). Without the label this
+          reads as a broken/half-loaded video; with it, it reads as an
+          intentional "tap to start" design, the same pattern Instagram/
+          TikTok use for some embedded content. */}
       {src && paused && (
-        <button
-          onClick={togglePlay}
-          aria-label="Play"
-          style={{
-            position: 'absolute', inset: 0, margin: 'auto', width: 64, height: 64,
-            borderRadius: '50%', background: 'rgba(0,0,0,.45)', border: 'none',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: '1.6rem', cursor: 'pointer', pointerEvents: 'none',
-          }}
-        >▶</button>
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 10, pointerEvents: 'none',
+        }}>
+          <button
+            onClick={togglePlay}
+            aria-label="Play"
+            style={{
+              width: 64, height: 64,
+              borderRadius: '50%', background: 'rgba(0,0,0,.45)', border: 'none',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontSize: '1.6rem', cursor: 'pointer', pointerEvents: 'none',
+            }}
+          >▶</button>
+          {src.kind === 'youtube' && (
+            <span style={{
+              color: '#fff', fontSize: '.78rem', fontWeight: 700,
+              textShadow: '0 1px 6px rgba(0,0,0,.7)', background: 'rgba(0,0,0,.45)',
+              padding: '4px 12px', borderRadius: 12,
+            }}>
+              Tap to play
+            </span>
+          )}
+        </div>
       )}
 
       {/* Bottom caption overlay */}
