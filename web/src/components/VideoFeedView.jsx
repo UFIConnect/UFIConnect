@@ -1413,48 +1413,60 @@ export default function VideoFeedView({ onExit }) {
         </div>
 
         {/* Shared YouTube player overlay (see sharedYt/sharedYtPlayerRef
-            above) — positioned independently of any individual slide,
-            matching the exact same centered/aspect-ratio box a per-slide
-            player would have used, so it always lines up with the active
-            slide (which, scroll-snapped, always fills this same viewport).
-            z-index sits above the scrolling slide list itself (default
-            stacking) but below every per-slide UI element (caption/scrub
-            bar/action rail/pause indicator, all bumped to z-index 2 — see
-            VideoSlide) and well below the top controls (z-index 10) and
-            any modal (comments sheet, filter sheet). Outer wrapper is
-            non-interactive so it never blocks taps meant for the caption/
-            action rail sitting in the letterboxed margins around it; the
-            inner box re-enables pointer events so tapping the video itself
-            still toggles play. */}
-        {activeSrc?.kind === 'youtube' && (
-          <div style={{
-            position: 'absolute', inset: 0, zIndex: 1,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            pointerEvents: 'none',
-          }}>
-            <div
-              style={{
-                width: '100%', aspectRatio: activeSrc.vertical ? '9/16' : '16/9', maxHeight: '100%',
-                position: 'relative', pointerEvents: 'auto',
-              }}
-              onClick={sharedYtTogglePlay}
-            >
-              <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
-              {sharedYt.failed && (
-                // Same reasoning as the old per-slide fallback: the IFrame
-                // Player API script never went ready (blocked, offline,
-                // slow network) — a plain embed iframe doesn't load that
-                // script at all and still autoplays muted on its own.
-                <iframe
-                  src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=1&modestbranding=1&rel=0`}
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
-                  allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-                  title={videoPosts[activeIndex]?.title}
-                />
-              )}
-            </div>
+            above) — ALWAYS mounted, never conditionally removed from the
+            DOM based on which slide is active. YouTube's IFrame API
+            physically replaces the mount div below with its own <iframe>,
+            entirely outside React's knowledge (same hazard Feed.jsx's own
+            YouTubeEmbedBlock documents at length). This used to be wrapped
+            in `{activeSrc?.kind === 'youtube' && (...)}`, so React tore the
+            mount div — and the live iframe YouTube had already substituted
+            in its place — out of the DOM the instant the user scrolled to
+            a single non-YouTube video, but sharedYtPlayerRef.current was
+            never cleared to match. The next YouTube video's effect then
+            took the "reuse existing player" branch against a reference to
+            an already-destroyed player, silently failing every play/
+            pause/seek call — confirmed live as "tap to play doesn't
+            work," and it undid the entire point of keeping one player
+            alive across slides. Hidden via opacity/pointer-events instead
+            of unmounted, so the node (and whatever live iframe YouTube has
+            put in its place) survives scrolling past any number of non-
+            YouTube videos in between. Positioned independently of any
+            individual slide, matching the exact same centered/aspect-ratio
+            box a per-slide player would have used, so it always lines up
+            with the active slide (which, scroll-snapped, always fills this
+            same viewport). z-index sits above the scrolling slide list
+            itself (default stacking) but below every per-slide UI element
+            (caption/scrub bar/action rail/pause indicator, all bumped to
+            z-index 2 — see VideoSlide) and well below the top controls
+            (z-index 10) and any modal (comments sheet, filter sheet). */}
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 1,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
+          opacity: activeSrc?.kind === 'youtube' ? 1 : 0,
+        }}>
+          <div
+            style={{
+              width: '100%', aspectRatio: activeSrc?.vertical ? '9/16' : '16/9', maxHeight: '100%',
+              position: 'relative', pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
+            }}
+            onClick={sharedYtTogglePlay}
+          >
+            <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
+            {sharedYt.failed && activeSrc?.kind === 'youtube' && (
+              // Same reasoning as the old per-slide fallback: the IFrame
+              // Player API script never went ready (blocked, offline,
+              // slow network) — a plain embed iframe doesn't load that
+              // script at all and still autoplays muted on its own.
+              <iframe
+                src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=1&modestbranding=1&rel=0`}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+                allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                title={videoPosts[activeIndex]?.title}
+              />
+            )}
           </div>
-        )}
+        </div>
         </>
       )}
 
