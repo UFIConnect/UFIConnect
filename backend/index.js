@@ -6000,15 +6000,17 @@ function addSeenId(id) {
 }
 
 // Truncate long content strings before storing to cap per-post memory. Was
-// 600 — genuinely too tight: most sources (Reddit, DEV.to, Mastodon, HN,
-// RSS full-text feeds) hand back considerably more real text than that in
-// their own API response, and this was discarding it before it ever
-// reached the DB, forcing Feed's "Read full post ↗" external link to
-// appear far more often than the actual source material required. Raised
-// to 1500 — still a real bound (not unlimited; per-post memory across up to
-// MAX_CACHED_DB_POSTS rows still matters), just wide enough that a normal
-// post's real content usually fits without hitting the wall.
-const MAX_CONTENT_LEN = 1500;
+// 600, then 1500 — both still tighter than what individual source parsers
+// themselves were allowed to return (see POST_CONTENT_MAX_CHARS, 2000 —
+// matching the DB content column's own real ceiling), so this later,
+// general safety-net pass was silently re-clamping content a source fetcher
+// had *already* been fixed to hand back in full — confirmed live as posts
+// still reading cut off after raising the per-source limits, since this was
+// the actual binding constraint the whole time. Matched to
+// POST_CONTENT_MAX_CHARS so the two layers agree instead of one quietly
+// undoing the other; per-post memory across up to MAX_CACHED_DB_POSTS rows
+// is still bounded, just no longer the tighter of the two ceilings.
+const MAX_CONTENT_LEN = POST_CONTENT_MAX_CHARS;
 function trimPostContent(p) {
   if (!p) return p;
   if (p.content && p.content.length > MAX_CONTENT_LEN) {
