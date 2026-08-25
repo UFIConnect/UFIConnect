@@ -11806,6 +11806,18 @@ function dbRowToFeedPost(r) {
   };
 }
 
+// Search is matched per typed word, not as one literal phrase — "AI
+// startup" now finds a post that says "startup building AI tools" even
+// though "AI startup" never appears adjacent, which a single ILIKE
+// '%AI startup%' would've missed. Every word must appear somewhere
+// (AND across words, checked independently — see the OR-across-columns
+// clause each word gets in getPostsFromDB below and the mirrored JS
+// .every() checks in handleFeedRequest/handleVideoFeedRequest), so more
+// words narrows results the way a search box normally behaves.
+function splitSearchWords(q) {
+  return String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null, options = {}) {
   if (!db.isConnected()) return [];
   try {
@@ -11830,8 +11842,11 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       clauses.push(`source = $${params.length}`);
     }
     if (options.q) {
-      params.push(`%${options.q}%`);
-      clauses.push(`(title ILIKE $${params.length} OR content ILIKE $${params.length} OR author_name ILIKE $${params.length} OR topic ILIKE $${params.length} OR source ILIKE $${params.length})`);
+      for (const word of splitSearchWords(options.q)) {
+        params.push(`%${word}%`);
+        const p = params.length;
+        clauses.push(`(title ILIKE $${p} OR content ILIKE $${p} OR author_name ILIKE $${p} OR topic ILIKE $${p} OR source ILIKE $${p})`);
+      }
     }
     if (options.mediaType) {
       params.push(options.mediaType);
@@ -14080,13 +14095,14 @@ async function handleFeedRequest(req, res) {
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     const searchRangeMs = feedTimeRangeMs(timeRange);
+    const searchWords = splitSearchWords(searchQuery);
     const memMatches = allCached.filter(p => {
       if (Array.isArray(searchSources) && searchSources.length && !searchSources.includes(p.source)) return false;
       if (searchSources && !Array.isArray(searchSources) && p.source !== searchSources) return false;
       if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
       if (!matchesTopic(p)) return false;
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
-      return text.includes(searchQuery);
+      return searchWords.every(w => text.includes(w));
     });
     let dbMatches = [];
     if (db.isConnected()) {
@@ -14896,18 +14912,22 @@ async function handleVideoFeedRequest(req, res) {
     const freshOnly = req.query.bust === '1';
     // topic filters at the SQL level (see getCursorFeedPage) — an exact
     // match against feed_posts_cache.topic, the same keyword string
-    // whichever fetcher used to find the post (see FEED_TOPICS). q is a
-    // client-side, in-memory search instead: getCursorFeedPage has no q
-    // support of its own (unlike the main Feed's getPostsFromDB path), and
-    // video volume per request is small enough (a page at a time) that
-    // filtering the already-fetched page is simpler than threading a new
-    // parameter all the way through the shared cursor query.
+    // whichever fetcher used to find the post (see FEED_TOPICS). q also
+    // gets a real DB-wide branch below (searchQuery && db.isConnected()),
+    // same as the main Feed's own getPostsFromDB path — matchesSearch here
+    // stays in place as the in-memory fallback for whenever that branch
+    // doesn't apply (no DB connection, e.g. local dev fallback mode).
     const topicsFilter = req.query.topics
       ? req.query.topics.split(',').map(t => t.trim()).filter(Boolean)
       : (req.query.topic ? [req.query.topic.trim()] : []); // back-compat: old single ?topic=
     const topicsFilterLower = topicsFilter.map(t => t.toLowerCase());
     const searchQuery = (req.query.q || '').trim().toLowerCase();
-    const matchesSearch = p => !searchQuery || `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase().includes(searchQuery);
+    const searchWords = splitSearchWords(searchQuery);
+    const matchesSearch = p => {
+      if (!searchWords.length) return true;
+      const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase();
+      return searchWords.every(w => text.includes(w));
+    };
     const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
 
     // ── Full-text search across every cached video post, not just whatever
