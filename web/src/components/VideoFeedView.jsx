@@ -244,6 +244,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     if (src?.kind !== 'youtube' || !active) return;
     let cancelled = false;
     let pollId;
+    let autoplayRetryId;
     const startUnmuted = !muted;
     setYtFailed(false);
     // If onReady hasn't fired by the time this fires, either the iframe_api
@@ -299,15 +300,29 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             // wrong and the center ▶ indicator never appeared, leaving no
             // visible cue that a tap was needed at all — confirmed live as
             // "can't watch videos" on mobile: playback silently never
-            // started and nothing on screen said so. A short delayed check
-            // against the player's real state (not another event
-            // subscription, since the whole problem is that blocked
-            // autoplay doesn't reliably fire one) corrects `paused` if
-            // playback genuinely never began.
-            setTimeout(() => {
-              if (cancelled || !ytPlayerRef.current) return;
-              try { if (ytPlayerRef.current.getPlayerState() !== 1) setPaused(true); } catch {}
-            }, 1200);
+            // started and nothing on screen said so. Retries playVideo()
+            // itself a few times before giving up — a single blocked/timed-
+            // out attempt isn't necessarily final (the player can still be
+            // settling internally right after onReady fires), so hitting it
+            // again a couple of times over ~1.5s recovers autoplay in cases
+            // where one call alone wouldn't have. Only once every retry
+            // still shows it not actually playing does this fall back to
+            // setPaused(true) — surfacing the tap-to-play UI instead of
+            // silently doing nothing.
+            let autoplayAttempts = 0;
+            autoplayRetryId = setInterval(() => {
+              if (cancelled || !ytPlayerRef.current) { clearInterval(autoplayRetryId); return; }
+              autoplayAttempts++;
+              try {
+                if (ytPlayerRef.current.getPlayerState() === 1) { clearInterval(autoplayRetryId); return; }
+                if (autoplayAttempts >= 3) {
+                  clearInterval(autoplayRetryId);
+                  setPaused(true);
+                  return;
+                }
+                ytPlayerRef.current.playVideo();
+              } catch { clearInterval(autoplayRetryId); }
+            }, 500);
           },
           onStateChange: (e) => {
             if (cancelled) return;
@@ -331,6 +346,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       cancelled = true;
       clearTimeout(readyTimeout);
       clearInterval(pollId);
+      clearInterval(autoplayRetryId);
       try { ytPlayerRef.current?.destroy(); } catch {}
       ytPlayerRef.current = null;
       setCurrentTime(0);
@@ -1094,6 +1110,27 @@ export default function VideoFeedView({ onExit }) {
   }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
 
   useLockBodyScroll();
+
+  // Safety net for the page background showing through as a light strip
+  // anywhere this full-bleed view doesn't perfectly cover the real
+  // viewport (confirmed live as a persistent white/grey gap on some mobile
+  // browsers even after fixing the slide-height mismatch that was one
+  // known cause of it — belt and suspenders against any other, harder-to-
+  // pin-down geometric cause behind the same symptom). The root view here
+  // already paints black itself; this only guards the page *underneath*
+  // it, restored to whatever it was on unmount.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlBg = html.style.background;
+    const prevBodyBg = body.style.background;
+    html.style.background = '#000';
+    body.style.background = '#000';
+    return () => {
+      html.style.background = prevHtmlBg;
+      body.style.background = prevBodyBg;
+    };
+  }, []);
 
   useEffect(() => {
     const handleKey = (e) => { if (e.key === 'Escape') onExit(); };
