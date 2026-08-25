@@ -11383,17 +11383,22 @@ const FEED_POSTS_TRIM_INTERVAL_MS = 10 * 60 * 1000;
 // what's fetched in a 6-week window was never realistically going to be
 // seen by anyone, just sitting in Render's Postgres storage costing space.
 const STALE_POST_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
-// A high-volume source (Reddit, Bluesky, GitHub, Mastodon, ...) produces
-// more than enough real content within just a few days that keeping a full
-// 20 days of its backlog around is pure storage cost with no real depth
-// benefit — a low-volume source (IndieHackers, VentureBeat, ...) is the
-// opposite: even 20 days barely clears a handful of posts, so it needs the
-// full window just to have any real depth to page through at all (see
-// UNSEEN_POST_MAX_AGE_MS's own history). Threshold-based per source rather
-// than a static source list, so it keeps adjusting itself as any given
-// source's real posting rate changes over time instead of going stale.
-const HIGH_VOLUME_SOURCE_MAX_AGE_MS = 4 * 24 * 60 * 60 * 1000;
-const HIGH_VOLUME_SOURCE_THRESHOLD  = 50; // posts within HIGH_VOLUME_SOURCE_MAX_AGE_MS
+// A source that dominates the table (Hacker News, Mastodon, ...) produces
+// more than enough real content within just over a week that keeping a
+// full 20 days of its backlog around is pure storage cost with no real
+// depth benefit — a low-volume source (IndieHackers, VentureBeat, ...) is
+// the opposite: even 20 days barely clears a handful of posts, so it needs
+// the full window just to have any real depth to page through at all (see
+// UNSEEN_POST_MAX_AGE_MS's own history). Share-based (this source's rows as
+// a fraction of the whole table) rather than a raw per-window post count or
+// a static source list: a source pulling a lot in absolute terms isn't the
+// problem on its own (more sources fetching more in total just means a
+// bigger table everywhere), it's specifically a source crowding out
+// everything else's retained history that this exists to fix — and share
+// keeps adjusting itself automatically as real posting rates change, same
+// reasoning as the count-based version it replaced.
+const HIGH_VOLUME_SOURCE_MAX_AGE_MS = 8 * 24 * 60 * 60 * 1000;
+const HIGH_VOLUME_SOURCE_SHARE_THRESHOLD = 0.20; // this source's share of feed_posts_cache's total row count
 // Used to be a separate, shorter rule (7 days) pruning any post nobody had
 // ever been shown yet, ahead of the hard 20-day ceiling above — but that
 // quietly punished exactly the lower-volume sources (fewer viewers to ever
@@ -11431,27 +11436,28 @@ function trimFeedPostsCache() {
        WHERE global_rank > $1 AND source_rank > $2
      )`, [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
   ).catch(() => {});
-  // Replaces the old flat 20-day-for-everyone rule — recent_count is
-  // recomputed fresh every trim pass, so a source crossing the threshold
-  // in either direction (a normally-quiet source having a busy week, or a
-  // usually-busy one going quiet) gets reclassified automatically on the
-  // next pass rather than being stuck with whichever bucket it started in.
-  // Job-listing sources exempted from the high-volume 4-day cap regardless
-  // of their own pull volume — confirmed live as a real regression the
-  // instant this rule shipped: Indeed/RemoteOK/USAJobs easily clear 50
-  // posts within 4 days (fetched across all 206 FEED_TOPICS), so they
-  // qualified as "high volume" same as a busy social source, and got capped
-  // to 4 days — but Opportunities/resume-matching (getJobCandidatePool)
-  // wants maximum historical breadth to match against, not freshness the
-  // way a social feed does. Job listings don't go stale the way a social
-  // post does; cutting them to 4 days just shrank the real candidate pool
-  // down to a handful of postings, which is what made "same jobs every
-  // time" and "doesn't match my resume" show up together — too few
-  // candidates left for applyResumeMatchedJobs/scoreJobResumeMatch to ever
-  // find a real match among.
+  // Replaces the old flat 20-day-for-everyone rule — share is recomputed
+  // fresh every trim pass over the *whole* table (not a recent window), so
+  // a source crossing the 20% threshold in either direction (Hacker News
+  // or Mastodon having a quiet stretch, some other source suddenly pulling
+  // harder) gets reclassified automatically on the next pass rather than
+  // being stuck with whichever bucket it started in.
+  // Job-listing sources exempted from the high-volume 8-day cap regardless
+  // of their own share — confirmed live as a real regression the instant an
+  // earlier version of this rule shipped: Indeed/RemoteOK/USAJobs easily
+  // pulled enough volume (fetched across all 206 FEED_TOPICS) to qualify as
+  // "high volume" same as a busy social source, and got capped short — but
+  // Opportunities/resume-matching (getJobCandidatePool) wants maximum
+  // historical breadth to match against, not freshness the way a social
+  // feed does. Job listings don't go stale the way a social post does;
+  // cutting their retention short just shrank the real candidate pool down
+  // to a handful of postings, which is what made "same jobs every time" and
+  // "doesn't match my resume" show up together — too few candidates left
+  // for applyResumeMatchedJobs/scoreJobResumeMatch to ever find a real
+  // match among.
   db.query(
     `WITH source_counts AS (
-       SELECT source, COUNT(*) FILTER (WHERE post_created_at >= NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds') AS recent_count
+       SELECT source, COUNT(*)::float / NULLIF(SUM(COUNT(*)) OVER (), 0) AS share
        FROM feed_posts_cache
        GROUP BY source
      )
@@ -11459,10 +11465,10 @@ function trimFeedPostsCache() {
      USING source_counts sc
      WHERE fp.source = sc.source
        AND (
-         (sc.recent_count > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+         (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
          OR
-         ((sc.recent_count <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
-       )`, [HIGH_VOLUME_SOURCE_THRESHOLD, JOB_LISTING_SOURCES]
+         ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+       )`, [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES]
   ).catch(() => {});
   db.query(
     `DELETE FROM feed_posts_cache fp
