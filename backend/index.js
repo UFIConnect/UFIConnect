@@ -165,6 +165,31 @@ const passwordResetLimiter = rateLimit({
   keyGenerator: rateLimitKey,
   message: { message: 'Too many password reset attempts. Please try again later.' },
 });
+// General floor, applied to every route below — distinct from the
+// abuse-specific limiters above (which stay tight and route-scoped; the
+// comment on those still applies: a tight blanket limiter risks throttling
+// legitimate heavy scrolling/pagination). This one is deliberately generous
+// — 300 req/min per IP is well above anything a real person scrolling/
+// paginating/searching normally produces, but low enough to stop a single
+// misbehaving script or bot from monopolizing the DB connection pool and
+// CPU that every other concurrent visitor also depends on. Previously
+// nothing at all guarded /feed, /opportunities, /groups, /users/search, or
+// any other read route — confirmed via audit as a real gap, not
+// theoretical: those are exactly the routes doing the heaviest per-request
+// work (see getCursorFeedPage, /users/search's array scan, etc.), so an
+// unthrottled burst against any of them lands directly on shared resources
+// every other user's request also needs. /health matches its own handler
+// (registered above, before this) and never reaches this middleware at
+// all, so Render's own health checks are unaffected regardless of frequency.
+const generalApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { message: 'Too many requests — please slow down and try again shortly.' },
+});
+app.use(generalApiLimiter);
 
 // Holomine brain service (simulated or external via HOLOMINE_URL)
 try {
