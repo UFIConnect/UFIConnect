@@ -904,19 +904,20 @@ export default function VideoFeedView({ onExit }) {
   // filterOpen below) rather than a single always-visible bar/row — a
   // permanent search bar floating over a full-bleed swipe feed would
   // compete with the video for the very top of the screen, exactly the
-  // "look ugly" this was asked to avoid. Topic (single-select) and Platform
-  // apply immediately on tap, same as before — no separate "uncommitted"
-  // state needed for either. Search is the one exception: searchInput is
-  // the raw, uncommitted textbox value, searchQuery/searchQueryRef is
-  // what's actually been applied and sent to loadPage, only updated on the
+  // "look ugly" this was asked to avoid. Topic (multi-select — any post
+  // matching ANY of the picked topics) and Platform apply immediately on
+  // tap, same as before — no separate "uncommitted" state needed for
+  // either. Search is the one exception: searchInput is the raw,
+  // uncommitted textbox value, searchQuery/searchQueryRef is what's
+  // actually been applied and sent to loadPage, only updated on the
   // search sheet's own Done/Enter (applySearch) — live-as-you-type doesn't
   // make much sense tucked inside a sheet the user has to deliberately
   // open anyway.
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [topicFilter, setTopicFilter] = useState('');
+  const [topicFilters, setTopicFilters] = useState([]);
   const searchQueryRef = useRef('');
-  const topicFilterRef = useRef('');
+  const topicFiltersRef = useRef([]);
   // 'newest' (default — the cursor/round-robin mix below) or 'balanced'
   // (an even share per active source instead — see handleVideoFeedRequest's
   // getBalancedFeedPosts branch server-side, the exact distinction the
@@ -944,6 +945,21 @@ export default function VideoFeedView({ onExit }) {
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
+  // Consecutive pages that came back with zero results after a search/topic
+  // filter was applied server-side — resets to 0 the moment any page has
+  // real posts. Guards the "keep auto-fetching while hasMore" effect below:
+  // hasMore now correctly reflects the server's own real cursor/page
+  // exhaustion rather than "did THIS page have anything" (see loadPage's
+  // own comment), which is what actually fixes empty-first-page search
+  // results — but a search term with genuinely zero matches anywhere would
+  // otherwise auto-fetch page after page in the background forever, since
+  // the server can keep saying hasMore:true right up until real exhaustion
+  // regardless of the filter ever matching anything. Capped rather than
+  // trusting the server's own bounded-retry (fetchPlayableVideoPage's own
+  // 4 attempts) alone, since that resets per-request — this tracks across
+  // the whole client-side auto-fetch sequence instead.
+  const emptyStreakRef = useRef(0);
+  const EMPTY_STREAK_LIMIT = 6;
   const loadingMoreRef = useRef(false);
   // Bounded rolling dedup — see VIDEO_DEDUP_WINDOW. Set for O(1) lookups,
   // paired with an array for FIFO eviction (Sets iterate in insertion
@@ -969,16 +985,22 @@ export default function VideoFeedView({ onExit }) {
 
   const loadPage = useCallback(async ({ reset = false, bust = false } = {}) => {
     try {
+      // A genuinely new search/topic/filter/mode shouldn't inherit a
+      // streak left over from whatever was applied before it — otherwise
+      // a brand new filter's own first (possibly also thin) page could
+      // get immediately blocked from auto-continuing by a limit already
+      // used up by the previous one.
+      if (reset) emptyStreakRef.current = 0;
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
       let params = `limit=10`;
       // Same ?source= (single)/?sources= (multi) convention as the main feed.
       if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
       else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
-      // Same ?q=/?topic= convention as the main feed (see handleFeedRequest/
+      // Same ?q=/?topics= convention as the main feed (see handleFeedRequest/
       // handleVideoFeedRequest server-side).
       if (searchQueryRef.current) params += `&q=${encodeURIComponent(searchQueryRef.current)}`;
-      if (topicFilterRef.current) params += `&topic=${encodeURIComponent(topicFilterRef.current)}`;
+      if (topicFiltersRef.current.length) params += `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
       let endpoint;
       if (mode === 'following') {
         if (reset) followingPageRef.current = 1;
@@ -1036,7 +1058,22 @@ export default function VideoFeedView({ onExit }) {
       if (mode === 'following') followingPageRef.current += 1;
       else if (sortModeRef.current === 'balanced') balancedPageRef.current += 1;
       else if (data.cursor) cursorRef.current = data.cursor;
-      setHasMore(data.hasMore !== false && incoming.length > 0);
+      // Was `data.hasMore !== false && incoming.length > 0` — conflated
+      // "this one page happened to have zero results" with "there's
+      // nothing left at all." A search/topic filter is applied server-
+      // side against whatever page the cursor/balanced-page query already
+      // fetched, same as a plain scroll — a narrow search term can easily
+      // land on a page with zero matches while real matches sit further
+      // back behind the SAME still-valid cursor. incoming.length===0 was
+      // overriding the server's own hasMore to false right there, ending
+      // pagination permanently on the very first thin page instead of
+      // continuing to page forward — confirmed live as "No videos yet"
+      // for search terms that do have real matches, just not on page one.
+      // emptyStreakRef (below) is what keeps this from turning into an
+      // unbounded background hammering loop for a term with genuinely no
+      // matches anywhere.
+      setHasMore(data.hasMore !== false);
+      emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
       setError(false);
     } catch {
       setError(true);
@@ -1124,19 +1161,21 @@ export default function VideoFeedView({ onExit }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
-  // Single-select, applies immediately — same pattern as toggleSourceFilter
+  // Multi-select, applies immediately — same pattern as toggleSourceFilter
   // and toggleSortMode above, now that Topic lives in the same
   // immediate-apply Filter sheet as Platform/Sort rather than paired with
   // Search's own text input (which does need to defer to a Done tap —
   // fetching on every keystroke isn't reasonable, but a topic pick isn't
-  // keystroke-driven, so there's no reason to defer this one anymore
-  // either). Tapping the already-selected chip clears it. The backend does
-  // an exact match against one topic (see handleVideoFeedRequest's
-  // topicFilter), not a set, unlike the platform filter.
+  // keystroke-driven, so there's no reason to defer this one either).
+  // Tapping an unselected chip adds it, tapping a selected one removes it
+  // — the backend matches a post whose topic is ANY of the selected ones
+  // (see handleVideoFeedRequest's topicsFilter), same idea as the
+  // platform filter just above.
   const toggleTopicFilter = useCallback((topic) => {
-    const next = topicFilterRef.current === topic ? '' : topic;
-    topicFilterRef.current = next;
-    setTopicFilter(next);
+    const current = topicFiltersRef.current;
+    const next = current.includes(topic) ? current.filter(t => t !== topic) : [...current, topic];
+    topicFiltersRef.current = next;
+    setTopicFilters(next);
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
@@ -1148,11 +1187,11 @@ export default function VideoFeedView({ onExit }) {
   // Clear). Sort resets to 'newest' rather than being left at 'balanced'
   // with nothing else filtered.
   const clearFilters = useCallback(() => {
-    if (!sourceFilterRef.current.length && !topicFilterRef.current && sortModeRef.current === 'newest') return;
+    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length && sortModeRef.current === 'newest') return;
     sourceFilterRef.current = [];
     setSourceFilter([]);
-    topicFilterRef.current = '';
-    setTopicFilter('');
+    topicFiltersRef.current = [];
+    setTopicFilters([]);
     sortModeRef.current = 'newest';
     setSortMode('newest');
     setActiveIndex(0);
@@ -1338,8 +1377,16 @@ export default function VideoFeedView({ onExit }) {
   }, [videoPosts.length]);
 
   // Fetch the next page a couple of slides before actually running out.
+  // emptyStreakRef cap (see its own declaration above): without it, a
+  // search/topic filter matching nothing anywhere would auto-fetch page
+  // after page in the background indefinitely, since the server's hasMore
+  // reflects real cursor exhaustion, not whether the filter ever matched
+  // anything — this stops that once it's genuinely looking hopeless
+  // rather than hammering the server (and the user's connection) forever
+  // in a loop that never shows anything on screen.
   useEffect(() => {
     if (!hasMore || loadingMoreRef.current || loading) return;
+    if (emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
       loadPage({}).finally(() => { loadingMoreRef.current = false; });
@@ -1782,8 +1829,8 @@ export default function VideoFeedView({ onExit }) {
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
             fontWeight: 700, fontSize: '.78rem',
-            border: `1px solid ${(sourceFilter.length || topicFilter || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.25)'}`,
-            background: (sourceFilter.length || topicFilter || sortMode !== 'newest') ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+            border: `1px solid ${(sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.25)'}`,
+            background: (sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
             backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
             color: '#fff',
           }}
@@ -1793,8 +1840,8 @@ export default function VideoFeedView({ onExit }) {
             <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
             <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
           </svg>
-          Filter{(sourceFilter.length + (topicFilter ? 1 : 0) + (sortMode !== 'newest' ? 1 : 0)) > 0
-            ? ` · ${sourceFilter.length + (topicFilter ? 1 : 0) + (sortMode !== 'newest' ? 1 : 0)}` : ''}
+          Filter{(sourceFilter.length + topicFilters.length + (sortMode !== 'newest' ? 1 : 0)) > 0
+            ? ` · ${sourceFilter.length + topicFilters.length + (sortMode !== 'newest' ? 1 : 0)}` : ''}
         </button>
       </div>
 
@@ -1883,7 +1930,13 @@ export default function VideoFeedView({ onExit }) {
         >
           <div style={{
             background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
-            width: '100%', maxWidth: 540, maxHeight: '80vh',
+            // maxHeight back to the original 72vh (was briefly bumped to
+            // 80vh when Sort/Topic/Platform all landed in this one sheet)
+            // — the sheet's own on-screen footprint shouldn't grow just
+            // because there's more to scroll through inside it; the
+            // content area's own overflowY:auto (below) is what's meant to
+            // absorb that, not the sheet itself taking up more of the screen.
+            width: '100%', maxWidth: 540, maxHeight: '72vh',
             display: 'flex', flexDirection: 'column',
             boxShadow: '0 -4px 32px rgba(0,0,0,.4)',
           }}>
@@ -1891,10 +1944,20 @@ export default function VideoFeedView({ onExit }) {
               <div style={{ width: 36, height: 4, borderRadius: 2, background: 'rgba(255,255,255,.25)', margin: '0 auto 14px' }} />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter</h2>
+                {/* Every selection here already applies immediately on tap
+                    (Sort/Topic/Platform, unlike Search's own deferred
+                    text input) — this Done button, same as the one in the
+                    footer below, is really just "close the sheet," not
+                    "apply." A proper button up here instead of just the
+                    small × means closing doesn't require scrolling all
+                    the way down through Topic's ~230 chips first. */}
                 <button
                   onClick={() => setFilterOpen(false)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.3rem', color: 'rgba(255,255,255,.6)', lineHeight: 1 }}
-                >×</button>
+                  style={{
+                    background: '#fff', border: 'none', borderRadius: 14,
+                    padding: '5px 14px', color: '#000', fontWeight: 700, fontSize: '.78rem', cursor: 'pointer',
+                  }}
+                >Done</button>
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
@@ -1971,7 +2034,7 @@ export default function VideoFeedView({ onExit }) {
               <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, marginBottom: 8, textTransform: 'uppercase' }}>Topic</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {ALL_INTERESTS.map(topic => {
-                  const active = topicFilter === topic;
+                  const active = topicFilters.includes(topic);
                   return (
                     <button
                       key={topic}
@@ -1993,13 +2056,13 @@ export default function VideoFeedView({ onExit }) {
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
                 onClick={() => clearFilters()}
-                disabled={sourceFilter.length === 0 && !topicFilter && sortMode === 'newest'}
+                disabled={sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest'}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
                   border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (sourceFilter.length === 0 && !topicFilter && sortMode === 'newest') ? 'rgba(255,255,255,.35)' : '#fff',
+                  color: (sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest') ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
-                  cursor: (sourceFilter.length === 0 && !topicFilter && sortMode === 'newest') ? 'default' : 'pointer',
+                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest') ? 'default' : 'pointer',
                 }}
               >
                 Clear all

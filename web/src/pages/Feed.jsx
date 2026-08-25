@@ -137,7 +137,7 @@ const FOLLOWING_SOURCE_TABS = [
   ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' })),
 ];
 
-const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topic: '' };
+const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 // Rolling dedup window for pagination — comfortably larger than the
@@ -375,8 +375,8 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
         </div>
       </div>
 
-      {/* Topic — single-select (the backend does an exact match against one
-          topic, not a set), reusing the exact same interest vocabulary
+      {/* Topic — multi-select (a post matches if its topic is ANY of the
+          ones picked here), reusing the exact same interest vocabulary
           Onboarding already offers rather than a second list that could
           drift out of sync with it. No bounded scroll box of its own (was
           maxHeight:130/overflowY:auto) — that made this panel two nested
@@ -390,15 +390,15 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
           way. */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
-          Topic {local.topic && '(1 selected)'}
+          Topic {local.topics.length > 0 && `(${local.topics.length} selected)`}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
           {ALL_INTERESTS.map(topic => {
-            const active = local.topic === topic;
+            const active = local.topics.includes(topic);
             return (
               <button
                 key={topic}
-                onClick={() => setLocal(f => ({ ...f, topic: f.topic === topic ? '' : topic }))}
+                onClick={() => setLocal(f => ({ ...f, topics: f.topics.includes(topic) ? f.topics.filter(t => t !== topic) : [...f.topics, topic] }))}
                 style={{
                   padding: '4px 10px', borderRadius: 16, fontSize: '.73rem', fontWeight: 600,
                   border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
@@ -1497,7 +1497,7 @@ export default function Feed() {
         seed: refreshSeedRef.current,
       });
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
-      if (activeFilters.topic) params.set('topic', activeFilters.topic);
+      if (activeFilters.topics?.length) params.set('topics', activeFilters.topics.join(','));
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
@@ -2045,7 +2045,7 @@ export default function Feed() {
     : -1;
 
   const firstName = profile?.name?.split(' ')[0] || '';
-  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + (filters.topic ? 1 : 0);
+  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -2277,20 +2277,20 @@ export default function Feed() {
             </span>
           )}
 
-          {filters.topic && (
-            <span style={{
+          {filters.topics.map(topic => (
+            <span key={topic} style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
               padding: '3px 9px', borderRadius: 12,
               background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
               border: '1px solid var(--border)',
             }}>
-              Topic: {filters.topic}
-              <button onClick={() => applyFilters({ ...filtersRef.current, topic: '' })} style={{
+              Topic: {topic}
+              <button onClick={() => applyFilters({ ...filtersRef.current, topics: filtersRef.current.topics.filter(t => t !== topic) })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>
             </span>
-          )}
+          ))}
 
           {filters.sources.length > 0 && filters.sources.map(key => {
             const meta = SOURCE_META[key] || {};
