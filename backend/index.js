@@ -11735,24 +11735,6 @@ function cursorTsOf(cur) {
   if (!cur) return null;
   return typeof cur === 'string' ? cur : (cur.ts || null);
 }
-// "Reconstruct true mix so all sources are actually visible, no time
-// factor — repeat that style until there's truly nothing else, then let
-// recency take over" — this is roundRobinMerge (see its own comment: every
-// active source's queue contributes one item per round, in order,
-// dropping out only once it's genuinely out of content, no probabilistic
-// cap involved), just reused here for the full merge instead of only a
-// small explicit source selection. No evenCount ceiling, no re-sort back
-// into timestamp order — a source only ever stops contributing because it
-// ran out, not because of an artificial round budget, and the round-robin
-// position itself is the intended order (recency was the whole thing
-// asked to be set aside). "Then mix it based on time" past that point
-// isn't a separate code path here: once real content is this thin, the
-// active-source cycling below and a plain recency ordering converge to
-// the same thing anyway — there's nothing left for a proportional cap to
-// meaningfully choose between.
-function equalizeThenRecencyMerge(lists, limit) {
-  return roundRobinMerge(lists).slice(0, limit);
-}
 // extraLists: pre-fetched { [sourceKey]: post[] } for content that isn't in
 // feed_posts_cache and needs its own fetch path (e.g. native UFconnect
 // community posts — see the unfiltered branch in handleFeedRequest) but
@@ -11770,8 +11752,16 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // ~30 queries fetching 20-25 rows to actually use 1-2 of them each.
   // Scales down as source count grows, up for a narrow selection where
   // each source needs real depth; floored at 10 so a request never starves
-  // a source that just fetched slightly late.
-  const perSourceLimit = Math.max(10, Math.ceil((limit * 2) / sources.length));
+  // a source that just fetched slightly late. freshOnly (a manual refresh —
+  // see below) floors substantially higher: its shuffle draws from this same
+  // per-source depth, and a shallow 10-deep pool meant a refresh could only
+  // ever reshuffle the same handful of most-recent posts per source rather
+  // than surfacing genuinely different ones — confirmed live on the Videos
+  // tab as "refresh reorders the same ~25 videos instead of showing new
+  // ones." Deeper here directly widens what a refresh can actually turn up.
+  const perSourceLimit = freshOnly
+    ? Math.max(30, Math.ceil((limit * 2) / sources.length))
+    : Math.max(10, Math.ceil((limit * 2) / sources.length));
   // One query with a per-source cursor join instead of N parallel
   // getPostsFromDB calls (the same ROW_NUMBER()-partition-by-source pattern
   // getBalancedFeedPosts already uses, adapted for a per-source "before"
@@ -11884,14 +11874,25 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   const extraKeys = Object.keys(extraLists);
   const allSources = [...sources, ...extraKeys];
   const allLists = [...bySource, ...extraKeys.map(k => extraLists[k] || [])];
-  // Every page — not just the first — gets the same no-time-factor,
-  // round-robin-across-every-active-source merge (see
-  // equalizeThenRecencyMerge's own comment): each source's own cursor
-  // keeps advancing page to page, so this naturally keeps repeating "one
-  // from every source still contributing" for as long as any of them
-  // genuinely have more, tapering itself as thin sources' cursors catch up
-  // to their real supply.
-  const merged = equalizeThenRecencyMerge(allLists, limit);
+  // "Reconstruct true mix so all sources are actually visible, no time
+  // factor" — every page, not just the first, gets the same no-time-factor,
+  // round-robin-across-every-active-source merge (roundRobinMerge: every
+  // active source's queue contributes one item per round, in order,
+  // dropping out only once it's genuinely out of content, no probabilistic
+  // cap involved). Each source's own cursor keeps advancing page to page, so
+  // this naturally keeps repeating "one from every source still
+  // contributing" for as long as any of them genuinely have more.
+  //
+  // Unsliced, kept alongside the limit-capped `merged` below — freshOnly's
+  // shuffle needs the full per-source depth (up to perSourceLimit each) to
+  // actually draw from, not just the ~1-per-source slice a limit-cap taken
+  // *before* shuffling would leave. Capping before shuffling was the actual
+  // bug behind "refresh reshuffles the same handful of posts instead of a
+  // genuinely different set" — confirmed live on Videos, where an
+  // unfiltered refresh only ever had one candidate per source to work with
+  // regardless of how deep the query itself went.
+  const fullMerged = roundRobinMerge(allLists);
+  const merged = fullMerged.slice(0, limit);
   // Own check, not just filterUnseen's return value — filterUnseen falls
   // back to re-showing already-seen posts rather than an empty page (the
   // right behavior for a normal request), but that fallback is exactly the
@@ -11921,9 +11922,36 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // rotateForUser's seed for the ranked feed, applied here since this
   // cursor-based pathway had no equivalent. Guaranteed non-empty as long as
   // there's any content at all for these sources/params.
+  //
+  // Normal (non-refresh) paging used to be all-or-nothing: any unseen
+  // supply at all meant the page was ONLY that unseen slice — even a single
+  // unseen post produced a 1-item page instead of backfilling the rest —
+  // and only once unseen supply hit exactly zero did it switch to an
+  // entirely-seen page. A user who'd already scrolled deep (unseen supply
+  // thinning out but not yet zero) saw pages get progressively shorter
+  // rather than staying full, which read as scrolling grinding to a halt
+  // well before real content actually ran out. Backfilling the remainder
+  // from already-seen posts keeps every page full for as long as there's
+  // *any* real content left (seen or not) — capped at SEEN_BACKFILL_MAX_
+  // FRACTION so a thin-unseen page still reads as mostly-fresh rather than
+  // quietly turning into a wall of reruns; a page that hits the cap simply
+  // comes back shorter than `limit`; instead of over-filling with repeats,
+  // which just makes the client ask for another page sooner.
+  const SEEN_BACKFILL_MAX_FRACTION = 0.25;
   const page = freshOnly
-    ? _seededShuffle(merged, (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0).slice(0, limit)
-    : (trulyUnseen.length ? trulyUnseen : merged).slice(0, limit);
+    ? _seededShuffle(fullMerged, (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0).slice(0, limit)
+    : trulyUnseen.length >= limit
+      ? trulyUnseen.slice(0, limit)
+      : (() => {
+          const unseenIds = new Set(trulyUnseen.map(p => p?.id).filter(Boolean));
+          const seenCandidates = merged.filter(p => !p?.id || !unseenIds.has(p.id));
+          const seenBudget = Math.min(
+            Math.ceil(limit * SEEN_BACKFILL_MAX_FRACTION),
+            limit - trulyUnseen.length,
+            seenCandidates.length
+          );
+          return [...trulyUnseen, ...seenCandidates.slice(0, seenBudget)];
+        })();
 
   // Genuine exhaustion — not "nothing unseen left" (that's `exhausted`
   // above, and already has a reshow-the-seen-ones fallback), but "there is
@@ -13236,6 +13264,27 @@ app.get('/groups', async (req, res) => {
     const viewerId = optionalViewerId(req);
     let result = category ? groups.filter((g) => g.category === category) : groups;
     result = result.filter((g) => canSeeGroup(g, viewerId));
+    if (!category) {
+      // "All" view — same true-mix reasoning as the main Feed's
+      // buildTwoPhaseMix/roundRobinMerge: `groups` is member_count-sorted
+      // (see seedAndLoadGroups' own query), so without this the top of the
+      // list is dominated by whichever categories happen to have the
+      // biggest established communities (LinkedIn's million-member
+      // Startups/Marketing groups, say) — a niche category (Gaming, Music,
+      // Space) never surfaces until a user scrolls past dozens of cards
+      // from the same few categories first. Round-robin by category — one
+      // from each, cycling, member_count order preserved *within* each
+      // category's own queue — keeps every category visible near the top
+      // instead of buried behind whichever few happen to have the largest
+      // groups.
+      const byCategory = new Map();
+      for (const g of result) {
+        const key = g.category || 'Other';
+        if (!byCategory.has(key)) byCategory.set(key, []);
+        byCategory.get(key).push(g);
+      }
+      result = roundRobinMerge([...byCategory.values()]);
+    }
     res.json({ groups: result });
   } catch (e) { console.error('GET /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
@@ -14502,6 +14551,36 @@ function isPlayableVideoPost(p) {
   return false;
 }
 
+// getCursorFeedPage's own media_type='video' filter is looser than what's
+// actually playable client-side (see isPlayableVideoPost's comment above —
+// a Bluesky row whose mediaUrl doesn't match the thumbnail pattern, a stale
+// row saved under an earlier/looser classification, etc). A single page
+// whose rows all happened to fail that stricter check used to come back as
+// an empty posts array while still reporting hasMore:true — the client took
+// that at face value, saw zero usable videos on this page, and (per its own
+// incoming.length>0 check) quietly flipped hasMore to false and stopped
+// scrolling right there, even though real playable videos sat further back
+// past that page's cursor. Confirmed live as the Videos feed dead-ending
+// well short of "endless." This keeps paging forward with whatever cursor
+// getCursorFeedPage hands back until a page actually contains something
+// playable, or getCursorFeedPage itself reports genuine exhaustion —
+// bounded so an edge case with no playable content left doesn't loop
+// forever; the client's own near-the-end trigger just asks again on the
+// next scroll tick either way.
+async function fetchPlayableVideoPage(params, attempts = 4) {
+  let cursorMap = params.cursorMap;
+  let result = { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: true };
+  for (let i = 0; i < attempts; i++) {
+    result = await getCursorFeedPage({ ...params, cursorMap });
+    const playable = result.posts.filter(isPlayableVideoPost);
+    if (playable.length > 0 || !result.hasMore) {
+      return { posts: playable, nextCursor: result.nextCursor, hasMore: result.hasMore };
+    }
+    cursorMap = decodeFeedCursor(result.nextCursor);
+  }
+  return { posts: [], nextCursor: result.nextCursor, hasMore: result.hasMore };
+}
+
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
@@ -14550,11 +14629,10 @@ async function handleVideoFeedRequest(req, res) {
     // filter already tells you which platforms you're looking at, so the
     // "one per platform" intro has nothing to add there.
     if (!isUnfilteredVideo) {
-      const { posts, nextCursor, hasMore } = await getCursorFeedPage({
+      const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      const playable = posts.filter(isPlayableVideoPost);
       markPostsSeen(req.user.id, playable, 'videos');
       return res.json({ posts: playable, cursor: nextCursor, hasMore });
     }
@@ -14577,11 +14655,11 @@ async function handleVideoFeedRequest(req, res) {
     let introPosts = [];
     let cursorAfterIntro = cursorMap;
     if (isFreshSession && cursorSources.length) {
-      const intro = await getCursorFeedPage({
+      const intro = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      introPosts = intro.posts.filter(isPlayableVideoPost);
+      introPosts = intro.posts;
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
     }
 
@@ -14596,11 +14674,11 @@ async function handleVideoFeedRequest(req, res) {
     const remaining = Math.max(0, feedLimit - introPosts.length);
     let mixPosts = [], nextCursor = encodeFeedCursor(cursorAfterIntro), hasMore = introPosts.length > 0;
     if (remaining > 0) {
-      const mix = await getCursorFeedPage({
+      const mix = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
         mediaType: 'video', timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id) && isPlayableVideoPost(p)), userTopics).slice(0, remaining);
+      mixPosts = filterByUserTopics(mix.posts.filter(p => !introIds.has(p.id)), userTopics).slice(0, remaining);
       nextCursor = mix.nextCursor;
       hasMore = mix.hasMore;
     }
