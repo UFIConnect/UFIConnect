@@ -799,22 +799,36 @@ input, textarea, select { font-family: inherit; }
    across every width above a phone's.
    (A version of this tied width+height to a fixed 9:18.5 aspect-ratio
    instead, for a more literally phone-shaped card — reverted, this
-   independently-clamped version was what actually looked right.)
-   margin is a right-only gap, not the auto/auto that used to center it —
-   the root's own justifyContent:flex-end (see VideoFeedView.jsx) is what
-   actually pins this to the right edge now; auto margins on a flex child
-   claim the free space evenly on both sides regardless of the parent's
-   justify-content, which would have silently put it right back in the
-   middle. */
+   independently-clamped version was what actually looked right. A version
+   after that pinned it to the right edge via the root's justifyContent —
+   also reverted, centered is what's wanted.)
+   margin:0 auto centers the card within the root's flex row (which uses
+   plain justifyContent:'center' — see VideoFeedView.jsx) on every screen
+   this query matches, tablet and desktop alike, so there's one consistent
+   centered scale for every video regardless of viewport rather than a
+   different position/size per breakpoint. */
 @media (min-width: 769px) {
   .video-feed-frame {
     max-width: clamp(420px, 46vw, 560px);
     height: min(900px, calc(100vh - 64px)) !important;
-    margin: 0 clamp(24px, 5vw, 64px) 0 0;
+    margin: 0 auto;
     border-radius: 20px;
     overflow: hidden;
     box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09);
   }
+}
+
+/* No visible cursor anywhere in Videos, on every element (top controls,
+   scrub bar, buttons, comments sheet, filter sheet) — every one of them
+   sets its own inline cursor value (pointer/default/grab...), so this is
+   the one place able to override all of them at once rather than editing
+   each individually and risking missing one. !important because it's
+   fighting those specific inline values, not a peer stylesheet rule.
+   Purely cosmetic: cursor never affects click-ability, so every control
+   here stays fully functional — clicking, dragging to scroll, seeking —
+   with the pointer simply not rendered while it's over any of it. */
+.video-feed-root, .video-feed-root * {
+  cursor: none !important;
 }
 
 /* ── PWA / App optimisations ──────────────────────────────── */
