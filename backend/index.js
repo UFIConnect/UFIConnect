@@ -9963,6 +9963,17 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
 ]);
 
+// Hidden from the Connected Accounts *connect* screen specifically (see
+// GET /social/platforms) without touching CONNECTED_SOCIAL_PLATFORMS
+// itself — that Set also drives Following-mode filter chips (Feed/Videos'
+// own CONNECTED_SOCIAL_PLATFORMS mirror in sourceMeta.js) and connection-
+// status checks elsewhere, none of which this is meant to affect. LinkedIn
+// only offers basic profile import today (see PLATFORMS.linkedin's own
+// note — real post content needs LinkedIn's gated Partner Program,
+// approval pending), so surfacing it as a normal "connect" option
+// oversells what actually happens once someone taps it.
+const HIDDEN_CONNECT_PLATFORMS = new Set(['linkedin']);
+
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
 // further down) — that personal-OAuth path is unrelated to whether these
@@ -12965,11 +12976,15 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // ─── Profile: social connection status + disconnect ───────────────────────────
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => {
+  // See HIDDEN_CONNECT_PLATFORMS' own comment — filtered here, not out of
+  // CONNECTED_SOCIAL_PLATFORMS itself, so nothing else that Set drives gets
+  // touched.
+  const visiblePlatforms = [...CONNECTED_SOCIAL_PLATFORMS].filter(p => !HIDDEN_CONNECT_PLATFORMS.has(p));
+  const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
   }));
-  const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => {
+  const platforms = Object.fromEntries(visiblePlatforms.map(key => {
     const status = socialCredentialStatus(key);
     return [key, {
       ...PLATFORMS[key],
