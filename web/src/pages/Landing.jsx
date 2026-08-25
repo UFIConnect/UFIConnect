@@ -148,49 +148,80 @@ export default function Landing() {
 
         <main style={{ flex: 1 }}>
           {/* Hero */}
-          <section style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '80px 32px 60px' }}>
-            <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
-              All-in-one professional networking
-            </div>
-            <h1 style={{ fontSize: 'clamp(2rem, 5vw, 3.2rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-              Professional Networking Platform
-            </h1>
-            <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '680px', margin: '0 auto 36px' }}>
-              A personalized feed, communities, messaging, and career opportunities — all tailored to your role and professional interests.
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '60px' }}>
-              <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
-                Get Started Free →
-              </Link>
-              <a href="#features" className="btn btn-outline btn-lg" style={{ padding: '13px 36px' }}>
-                Learn More
-              </a>
-            </div>
+          <section style={{ maxWidth: '1180px', margin: '0 auto', padding: '72px 32px 60px' }}>
+            <div className="landing-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 48, alignItems: 'center' }}>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
+                  All-in-one professional networking
+                </div>
+                <h1 style={{ fontSize: 'clamp(2rem, 4.4vw, 3rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
+                  Professional Networking Platform
+                </h1>
+                <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '520px' }}>
+                  A personalized feed, communities, messaging, and career opportunities — all tailored to your role and professional interests.
+                </p>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '44px' }}>
+                  <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
+                    Get Started Free →
+                  </Link>
+                  <a href="#features" className="btn btn-outline btn-lg" style={{ padding: '13px 36px' }}>
+                    Learn More
+                  </a>
+                </div>
 
-            {/* Role pills preview */}
-            <div style={{ marginBottom: 0 }}>
-              <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
-                Designed for diverse professional backgrounds — select your role during registration
+                {/* Role pills preview */}
+                <div style={{ marginBottom: 0 }}>
+                  <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
+                    Designed for diverse professional backgrounds
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {ROLE_PREVIEWS.slice(0, 8).map(({ icon, label, color }) => (
+                      <span key={label} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        padding: '6px 14px', borderRadius: 20, background: '#fff',
+                        border: `1.5px solid ${color}40`, color, fontWeight: 600, fontSize: '.8rem',
+                        boxShadow: 'var(--shadow)',
+                      }}>
+                        {icon} {label}
+                      </span>
+                    ))}
+                    <span style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.8rem' }}>
+                      + more
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
-                {ROLE_PREVIEWS.map(({ icon, label, color }) => (
-                  <span key={label} style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '6px 14px', borderRadius: 20, background: '#fff',
-                    border: `1.5px solid ${color}40`, color, fontWeight: 600, fontSize: '.8rem',
-                    boxShadow: 'var(--shadow)',
-                  }}>
-                    {icon} {label}
-                  </span>
-                ))}
-                <span style={{ padding: '6px 14px', borderRadius: 20, background: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--muted)', fontSize: '.8rem' }}>
-                  + more
-                </span>
+
+              {/* Real product screenshots — a groups-page shot peeking behind the
+                  primary feed shot, both in a plain phone-frame treatment. This
+                  used to be the one thing the whole page never actually did:
+                  every section described the product in words (feature cards,
+                  role pills, platform badges) without ever showing what it
+                  looks like, so there was nothing here to visually back up
+                  what the copy — or the Play Store listing, built from these
+                  same screenshots — promises. */}
+              <div className="landing-hero-art" style={{ position: 'relative', height: 460, justifySelf: 'center' }}>
+                <div className="landing-hero-shot landing-hero-shot-back" style={{
+                  position: 'absolute', top: 30, left: -10, width: 240,
+                  transform: 'rotate(-9deg)', borderRadius: 22, overflow: 'hidden',
+                  border: '6px solid #0F172A', boxShadow: '0 30px 60px -20px rgba(15,23,42,.35)',
+                  background: '#0F172A',
+                }}>
+                  <img src="/hero-groups-screenshot.png" alt="" aria-hidden="true" style={{ display: 'block', width: '100%' }} />
+                </div>
+                <div className="landing-hero-shot landing-hero-shot-front" style={{
+                  position: 'absolute', top: 0, right: 0, width: 260,
+                  transform: 'rotate(6deg)', borderRadius: 24, overflow: 'hidden',
+                  border: '7px solid #0F172A', boxShadow: '0 34px 70px -16px rgba(15,23,42,.4)',
+                  background: '#0F172A',
+                }}>
+                  <img src="/hero-feed-screenshot.png" alt="UFconnect's personalized feed, showing real posts pulled from GitHub" style={{ display: 'block', width: '100%' }} />
+                </div>
               </div>
             </div>
 
             {/* Content platforms preview */}
-            <div style={{ marginTop: 32 }}>
+            <div style={{ marginTop: 56, textAlign: 'center' }}>
               <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 14, fontWeight: 500 }}>
                 Content aggregated from the platforms you already use
               </div>

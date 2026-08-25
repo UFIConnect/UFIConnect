@@ -747,6 +747,15 @@ input, textarea, select { font-family: inherit; }
   .landing-logo-text { display: none; }
   .landing-nav-join { display: none; }
 
+  /* Landing hero — stack text above screenshots instead of side-by-side,
+     and shrink the screenshot pair to fit a narrow viewport instead of
+     overflowing it (their 240px/260px frame widths are inline styles sized
+     for desktop, so overriding them here needs !important to actually win). */
+  .landing-hero-grid { grid-template-columns: 1fr !important; }
+  .landing-hero-art { width: 100% !important; max-width: 300px; height: 320px !important; margin: 8px auto 0; }
+  .landing-hero-shot-back { width: 165px !important; top: 24px !important; left: 0 !important; }
+  .landing-hero-shot-front { width: 180px !important; }
+
   /* Feed source tabs */
   .feed-source-tabs::-webkit-scrollbar { display: none; }
 
