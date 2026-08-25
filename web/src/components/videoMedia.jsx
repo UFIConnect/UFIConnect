@@ -136,6 +136,34 @@ export function deriveBlueskyPlaylistUrl(thumbnailUrl) {
   return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
 }
 
+// Vimeo posts (see resolveVideoSource's own 'vimeo' branch in
+// VideoFeedView.jsx) always have poster:null — mediaUrl there is the
+// vimeo.com/{id} *watch* URL, needed as-is for extractVimeoId, so it can't
+// double as a thumbnail source the way YouTube's mediaUrl-derived
+// i.ytimg.com poster does. Confirmed live as a blank/emoji-only "no
+// thumbnail" state for every Vimeo post: no letterboxed backdrop, no
+// preview image while inactive. Vimeo's own oEmbed endpoint (public,
+// CORS-enabled — meant for exactly this, embedding a preview on a
+// third-party page) returns a real thumbnail_url given just the video ID,
+// no API key needed. Module-level Map, not component state — every
+// VideoSlide showing the same Vimeo post (repeats are possible, see
+// VIDEO_DEDUP_WINDOW) shares one fetch and one cached result instead of
+// each re-fetching independently; failures are cached too (as null) so a
+// broken/private video doesn't get re-requested on every render.
+const vimeoThumbnailCache = new Map();
+export async function fetchVimeoThumbnail(vimeoId) {
+  if (!vimeoId) return null;
+  if (vimeoThumbnailCache.has(vimeoId)) return vimeoThumbnailCache.get(vimeoId);
+  const promise = fetch(`https://vimeo.com/api/oembed.json?url=${encodeURIComponent(`https://vimeo.com/${vimeoId}`)}`)
+    .then(r => r.ok ? r.json() : null)
+    .then(data => data?.thumbnail_url || null)
+    .catch(() => null);
+  vimeoThumbnailCache.set(vimeoId, promise);
+  const result = await promise;
+  vimeoThumbnailCache.set(vimeoId, result);
+  return result;
+}
+
 // Reddit/Mastodon (and any other source) can store a direct, already-playable
 // video file URL in mediaUrl rather than a poster image — no separate
 // thumbnail exists, so this URL needs a plain <video> element, not an <img>.

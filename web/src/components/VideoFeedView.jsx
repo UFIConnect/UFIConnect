@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -159,6 +159,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [seeking, setSeeking] = useState(false);
+  // Vimeo-only: resolveVideoSource always hands back poster:null for it
+  // (mediaUrl there is the watch URL, needed as-is, so it can't double as
+  // a thumbnail source) — fetched separately via Vimeo's own oEmbed
+  // endpoint (see fetchVimeoThumbnail) instead. Not gated on `active`:
+  // useful for the inactive-state preview image too (see the render
+  // below), and the module-level cache in fetchVimeoThumbnail means an
+  // already-fetched video's poster resolves instantly here regardless.
+  const [vimeoPoster, setVimeoPoster] = useState(null);
+  useEffect(() => {
+    if (src?.kind !== 'vimeo') return;
+    let cancelled = false;
+    fetchVimeoThumbnail(src.id).then(url => { if (!cancelled) setVimeoPoster(url); });
+    return () => { cancelled = true; };
+  }, [src?.kind, src?.id]);
 
   const getNativeEl = useCallback(() => (src?.kind === 'hls' ? hlsVideoRef.current : fileVideoRef.current), [src?.kind]);
 
@@ -414,15 +428,20 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           z-index:auto paints above unpositioned siblings regardless of DOM
           order — without a negative z-index here this backdrop would cover
           the plain-element cases instead of sitting behind them. Harmless
-          no-op for kinds with no poster (file). */}
-      {src?.poster && (
+          no-op for kinds with no poster (file, or vimeo before its oEmbed
+          fetch resolves). effectivePoster prefers vimeoPoster over
+          src.poster — resolveVideoSource always hands back poster:null
+          for vimeo (see vimeoPoster's own comment above), so without this
+          override every Vimeo post would permanently skip this backdrop
+          and the inactive-state preview image below. */}
+      {(() => { const effectivePoster = src?.kind === 'vimeo' ? vimeoPoster : src?.poster; return effectivePoster && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: -1,
-          backgroundImage: `url(${src.poster})`,
+          backgroundImage: `url(${effectivePoster})`,
           backgroundSize: 'cover', backgroundPosition: 'center',
           transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
         }} />
-      )}
+      ); })()}
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Video unavailable</div>
       ) : src.kind === 'youtube' ? (
@@ -466,8 +485,8 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
               title={post.title}
             />
           </div>
-        ) : src.poster ? (
-          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+        ) : vimeoPoster ? (
+          <img src={vimeoPoster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         ) : (
           <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Vimeo video</div>
         )
