@@ -26,7 +26,12 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 // genuine shared, cached, app-level fetcher, architecturally identical to
 // every other source — just idling at 0 posts until an app bearer token is
 // configured, same as any source having a quiet cycle (see the commit that
-// brought them into the aggregate sort/rank pool).
+// brought them into the aggregate sort/rank pool). Instagram specifically
+// is pulled from this filter row for now — it was showing up as a
+// selectable platform with nothing behind it, which reads as broken rather
+// than quiet. Not worth an app-level Instagram token yet at current
+// traffic; the fetcher/SOURCE_CONFIG entry are untouched, so bringing it
+// back once that's worth doing is just removing it from this one array.
 //
 // Either way, this is entirely separate from Following mode's own path for
 // these same platforms (FOLLOWING_VIDEO_SOURCES below) — that one is a
@@ -34,7 +39,7 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 // (CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts), already works
 // today independent of any app-level token, and was never gated by this
 // exclusion list to begin with.
-const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble'];
+const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble', 'instagram'];
 // Feed mode's filter row — every publicly-aggregated source, since any of
 // them can carry a real video (a dedicated video source like YouTube, a
 // direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
