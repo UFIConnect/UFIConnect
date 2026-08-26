@@ -2,7 +2,16 @@ databases:
   - name: uficonnect-db
     databaseName: uficonnect
     user: ufi_admin
-    plan: free
+    # Was 'free' here — stale relative to reality. The live database has
+    # been on Basic 4gb for a while (upgraded directly in the Render
+    # dashboard at some point, never reflected back into this file), and
+    # Blueprint sync refuses to apply a plan value here that would mean
+    # downgrading a live database. This just matches what's already true in
+    # production so the sync stops trying to change it — not requesting an
+    # actual plan change. Review the sync's own preview before confirming;
+    # I can't see the Render dashboard directly, so if this exact string is
+    # off, the preview (or another sync error) is the way to catch it.
+    plan: basic-4gb
 
 services:
   # ── Backend (Node.js API) ───────────────────────────────────
@@ -161,11 +170,14 @@ services:
       - key: GITHUB_TOKEN
         sync: false
       # ── Office dashboard: Autofix agent ──────────────────────────────────
-      # Off by default (AUTOFIX_ENABLED unset). Detection/logging always run
-      # regardless; only committing a generated fix is gated by this. See
-      # backend/.env.example and office/src's Autofix view.
+      # Detection/logging always run regardless of this flag; only
+      # committing a generated fix is gated by it, and that in turn still
+      # requires AUTOFIX_GITHUB_TOKEN (unset for now) before anything can
+      # actually be committed — so this is enabled but not yet capable of
+      # shipping anything. See backend/.env.example and office/src's
+      # Autofix view.
       - key: AUTOFIX_ENABLED
-        value: 'false'
+        value: 'true'
       # A NEW, separate PAT scoped to contents:write on this one repo only —
       # do not reuse GITHUB_TOKEN above, which stays read-only.
       - key: AUTOFIX_GITHUB_TOKEN
