@@ -1313,61 +1313,37 @@ export default function VideoFeedView({ onExit }) {
   // scroll while hovering the video specifically" — dragging anywhere else
   // on the same slide worked, only the video's own area didn't.
   //
-  // Touch is included here too, not just mouse — a finger drag normally
-  // *does* get real scrolling for free, but only because the browser walks
-  // up the DOM ancestor chain from the touch's target looking for a
-  // scrollable element, same as the wheel-forwarding effect below has to
-  // work around. Since the overlay is a sibling of the scrollable
-  // container, not a descendant, that walk never finds it — confirmed live
-  // as touch swipes silently doing nothing specifically over an active
-  // YouTube video in this view, everywhere else on the same slide scrolling
-  // normally. preventDefault once a real drag is detected stops the browser
-  // from separately trying (and failing, since there's still nothing
-  // scrollable under the touch) to rubber-band/bounce the touch itself
-  // while this manually drives the container's scrollTop instead.
   useEffect(() => {
     const container = containerRef.current;
     const ytOverlay = sharedYtWrapperRef.current;
     if (!container) return;
     function handlePointerDown(e) {
-      if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (e.pointerType !== 'mouse' && e.pointerType !== 'touch') return;
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
       if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
-      const isTouch = e.pointerType === 'touch';
       const startY = e.clientY;
       const startScrollTop = container.scrollTop;
       let dragged = false;
       function handleMove(ev) {
         const dy = ev.clientY - startY;
         if (Math.abs(dy) > 3) dragged = true;
-        if (dragged) {
-          if (isTouch) ev.preventDefault();
-          container.scrollTop = startScrollTop - dy;
-        }
+        if (dragged) container.scrollTop = startScrollTop - dy;
       }
       function handleUp() {
         document.removeEventListener('pointermove', handleMove);
         document.removeEventListener('pointerup', handleUp);
-        if (!isTouch) {
-          container.style.cursor = 'grab';
-          // Set back to 'none' rather than removeProperty()'d away: this
-          // element's JSX also declares userSelect:'none' as its permanent
-          // default, and React only re-touches a style property on render
-          // when ITS OWN last-known value for it changed — since that JSX
-          // value never changes, a later render wouldn't notice (or undo) a
-          // removeProperty() done here outside React, permanently reverting
-          // to selectable text after the very first drag.
-          container.style.userSelect = 'none';
-        }
-      }
-      if (!isTouch) {
-        container.style.cursor = 'grabbing';
+        container.style.cursor = 'grab';
+        // Set back to 'none' rather than removeProperty()'d away: this
+        // element's JSX also declares userSelect:'none' as its permanent
+        // default, and React only re-touches a style property on render
+        // when ITS OWN last-known value for it changed — since that JSX
+        // value never changes, a later render wouldn't notice (or undo) a
+        // removeProperty() done here outside React, permanently reverting
+        // to selectable text after the very first drag.
         container.style.userSelect = 'none';
       }
-      // passive:false only matters for the touch case — that's the one
-      // where handleMove calls preventDefault, which a passive listener
-      // would silently ignore.
-      document.addEventListener('pointermove', handleMove, isTouch ? { passive: false } : undefined);
+      container.style.cursor = 'grabbing';
+      container.style.userSelect = 'none';
+      document.addEventListener('pointermove', handleMove);
       document.addEventListener('pointerup', handleUp, { once: true });
     }
     container.addEventListener('pointerdown', handlePointerDown);
@@ -1376,6 +1352,53 @@ export default function VideoFeedView({ onExit }) {
       container.removeEventListener('pointerdown', handlePointerDown);
       ytOverlay?.removeEventListener('pointerdown', handlePointerDown);
     };
+  }, [videoPosts.length]);
+
+  // Touch forwarding for the shared YouTube overlay ONLY — deliberately a
+  // separate effect from the mouse-drag one above, attached only to
+  // ytOverlay, never to container. A finger drag on `container` itself
+  // already gets real, smooth, momentum-based scrolling for free from the
+  // browser (WebkitOverflowScrolling:touch + scroll-snap) — it was never
+  // broken there and manually driving scrollTop for it would only make it
+  // worse (no momentum, fighting the browser's own physics). The overlay is
+  // the one place touch doesn't get that for free: it's a DOM sibling of
+  // container, not a descendant (see its own top comment for why — stays
+  // fixed in place across slide transitions), so the browser's touch-to-
+  // scrollable-ancestor walk from a touch starting there never finds
+  // container. Confirmed live as touch swipes silently doing nothing
+  // specifically over an active YouTube video, everywhere else on the same
+  // slide scrolling normally — and confirmed again, the hard way, as
+  // "scrolling feels heavy/difficult everywhere" the one time this got
+  // merged into the same handler as the mouse-drag effect above instead of
+  // scoped to just this element.
+  useEffect(() => {
+    const container = containerRef.current;
+    const ytOverlay = sharedYtWrapperRef.current;
+    if (!container || !ytOverlay) return;
+    function handleTouchStart(e) {
+      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
+      const startY = e.touches[0].clientY;
+      const startScrollTop = container.scrollTop;
+      let dragged = false;
+      function handleMove(ev) {
+        const dy = ev.touches[0].clientY - startY;
+        if (Math.abs(dy) > 3) dragged = true;
+        if (dragged) {
+          ev.preventDefault();
+          container.scrollTop = startScrollTop - dy;
+        }
+      }
+      function handleEnd() {
+        document.removeEventListener('touchmove', handleMove);
+        document.removeEventListener('touchend', handleEnd);
+      }
+      // passive:false — handleMove calls preventDefault, which a passive
+      // listener silently ignores.
+      document.addEventListener('touchmove', handleMove, { passive: false });
+      document.addEventListener('touchend', handleEnd, { once: true });
+    }
+    ytOverlay.addEventListener('touchstart', handleTouchStart, { passive: true });
+    return () => ytOverlay.removeEventListener('touchstart', handleTouchStart);
   }, [videoPosts.length]);
 
   // Mouse-wheel/trackpad scrolling over the shared YouTube overlay — a
