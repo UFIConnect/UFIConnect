@@ -8750,9 +8750,15 @@ async function refreshGlobalFeedCache() {
       });
       globalFeedCache.refreshedAt = Date.now();
       logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
-      // Persist to DB in background (only if connected)
+      // Persist to DB in background (only if connected). Currently
+      // unreachable in production (this whole function only runs behind
+      // STARTUP_FULL_FEED_WARMUP=1 && IS_PIPELINE_ROLE, and that env var
+      // isn't set anywhere — see this function's own call site) — targeting
+      // SERVICE_ROLE's table here anyway so a future STARTUP_FULL_FEED_WARMUP
+      // use doesn't silently write pipeline-fetched posts straight into
+      // feed_posts_cache, bypassing staging the way runWebStorageSubAgent did.
       if (db.isConnected()) {
-        savePostsToDB(all).then(n => {
+        savePostsToDB(all, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache').then(n => {
           if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
         }).catch(() => {});
       }
@@ -9604,7 +9610,16 @@ async function runWebStorageSubAgent() {
     const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
-    const saved = db.isConnected() ? (await savePostsToDBFast(hotPosts) || 0) : 0;
+    // Predates SERVICE_ROLE — on the pipeline role this used to write
+    // straight into feed_posts_cache, bypassing feed_posts_staging and the
+    // transfer job entirely (a second, ungoverned path into the table real
+    // users read from, alongside addAndBroadcast's correctly-gated one).
+    // On the api role hotPosts is always [] anyway (globalFeedCache/
+    // agentSourceCache only get populated by the continuous workers, which
+    // stay off there), so this was a live bug only on pipeline.
+    const saved = db.isConnected()
+      ? (await savePostsToDBFast(hotPosts, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache') || 0)
+      : 0;
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
@@ -17690,29 +17705,47 @@ async function refreshStagingPostCount() {
     console.warn('[refreshStagingPostCount] query failed:', e.message);
   }
 }
+// Guards against two overlapping runs racing on the shared lastTransferCursor
+// (whichever finishes last wins, which can walk the cursor backward and make
+// the job re-process the same window instead of draining forward) — a real
+// risk now that the interval below is 1 minute instead of the original 15.
+let transferInFlight = false;
 async function transferStagedPosts() {
-  if (!db.isConnected()) return;
+  if (!db.isConnected() || transferInFlight) return;
+  transferInFlight = true;
   try {
-    const { rows } = await db.query(
-      `SELECT * FROM feed_posts_staging WHERE fetched_at > $1 ORDER BY fetched_at ASC LIMIT 5000`,
-      [lastTransferCursor]
-    );
-    stagingTransferState.lastRun = new Date().toISOString();
-    if (!rows.length) { stagingTransferState.lastCount = 0; return; }
-    const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache');
-    // Only the exact rows just read, by id — not a blanket "everything
-    // older than the new cursor" sweep, so a row re-staged by a fast-
-    // cycling source between the SELECT above and this DELETE can't be
-    // silently dropped just because its fetched_at briefly overlapped.
-    await db.query(`DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`, [rows.map(r => r.id)]).catch(() => {});
-    lastTransferCursor = rows[rows.length - 1].fetched_at;
-    const count = saved || rows.length;
-    stagingTransferState.lastCount = count;
-    stagingTransferState.totalTransferred += count;
-    logAgentAction('feed', '📦', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
+    // Drains in a tight loop within one invocation, capped at 20 batches
+    // (100k rows), instead of one fixed 5000-row batch per tick — after
+    // staging sat un-drained for over a week (pipeline stuck on a stale
+    // build), a large backlog needs to clear faster than 5000/minute. Stops
+    // early once a batch comes back under the LIMIT (caught up); the 20-batch
+    // cap just bounds worst-case time on a single tick, not total throughput
+    // — an unusually large backlog keeps draining on the next tick.
+    for (let batch = 0; batch < 20; batch++) {
+      const { rows } = await db.query(
+        `SELECT * FROM feed_posts_staging WHERE fetched_at > $1 ORDER BY fetched_at ASC LIMIT 5000`,
+        [lastTransferCursor]
+      );
+      stagingTransferState.lastRun = new Date().toISOString();
+      if (!rows.length) { stagingTransferState.lastCount = 0; break; }
+      const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache');
+      // Only the exact rows just read, by id — not a blanket "everything
+      // older than the new cursor" sweep, so a row re-staged by a fast-
+      // cycling source between the SELECT above and this DELETE can't be
+      // silently dropped just because its fetched_at briefly overlapped.
+      await db.query(`DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`, [rows.map(r => r.id)]).catch(() => {});
+      lastTransferCursor = rows[rows.length - 1].fetched_at;
+      const count = saved || rows.length;
+      stagingTransferState.lastCount = count;
+      stagingTransferState.totalTransferred += count;
+      logAgentAction('feed', '📦', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
+      if (rows.length < 5000) break; // caught up — no need to keep looping this tick
+    }
   } catch (e) {
     stagingTransferState.lastError = e.message;
     console.warn('[transfer] failed:', e.message);
+  } finally {
+    transferInFlight = false;
   }
 }
 

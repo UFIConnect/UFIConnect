@@ -10,6 +10,12 @@ const API = import.meta.env.VITE_API_URL || '';
 // same place," not a broken one.
 const PIPELINE_API = import.meta.env.VITE_PIPELINE_API_URL || API;
 const OFFICE_TOKEN_KEY = 'ufi_office_token';
+// transferStagedPosts drains in batches of up to 100k/minute now (20 x 5000-
+// row batches per tick) — steady-state pending should stay well under this.
+// Past it, the sidebar flags it rather than requiring a click into Pipeline
+// to notice a real backlog (how the 8+ day stale-pipeline backlog went
+// unnoticed for so long in the first place).
+const STAGING_BACKLOG_WARN = 20000;
 
 // ─── office auth ────────────────────────────────────────────────────────────
 // The API accepts requests with no token until OFFICE_TOKEN is set server-side
@@ -85,6 +91,16 @@ function Dot({ ok, pulse }) {
       animation: ok && pulse ? 'pulse 2s ease-in-out infinite' : 'none',
     }} />
   );
+}
+
+// Seconds -> "3m" / "2h" / "9d" — used in the sidebar's per-service health
+// rows so an unexpectedly large number (pipeline sat at 8+ days once) is
+// visible at a glance instead of requiring a click into a detail view.
+function formatUptime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
 }
 
 function Card({ children, style }) {
@@ -2708,11 +2724,36 @@ export default function App() {
           </nav>
 
           <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               <Dot ok={connected} pulse={connected} />
               <span style={{ fontSize: 11, color: '#475569' }}>
                 {connected ? 'Live stream active' : 'Reconnecting...'}
               </span>
+            </div>
+            {/* Both services' own health, always visible regardless of which
+                view is open — not just a single merged dot. Pipeline ran on
+                an 8+ day stale build with nothing surfacing that anywhere;
+                its uptime reads here now specifically so that's obvious at
+                a glance next time, not just in the Pipeline detail view. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Dot ok={!!status?.server} pulse={false} />
+                <span style={{ fontSize: 10.5, color: '#64748b' }}>
+                  API{status?.server ? ` · up ${formatUptime(status.server.uptime)}` : ' · unreachable'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Dot ok={!!pipelineStatus?.server} pulse={false} />
+                <span style={{ fontSize: 10.5, color: '#64748b' }}>
+                  Pipeline{pipelineStatus?.server ? ` · up ${formatUptime(pipelineStatus.server.uptime)}` : ' · unreachable'}
+                </span>
+              </div>
+              {status?.staging && (
+                <div style={{ fontSize: 10.5, color: (status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? '#f87171' : '#64748b' }}>
+                  Staging · {status.staging.pendingCount ?? '—'} pending
+                  {(status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? ' ⚠' : ''}
+                </div>
+              )}
             </div>
             <a
               href="https://uficonnect.org"
@@ -2726,9 +2767,17 @@ export default function App() {
               href="https://uficonnect-api-708r.onrender.com/health"
               target="_blank"
               rel="noreferrer"
-              style={{ fontSize: 10, color: '#334155', display: 'block' }}
+              style={{ fontSize: 10, color: '#334155', display: 'block', marginBottom: 2 }}
             >
               api health ↗
+            </a>
+            <a
+              href="https://uficonnect-pipeline-708r.onrender.com/health"
+              target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 10, color: '#334155', display: 'block' }}
+            >
+              pipeline health ↗
             </a>
           </div>
         </aside>
