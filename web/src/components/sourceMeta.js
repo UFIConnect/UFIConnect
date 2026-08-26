@@ -54,8 +54,12 @@ export const SOURCE_META = {
 // just shows the existing empty state once selected, same as any other
 // source with temporarily-thin supply, rather than being left off the
 // picker entirely.
+// discord and figma removed — neither can ever have a real content
+// fetcher (see CONNECTED_SOCIAL_PLATFORMS' own comment server-side).
+// bluesky and medium now have real fetchers, so every platform left here
+// actually pulls content once connected.
 export const CONNECTED_SOCIAL_PLATFORMS = [
   'linkedin', 'twitter', 'facebook',
-  'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
+  'github', 'gitlab', 'youtube', 'reddit',
+  'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ];

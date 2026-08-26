@@ -1051,6 +1051,47 @@ async function atprotoPost(url, formParams, { accessToken } = {}) {
   }
 }
 
+// GET equivalent of postFormWithMeta — same "expose headers/status" shape
+// atprotoGet below needs for its own DPoP-nonce retry.
+function getWithMeta(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const opts = {
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, method: 'GET',
+      headers: { 'Accept': 'application/json', ...headers },
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(data); } catch {}
+        resolve({ data: parsed, headers: res.headers, status: res.statusCode });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => req.destroy(new Error('getWithMeta timeout')));
+    req.end();
+  });
+}
+
+// GET counterpart to atprotoPost — same nonce-retry dance, for authenticated
+// reads against a member's own PDS (e.g. app.bsky.feed.getAuthorFeed).
+async function atprotoGet(url, { accessToken } = {}) {
+  let nonce;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const proof = createDPoPProof('GET', url, { nonce, accessToken });
+    const headers = { DPoP: proof };
+    if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
+    const result = await getWithMeta(url, headers);
+    const nextNonce = result.headers['dpop-nonce'];
+    if (nextNonce) nonce = nextNonce;
+    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    return result;
+  }
+}
+
 // Resolves a Bluesky handle all the way to its actual authorization server
 // — the federated equivalent of every other platform's fixed authUrl.
 // Handle -> DID (identity), DID -> DID document -> PDS (where their data
@@ -5462,6 +5503,94 @@ async function fetchBlueskyByKeyword(keyword) {
     throw e;
   }
   return getCached(key) || [];
+}
+
+// Following feed: a connected member's own Bluesky posts (app.bsky.feed.
+// getAuthorFeed against their own PDS), not a keyword search — same
+// distinction fetchDribbbleOwnShots/fetchGitHubFollowingActivity draw for
+// their own platforms. token is the JSON blob saveSocialToken stored at
+// connect time (see the OAuth callback's own comment) — accessToken/did/
+// pdsUrl, not a bare bearer string like every other platform here.
+async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
+  if (!token) return [];
+  let session;
+  try { session = JSON.parse(token); } catch { return []; }
+  if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
+
+  const key = `bluesky_own_${session.did}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+
+  try {
+    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=30`;
+    const result = await atprotoGet(url, { accessToken: session.accessToken });
+    if (result?.status >= 400) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+    const feed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+    const posts = feed
+      // Reposts carry someone ELSE's record under this member's feed entry —
+      // keeping them would misattribute another author's post as this
+      // member's own content, the exact thing "own posts" is supposed to mean.
+      .filter(item => !item.reason && item.post?.cid)
+      .map(({ post: p }) => {
+        const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
+        const handle = p.author?.handle || p.author?.did || 'unknown';
+        const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
+        const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
+        return {
+          id:          `bluesky_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi, '').slice(-16)}`,
+          authorId:    `bluesky_${p.author?.did || 'anon'}`,
+          groupId:     'ext_bluesky',
+          content:     text,
+          title:       text.slice(0, 120),
+          source:      'bluesky',
+          sourceLabel: `@${handle}`,
+          sourceUrl:   `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
+          topic:       null,
+          author:      { id: `bluesky_${p.author?.did}`, name: p.author?.displayName || handle, title: 'Bluesky', organization: 'Bluesky' },
+          likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
+          createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
+          isExternal:  true,
+          mediaUrl:    isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].thumb : null),
+          mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
+          group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Bluesky own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+// Following feed: a connected member's own Medium posts. Medium's public API
+// (basicProfile scope) has no "list my posts" endpoint of its own, but every
+// profile publishes a standard RSS feed at /feed/@username with no auth
+// needed once we know the username — same feed shape fetchMediumByTag
+// already parses for the app-level tag-based source, just scoped to one
+// person's own profile instead of a tag.
+async function fetchMediumOwnPosts(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `medium_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const me = await fetchJSON('https://api.medium.com/v1/me', { Authorization: `Bearer ${token}` });
+    const username = me?.data?.username;
+    if (!username) throw new Error('Medium profile has no username');
+    const xml = await fetchText(`https://medium.com/feed/@${encodeURIComponent(username)}`);
+    const items = parseRSSItems(xml);
+    const posts = items.slice(0, 50).map(it => rssPost(it, 'medium', 'Medium', 'ext_medium', 'Medium', 'Engineering', null));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Medium own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
 }
 
 // ─── LinkedIn: uses env token (app-level) or per-user OAuth token ─────────────
@@ -10257,10 +10386,17 @@ const PLATFORMS = {
 
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
+// discord and figma removed — neither has (or can have) a real content
+// fetcher: Discord's API has no generic "personal feed" concept at all, and
+// Figma's REST API has no "list my files" endpoint without already knowing
+// a team_id (see PLATFORMS.figma's own comment). bluesky and medium now
+// have real fetchers (fetchBlueskyOwnPosts/fetchMediumOwnPosts, wired into
+// FOLLOWING_SOURCE_FETCHERS below) so every platform left in this list
+// actually pulls real content once connected.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook',
-  'github', 'gitlab', 'discord', 'youtube', 'reddit',
-  'medium', 'dribbble', 'figma', 'twitch', 'threads', 'bluesky',
+  'github', 'gitlab', 'youtube', 'reddit',
+  'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ]);
 
 // Platforms whose OAuth credentials are configured and working, but which
@@ -10746,7 +10882,6 @@ function serializeCommunityPost(post, viewerId = null) {
 // available — deliberately never backed by keyword search, which would
 // mislabel unrelated public posts as "from people you follow."
 const FOLLOWING_SOURCE_FETCHERS = {
-  // bluesky:  fetchBlueskyFollowingTimeline,  // TODO: once Bluesky OAuth connect is live
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
@@ -10755,6 +10890,8 @@ const FOLLOWING_SOURCE_FETCHERS = {
   dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
   twitch:   fetchTwitchFollowedStreams,       // GET /streams/followed — currently-live followed channels, see its own comment
   threads:  fetchThreadsOwnPosts,             // GET /v1.0/me/threads — the member's own published threads, see its own comment
+  bluesky:  fetchBlueskyOwnPosts,             // app.bsky.feed.getAuthorFeed against the member's own PDS, DPoP-authenticated
+  medium:   fetchMediumOwnPosts,              // /feed/@username RSS, resolved from the member's Medium profile
   // figma and linkedin deliberately absent — neither has a real content API
   // reachable with the scopes we can actually get: Figma's REST API has no
   // "list my files" endpoint without already knowing a team_id (verified
