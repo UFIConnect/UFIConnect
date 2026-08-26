@@ -33,6 +33,24 @@ dotenv.config();
 const SERVICE_ROLE = process.env.SERVICE_ROLE === 'pipeline' ? 'pipeline' : 'api';
 const IS_PIPELINE_ROLE = SERVICE_ROLE === 'pipeline';
 
+// Declared here, not next to the rest of the autofix/job-board code further
+// down, because both are read synchronously as a setInterval() argument in
+// the startup sequence below (~line 9950) — unlike a function reference
+// (hoisted in full), a const's VALUE isn't available until its own
+// declaration line actually runs, so referencing it here while it was still
+// declared hundreds of lines later threw "Cannot access before
+// initialization" during module load, on every boot, on both roles —
+// confirmed live: this aborted the rest of the module's top-to-bottom
+// evaluation entirely, leaving everything declared afterward (hundreds of
+// lines — routes, other module-scope consts) permanently uninitialized,
+// which is what the seemingly-unrelated "Cannot access 'groups'/
+// 'conversations' before initialization" errors downstream were actually
+// symptoms of, not separate bugs. envNumber itself is a function
+// declaration (fully hoisted), so calling it this early is safe regardless
+// of where it's textually defined.
+const AUTOFIX_CHECK_INTERVAL_MS = envNumber('AUTOFIX_CHECK_INTERVAL_MS', 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const JOB_BOARD_SWEEP_INTERVAL_MS = 20 * 1000;
+
 // Same "idle until configured, never crash" pattern as every other
 // credential-gated integration in this file (USAJobs, Reddit OAuth,
 // Bluesky) — stripe(null) would throw on construction, so this stays null
@@ -16682,7 +16700,8 @@ const AUTOFIX_WINDOW_MS = envNumber('AUTOFIX_WINDOW_MS', 6 * 60 * 60 * 1000, 10 
 const AUTOFIX_MAX_PER_DAY = envNumber('AUTOFIX_MAX_PER_DAY', 1, 0, 10);
 const AUTOFIX_MAX_PER_WEEK = envNumber('AUTOFIX_MAX_PER_WEEK', 3, 0, 30);
 const AUTOFIX_VERIFY_WINDOW_MS = envNumber('AUTOFIX_VERIFY_WINDOW_MS', 15 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
-const AUTOFIX_CHECK_INTERVAL_MS = envNumber('AUTOFIX_CHECK_INTERVAL_MS', 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+// AUTOFIX_CHECK_INTERVAL_MS lives near the top of the file now, not here —
+// see that declaration's own comment for why.
 const AUTOFIX_GITHUB_OWNER = process.env.AUTOFIX_GITHUB_OWNER || 'yosufkaka99-alt';
 const AUTOFIX_GITHUB_REPO = process.env.AUTOFIX_GITHUB_REPO || 'UFConnect';
 // Sole v1-allowlisted file — the scope gate below rejects anything whose
@@ -19177,8 +19196,12 @@ async function fetchMuseByCategoryLevel(category, level) {
 // enough a full sweep finishes in minutes without it. Registered directly
 // as its own pair of intervals (not through startContinuousWorkers'
 // SOURCES array/makeTopicCycler) since there's no per-topic keyword here to
-// cycle through — see this function's own call site for the SERVICE_ROLE gate.
-const JOB_BOARD_SWEEP_INTERVAL_MS = 20 * 1000;
+// cycle through — see this function's own call site for the SERVICE_ROLE
+// gate. JOB_BOARD_SWEEP_INTERVAL_MS lives near the top of the file now, not
+// here — see that declaration's own comment for why (this function is
+// called synchronously from the startup sequence, so the same
+// before-initialization hazard applied here as it did for autofix's
+// interval constant).
 let remotiveSweepIdx = 0;
 let museSweepIdx = 0;
 // Lightweight health entries (not the full circuit-breaker/shard state
