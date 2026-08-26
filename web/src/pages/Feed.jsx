@@ -1879,7 +1879,22 @@ export default function Feed() {
       // scrolled far enough that it's fallen out of the window. (Cursor
       // mode shouldn't produce near-term repeats in the first place, but
       // the same dedup is harmless insurance against a straddled request.)
-      const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
+      //
+      // Following mode skips this window entirely — it was built for the
+      // main feed's periodic snapshot-rebuild straddling, which doesn't
+      // apply here (Following is computed fresh per request, not from a
+      // rebuilt-every-few-minutes shared snapshot). It also deliberately
+      // wraps around and re-serves reshuffled content once a small
+      // connected-account pool is exhausted (see the server's own
+      // sliceCircular/filterUnseen there, which already does real seen-
+      // tracking correctly) — a 600-item client window is often bigger
+      // than that whole pool, so every wrapped-around repeat landed inside
+      // it and got silently dropped, making the feed look stuck at a
+      // fixed, limited amount of content even while the server kept
+      // reporting hasMore:true. Confirmed live as exactly that complaint.
+      const incoming = viewModeRef.current === 'following'
+        ? (data.posts || []).filter(p => p?.id)
+        : (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
         setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));

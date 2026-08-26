@@ -1056,9 +1056,19 @@ export default function VideoFeedView({ onExit }) {
         // repeats from either cause while still admitting a genuine repeat
         // once it's fallen out of the window. React keys below are still
         // (id + index) since a repeat past the window is still expected
-        // eventually, especially now that Following mode can still lap its
-        // own smaller pool.
-        const fresh = reset ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+        // eventually.
+        //
+        // Following mode skips the window entirely instead — its backend
+        // pool (handleFollowingVideoFeedRequest) is often much smaller than
+        // VIDEO_DEDUP_WINDOW (400), and it deliberately wraps around and
+        // re-serves reshuffled content once that pool is exhausted (real
+        // seen-tracking already happens server-side via filterUnseen/
+        // markPostsSeen). With the window applied here too, every wrapped-
+        // around repeat landed inside it and got silently dropped, making
+        // Following videos look stuck at a small fixed amount even while
+        // the server kept reporting hasMore:true. Confirmed live as
+        // exactly that complaint.
+        const fresh = reset || mode === 'following' ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
         fresh.forEach(p => markKnownId(p.id));
         // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
