@@ -2519,17 +2519,30 @@ async function fetchRedditByKeyword(keyword) {
 // personalized front page — same response shape as a subreddit listing
 // (parseRedditJSON already handles it, just fed a null topicKeyword since
 // this isn't scoped to one subreddit/topic).
+// Pages back through real history instead of stopping at the single most
+// recent 100 — Reddit's listing API supports real cursor pagination (the
+// `after` fullname in each page's response), so "not enough content" here
+// was a fetch-depth choice, not an API limitation. Capped at
+// REDDIT_HOME_MAX_PAGES pages (still one real API call per page, same
+// rate-limit footprint per page as before) rather than paging until
+// exhausted — a home feed is unbounded, this just needs to be "deep enough
+// to feel like a real feed," not literally everything.
+const REDDIT_HOME_MAX_PAGES = 3;
 async function fetchRedditHomeFeed(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `reddit_home_${token.slice(-12)}`;
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
-    const data = await fetchJSON(
-      'https://oauth.reddit.com/.json?limit=100&raw_json=1',
-      { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
-    );
-    const posts = parseRedditJSON(data, null);
+    const posts = [];
+    let after = null;
+    for (let page = 0; page < REDDIT_HOME_MAX_PAGES; page++) {
+      const url = `https://oauth.reddit.com/.json?limit=100&raw_json=1${after ? `&after=${after}` : ''}`;
+      const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' });
+      posts.push(...parseRedditJSON(data, null));
+      after = data?.data?.after || null;
+      if (!after) break; // genuinely out of history, not just out of pages
+    }
     setCached(key, posts);
     return posts;
   } catch (e) {
@@ -2795,17 +2808,27 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
     recordGitHubRateLimitHeaders(meHeaders);
     if (!me?.login) return [];
 
-    const { data: events, headers: evHeaders } = await fetchJSONWithHeaders(
-      `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=100`,
-      auth
-    );
-    recordGitHubRateLimitHeaders(evHeaders);
+    // GitHub's received_events is hard-capped at ~300 events regardless of
+    // how it's paginated (documented API behavior, not a choice made here)
+    // — 3 pages of 100 reaches that ceiling instead of stopping at the
+    // first page's worth.
+    const events = [];
+    for (let page = 1; page <= 3; page++) {
+      const { data: pageEvents, headers: evHeaders } = await fetchJSONWithHeaders(
+        `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=100&page=${page}`,
+        auth
+      );
+      recordGitHubRateLimitHeaders(evHeaders);
+      if (!Array.isArray(pageEvents) || !pageEvents.length) break;
+      events.push(...pageEvents);
+      if (pageEvents.length < 100) break; // fewer than a full page — genuinely out of events
+    }
 
     // Only the event types that actually read as a real feed item — GitHub's
     // received_events stream includes a long tail of noisier types (member
     // additions, gollum wiki edits, etc.) that would just clutter Following
     // with low-signal noise.
-    const posts = (Array.isArray(events) ? events : [])
+    const posts = events
       .filter(e => ['PushEvent', 'WatchEvent', 'PullRequestEvent', 'IssuesEvent', 'CreateEvent', 'ForkEvent'].includes(e.type))
       .map(e => {
         const repoName = e.repo?.name || 'unknown/unknown';
@@ -4943,11 +4966,19 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
-    const data = await fetchJSON(
-      'https://gitlab.com/api/v4/events?per_page=100&sort=desc',
-      { Authorization: `Bearer ${token}` }
-    );
-    const posts = (Array.isArray(data) ? data : [])
+    // 3 pages of 100 instead of one — GitLab's events endpoint supports
+    // real page-based pagination, no reason to stop at the first 100.
+    const events = [];
+    for (let page = 1; page <= 3; page++) {
+      const data = await fetchJSON(
+        `https://gitlab.com/api/v4/events?per_page=100&sort=desc&page=${page}`,
+        { Authorization: `Bearer ${token}` }
+      );
+      if (!Array.isArray(data) || !data.length) break;
+      events.push(...data);
+      if (data.length < 100) break;
+    }
+    const posts = events
       .filter(e => e?.action_name)
       .map(e => {
         const actor = e.author?.name || e.author_username || 'Someone';
@@ -4993,11 +5024,19 @@ async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
-    const data = await fetchJSON(
-      'https://api.dribbble.com/v2/user/shots?per_page=100',
-      { Authorization: `Bearer ${token}` }
-    );
-    const posts = (Array.isArray(data) ? data : [])
+    // 3 pages of 100 instead of one — a member's own shot history goes back
+    // as far as their account does, not just their most recent 100.
+    const shots = [];
+    for (let page = 1; page <= 3; page++) {
+      const data = await fetchJSON(
+        `https://api.dribbble.com/v2/user/shots?per_page=100&page=${page}`,
+        { Authorization: `Bearer ${token}` }
+      );
+      if (!Array.isArray(data) || !data.length) break;
+      shots.push(...data);
+      if (data.length < 100) break;
+    }
+    const posts = shots
       .filter(s => s?.id && s?.html_url)
       .map(s => ({
         id:          `dribbble_${s.id}`,
@@ -5085,11 +5124,20 @@ async function fetchThreadsOwnPosts(token, { bust = false } = {}) {
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
+    // 3 pages of 100 instead of one — the Graph API hands back a ready-to-
+    // use paging.next URL (already carries its own cursor/token), simpler
+    // to just follow it than reconstruct the cursor param by hand.
     const fields = 'id,text,permalink,timestamp,media_type,media_url,thumbnail_url,username';
-    const data = await fetchJSON(
-      `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=100&access_token=${encodeURIComponent(token)}`
-    );
-    const posts = (Array.isArray(data?.data) ? data.data : [])
+    const items = [];
+    let url = `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=100&access_token=${encodeURIComponent(token)}`;
+    for (let page = 0; page < 3 && url; page++) {
+      const data = await fetchJSON(url);
+      const pageItems = Array.isArray(data?.data) ? data.data : [];
+      if (!pageItems.length) break;
+      items.push(...pageItems);
+      url = data?.paging?.next || null;
+    }
+    const posts = items
       .filter(t => t?.id)
       .map(t => ({
         id:          `threads_${t.id}`,
@@ -5594,10 +5642,24 @@ async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
   if (cached) return cached;
 
   try {
-    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100`;
-    const result = await atprotoGet(url, { accessToken: session.accessToken });
-    if (result?.status >= 400) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
-    const feed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+    // 3 pages of 100 instead of one — getAuthorFeed's own cursor lets a
+    // real fetch actually reach back into a member's post history instead
+    // of stopping at their 100 most recent.
+    const feed = [];
+    let cursor = null;
+    for (let page = 0; page < 3; page++) {
+      const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const result = await atprotoGet(url, { accessToken: session.accessToken });
+      if (result?.status >= 400) {
+        if (page === 0) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+        break; // already have page 1+ worth of real content — a later page failing shouldn't discard it
+      }
+      const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+      if (!pageFeed.length) break;
+      feed.push(...pageFeed);
+      cursor = result?.data?.cursor || null;
+      if (!cursor) break;
+    }
     const posts = feed
       // Reposts carry someone ELSE's record under this member's feed entry —
       // keeping them would misattribute another author's post as this
