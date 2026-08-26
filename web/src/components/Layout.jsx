@@ -49,7 +49,11 @@ export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
-  const [pendingConnections, setPendingConnections] = useState(0);
+  // Pending connection requests + unread persisted notifications
+  // (message/comment/like/follow) combined — one badge for "you have
+  // something new to look at in Notifications," not two separate numbers
+  // competing for the same small dot.
+  const [notifBadge, setNotifBadge] = useState(0);
 
   // Polled from the shell itself, not the Notifications page — the whole
   // point of a nav badge is being visible from anywhere else in the app,
@@ -59,7 +63,10 @@ export default function Layout({ children }) {
     let cancelled = false;
     function load() {
       client.get('/notifications/badge-counts')
-        .then(({ data }) => { if (!cancelled) setPendingConnections(data.pendingConnections || 0); })
+        .then(({ data }) => {
+          if (cancelled) return;
+          setNotifBadge((data.pendingConnections || 0) + (data.unreadNotifications || 0));
+        })
         .catch(() => {});
     }
     load();
@@ -102,7 +109,7 @@ export default function Layout({ children }) {
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
                 {icon}
-                {to === '/notifications' && <NavBadge count={pendingConnections} />}
+                {to === '/notifications' && <NavBadge count={notifBadge} />}
               </span>
               {label}
             </NavLink>
@@ -172,7 +179,7 @@ export default function Layout({ children }) {
           >
             <span className="nav-icon" style={{ position: 'relative' }}>
               {icon}
-              {to === '/notifications' && <NavBadge count={pendingConnections} />}
+              {to === '/notifications' && <NavBadge count={notifBadge} />}
             </span>
             {shortLabel || label}
           </NavLink>

@@ -25,6 +25,19 @@ window.addEventListener('unhandledrejection', (e) => {
   reportClientError({ message: reason?.message || String(reason), stack: reason?.stack });
 });
 
+// Clicking a push notification (see sw.js's notificationclick handler)
+// focuses an already-open tab rather than opening a new one, but can't
+// change that tab's URL itself — a full navigation here, not a React
+// Router push, since this runs outside the router/component tree entirely
+// (this file loads before the app even mounts). A page load on a rare,
+// deliberate click is an acceptable tradeoff for not having to thread a
+// navigate function out to a module-level listener.
+navigator.serviceWorker?.addEventListener('message', (e) => {
+  if (e.data?.type === 'notification-click' && e.data.url) {
+    window.location.href = e.data.url;
+  }
+});
+
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});

@@ -38,7 +38,13 @@ export default function Notifications() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    // Same "viewing the list clears the badge" convention as everywhere
+    // else — fire-and-forget, doesn't block rendering the (already-unread)
+    // items on this same load.
+    client.post('/notifications/mark-read').catch(() => {});
+  }, []);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
@@ -107,7 +113,7 @@ export default function Notifications() {
         <div className="empty-state">
           <div className="empty-icon">🔔</div>
           <div className="empty-title">No notifications yet</div>
-          <div className="empty-desc">Connection requests and new followers will show up here.</div>
+          <div className="empty-desc">Likes, comments, follows, and connection requests will show up here.</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
             <Link to="/search" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>
               Find people
@@ -120,24 +126,40 @@ export default function Notifications() {
             const isRequest = n.type === 'connection_request';
             const isAccepted = accepted.has(n.id);
             const isDeclined = declined.has(n.id);
+            // comment/like link to the post they're about; connection_request/
+            // new_follower link to the person's profile, same as before.
+            const targetLink = (n.type === 'comment' || n.type === 'like') && n.targetId
+              ? `/p/${n.targetId}`
+              : `/u/${n.user.id}`;
+            const actionText = {
+              connection_request: 'wants to connect with you',
+              new_follower:       'started following you',
+              comment:            'commented on your post',
+              like:               'liked your post',
+            }[n.type] || '';
             return (
-              <div key={n.id} className="conv-item" style={{ cursor: 'default' }}>
-                <Link to={`/u/${n.user.id}`} style={{ flexShrink: 0 }}>
+              <div key={n.id} className="conv-item" style={{ cursor: 'default', opacity: n.read === false ? 1 : 0.85 }}>
+                <Link to={targetLink} style={{ flexShrink: 0 }}>
                   <div className="avatar avatar-md">{initials(n.user.name)}</div>
                 </Link>
                 <div className="conv-info">
                   <div className="conv-name">
-                    <Link to={`/u/${n.user.id}`} style={{ color: 'inherit', textDecoration: 'none' }}>
+                    <Link to={targetLink} style={{ color: 'inherit', textDecoration: 'none' }}>
                       {n.user.name}
                     </Link>
                   </div>
                   <div className="conv-last">
-                    {isRequest ? 'wants to connect with you' : 'started following you'}
-                    {n.user.title ? ` · ${n.user.title}` : ''}
+                    {actionText}
+                    {n.type === 'connection_request' || n.type === 'new_follower'
+                      ? (n.user.title ? ` · ${n.user.title}` : '')
+                      : (n.preview ? `: "${n.preview}"` : '')}
                   </div>
                 </div>
                 <div className="conv-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div className="conv-time">{timeAgo(n.createdAt)}</div>
+                  {(n.type === 'comment' || n.type === 'like') && (
+                    <Link to={targetLink} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>View</Link>
+                  )}
                   {isRequest && (
                     isAccepted ? (
                       <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Connected</span>

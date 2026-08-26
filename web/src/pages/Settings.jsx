@@ -5,6 +5,7 @@ import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS } from '../data/roles';
+import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -89,6 +90,67 @@ function Toggle({ value, onChange }) {
 
 function SectionHeading({ children }) {
   return <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 14 }}>{children}</h3>;
+}
+
+// Separate from the notifs_* toggles above (and their own card) since this
+// is a real browser permission + device subscription, not a saved
+// preference flag — enabling/disabling happens immediately via its own
+// button, not batched into the form's Save. State is read fresh on mount
+// rather than trusted from anywhere else, since permission can change
+// outside the app entirely (the OS/browser's own notification settings).
+function PushNotificationsCard() {
+  const { showToast } = useToast();
+  const [state, setState] = useState({ supported: false, permission: 'default', subscribed: false });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getPushSubscriptionState().then(setState).finally(() => setLoading(false));
+  }, []);
+
+  async function handleToggle() {
+    setBusy(true);
+    try {
+      if (state.subscribed) {
+        await disablePush();
+        setState(s => ({ ...s, subscribed: false }));
+        showToast('Push notifications turned off', 'success');
+      } else {
+        await enablePush();
+        setState(s => ({ ...s, subscribed: true, permission: 'granted' }));
+        showToast('Push notifications enabled', 'success');
+      }
+    } catch (err) {
+      showToast(err.message || 'Could not update push notifications.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (loading) return null;
+
+  return (
+    <div className="card">
+      <SectionHeading>📲 Push Notifications</SectionHeading>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Browser notifications</div>
+          <div style={{ fontSize: '.75rem', color: 'var(--muted)', marginTop: 2 }}>
+            {!state.supported
+              ? "This browser doesn't support push notifications."
+              : state.permission === 'denied'
+              ? 'Blocked in your browser settings — re-enable it there to turn this back on.'
+              : 'Get a real-time alert for new messages, likes, comments, follows, and connection requests, even when UFconnect isn\'t open.'}
+          </div>
+        </div>
+        {state.supported && state.permission !== 'denied' && (
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={handleToggle} style={{ flexShrink: 0 }}>
+            {busy ? '…' : state.subscribed ? 'Turn off' : 'Turn on'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -797,6 +859,7 @@ export default function Settings() {
       {/* ── Notifications tab ────────────────────────────────────────────────── */}
       {activeTab === 'notifications' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <PushNotificationsCard />
           <div className="card">
             <SectionHeading>🔔 Notifications</SectionHeading>
             {[

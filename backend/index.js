@@ -13,6 +13,7 @@ const os     = require('os');
 const path   = require('path');
 const { execFile, fork } = require('child_process');
 const nodemailer = require('nodemailer');
+const webpush = require('web-push');
 const multer = require('multer');
 const v8 = require('v8');
 const db        = require('./db');
@@ -1306,6 +1307,95 @@ async function sendPasswordResetEmail(toEmail, resetUrl) {
       <p><a href="${resetUrl}">Reset your password</a></p>
       <p>This link expires in 30 minutes. If you didn't request this, you can safely ignore this email.</p>`,
   });
+}
+
+// ─── Web Push ───────────────────────────────────────────────────────────────
+// Same unconfigured-but-not-broken pattern as email/every OAuth platform —
+// until both VAPID keys are set, push is a silent no-op (createNotification
+// still persists the in-app row either way) rather than an error anywhere.
+function pushConfigured() {
+  return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+let _vapidReady = false;
+function ensureVapid() {
+  if (_vapidReady || !pushConfigured()) return;
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:support@uficonnect.org',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+  _vapidReady = true;
+}
+
+// Fire-and-forget from every createNotification call — a push failure never
+// blocks or fails the notification itself, that's still real and already
+// persisted regardless of whether any device gets a push for it. A 404/410
+// response means the browser itself discarded the subscription (uninstalled,
+// permissions revoked, or genuinely expired) — the *only* case a
+// subscription is deleted here, since any other error (network blip, the
+// push service being temporarily down) says nothing about whether the
+// subscription itself is still good.
+async function sendPushToUser(userId, { title, body, url = '/' }) {
+  if (!db.isConnected() || !pushConfigured()) return;
+  ensureVapid();
+  try {
+    const { rows } = await db.query(
+      `SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id=$1`,
+      [userId]
+    );
+    await Promise.all(rows.map(async (row) => {
+      const subscription = { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } };
+      try {
+        await webpush.sendNotification(subscription, JSON.stringify({ title, body, url }));
+      } catch (e) {
+        if (e.statusCode === 404 || e.statusCode === 410) {
+          await db.query(`DELETE FROM push_subscriptions WHERE id=$1`, [row.id]).catch(() => {});
+        } else {
+          console.warn(`[push] send failed for ${row.id}:`, e.message);
+        }
+      }
+    }));
+  } catch (e) {
+    console.warn('[push] sendPushToUser:', e.message);
+  }
+}
+
+// The single place a genuinely NEW notification type gets persisted —
+// message, comment, like. follow and connection_request deliberately stay
+// on GET /notifications' existing on-the-fly computation from the follows/
+// connections tables instead of also writing a row here — those two are
+// live state (accepting/declining reads connections directly), so a
+// persisted copy would just be a second, driftable source of truth for the
+// same thing. Those two call sendPushToUser directly at their own call
+// sites instead, for the push half only.
+//
+// Deliberately does NOT cover "mentions" (no @mention parsing exists —
+// matching on full names via regex isn't reliable the way it is for a real
+// @handle system, and this app has no username/handle field at all, only
+// display names with spaces) or "replies" (comments have no
+// parent_comment_id — they're flat, not threaded, so "reply" isn't a real
+// relationship in the data model yet). Settings' notifs_mentions toggle
+// exists for when that prerequisite work happens; until then this
+// deliberately leaves that type unbuilt rather than faking it off
+// unreliable name-matching. Same story for notifs_communityUpdates/
+// notifs_newOpportunities — real features (group-activity digests, resume-
+// matched opportunity alerts) rather than single-event triggers, out of
+// scope here.
+async function createNotification({ userId, type, actorId, targetType = null, targetId = null, preview = null, pushTitle, pushBody, pushUrl }) {
+  if (!userId || userId === actorId) return; // never notify yourself
+  if (!db.isConnected()) return;
+  const id = `notif_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    await db.query(
+      `INSERT INTO notifications (id, user_id, type, actor_id, target_type, target_id, preview)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, userId, type, actorId || null, targetType, targetId, preview]
+    );
+  } catch (e) {
+    console.warn('[createNotification] insert failed:', e.message);
+    return;
+  }
+  if (pushTitle) sendPushToUser(userId, { title: pushTitle, body: pushBody || '', url: pushUrl || '/' }).catch(() => {});
 }
 
 // POST application/x-www-form-urlencoded and return parsed JSON
@@ -11630,6 +11720,49 @@ async function migrateDB() {
     // behavior as a fallback, not a behavior change on its own.
     await db.query(`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT false`);
 
+    // Real notification types (message/comment/like/follow/connection
+    // request) — GET /notifications previously only ever computed
+    // connection_request and new_follower on the fly from the connections/
+    // follows arrays, with nothing persisted and no way to represent
+    // anything else. Settings already had toggles for mentions/community
+    // updates/new opportunities with nothing behind any of them (roleSettings.
+    // notifs_* saved and never once read) — this table is what actually
+    // backs the ones with a real, unambiguous trigger (see createNotification's
+    // own comment for which types those are and which were deliberately
+    // left out).
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        actor_id TEXT,
+        target_type TEXT,
+        target_id TEXT,
+        preview TEXT,
+        read BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS notifications_user_idx ON notifications(user_id, created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS notifications_user_unread_idx ON notifications(user_id) WHERE read = false`);
+
+    // Web Push subscriptions — one row per browser/device a member has
+    // enabled notifications on (a member can have several: phone + laptop),
+    // pruned automatically the moment a push actually fails with 404/410
+    // (the browser unsubscribed or the subscription genuinely expired — see
+    // sendPushToUser).
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        endpoint TEXT NOT NULL UNIQUE,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions(user_id)`);
+
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
     // restart/deploy or on a different device.
@@ -18199,13 +18332,27 @@ async function toggleCommunityPostLike(req, res) {
 
     const uid = req.user.id;
     const idx = post.likes.indexOf(uid);
-    if (idx > -1) post.likes.splice(idx, 1);
+    const isUnlike = idx > -1;
+    if (isUnlike) post.likes.splice(idx, 1);
     else if (!post.likes.includes(uid)) post.likes.push(uid);
 
     await db.query(
       `UPDATE community_posts SET likes=$1 WHERE id=$2`,
       [post.likes, post.id]
     );
+
+    // Only on a genuine like, not an unlike — nobody wants a notification
+    // for someone changing their mind back to nothing.
+    if (!isUnlike) {
+      getUser(uid).then(liker => {
+        if (!liker) return;
+        createNotification({
+          userId: post.authorId, type: 'like', actorId: uid,
+          targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(post.content || '', 120),
+          pushTitle: 'New like', pushBody: `${liker.name} liked your post`, pushUrl: `/p/${post.id}`,
+        });
+      }).catch(() => {});
+    }
 
     res.json({
       likedByMe: post.likes.includes(uid),
@@ -18264,6 +18411,15 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
       `UPDATE community_posts SET comments_count=comments_count+1 WHERE id=$1`,
       [post.id]
     ).catch(e => console.error('post comment count DB:', e.message));
+
+    getUser(req.user.id).then(commenter => {
+      if (!commenter) return;
+      createNotification({
+        userId: post.authorId, type: 'comment', actorId: req.user.id,
+        targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(content, 120),
+        pushTitle: 'New comment', pushBody: `${commenter.name} commented on your post: "${truncateWithEllipsis(content, 60)}"`, pushUrl: `/p/${post.id}`,
+      });
+    }).catch(() => {});
 
     res.status(201).json({
       comment: serializePostComment(comment),
@@ -18833,6 +18989,12 @@ app.post('/users/:id/follow', authenticate, async (req, res) => {
         `INSERT INTO follows (follower_id, following_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
         [followerId, followingId]
       );
+      // Push only, no persisted notifications row — GET /notifications
+      // already computes new_follower on the fly from this same follows
+      // table (see createNotification's own comment for why).
+      getUser(followerId).then(follower => {
+        if (follower) sendPushToUser(followingId, { title: 'New follower', body: `${follower.name} started following you`, url: `/u/${followerId}` });
+      }).catch(() => {});
     }
     res.json({ ok: true, followersCount: follows.filter(f => f.followingId === followingId).length });
   } catch (e) { console.error('POST /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
@@ -18947,6 +19109,10 @@ app.post('/users/:id/connect', authenticate, async (req, res) => {
         `INSERT INTO connections (id, from_id, to_id, status) VALUES ($1,$2,$3,'pending') ON CONFLICT (from_id, to_id) DO NOTHING`,
         [id, fromId, toId]
       );
+      // Push only — see the follow endpoint's identical comment just above.
+      getUser(fromId).then(sender => {
+        if (sender) sendPushToUser(toId, { title: 'Connection request', body: `${sender.name} wants to connect with you`, url: '/notifications' });
+      }).catch(() => {});
       return res.json({ connectionStatus: 'pending_sent' });
     }
 
@@ -18956,6 +19122,14 @@ app.post('/users/:id/connect', authenticate, async (req, res) => {
       }
       existing.status = 'accepted';
       await db.query(`UPDATE connections SET status='accepted' WHERE id=$1`, [existing.id]);
+      // Whoever originally sent the request never gets a persisted/in-app
+      // row for the accept (there's no "accepted" type in the on-the-fly
+      // computation to slot alongside) — push is the one real signal that
+      // it happened at all, so it's worth sending here even without an
+      // in-app counterpart.
+      getUser(fromId).then(accepter => {
+        if (accepter) sendPushToUser(existing.fromId, { title: 'Connection accepted', body: `${accepter.name} accepted your connection request`, url: `/u/${fromId}` });
+      }).catch(() => {});
       return res.json({ connectionStatus: 'connected' });
     }
 
@@ -19125,7 +19299,7 @@ app.post('/reports', authenticate, async (req, res) => {
 });
 
 // ─── Notifications: pending connection requests + new followers ───────────────
-app.get('/notifications', authenticate, (req, res) => {
+app.get('/notifications', authenticate, async (req, res) => {
   try {
     const uid = req.user.id;
 
@@ -19138,6 +19312,7 @@ app.get('/notifications', authenticate, (req, res) => {
           type:      'connection_request',
           createdAt: c.createdAt,
           user:      sanitizeUser(from),
+          read:      true, // has its own Accept/Decline UI, not a badge-tracked "unread" concept
         } : null;
       })
       .filter(Boolean);
@@ -19151,16 +19326,105 @@ app.get('/notifications', authenticate, (req, res) => {
           type:      'new_follower',
           createdAt: f.createdAt || null,
           user:      sanitizeUser(follower),
+          read:      true,
         } : null;
       })
       .filter(Boolean);
 
-    const notifications = [...receivedRequests, ...newFollowers]
+    // Real persisted types (message/comment/like) — see createNotification's
+    // own comment for why follow/connection_request stay on-the-fly above
+    // instead of also writing a row here.
+    let persisted = [];
+    if (db.isConnected()) {
+      // type != 'message' — a message notification row still exists (see
+      // createNotification's call site in POST /messages/:userId) purely to
+      // trigger a push; the message ITSELF already has a real, richer home
+      // in Messages with its own unread tracking (direct_messages.read).
+      // Surfacing it here too would just be the same event shown twice
+      // with two different, driftable "read" states.
+      const { rows } = await db.query(
+        `SELECT * FROM notifications WHERE user_id=$1 AND type != 'message' ORDER BY created_at DESC LIMIT 100`,
+        [uid]
+      );
+      persisted = (await Promise.all(rows.map(async (r) => {
+        const actor = r.actor_id ? await getUser(r.actor_id) : null;
+        if (r.actor_id && !actor) return null; // actor account gone — nothing sane to show
+        return {
+          id:         r.id,
+          type:       r.type,
+          createdAt:  r.created_at,
+          user:       actor ? sanitizeUser(actor) : null,
+          preview:    r.preview,
+          targetType: r.target_type,
+          targetId:   r.target_id,
+          read:       r.read,
+        };
+      }))).filter(Boolean);
+    }
+
+    const notifications = [...receivedRequests, ...newFollowers, ...persisted]
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
     res.json({ notifications, pendingConnections: receivedRequests.length });
   } catch (e) {
     console.error('GET /notifications:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Called when the Notifications page itself loads — same "viewing the list
+// clears the badge" convention as every mainstream notification UI, rather
+// than requiring a per-item click to individually dismiss each one (message/
+// comment/like notifications have nowhere sensible for that anyway; the
+// notification itself just links to the thing it's about).
+app.post('/notifications/mark-read', authenticate, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.status(503).json({ message: 'Temporarily unavailable — please try again in a moment.' });
+    await db.query(`UPDATE notifications SET read=true WHERE user_id=$1 AND read=false`, [req.user.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /notifications/mark-read:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Web Push subscriptions ─────────────────────────────────────────────────
+app.get('/push/config', authenticate, (req, res) => {
+  res.json({ configured: pushConfigured(), publicKey: pushConfigured() ? process.env.VAPID_PUBLIC_KEY : null });
+});
+
+app.post('/push/subscribe', authenticate, async (req, res) => {
+  try {
+    const { endpoint, keys } = req.body?.subscription || req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ message: 'Invalid subscription.' });
+    if (!db.isConnected()) return res.status(503).json({ message: 'Temporarily unavailable — please try again in a moment.' });
+    // ON CONFLICT (endpoint) — the same browser subscribing again (a repeat
+    // visit, a different account on a shared device) updates who owns this
+    // endpoint rather than erroring or creating a duplicate row a stale
+    // account would keep receiving pushes through.
+    await db.query(
+      `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id=$2, p256dh=$4, auth=$5`,
+      [`push_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, req.user.id, endpoint, keys.p256dh, keys.auth]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /push/subscribe:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/push/unsubscribe', authenticate, async (req, res) => {
+  try {
+    const { endpoint } = req.body || {};
+    if (!endpoint) return res.status(400).json({ message: 'endpoint required.' });
+    if (db.isConnected()) {
+      await db.query(`DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2`, [endpoint, req.user.id]);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('POST /push/unsubscribe:', e);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -19195,7 +19459,19 @@ app.get('/notifications/badge-counts', authenticate, async (req, res) => {
     });
     const unreadMessages = [...unreadByParticipant.values()].reduce((sum, n) => sum + n, 0);
 
-    res.json({ pendingConnections, unreadMessages });
+    // Same type != 'message' exclusion as GET /notifications — those rows
+    // exist only to trigger a push, unreadMessages above already covers
+    // the real unread state for messages.
+    let unreadNotifications = 0;
+    if (db.isConnected()) {
+      const { rows } = await db.query(
+        `SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND read=false AND type != 'message'`,
+        [uid]
+      );
+      unreadNotifications = rows[0]?.n || 0;
+    }
+
+    res.json({ pendingConnections, unreadMessages, unreadNotifications });
   } catch (e) {
     console.error('GET /notifications/badge-counts:', e);
     res.status(500).json({ error: 'Internal server error' });
@@ -20315,6 +20591,16 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
       [newMsg.id, directConversationId(uid, otherId), uid, otherId, newMsg.content, JSON.stringify(newMsg.attachment), newMsg.createdAt]
     );
     conv.messages.push(newMsg);
+
+    getUser(uid).then(sender => {
+      if (!sender) return;
+      createNotification({
+        userId: otherId, type: 'message', actorId: uid,
+        targetType: 'conversation', targetId: conv.id,
+        preview: newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : '📷 Photo',
+        pushTitle: sender.name, pushBody: newMsg.content ? truncateWithEllipsis(newMsg.content, 100) : '📷 Sent a photo', pushUrl: `/messages/${uid}`,
+      });
+    }).catch(() => {});
 
     res.json({
       message: newMsg,

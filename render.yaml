@@ -102,6 +102,18 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      # Web Push (VAPID). Until both are set, pushConfigured() is false and
+      # createNotification/sendPushToUser silently skip the push step — the
+      # in-app notification itself still gets created either way. Generate
+      # a pair with `npx web-push generate-vapid-keys` (or Settings already
+      # has one generated this session — see the chat this shipped in).
+      # VAPID_SUBJECT defaults to mailto:support@uficonnect.org if unset.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
       # USAJobs (federal government job listings on Opportunities) — free,
       # self-serve, no review: register at https://developer.usajobs.gov/apirequest
       # to get an API key by email within minutes. USAJOBS_USER_AGENT must be
