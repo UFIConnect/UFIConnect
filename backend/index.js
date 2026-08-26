@@ -741,14 +741,6 @@ const SOCIAL_CFG = {
     scope: 'read_user',
     pkce: false,
   },
-  discord: {
-    authUrl:  'https://discord.com/api/oauth2/authorize',
-    tokenUrl: 'https://discord.com/api/oauth2/token',
-    clientId:     () => process.env.DISCORD_CLIENT_ID,
-    clientSecret: () => process.env.DISCORD_CLIENT_SECRET,
-    scope: 'identify guilds',
-    pkce: false,
-  },
   youtube: {
     authUrl:  'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
@@ -784,23 +776,15 @@ const SOCIAL_CFG = {
     scope: 'public',
     pkce: false,
   },
-  // Behance removed — Adobe shut down the entire developer portal (both
-  // behance.net/dev and /dev/register 404, and Behance isn't listed as a
-  // product in Adobe's current unified developer console either), no
-  // working registration path left, self-serve or otherwise. Replaced with
-  // Figma below for the same "showcase your design work" audience.
-  figma: {
-    authUrl:  'https://www.figma.com/oauth',
-    tokenUrl: 'https://api.figma.com/v1/oauth/token',
-    clientId:     () => process.env.FIGMA_CLIENT_ID,
-    clientSecret: () => process.env.FIGMA_CLIENT_SECRET,
-    scope: 'current_user:read file_content:read',
-    pkce: false,
-    // Same HTTP Basic Authentication (client_id:client_secret, base64,
-    // Authorization header) token-exchange shape Twitter/Reddit already
-    // use below — confirmed against Figma's own OAuth docs.
-    basicAuth: true,
-  },
+  // Behance and Figma both removed — Adobe shut down the entire Behance
+  // developer portal (both behance.net/dev and /dev/register 404, and
+  // Behance isn't listed as a product in Adobe's current unified developer
+  // console either), no working registration path left. Figma briefly
+  // replaced it for the same "showcase your design work" audience, but
+  // Figma's REST API has no "list my files" endpoint without already
+  // knowing a team_id (verified against its OpenAPI spec — every file/
+  // project/folder endpoint requires one), so it could never have a real
+  // content fetcher either — removed for the same reason.
   // Twitch and Threads replace TikTok's (video/entertainment) and
   // Instagram's (visual/social) removed slots — both are genuinely popular
   // platforms with a real, working OAuth + content API (unlike TikTok/old
@@ -837,12 +821,10 @@ const SOCIAL_ENV_KEYS = {
   facebook:  ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
   github:    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
   gitlab:    ['GITLAB_CLIENT_ID', 'GITLAB_CLIENT_SECRET'],
-  discord:   ['DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'],
   youtube:   ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
   reddit:    ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET'],
   medium:    ['MEDIUM_CLIENT_ID', 'MEDIUM_CLIENT_SECRET'],
   dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
-  figma:     ['FIGMA_CLIENT_ID', 'FIGMA_CLIENT_SECRET'],
   twitch:    ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'],
   threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
@@ -6001,8 +5983,6 @@ function generateSocialSearchCards(interests = []) {
       url: (q) => `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(q)}` },
     youtube:   { label: 'YouTube',       icon: '▶️', color: '#FF0000',
       url: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
-    discord:   { label: 'Discord',       icon: '💬', color: '#5865F2',
-      url: (_q) => `https://discord.com/channels/@me` },
     indeed:    { label: 'Indeed Jobs',   icon: '🔍', color: '#2164F3',
       url: (q) => `https://www.indeed.com/jobs?q=${encodeURIComponent(q)}` },
     dribbble:  { label: 'Dribbble',      icon: '🏀', color: '#EA4C89',
@@ -6016,7 +5996,6 @@ function generateSocialSearchCards(interests = []) {
     facebook:  { mediaType: 'image', mediaLabel: 'Post preview', caption: 'Community posts, event updates, and visual stories.' },
     instagram: { mediaType: 'image', mediaLabel: 'Photo preview', caption: 'Visual and creator content in your feed.' },
     youtube:   { mediaType: 'video', mediaLabel: 'Video preview', caption: 'Video highlights and creator conversations.' },
-    discord:   { mediaType: 'image', mediaLabel: 'Community preview', caption: 'Discussion snippets from your favourite groups.' },
     indeed:    { mediaType: 'image', mediaLabel: 'Jobs preview', caption: 'Highlighted jobs and hiring opportunities.' },
     dribbble:  { mediaType: 'image', mediaLabel: 'Design preview', caption: 'Creative shots and portfolio updates.' },
     behance:   { mediaType: 'image', mediaLabel: 'Portfolio preview', caption: 'Showcasing concept work and case studies.' },
@@ -10276,16 +10255,6 @@ const PLATFORMS = {
     reviewRequired: false,
     note: 'Basic profile connection. Group post feed coming once Facebook App Review is approved.',
   },
-  discord: {
-    name: 'Discord', color: '#5865F2', icon: 'discord',
-    description: 'Connect with servers and communities in your field.',
-    scopes: ['identify', 'guilds'],
-    authUrl: 'https://discord.com/api/oauth2/authorize',
-    loginUrl: 'https://discord.com/login',
-    setupUrl: 'https://discord.com/developers/applications',
-    reviewRequired: false,
-    note: null,
-  },
   youtube: {
     name: 'YouTube', color: '#FF0000', icon: 'youtube',
     description: 'Follow channels and surface video content in your areas.',
@@ -10323,16 +10292,6 @@ const PLATFORMS = {
     authUrl: 'https://dribbble.com/oauth/authorize',
     loginUrl: 'https://dribbble.com/session/new',
     setupUrl: 'https://dribbble.com/account/applications/new',
-    reviewRequired: false,
-    note: null,
-  },
-  figma: {
-    name: 'Figma', color: '#F24E1E', icon: 'figma',
-    description: 'Display your creative portfolio and discover design projects.',
-    scopes: ['current_user:read', 'file_content:read'],
-    authUrl: 'https://www.figma.com/oauth',
-    loginUrl: 'https://www.figma.com/login',
-    setupUrl: 'https://www.figma.com/developers/apps',
     reviewRequired: false,
     note: null,
   },
@@ -10386,11 +10345,13 @@ const PLATFORMS = {
 
 // Display/connect order for Connected Accounts — Set iteration order
 // follows insertion order, so this list's order IS the UI order.
-// discord and figma removed — neither has (or can have) a real content
-// fetcher: Discord's API has no generic "personal feed" concept at all, and
-// Figma's REST API has no "list my files" endpoint without already knowing
-// a team_id (see PLATFORMS.figma's own comment). bluesky and medium now
-// have real fetchers (fetchBlueskyOwnPosts/fetchMediumOwnPosts, wired into
+// discord and figma removed entirely — SOCIAL_CFG, PLATFORMS, and this
+// list all dropped both, and neither ever had a following-feed fetcher.
+// Discord's API has no generic "personal feed" concept at all, and Figma's
+// REST API has no "list my files" endpoint without already knowing a
+// team_id — neither could ever pull real content no matter how the OAuth
+// side was wired up. bluesky and medium now have real fetchers
+// (fetchBlueskyOwnPosts/fetchMediumOwnPosts, wired into
 // FOLLOWING_SOURCE_FETCHERS below) so every platform left in this list
 // actually pulls real content once connected.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
@@ -13567,7 +13528,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       );
       accessToken = raw.access_token;
     } else if (cfg.basicAuth) {
-      // Basic-auth token exchange (Twitter, Reddit, Figma)
+      // Basic-auth token exchange (Twitter, Reddit)
       const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
       raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
@@ -13588,7 +13549,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       });
       accessToken = raw.data?.access_token || raw.access_token;
     } else {
-      // Standard POST form (LinkedIn, GitHub, Discord, YouTube, Medium, Dribbble, Twitch, Threads)
+      // Standard POST form (LinkedIn, GitHub, YouTube, Medium, Dribbble, Twitch, Threads)
       raw = await postForm(cfg.tokenUrl, {
         grant_type:    'authorization_code',
         code,

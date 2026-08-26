@@ -18,10 +18,11 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 
 // Platforms genuinely excluded from the shared Feed-mode video pool.
 // uficonnect is native/Following-only by design (a user's own network, not
-// an aggregated platform). discord and dribbble have no SOURCE_CONFIG entry
-// server-side — no aggregate fetcher exists for either, so including them
-// here would just be a permanently-empty filter with no path to fix short
-// of building one.
+// an aggregated platform). dribbble has no SOURCE_CONFIG entry server-side —
+// no shared app-level fetcher exists for it (its real content only comes
+// through Following mode's own per-user fetch, a separate path — see the
+// note below), so including it here would just be a permanently-empty
+// filter with no path to fix short of building a real aggregate one.
 //
 // Twitter/LinkedIn/Instagram/Facebook are a different situation from those
 // two: they DO have real SOURCE_CONFIG entries (see backend/index.js) — a
@@ -41,7 +42,7 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 // (CONNECTED_SOCIAL_SEARCH_FETCHERS/getFollowingFeedPosts), already works
 // today independent of any app-level token, and was never gated by this
 // exclusion list to begin with.
-const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'discord', 'dribbble', 'instagram'];
+const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'dribbble', 'instagram'];
 // Feed mode's filter row — every publicly-aggregated source, since any of
 // them can carry a real video (a dedicated video source like YouTube, a
 // direct-file post from Reddit/Mastodon/Bluesky, or an article that embeds
