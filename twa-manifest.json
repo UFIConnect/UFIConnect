@@ -10,13 +10,13 @@
   "startUrl": "/",
   "iconUrl": "https://uficonnect.org/icon.svg",
   "maskableIconUrl": "https://uficonnect.org/icon-512.png",
-  "appVersion": "1.1.2",
-  "appVersionCode": 4,
+  "appVersion": "1.1.3",
+  "appVersionCode": 5,
   "signingKey": {
     "path": "./android.keystore",
     "alias": "uficonnect"
   },
-  "appVersionName": "1.1.2",
+  "appVersionName": "1.1.3",
   "orientation": "portrait",
   "enableNotifications": true,
   "shortcuts": [
