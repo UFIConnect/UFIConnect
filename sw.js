@@ -69,3 +69,39 @@ self.addEventListener('fetch', (e) => {
     })
   );
 });
+
+// Payload is whatever JSON.stringify({ title, body, url }) sendPushToUser
+// sends server-side (see backend's sendPushToUser) — url is where a click
+// on this notification should land, not part of the visual notification
+// itself.
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'UFconnect', body: e.data ? e.data.text() : '' }; }
+  const title = data.title || 'UFconnect';
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || '',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+// Focuses an already-open tab on the target URL instead of always opening a
+// new one — most people already have the app open in a tab somewhere.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const targetUrl = e.notification.data?.url || '/';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.postMessage({ type: 'notification-click', url: targetUrl });
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
+  );
+});
