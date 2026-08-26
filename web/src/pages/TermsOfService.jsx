@@ -235,10 +235,11 @@ export default function TermsOfService() {
           display: 'flex', gap: 24, flexWrap: 'wrap',
           fontSize: '.82rem', color: '#94A3B8',
         }}>
-          <Link to="/"         style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
-          <Link to="/privacy"  style={{ color: '#64748B', textDecoration: 'none' }}>Privacy Policy</Link>
-          <Link to="/login"    style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
-          <Link to="/register" style={{ color: '#64748B', textDecoration: 'none' }}>Register</Link>
+          <Link to="/"             style={{ color: '#64748B', textDecoration: 'none' }}>Home</Link>
+          <Link to="/privacy"      style={{ color: '#64748B', textDecoration: 'none' }}>Privacy Policy</Link>
+          <Link to="/child-safety" style={{ color: '#64748B', textDecoration: 'none' }}>Child Safety Standards</Link>
+          <Link to="/login"        style={{ color: '#64748B', textDecoration: 'none' }}>Sign in</Link>
+          <Link to="/register"     style={{ color: '#64748B', textDecoration: 'none' }}>Register</Link>
           <span>© {new Date().getFullYear()} {APP_NAME}</span>
         </div>
       </main>

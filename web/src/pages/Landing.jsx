@@ -387,6 +387,8 @@ export default function Landing() {
           <p>
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}
+            <Link to="/child-safety" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Child Safety Standards</Link>
+            {' · '}
             <a href="mailto:support@uficonnect.org" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>support@uficonnect.org</a>
           </p>
         </footer>
