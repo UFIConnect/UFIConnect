@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import client from '../api/client';
 
 // shortLabel is used only in the mobile bottom-nav — 8 items sharing one
 // row at .62rem leaves each column ~40-47px wide, and "Notifications" /
@@ -21,11 +23,49 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+// The Notifications bell had no unread/pending indicator anywhere — a
+// member had no way to know a connection request or new follower was
+// waiting without remembering to open the page themselves. GET /notifications
+// already computed pendingConnections server-side; nothing on the client
+// ever read it. Small enough to just be a number in a dot rather than a
+// full component elsewhere.
+function NavBadge({ count }) {
+  if (!count) return null;
+  return (
+    <span style={{
+      position: 'absolute', top: -2, right: -6,
+      minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
+      background: '#EF4444', color: '#fff', fontSize: '.62rem', fontWeight: 700,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      lineHeight: 1, boxShadow: '0 0 0 2px var(--card, #fff)',
+    }}>
+      {count > 9 ? '9+' : count}
+    </span>
+  );
+}
+
 export default function Layout({ children }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
+  const [pendingConnections, setPendingConnections] = useState(0);
+
+  // Polled from the shell itself, not the Notifications page — the whole
+  // point of a nav badge is being visible from anywhere else in the app,
+  // not just after already navigating to the page it's supposed to hint at.
+  useEffect(() => {
+    if (!profile) return;
+    let cancelled = false;
+    function load() {
+      client.get('/notifications/badge-counts')
+        .then(({ data }) => { if (!cancelled) setPendingConnections(data.pendingConnections || 0); })
+        .catch(() => {});
+    }
+    load();
+    const id = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [profile]);
 
   function handleLogout() {
     logout();
@@ -60,7 +100,10 @@ export default function Layout({ children }) {
               onClick={() => handleNavClick(to)}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
-              <span className="nav-icon">{icon}</span>
+              <span className="nav-icon" style={{ position: 'relative' }}>
+                {icon}
+                {to === '/notifications' && <NavBadge count={pendingConnections} />}
+              </span>
               {label}
             </NavLink>
           ))}
@@ -127,7 +170,10 @@ export default function Layout({ children }) {
             onClick={() => handleNavClick(to)}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
-            <span className="nav-icon">{icon}</span>
+            <span className="nav-icon" style={{ position: 'relative' }}>
+              {icon}
+              {to === '/notifications' && <NavBadge count={pendingConnections} />}
+            </span>
             {shortLabel || label}
           </NavLink>
         ))}

@@ -19139,6 +19139,43 @@ app.get('/notifications', authenticate, (req, res) => {
   }
 });
 
+// Cheap counts-only endpoint for the nav bell badge — GET /notifications
+// above already computes pendingConnections, but returning full user/
+// conversation payloads on every poll (Layout polls this on an interval,
+// not just when the Notifications/Messages page itself is open) wastes
+// bandwidth for a number nothing renders but a badge. Mirrors the same
+// in-memory + DB merge /messages uses for unreadCount (deduped by
+// participant, keeping the higher count when both sources know about the
+// same conversation — see that endpoint's own comment for why) without
+// building/shipping the rest of each conversation's payload.
+app.get('/notifications/badge-counts', authenticate, async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const pendingConnections = connections.filter(c => c.toId === uid && c.status === 'pending').length;
+
+    const unreadByParticipant = new Map();
+    conversations
+      .filter(c => c.participants.includes(uid))
+      .forEach(c => {
+        const other = getOtherUser(c, uid);
+        const key = other?.id || c.id;
+        const unread = c.messages.filter(m => m.senderId !== uid && !m.read).length;
+        unreadByParticipant.set(key, unread);
+      });
+    (await getDirectMessageSummariesFromDB(uid)).forEach(s => {
+      const key = s.participant?.id || s.id;
+      const existing = unreadByParticipant.get(key) || 0;
+      unreadByParticipant.set(key, Math.max(existing, s.unreadCount || 0));
+    });
+    const unreadMessages = [...unreadByParticipant.values()].reduce((sum, n) => sum + n, 0);
+
+    res.json({ pendingConnections, unreadMessages });
+  } catch (e) {
+    console.error('GET /notifications/badge-counts:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── Opportunities data ───────────────────────────────────────────────────────
 const OPPORTUNITIES = [
   // Jobs
