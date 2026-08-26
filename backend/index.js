@@ -2436,7 +2436,7 @@ async function fetchRedditHomeFeed(token, { bust = false } = {}) {
   if (cached) return cached;
   try {
     const data = await fetchJSON(
-      'https://oauth.reddit.com/.json?limit=50&raw_json=1',
+      'https://oauth.reddit.com/.json?limit=100&raw_json=1',
       { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
     );
     const posts = parseRedditJSON(data, null);
@@ -2706,7 +2706,7 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
     if (!me?.login) return [];
 
     const { data: events, headers: evHeaders } = await fetchJSONWithHeaders(
-      `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=50`,
+      `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=100`,
       auth
     );
     recordGitHubRateLimitHeaders(evHeaders);
@@ -4854,7 +4854,7 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
   if (cached) return cached;
   try {
     const data = await fetchJSON(
-      'https://gitlab.com/api/v4/events?per_page=50&sort=desc',
+      'https://gitlab.com/api/v4/events?per_page=100&sort=desc',
       { Authorization: `Bearer ${token}` }
     );
     const posts = (Array.isArray(data) ? data : [])
@@ -4904,7 +4904,7 @@ async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
   if (cached) return cached;
   try {
     const data = await fetchJSON(
-      'https://api.dribbble.com/v2/user/shots?per_page=50',
+      'https://api.dribbble.com/v2/user/shots?per_page=100',
       { Authorization: `Bearer ${token}` }
     );
     const posts = (Array.isArray(data) ? data : [])
@@ -4953,7 +4953,7 @@ async function fetchTwitchFollowedStreams(token, { bust = false } = {}) {
     const userId = me?.data?.[0]?.id;
     if (!userId) return [];
     const data = await fetchJSON(
-      `https://api.twitch.tv/helix/streams/followed?user_id=${userId}&first=50`,
+      `https://api.twitch.tv/helix/streams/followed?user_id=${userId}&first=100`,
       headers
     );
     const posts = (Array.isArray(data?.data) ? data.data : [])
@@ -4997,7 +4997,7 @@ async function fetchThreadsOwnPosts(token, { bust = false } = {}) {
   try {
     const fields = 'id,text,permalink,timestamp,media_type,media_url,thumbnail_url,username';
     const data = await fetchJSON(
-      `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=50&access_token=${encodeURIComponent(token)}`
+      `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=100&access_token=${encodeURIComponent(token)}`
     );
     const posts = (Array.isArray(data?.data) ? data.data : [])
       .filter(t => t?.id)
@@ -5504,7 +5504,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
   if (cached) return cached;
 
   try {
-    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=30`;
+    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100`;
     const result = await atprotoGet(url, { accessToken: session.accessToken });
     if (result?.status >= 400) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
     const feed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
@@ -14454,14 +14454,29 @@ async function handleFeedRequest(req, res) {
     const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
-    const { posts: allFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
-    const pageRows = allFollowing.slice(offset, offset + feedLimit);
+    const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
+    // Equalized by source (round-robin — same buildEqualizedFeedPool the
+    // shared aggregate pool uses, see its own comment) so one especially
+    // chatty connected platform (e.g. a big Reddit home feed) doesn't
+    // crowd out a quieter one (e.g. a handful of GitHub events) the way a
+    // flat interleave-by-author order alone doesn't guarantee. Then the
+    // same filterUnseen + sliceCircular wraparound every other feed
+    // surface already uses (seenIds computed once, above), so a genuinely
+    // small connected-account pool doesn't hard dead-end scroll the moment
+    // it's exhausted — it reshuffles and keeps going instead, same "never
+    // truly dead-end" philosophy as the main Feed's own paging. Confirmed
+    // live as the Following feed's actual complaint: hasMore going flat
+    // false the instant a thin pool ran out, not a genuine content shortage.
+    const equalized = buildEqualizedFeedPool(rawFollowing, rawFollowing.length);
+    const rotated = filterUnseen(equalized, seenIds);
+    const pageRows = sliceCircular(rotated, offset, feedLimit);
+    markPostsSeen(req.user.id, pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'following',
-      hasMore: allFollowing.length > offset + feedLimit,
-      totalAvailable: allFollowing.length,
+      hasMore: rotated.length > 0,
+      totalAvailable: rotated.length,
       followingCount: followingIds.size,
       sourceErrors,
     });
@@ -15631,13 +15646,23 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1', surface: 'videos' });
     const videos = all.filter(isPlayableVideoPost);
     const offset = (reqPage - 1) * feedLimit;
-    const pageRows = videos.slice(offset, offset + feedLimit);
+    // Same fix as handleFeedRequest's feedMode==='following' branch, applied
+    // after the video-only filter above (equalizing the full mixed pool
+    // first would waste round-robin fairness on posts that get dropped
+    // here anyway) — round-robin by source so one connected platform with a
+    // lot of video content doesn't crowd out a thinner one, then wraparound
+    // instead of hard-stopping once a small connected pool runs out.
+    const equalized = buildEqualizedFeedPool(videos, videos.length);
+    const seenIds = await getUserSeenSet(req.user.id, 'videos');
+    const rotated = filterUnseen(equalized, seenIds);
+    const pageRows = sliceCircular(rotated, offset, feedLimit);
+    markPostsSeen(req.user.id, pageRows, 'videos');
     res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'following',
-      hasMore: videos.length > offset + feedLimit,
-      totalAvailable: videos.length,
+      hasMore: rotated.length > 0,
+      totalAvailable: rotated.length,
       followingCount: followingIds.size,
       sourceErrors,
     });
