@@ -17926,9 +17926,10 @@ app.get('/office/versions', requireOfficeToken, (req, res) => {
   res.json({
     backend: { version: pkg.version, name: pkg.name, node: process.version },
     services: [
-      { name: 'Backend API',  slug: 'api',    url: 'https://uficonnect-api-708r.onrender.com', domain: 'uficonnect-api-708r.onrender.com' },
-      { name: 'Web Frontend', slug: 'web',    url: 'https://uficonnect.org',              domain: 'uficonnect.org' },
-      { name: 'Office',       slug: 'office', url: 'https://office.uficonnect.org',        domain: 'office.uficonnect.org' },
+      { name: 'Backend API',  slug: 'api',      url: 'https://uficonnect-api-708r.onrender.com',      domain: 'uficonnect-api-708r.onrender.com' },
+      { name: 'Pipeline',     slug: 'pipeline', url: 'https://uficonnect-pipeline-708r.onrender.com', domain: 'uficonnect-pipeline-708r.onrender.com' },
+      { name: 'Web Frontend', slug: 'web',      url: 'https://uficonnect.org',                        domain: 'uficonnect.org' },
+      { name: 'Office',       slug: 'office',   url: 'https://office.uficonnect.org',                 domain: 'office.uficonnect.org' },
     ],
   });
 });

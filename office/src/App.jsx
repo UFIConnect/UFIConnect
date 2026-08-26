@@ -937,7 +937,17 @@ function AnalyticsView() {
 
 // ─── Versions view ────────────────────────────────────────────────────────────
 
-function VersionsView({ versions }) {
+function VersionsView({ versions, status, pipelineStatus }) {
+  // Real reachability for the two services we actually have live status
+  // for — was a hardcoded <Dot ok pulse /> on every row regardless of
+  // actual health before this, which is exactly the kind of thing that let
+  // pipeline sit stale for 8+ days with nothing here ever flagging it. web/
+  // office are static hosting with no equivalent /office/status signal
+  // wired up, so they stay unlabeled rather than faking a green dot for them too.
+  const HEALTH = {
+    api:      { known: true,  ok: !!status?.server,         uptime: status?.server?.uptime },
+    pipeline: { known: true,  ok: !!pipelineStatus?.server,  uptime: pipelineStatus?.server?.uptime },
+  };
   const repos = [
     {
       name: 'UFconnect Monorepo',
@@ -975,12 +985,19 @@ function VersionsView({ versions }) {
 
           <Label color="#475569">Live Services</Label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '12px 0 28px', maxWidth: 680 }}>
-            {versions.services.map(svc => (
+            {versions.services.map(svc => {
+              const h = HEALTH[svc.slug];
+              return (
               <Card key={svc.slug} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px' }}>
-                <Dot ok pulse />
+                {h?.known ? <Dot ok={h.ok} pulse={h.ok} /> : <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#334155', flexShrink: 0 }} />}
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{svc.name}</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>{svc.domain}</div>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 1 }}>
+                    {svc.domain}
+                    {h?.known && (h.ok
+                      ? ` · up ${formatUptime(h.uptime)}`
+                      : ' · unreachable')}
+                  </div>
                 </div>
                 <a
                   href={svc.url}
@@ -995,7 +1012,8 @@ function VersionsView({ versions }) {
                   Open ↗
                 </a>
               </Card>
-            ))}
+              );
+            })}
           </div>
         </>
       ) : (
@@ -1266,7 +1284,7 @@ function SortHelperPanel({ status, triggerAgent, triggering }) {
   );
 }
 
-function TransferHelperPanel({ status, triggerAgent, triggering }) {
+function RefetchHelperPanel({ status, triggerAgent, triggering }) {
   const q = status?.refreshQueue;
   const running = !!q?.running;
   const pct = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
@@ -1290,14 +1308,16 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
   return (
     <Card>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-        <Label color="#38bdf8">Transfer Helper</Label>
+        <Label color="#38bdf8">Refetch Helper</Label>
         <Btn size="sm" onClick={() => triggerAgent('feed')} disabled={triggering.feed || running}>
-          {running ? 'Transferring...' : '⇪ Transfer content to website'}
+          {running ? 'Refetching...' : '⇪ Refetch all sources now'}
         </Btn>
       </div>
       <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 16px' }}>
         Queues every source worker to refetch, then drains the queue 4 at a time in parallel (paced — this is
         the same mechanism a full refresh always used, just now with visible progress instead of firing blind).
+        Runs on the pipeline service — separate from the Staging → Cache transfer that promotes what gets fetched
+        here into the table users actually read from (see Pipeline).
       </p>
 
       <div style={{
@@ -1344,10 +1364,10 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
           </>
         ) : (
           <div style={{ fontSize: 12, color: '#64748b' }}>
-            Idle — {q?.lastFinished ? `last transfer finished ${fmtAgo(q.lastFinished)}` : 'no transfer run yet'}
+            Idle — {q?.lastFinished ? `last refetch finished ${fmtAgo(q.lastFinished)}` : 'no refetch run yet'}
             {q?.lastReason ? ` (${q.lastReason})` : ''}
             <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>
-              {(q?.processedLastHour ?? 0).toLocaleString()} sources transferred in the last hour
+              {(q?.processedLastHour ?? 0).toLocaleString()} sources refetched in the last hour
               {q?.dbPostCount != null ? ` · ${q.dbPostCount.toLocaleString()} posts in DB` : ''}
             </div>
           </div>
@@ -1355,7 +1375,7 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
       </div>
 
       <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 14, marginBottom: outage?.active ? 14 : 0 }}>
-        <Label color="#60a5fa">Transfer to a specific filter</Label>
+        <Label color="#60a5fa">Refetch a specific source</Label>
         <p style={{ fontSize: 12, color: '#64748b', margin: '4px 0 10px' }}>
           Pushes one platform straight to its own filter tab on the site (e.g. the GitHub tab) —
           it's fetched and saved directly, not routed through the mixed/True Mix pool the way "All"
@@ -1380,12 +1400,12 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
             onClick={() => targetSource && triggerAgent(targetSource)}
             disabled={!targetSource || targetBusy}
           >
-            {targetBusy ? 'Transferring...' : '⇪ Transfer to filter'}
+            {targetBusy ? 'Refetching...' : '⇪ Refetch source'}
           </Btn>
         </div>
         {targetWorker && (
           <div style={{ fontSize: 11, color: '#475569', marginTop: 8 }}>
-            {targetWorker.lastSuccess ? `Last transferred ${fmtAgo(targetWorker.lastSuccess)}` : 'Never transferred yet'}
+            {targetWorker.lastSuccess ? `Last refetched ${fmtAgo(targetWorker.lastSuccess)}` : 'Never refetched yet'}
             {' · '}{(targetWorker.postCount || 0).toLocaleString()} posts seen
           </div>
         )}
@@ -1402,13 +1422,18 @@ function TransferHelperPanel({ status, triggerAgent, triggering }) {
   );
 }
 
-function FeedManagerView({ status, triggerAgent, triggering }) {
+// Sorting/composition/refetch-queue state all lives in globalFeedCache/
+// workerHealth, which only the pipeline role's continuous workers ever
+// populate (same reason SourcesView reads pipelineStatus, not status) — this
+// view used to be fed api's status, which meant Sort Helper and Refetch
+// Helper below always rendered empty/idle on the api role, i.e. always.
+function FeedManagerView({ pipelineStatus, triggerAgent, triggering }) {
   return (
     <>
       <h1 style={H1}>Feed Manager</h1>
       <p style={SUBTITLE}>Manage how the shared feed is sorted and how content moves from the office's source workers to the live site.</p>
-      <SortHelperPanel status={status} triggerAgent={triggerAgent} triggering={triggering} />
-      <TransferHelperPanel status={status} triggerAgent={triggerAgent} triggering={triggering} />
+      <SortHelperPanel status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />
+      <RefetchHelperPanel status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />
     </>
   );
 }
@@ -1422,6 +1447,22 @@ const PIPELINE_STATUS_DOT = {
   starting: '#64748b', healthy: '#22c55e', fallback: '#38bdf8', ready: '#22c55e',
   degraded: '#f59e0b', paused: '#ef4444', pro: '#f59e0b', gated: '#64748b',
 };
+
+// Every stage in this view reads from one of two services' status objects
+// (see the view's own top comment) — this makes which one explicit right on
+// the stage itself instead of requiring a read of the source to know.
+function SvcTag({ svc }) {
+  const color = svc === 'pipeline' ? '#60a5fa' : '#f472b6';
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px',
+      color, background: `${color}18`, border: `1px solid ${color}40`,
+      borderRadius: 4, padding: '1px 5px', marginLeft: 6,
+    }}>
+      {svc}
+    </span>
+  );
+}
 
 function FlowConnector({ colors, fast }) {
   const dur = fast ? 1.1 : 2.6;
@@ -1525,7 +1566,7 @@ function PipelineView({ status, pipelineStatus }) {
           {/* Stage 1 — Sources */}
           <PipelineNode style={{ flex: '1 1 360px', minWidth: 320 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <Label color="#60a5fa">Sources</Label>
+              <div><Label color="#60a5fa">Sources</Label><SvcTag svc="pipeline" /></div>
               <span style={{ fontSize: 11, color: '#64748b' }}>{healthyCount}/{workers.length} live</span>
             </div>
             {workers.length === 0 ? (
@@ -1571,7 +1612,7 @@ function PipelineView({ status, pipelineStatus }) {
               reorders, same as every other diversity mechanism in this
               pipeline. */}
           <PipelineNode glow="#38bdf8" style={{ flex: '0 0 210px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#38bdf8">Equalizer</Label>
+            <div><Label color="#38bdf8">Equalizer</Label><SvcTag svc="pipeline" /></div>
             <div style={{
               width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(56,189,248,.28), rgba(56,189,248,.03))',
@@ -1596,7 +1637,7 @@ function PipelineView({ status, pipelineStatus }) {
               duplicate (already broadcast by this or another source, within
               the rolling seenPostIds window). */}
           <PipelineNode glow="#fbbf24" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#fbbf24">Filter</Label>
+            <div><Label color="#fbbf24">Filter</Label><SvcTag svc="pipeline" /></div>
             <div style={{
               width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(251,191,36,.28), rgba(251,191,36,.03))',
@@ -1617,7 +1658,7 @@ function PipelineView({ status, pipelineStatus }) {
 
           {/* Stage 3 — Sort & Rank */}
           <PipelineNode glow="#a78bfa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#a78bfa">Sort &amp; Rank</Label>
+            <div><Label color="#a78bfa">Sort &amp; Rank</Label><SvcTag svc="pipeline" /></div>
             <div style={{
               width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(167,139,250,.28), rgba(167,139,250,.03))',
@@ -1646,16 +1687,17 @@ function PipelineView({ status, pipelineStatus }) {
               avoid colliding with the actual Staging → Cache transfer added
               right after it, a genuinely different mechanism: this one
               nudges a stale external source to fetch again, pipeline-side
-              only now). The ring still genuinely reflects the current batch
-              (batches are mostly small self-healing refills now, not one
-              sustained sweep — see AUTO_TRANSFER_INTERVAL_MS's own comment
-              server-side), so it's honest for it to sit at 0% right as a
-              fresh tiny batch starts. What it doesn't do on its own is
-              convey that anything's actually happening overall — a rolling
-              count underneath does that regardless of whether a batch
-              happens to be running at this exact instant. */}
+              only now). Event-driven, not on a fixed interval like Staging →
+              Cache — items get queued whenever a source is flagged stale (or
+              a manual trigger), then TRANSFER_WORKER_COUNT (4) parallel
+              workers drain it continuously. The ring reflects the current
+              batch, so it's honest for it to sit at 0% right as a fresh
+              small batch starts. What it doesn't do on its own is convey
+              that anything's actually happening overall — a rolling count
+              underneath does that regardless of whether a batch happens to
+              be running at this exact instant. */}
           <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#38bdf8">Refetch Queue</Label>
+            <div><Label color="#38bdf8">Refetch Queue</Label><SvcTag svc="pipeline" /></div>
             <div style={{ margin: '14px 0' }}>
               <TransferRing pct={pct} active={running} />
             </div>
@@ -1681,7 +1723,7 @@ function PipelineView({ status, pipelineStatus }) {
               pipeline — see staging above (status.staging, not
               pipelineStatus). */}
           <PipelineNode glow="#00d4aa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#00d4aa">Staging → Cache</Label>
+            <div><Label color="#00d4aa">Staging → Cache</Label><SvcTag svc="api" /></div>
             <div style={{
               width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(0,212,170,.28), rgba(0,212,170,.03))',
@@ -1708,7 +1750,7 @@ function PipelineView({ status, pipelineStatus }) {
               Sort & Rank's own node already uses for its own per-request
               calls — not a global aggregate. */}
           <PipelineNode glow="#f472b6" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
-            <Label color="#f472b6">Topic Filter</Label>
+            <div><Label color="#f472b6">Topic Filter</Label><SvcTag svc="api" /></div>
             <div style={{
               width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(244,114,182,.28), rgba(244,114,182,.03))',
@@ -2068,17 +2110,19 @@ function TransferDetailCard({ q, workers = [] }) {
 
 // The mechanism that actually moves content to where users can see it
 // post-split (see SERVICE_ROLE/transferStagedPosts server-side) — pulls
-// whatever the pipeline role has staged into feed_posts_cache every 15min.
-// Runs on the api role only; staging (the object this reads) comes from
-// that role's own /office/status response.
+// whatever the pipeline role has staged into feed_posts_cache every minute,
+// draining in a loop (up to 20 batches of 5000 rows per tick) rather than
+// one fixed batch, so a backlog catches up instead of trickling out for
+// hours. Runs on the api role only; staging (the object this reads) comes
+// from that role's own /office/status response.
 function StagingTransferDetailCard({ staging }) {
   return (
     <Card>
       <Label color="#38bdf8">Staging → Cache — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Every 15 minutes, copies whatever the pipeline service has fetched since the last run out of
-        feed_posts_staging and into feed_posts_cache — the table every real user's feed is actually served from.
-        Runs on the api role, not pipeline.
+        Every minute, copies whatever the pipeline service has fetched since the last run out of
+        feed_posts_staging and into feed_posts_cache — the table every real user's feed is actually served from —
+        looping through up to 100k rows per tick if there's a backlog. Runs on the api role, not pipeline.
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="pending in staging" value={staging?.pendingCount != null ? staging.pendingCount.toLocaleString() : '—'} color="#38bdf8" />
@@ -2796,11 +2840,14 @@ export default function App() {
           {view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} />}
           {view === 'topics'   && <TopicsView />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
-          {view === 'feed'     && <FeedManagerView status={status} triggerAgent={triggerAgent} triggering={triggering} />}
+          {/* Sort/refetch-queue state is pipeline-only real data (see
+              FeedManagerView's own top-of-function comment) — same reason
+              SourcesView reads pipelineStatus, not status. */}
+          {view === 'feed'     && <FeedManagerView pipelineStatus={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'analytics'&& <AnalyticsView />}
           {view === 'deploy'   && <DeployView triggerDeploy={triggerDeploy} deploying={deploying} log={log} />}
           {view === 'autofix'  && <AutofixView />}
-          {view === 'versions' && <VersionsView versions={versions} />}
+          {view === 'versions' && <VersionsView versions={versions} status={status} pipelineStatus={pipelineStatus} />}
         </main>
       </div>
     </>
