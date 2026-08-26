@@ -6,6 +6,7 @@ import client from '../api/client';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useToast } from '../contexts/ToastContext';
 import EmojiPicker from '../components/EmojiPicker';
+import PhotoPickerButton from '../components/PhotoPickerButton';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -56,7 +57,6 @@ export default function Post() {
   const [uploading,     setUploading]     = useState(false);
   const [uploadProgress,setUploadProgress]= useState(0);
   const [mediaError,    setMediaError]    = useState('');
-  const fileInputRef = useRef(null);
 
   const placeholder = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
@@ -122,11 +122,9 @@ export default function Post() {
     setUploading(false);
     setUploadProgress(0);
     setMediaError('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
-  async function handleFileSelect(e) {
-    const file = e.target.files?.[0];
+  async function handleFileSelect(file) {
     if (!file) return;
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
       setMediaError('Only photos and videos are supported.');
@@ -293,22 +291,13 @@ export default function Post() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input
-                  ref={fileInputRef}
-                  type="file"
+                <PhotoPickerButton
+                  onFileSelected={handleFileSelect}
                   accept="image/*,video/*"
-                  onChange={handleFileSelect}
-                  style={{ display: 'none' }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => fileInputRef.current?.click()}
                   disabled={!!mediaFile}
-                  title="Add a photo or video"
-                >
-                  📷 Photo/Video
-                </button>
+                  className="btn btn-ghost btn-sm"
+                  label="📷 Photo/Video"
+                />
                 <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
                 <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
                   {content.length} / 2000

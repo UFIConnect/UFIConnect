@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
 import PostList from '../components/PostList';
+import PhotoPickerButton from '../components/PhotoPickerButton';
 import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { uploadMedia } from '../api/upload';
@@ -304,17 +305,17 @@ export default function Profile() {
           ...(profile.coverUrl ? { backgroundImage: `url(${profile.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}),
         }}
       >
-        <label style={{
-          position: 'absolute', right: 10, bottom: 10, cursor: uploadingCover ? 'default' : 'pointer',
-          display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20,
-          background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: '.72rem', fontWeight: 700,
-          backdropFilter: 'blur(4px)',
-        }}>
-          {uploadingCover ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
-          {uploadingCover ? 'Uploading…' : 'Change cover'}
-          <input type="file" accept="image/*" style={{ display: 'none' }} disabled={uploadingCover}
-            onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleCoverUpload(file); }} />
-        </label>
+        <PhotoPickerButton
+          onFileSelected={handleCoverUpload}
+          disabled={uploadingCover}
+          label={<>{uploadingCover ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'} {uploadingCover ? 'Uploading…' : 'Change cover'}</>}
+          style={{
+            position: 'absolute', right: 10, bottom: 10, cursor: uploadingCover ? 'default' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20,
+            background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: '.72rem', fontWeight: 700,
+            backdropFilter: 'blur(4px)', border: 'none',
+          }}
+        />
       </div>
 
       {/* Header card */}
@@ -325,16 +326,17 @@ export default function Profile() {
           ) : (
             <div className="avatar avatar-xl">{initials(profile.name)}</div>
           )}
-          <label style={{
-            position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingAvatar ? 'default' : 'pointer',
-            background: 'var(--primary)', color: '#fff', fontSize: '.75rem',
-            border: '2px solid var(--card)',
-          }} title="Change photo">
-            {uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
-            <input type="file" accept="image/*" style={{ display: 'none' }} disabled={uploadingAvatar}
-              onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleAvatarUpload(file); }} />
-          </label>
+          <PhotoPickerButton
+            onFileSelected={handleAvatarUpload}
+            disabled={uploadingAvatar}
+            label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
+            style={{
+              position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingAvatar ? 'default' : 'pointer',
+              background: 'var(--primary)', color: '#fff', fontSize: '.75rem',
+              border: '2px solid var(--card)',
+            }}
+          />
         </div>
         <div className="profile-name">{profile.name}</div>
         <div className="profile-title">{profile.title || 'UFconnect Member'}</div>
