@@ -11,6 +11,8 @@ import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
 import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
+import ReportModal from '../components/ReportModal';
+import { useToast } from '../contexts/ToastContext';
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -890,6 +892,11 @@ function commentUrl(post) {
 
 const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
   const { profile } = useAuth();
+  const { showToast } = useToast();
+  const [moreOpen,   setMoreOpen]   = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const moreBtnRef  = useRef(null);
+  const moreMenuRef = useRef(null);
   const [showComments,    setShowComments]    = useState(false);
   const [comments,        setComments]        = useState(null);
   const [commentsLive,    setCommentsLive]    = useState(false);
@@ -917,6 +924,22 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       reportEngagementSignal({ postId: post?.id, source: post?.source, topic: post?.topic, commentsViewMs: Date.now() - commentsOpenedAtRef.current });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close the "more options" menu on an outside click (same pattern as
+  // PublicProfile's). Listener is only attached while open — PostCard is
+  // repeated for every post on screen, so a permanently-mounted document
+  // listener per card would add up.
+  useEffect(() => {
+    if (!moreOpen) return;
+    function handleClick(e) {
+      if (
+        moreMenuRef.current && !moreMenuRef.current.contains(e.target) &&
+        moreBtnRef.current && !moreBtnRef.current.contains(e.target)
+      ) setMoreOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [moreOpen]);
 
   if (!post || typeof post !== 'object') return null;
 
@@ -1025,7 +1048,53 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
           {timeAgo(post.createdAt)}
         </Link>
+        <div style={{ position: 'relative' }}>
+          <button
+            ref={moreBtnRef}
+            onClick={() => setMoreOpen(o => !o)}
+            aria-label="More options"
+            aria-expanded={moreOpen}
+            style={{ all: 'unset', cursor: 'pointer', padding: '2px 4px', fontSize: '.9rem', fontWeight: 700, color: 'var(--muted)', lineHeight: 1 }}
+          >
+            •••
+          </button>
+          {moreOpen && (
+            <div
+              ref={moreMenuRef}
+              role="menu"
+              style={{
+                position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 20,
+                minWidth: 160, background: 'var(--card)', border: '1px solid var(--border)',
+                borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,.12)', overflow: 'hidden',
+                textAlign: 'left',
+              }}
+            >
+              <button
+                role="menuitem"
+                onClick={() => { setMoreOpen(false); setReportOpen(true); }}
+                style={{
+                  all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8,
+                  width: '100%', padding: '9px 12px', fontSize: '.82rem', fontWeight: 600,
+                  color: 'var(--text)', cursor: 'pointer',
+                }}
+                onMouseOver={e => e.currentTarget.style.background = 'var(--hover, rgba(0,0,0,.04))'}
+                onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+              >
+                🚩 Report post
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+      {reportOpen && (
+        <ReportModal
+          targetType="post"
+          targetId={post.id}
+          targetLabel="this post"
+          onClose={() => setReportOpen(false)}
+          onSubmitted={() => showToast('Report submitted — thank you.', 'success')}
+        />
+      )}
 
       {!isExternal && post.author?.id && (
         <Link

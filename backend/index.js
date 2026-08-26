@@ -11457,6 +11457,32 @@ async function migrateDB() {
       )
     `);
 
+    // User-submitted reports (posts, comments, or a user profile directly) —
+    // no in-memory mirror the way blocks/follows/connections get (those need
+    // fast, on-every-request lookups; reports are write-occasionally,
+    // read-rarely-by-a-human, a plain table is enough). target_type/target_id
+    // instead of separate post_id/comment_id/user_id columns so one table
+    // covers all three without three mostly-null columns per row. reason is
+    // a short fixed category (see REPORT_REASONS below); details is the
+    // reporter's own free text. status starts 'open' — GET/PATCH
+    // /office/reports is how a human actually reviews and closes these.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS reports (
+        id          TEXT PRIMARY KEY,
+        reporter_id TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id   TEXT NOT NULL,
+        reason      TEXT NOT NULL,
+        details     TEXT,
+        status      TEXT NOT NULL DEFAULT 'open',
+        created_at  TIMESTAMPTZ DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ,
+        resolved_by TEXT
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS reports_status_idx  ON reports(status, created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS reports_reason_idx  ON reports(reason)`);
+
     // Profile attachments (resumes, etc.) — the file itself lives here as
     // bytea rather than in Cloudinary: these are small (capped well under
     // Postgres's per-row limits) and storing them directly means the ATS
@@ -12930,6 +12956,43 @@ app.post('/analytics/pageview', async (req, res) => {
     // Never let analytics logging fail a real user's page load.
     res.status(204).end();
   }
+});
+
+// ─── Reports admin (office dashboard) ──────────────────────────────────────
+// The other half of what makes "users can report child safety concerns
+// in-app" a real, working claim rather than a form that submits into a
+// black hole — status defaults to 'open' at creation (see POST /reports);
+// this is where a human actually sees and closes them out.
+app.get('/office/reports', requireOfficeToken, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.json({ reports: [] });
+    const status = ['open', 'resolved'].includes(req.query.status) ? req.query.status : null;
+    const { rows } = await db.query(
+      `SELECT * FROM reports ${status ? 'WHERE status = $1' : ''} ORDER BY created_at DESC LIMIT 200`,
+      status ? [status] : []
+    );
+    res.json({
+      reports: rows.map(r => ({
+        id: r.id, reporterId: r.reporter_id, targetType: r.target_type, targetId: r.target_id,
+        reason: r.reason, details: r.details, status: r.status,
+        createdAt: r.created_at, resolvedAt: r.resolved_at, resolvedBy: r.resolved_by,
+      })),
+      openCount: rows.filter(r => r.status === 'open').length,
+    });
+  } catch (e) { console.error('GET /office/reports:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+app.patch('/office/reports/:id', requireOfficeToken, async (req, res) => {
+  try {
+    if (!db.isConnected()) return res.status(503).json({ message: 'Not available right now.' });
+    const status = req.body?.status === 'resolved' ? 'resolved' : 'open';
+    await db.query(
+      `UPDATE reports SET status = $2, resolved_at = CASE WHEN $2 = 'resolved' THEN NOW() ELSE NULL END,
+         resolved_by = CASE WHEN $2 = 'resolved' THEN $3 ELSE NULL END
+       WHERE id = $1`,
+      [req.params.id, status, req.get('x-office-token') ? 'office' : null]
+    );
+    res.json({ ok: true, status });
+  } catch (e) { console.error('PATCH /office/reports/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
@@ -18826,6 +18889,67 @@ app.get('/users/blocked', authenticate, async (req, res) => {
     const blockedUsers = (await Promise.all(blockedIds.map(id => getUser(id)))).filter(Boolean);
     res.json({ users: blockedUsers.map(sanitizeUser) });
   } catch (e) { console.error('GET /users/blocked:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
+
+// ─── Reports (posts, comments, or a user directly) ────────────────────────────
+// child_safety is its own category, not folded into "other" or "harassment"
+// — Play Store's child-safety policy specifically expects a real, working
+// in-app path for exactly this, and it's the one category that gets an
+// immediate email alert below rather than waiting to be noticed in the
+// office dashboard.
+const REPORT_REASONS = ['child_safety', 'harassment', 'spam', 'inappropriate', 'impersonation', 'other'];
+const REPORT_TARGET_TYPES = ['post', 'comment', 'user'];
+
+async function sendChildSafetyAlertEmail(report) {
+  const transport = getMailTransport();
+  const to = process.env.SAFETY_ALERT_EMAIL || 'support@uficonnect.org';
+  const body = `A child-safety report was just submitted on UFconnect.
+
+Target: ${report.targetType} ${report.targetId}
+Reporter: ${report.reporterId}
+Details: ${report.details || '(none provided)'}
+Report id: ${report.id}
+
+Review it in the office dashboard under Reports.`;
+  if (!transport) {
+    console.warn(`[email] SMTP not configured — child-safety report alert would have gone to ${to}:\n${body}`);
+    return;
+  }
+  try {
+    await transport.sendMail({
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+      to,
+      subject: '⚠️ UFconnect child-safety report submitted',
+      text: body,
+    });
+  } catch (e) { console.error('[email] child-safety alert failed:', e.message); }
+}
+
+app.post('/reports', authenticate, async (req, res) => {
+  try {
+    const { targetType, targetId, reason, details } = req.body || {};
+    if (!REPORT_TARGET_TYPES.includes(targetType)) return res.status(400).json({ message: 'Invalid target type.' });
+    if (!targetId || typeof targetId !== 'string') return res.status(400).json({ message: 'Missing target.' });
+    if (!REPORT_REASONS.includes(reason)) return res.status(400).json({ message: 'Invalid reason.' });
+    // Same reasoning as blocking above: a report that "succeeds" but isn't
+    // durable is worse than an honest failure, especially for child-safety
+    // reports specifically — never silently drop one.
+    if (!db.isConnected()) {
+      return res.status(503).json({ message: 'Reporting is temporarily unavailable — please try again in a moment.' });
+    }
+    const report = {
+      id: `report_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      reporterId: req.user.id,
+      targetType, targetId, reason,
+      details: typeof details === 'string' ? details.slice(0, 1000) : null,
+    };
+    await db.query(
+      `INSERT INTO reports (id, reporter_id, target_type, target_id, reason, details) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [report.id, report.reporterId, report.targetType, report.targetId, report.reason, report.details]
+    );
+    if (reason === 'child_safety') sendChildSafetyAlertEmail(report).catch(() => {});
+    res.json({ ok: true });
+  } catch (e) { console.error('POST /reports:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
 // ─── Notifications: pending connection requests + new followers ───────────────

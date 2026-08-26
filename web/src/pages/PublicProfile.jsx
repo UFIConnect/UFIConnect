@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
 import PostList from '../components/PostList';
+import ReportModal from '../components/ReportModal';
 import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 
@@ -87,6 +88,7 @@ export default function PublicProfile() {
   const [postsHasMore, setPostsHasMore] = useState(false);
   const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const moreBtnRef  = useRef(null);
   const moreMenuRef = useRef(null);
 
@@ -400,6 +402,19 @@ export default function PublicProfile() {
                 >
                   <button
                     role="menuitem"
+                    onClick={() => { setMoreOpen(false); setReportOpen(true); }}
+                    style={{
+                      all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8,
+                      width: '100%', padding: '10px 14px', fontSize: '.85rem', fontWeight: 600,
+                      color: 'var(--text)', cursor: 'pointer',
+                    }}
+                    onMouseOver={e => e.currentTarget.style.background = 'var(--hover, rgba(0,0,0,.04))'}
+                    onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    🚩 Report {user.name}
+                  </button>
+                  <button
+                    role="menuitem"
                     onClick={handleBlock}
                     disabled={blocking}
                     style={{
@@ -416,6 +431,15 @@ export default function PublicProfile() {
               )}
             </div>
           </div>
+        )}
+        {reportOpen && (
+          <ReportModal
+            targetType="user"
+            targetId={user.id}
+            targetLabel={user.name}
+            onClose={() => setReportOpen(false)}
+            onSubmitted={() => showToast('Report submitted — thank you.', 'success')}
+          />
         )}
         {isOwn && (
           <div className="profile-actions" style={{ marginTop: 14 }}>
