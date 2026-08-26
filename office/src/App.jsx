@@ -528,6 +528,15 @@ function DeployView({ triggerDeploy, deploying, log }) {
       icon: '🏢',
       hook: 'RENDER_HOOK_OFFICE',
     },
+    {
+      slug: 'pipeline',
+      name: 'Pipeline',
+      desc: 'Same codebase as Backend API (SERVICE_ROLE=pipeline) — does all external-source fetching',
+      url: 'https://uficonnect-pipeline-708r.onrender.com',
+      health: 'https://uficonnect-pipeline-708r.onrender.com/health',
+      icon: '📦',
+      hook: 'RENDER_HOOK_PIPELINE',
+    },
   ];
 
   const deployLogs = log.filter(e => e.agentId === 'deploy').slice(0, 8);
@@ -574,7 +583,9 @@ function DeployView({ triggerDeploy, deploying, log }) {
           <br />
           For the <em>Deploy Now</em> buttons to work, add deploy hooks or Render API credentials to the backend env vars:
           <br />
-          <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code>
+          <code style={CODE}>RENDER_HOOK_API</code> · <code style={CODE}>RENDER_HOOK_WEB</code> · <code style={CODE}>RENDER_HOOK_OFFICE</code> · <code style={CODE}>RENDER_HOOK_PIPELINE</code>
+          <br />
+          Pipeline hasn't been redeploying automatically — it's worth confirming <em>Auto-Deploy</em> is actually turned on for it in Render's dashboard (Settings → Build & Deploy), not just relying on the hook here.
           <br />
           Find your deploy hooks under each service → <em>Settings → Deploy Hook</em> in the Render dashboard.
         </div>

@@ -68,6 +68,13 @@ services:
         sync: false
       - key: RENDER_HOOK_OFFICE
         sync: false
+      # uficonnect-pipeline had no deploy hook wired up at all until now —
+      # it went 8+ days without picking up new commits because nothing in
+      # the Office Deploy Center (or Render's own auto-deploy) was actually
+      # redeploying it. Find this under uficonnect-pipeline's own
+      # Settings → Deploy Hook in the Render dashboard.
+      - key: RENDER_HOOK_PIPELINE
+        sync: false
       - key: RENDER_API_KEY
         sync: false
       - key: RENDER_SERVICE_API_ID
@@ -75,6 +82,8 @@ services:
       - key: RENDER_SERVICE_WEB_ID
         sync: false
       - key: RENDER_SERVICE_OFFICE_ID
+        sync: false
+      - key: RENDER_SERVICE_PIPELINE_ID
         sync: false
       # Shared secret gating /office/* (status, manual refresh triggers, and
       # the deploy trigger). Until this is set the API accepts unauthenticated
@@ -388,11 +397,12 @@ services:
         value: https://uficonnect-api-708r.onrender.com
       # uficonnect-pipeline's own URL — Live Sources/Pipeline/Topics/agent
       # cards for source-fetchers point here now instead, since that's the
-      # service actually doing the fetching post-split. Update this to the
-      # real Render-assigned URL once uficonnect-pipeline is created (Render
-      # generates it; not knowable ahead of the first deploy the way the
-      # long-lived api/web/office URLs already are).
+      # service actually doing the fetching post-split. Not secret (it's the
+      # same public health-check URL, just not user-facing), so it's baked
+      # in directly rather than sync:false — this was left unset before,
+      # which meant the dashboard had been silently showing the api
+      # service's own (empty, post-split) data for every "pipeline" view.
       - key: VITE_PIPELINE_API_URL
-        sync: false
+        value: https://uficonnect-pipeline-708r.onrender.com
       - key: NODE_OPTIONS
         value: --max-old-space-size=6144

@@ -17716,7 +17716,17 @@ async function transferStagedPosts() {
   }
 }
 
-const AUTO_TRANSFER_INTERVAL_MS = 15 * 60 * 1000;
+// Was 15 min — that made sense as "re-sort + bulk-upsert" cadence pre-split,
+// but post-split this interval is the ONLY path fetched content takes to
+// reach feed_posts_cache at all (see transferStagedPosts's own comment).
+// Individual source fetchers cycle every 15-60s (see AGENT_DEFS' cadence),
+// so batching their output behind a 15-minute gate turned what used to be
+// near-continuous delivery into content arriving in occasional large
+// pulses — confirmed as a real regression from "same rate as before",
+// not just theoretical. A bounded query (LIMIT 5000 in transferStagedPosts)
+// run once a minute is trivial DB load next to the ~30 fetchers already
+// running continuously on the pipeline side.
+const AUTO_TRANSFER_INTERVAL_MS = 60 * 1000;
 setInterval(() => {
   // runSortAgentCheck stays unconditional — harmless and still useful for
   // whichever role's own in-memory cache actually has content (pipeline's
@@ -17784,9 +17794,10 @@ async function triggerRenderServiceDeploy(service, hook) {
   }
 
   const serviceIds = {
-    api:    process.env.RENDER_SERVICE_API_ID,
-    web:    process.env.RENDER_SERVICE_WEB_ID,
-    office: process.env.RENDER_SERVICE_OFFICE_ID,
+    api:      process.env.RENDER_SERVICE_API_ID,
+    web:      process.env.RENDER_SERVICE_WEB_ID,
+    office:   process.env.RENDER_SERVICE_OFFICE_ID,
+    pipeline: process.env.RENDER_SERVICE_PIPELINE_ID,
   };
   const serviceId = serviceIds[service];
   if (!process.env.RENDER_API_KEY || !serviceId) return null;
@@ -17808,14 +17819,15 @@ async function triggerRenderServiceDeploy(service, hook) {
 
 app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   const service = req.params.service;
-  if (!['api', 'web', 'office'].includes(service)) {
+  if (!['api', 'web', 'office', 'pipeline'].includes(service)) {
     return res.status(404).json({ ok: false, msg: `Unknown deploy service "${service}"` });
   }
 
   const hooks = {
-    api:    process.env.RENDER_HOOK_API,
-    web:    process.env.RENDER_HOOK_WEB,
-    office: process.env.RENDER_HOOK_OFFICE,
+    api:      process.env.RENDER_HOOK_API,
+    web:      process.env.RENDER_HOOK_WEB,
+    office:   process.env.RENDER_HOOK_OFFICE,
+    pipeline: process.env.RENDER_HOOK_PIPELINE,
   };
 
   try {
