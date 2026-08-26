@@ -1697,7 +1697,6 @@ export default function VideoFeedView({ onExit }) {
   // in-browser or installed, instead of guessing one fixed number that's
   // only right for some devices.
   const topSafe = 'calc(16px + env(safe-area-inset-top, 0px))';
-  const row2Safe = 'calc(64px + env(safe-area-inset-top, 0px))';
 
   return (
     <div style={{
@@ -1727,131 +1726,122 @@ export default function VideoFeedView({ onExit }) {
         data-orientation={activeIsWideVideo ? 'landscape' : 'portrait'}
         style={{ position: 'relative', height: '100%', width: '100%' }}
       >
-      {/* Row 1 is icon buttons ONLY (back / refresh / mute) — the
-          Feed/Following toggle used to sit in this same row, centered, and
-          on real mobile widths its pill was wide enough to visually and
-          functionally overlap the refresh button's position. Both were
-          painting at the same z-index, and the toggle rendered later in the
-          DOM, so it silently won every tap meant for refresh (and
-          sometimes mute) — confirmed as exactly "can't click mute or
-          refresh." Moving the toggle to its own row below removes any way
-          for that overlap to happen again, rather than tuning positions
-          closer together and hoping. */}
-      <button onClick={onExit} aria-label="Back to Feed" style={{ position: 'absolute', top: topSafe, left: 16, ...OVERLAY_BTN_STYLE }}>
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M15 18l-6-6 6-6" />
-        </svg>
-      </button>
-      <button
-        onClick={handleRefresh}
-        disabled={refreshing}
-        aria-label="Refresh videos"
-        style={{
-          position: 'absolute', top: topSafe, right: 64, ...OVERLAY_BTN_STYLE,
-          fontSize: '1.05rem', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
-        }}
-      >
-        <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
-      </button>
-      <button
-        onClick={() => { if (!muteControllable) return; toggleMuted(); }}
-        disabled={!muteControllable}
-        aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
-        style={{
-          position: 'absolute', top: topSafe, right: 16, ...OVERLAY_BTN_STYLE, fontSize: '1.1rem',
-          opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
-        }}
-      >{muted ? '🔇' : '🔊'}</button>
-
-      {/* Row 2: Feed/Following toggle — same split and reasoning as
-          pages/Feed.jsx's view-mode tabs, styled for the dark full-bleed
-          video overlay instead of the light page chrome. Own row now (see
-          row-1 comment above), so its content-dependent width can never
-          collide with the fixed-position icon buttons above it regardless
-          of device width or which label ("Following" vs "Feed") is
-          currently longer. */}
+      {/* All controls on one row now, at the very top — was three separate
+          absolutely-positioned rows (icons, then Feed/Following, then
+          Search/Filter), split apart specifically because independently
+          absolute-positioned elements had no awareness of each other's real
+          width and could mathematically overlap on a narrow phone (the
+          Feed/Following pill covering the refresh button was the confirmed
+          case — see git history). A single flex container sidesteps that
+          class of bug entirely: every child gets its own space in normal
+          flex flow, so two elements can't occupy the same pixels regardless
+          of viewport width. Search/Filter dropped their text labels here
+          (icon + a small active-state dot instead of "Search"/"Filter · N")
+          — with every other control now sharing this same row, keeping the
+          full-width pills would overflow a real phone width; a badge reads
+          fine at a glance and the sheet itself still shows exactly what's
+          active. */}
       <div style={{
-        position: 'absolute', top: row2Safe, left: '50%', transform: 'translateX(-50%)',
-        zIndex: 10, display: 'flex', gap: 6,
-        background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-        border: '1px solid rgba(255,255,255,.18)', borderRadius: 20, padding: 3,
+        position: 'absolute', top: topSafe, left: 12, right: 12,
+        zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
       }}>
-        {[{ key: 'feed', label: 'Feed' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
-          const active = viewMode === key;
-          return (
-            <button
-              key={key}
-              onClick={() => switchViewMode(key)}
-              style={{
-                padding: '6px 14px', borderRadius: 17, border: 'none', cursor: 'pointer',
-                fontWeight: 700, fontSize: '.78rem',
-                background: active ? '#fff' : 'transparent',
-                color: active ? '#000' : '#fff',
-              }}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+        <button onClick={onExit} aria-label="Back to Feed" style={{ ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
 
-      {/* Row 3: Search + Filter — two separate buttons/sheets, each doing
-          one job, rather than one combined sheet trying to do three
-          (search/topic/platform/sort) at once. Filters used to be a
-          permanently-visible row of every publicly-aggregated source
-          (FEED_VIDEO_SOURCES, ~30 of them) floating over the video at all
-          times, which read as visual overload on top of an already-full-
-          bleed video — collapsed into buttons that open sheets instead,
-          same underlying behavior, just not permanently on-screen. */}
-      <div style={{
-        position: 'absolute', top: `calc(${row2Safe} + 46px)`, left: '50%', transform: 'translateX(-50%)',
-        zIndex: 10, display: 'flex', gap: 8,
-      }}>
+        {/* Feed/Following toggle — same split and reasoning as
+            pages/Feed.jsx's view-mode tabs, styled for the dark full-bleed
+            video overlay instead of the light page chrome. */}
+        <div style={{
+          display: 'flex', gap: 4, flexShrink: 0,
+          background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+          border: '1px solid rgba(255,255,255,.18)', borderRadius: 18, padding: 3,
+        }}>
+          {[{ key: 'feed', label: 'Feed' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
+            const active = viewMode === key;
+            return (
+              <button
+                key={key}
+                onClick={() => switchViewMode(key)}
+                style={{
+                  padding: '5px 10px', borderRadius: 15, border: 'none', cursor: 'pointer',
+                  fontWeight: 700, fontSize: '.72rem', whiteSpace: 'nowrap',
+                  background: active ? '#fff' : 'transparent',
+                  color: active ? '#000' : '#fff',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Search + Filter — two separate buttons/sheets, each doing one
+            job, rather than one combined sheet trying to do three (search/
+            topic/platform/sort) at once. Following mode uses its own,
+            separate source list (FOLLOWING_VIDEO_SOURCES) — the Filter
+            sheet switches between them based on viewMode. */}
         <button
           onClick={() => { setSearchInput(searchQuery); setSearchOpen(true); }}
           aria-label="Search videos"
           style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-            fontWeight: 700, fontSize: '.78rem',
-            border: `1px solid ${searchQuery ? '#fff' : 'rgba(255,255,255,.25)'}`,
+            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
+            border: `1px solid ${searchQuery ? '#fff' : 'rgba(255,255,255,.18)'}`,
             background: searchQuery ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
-            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-            color: '#fff',
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
-          Search
+          {searchQuery && (
+            <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
+          )}
         </button>
-        {/* Following mode uses its own, separate source list
-            (FOLLOWING_VIDEO_SOURCES) — an entirely different pool from Feed
-            mode's (see getFollowingFeedPosts server-side) — the sheet below
-            switches between them based on viewMode. No Sort section shown
-            in Following (see toggleSortMode/switchViewMode's own comments
-            on why Balanced doesn't apply there). */}
         <button
           onClick={() => setFilterOpen(true)}
           aria-label="Filter videos"
           style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '6px 14px', borderRadius: 18, cursor: 'pointer', whiteSpace: 'nowrap',
-            fontWeight: 700, fontSize: '.78rem',
-            border: `1px solid ${(sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.25)'}`,
+            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
+            border: `1px solid ${(sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.18)'}`,
             background: (sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
-            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
-            color: '#fff',
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
             <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
             <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
           </svg>
-          Filter{(sourceFilter.length + topicFilters.length + (sortMode !== 'newest' ? 1 : 0)) > 0
-            ? ` · ${sourceFilter.length + topicFilters.length + (sortMode !== 'newest' ? 1 : 0)}` : ''}
+          {(sourceFilter.length || topicFilters.length || sortMode !== 'newest') > 0 && (
+            <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
+          )}
         </button>
+
+        {/* Spacer pushes refresh/mute to the far right regardless of how
+            much room the controls above actually take up. */}
+        <div style={{ flex: 1 }} />
+
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          aria-label="Refresh videos"
+          style={{
+            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0,
+            fontSize: '.95rem', cursor: refreshing ? 'default' : 'pointer', opacity: refreshing ? 0.6 : 1,
+          }}
+        >
+          <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>⟳</span>
+        </button>
+        <button
+          onClick={() => { if (!muteControllable) return; toggleMuted(); }}
+          disabled={!muteControllable}
+          aria-label={muteControllable ? (muted ? 'Unmute' : 'Mute') : 'This video uses its own built-in volume control'}
+          style={{
+            ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, fontSize: '1rem',
+            opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
+          }}
+        >{muted ? '🔇' : '🔊'}</button>
       </div>
 
       {searchOpen && (
