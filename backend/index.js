@@ -9587,6 +9587,14 @@ async function runWebCacheSubAgent() {
 }
 
 async function runWebStorageSubAgent() {
+  // Pulls from agentSourceCache/globalFeedCache, which only the pipeline
+  // role's continuous workers ever populate — was previously left to run
+  // unconditionally everywhere and just no-op on api via empty caches, but
+  // that meant its DB write needed its own SERVICE_ROLE check to avoid
+  // writing straight to feed_posts_cache on pipeline. Simpler and more
+  // direct to just not run this at all outside the pipeline role, same as
+  // startContinuousWorkers/enqueueSourceRefresh.
+  if (!IS_PIPELINE_ROLE) return;
   const id = 'web_storage';
   if (webStorageInFlight) {
     updateWebSubAgent(id, { status: 'running', lastError: 'previous fast storage pass still running' });
@@ -9610,16 +9618,10 @@ async function runWebStorageSubAgent() {
     const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
       limit: WEB_STORAGE_BATCH_LIMIT,
     });
-    // Predates SERVICE_ROLE — on the pipeline role this used to write
-    // straight into feed_posts_cache, bypassing feed_posts_staging and the
-    // transfer job entirely (a second, ungoverned path into the table real
-    // users read from, alongside addAndBroadcast's correctly-gated one).
-    // On the api role hotPosts is always [] anyway (globalFeedCache/
-    // agentSourceCache only get populated by the continuous workers, which
-    // stay off there), so this was a live bug only on pipeline.
-    const saved = db.isConnected()
-      ? (await savePostsToDBFast(hotPosts, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache') || 0)
-      : 0;
+    // Only ever reached on the pipeline role (see the IS_PIPELINE_ROLE
+    // guard above), so this always targets staging, same as every other
+    // pipeline-side save — never feed_posts_cache directly.
+    const saved = db.isConnected() ? (await savePostsToDBFast(hotPosts, 'feed_posts_staging') || 0) : 0;
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
