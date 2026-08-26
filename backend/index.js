@@ -6735,7 +6735,31 @@ const MAIN_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
 // filtered down to nearly nothing — scrolling past page 1 looked like it
 // had hit the end. Now every page slices the same frozen pool instead of
 // re-querying, so there's no window mismatch to begin with.
-const MAIN_FEED_SNAPSHOT_POOL_SIZE = 300;
+//
+// Was 300 — confirmed live as the actual cause of "I keep seeing posts
+// I've already scrolled through," widely, with real traffic. sliceCircular
+// (used for infinite-scroll paging through this snapshot) deliberately
+// wraps around once a page number exceeds the pool's real size — see its
+// own comment — and filterUnseen's fallback re-serves the *whole* pool
+// once every post in it has been marked seen rather than dead-ending
+// scroll. Both are working as designed; the pool backing them was just far
+// too small for how much a real, actively-scrolling user gets through
+// inside one 5-minute TTL window. dbPosts (the primary supply feeding this
+// pool, via getBalancedFeedPosts at ~40/source × ~30 active sources) can
+// already return on the order of 1,000+ candidates, so raising the ceiling
+// here doesn't require a new supply source, just stops discarding most of
+// what's already being fetched.
+const MAIN_FEED_SNAPSHOT_POOL_SIZE = 1000;
+// mainFeedSnapshots is keyed per-user (userId::sortMode::timeRange) with no
+// prior eviction at all — an oversight relative to its sibling
+// filteredFeedSnapshots (see FILTERED_FEED_SNAPSHOT_MAX_KEYS), which
+// already caps itself the same way. Unlike that one, this Map's key
+// cardinality grows with total registered users, not just distinct filter
+// combinations, and nothing ever removed a stale entry for a user who
+// stopped being active — a slow, real memory leak on its own, now more
+// costly per entry given the 3x+ pool-size increase above. Bounded here
+// the same way filteredFeedSnapshots already is.
+const MAIN_FEED_SNAPSHOT_MAX_KEYS = 4000;
 const mainFeedSnapshots = new Map();
 // Keyed by userId first (was sortMode/timeRange alone, shared by every
 // user) — the default "Personal Feed" view used to read one pool computed
@@ -6976,7 +7000,11 @@ async function getFilteredFeedPool(sources, sortMode, timeRange) {
   if (cached && (Date.now() - cached.computedAt) < FILTERED_FEED_SNAPSHOT_TTL) return cached.pool;
 
   const list = (Array.isArray(sources) ? sources : [sources]).filter(Boolean);
-  const perSourceLimit = 301;
+  // Was 301 — same wraparound-repeat issue as MAIN_FEED_SNAPSHOT_POOL_SIZE
+  // above (see its own comment), just for the source-filtered tabs instead
+  // of the default view. A narrow 1-2 source filter has less real supply to
+  // begin with, so it hit the old cap's wraparound even sooner in practice.
+  const perSourceLimit = 600;
   const bySource = await Promise.all(list.map(async src => {
     const agentKey = feedWorkerKey(src);
     const dbRows = await getPostsFromDB([], perSourceLimit, 0, src, { sort: sortMode, timeRange }).catch(() => []);
@@ -15100,6 +15128,7 @@ async function handleFeedRequest(req, res) {
       sources: sourcesBreakdown,
       refresh: refreshMeta,
     });
+    trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
   }
 
   // Same "only what actually survived the feedLimit slice" precision as the
