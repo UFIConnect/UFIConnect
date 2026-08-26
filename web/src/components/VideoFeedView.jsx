@@ -1289,20 +1289,18 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [videoPosts.length]);
 
-  // Mouse click-and-drag scrolling — touch already gets this for free (the
-  // browser turns a finger drag into a real scroll on a touch device), but
-  // a mouse drag over a plain overflow:auto container does nothing by
-  // default; the browser instead tries to *select text*, which is exactly
-  // what showed up as a stray text-caret cursor over the video on desktop
-  // and why nothing advanced when dragging with a mouse there. Gated to
-  // pointerType==='mouse' specifically so this never double-handles an
-  // actual touchscreen's native scroll, and skipped entirely when the drag
-  // starts on a real control (button/link) or the expanded caption text
-  // (its own overflowY:auto needs to own drags that start on it — see the
-  // caption's pointerEvents/className below) so those keep working
-  // normally for mouse users. scroll-snap (already on the container) takes
-  // over on release exactly like it does after a wheel scroll, settling on
-  // the nearest slide without any extra code here.
+  // Mouse click-and-drag scrolling, PLUS touch forwarding for the one place
+  // touch does NOT get real scrolling for free (see below). A mouse drag
+  // over a plain overflow:auto container does nothing by default; the
+  // browser instead tries to *select text*, which is exactly what showed up
+  // as a stray text-caret cursor over the video on desktop and why nothing
+  // advanced when dragging with a mouse there. Skipped entirely when the
+  // drag starts on a real control (button/link) or the expanded caption
+  // text (its own overflowY:auto needs to own drags that start on it — see
+  // the caption's pointerEvents/className below) so those keep working
+  // normally. scroll-snap (already on the container) takes over on release
+  // exactly like it does after a wheel scroll, settling on the nearest
+  // slide without any extra code here.
   //
   // Attached to BOTH the scroll container and the shared YouTube overlay
   // (sharedYtWrapperRef, declared further below) — that overlay renders as
@@ -1313,37 +1311,62 @@ export default function VideoFeedView({ onExit }) {
   // a listener on the container alone. Confirmed live as "can't drag to
   // scroll while hovering the video specifically" — dragging anywhere else
   // on the same slide worked, only the video's own area didn't.
+  //
+  // Touch is included here too, not just mouse — a finger drag normally
+  // *does* get real scrolling for free, but only because the browser walks
+  // up the DOM ancestor chain from the touch's target looking for a
+  // scrollable element, same as the wheel-forwarding effect below has to
+  // work around. Since the overlay is a sibling of the scrollable
+  // container, not a descendant, that walk never finds it — confirmed live
+  // as touch swipes silently doing nothing specifically over an active
+  // YouTube video in this view, everywhere else on the same slide scrolling
+  // normally. preventDefault once a real drag is detected stops the browser
+  // from separately trying (and failing, since there's still nothing
+  // scrollable under the touch) to rubber-band/bounce the touch itself
+  // while this manually drives the container's scrollTop instead.
   useEffect(() => {
     const container = containerRef.current;
     const ytOverlay = sharedYtWrapperRef.current;
     if (!container) return;
     function handlePointerDown(e) {
-      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.pointerType !== 'mouse' && e.pointerType !== 'touch') return;
       if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
+      const isTouch = e.pointerType === 'touch';
       const startY = e.clientY;
       const startScrollTop = container.scrollTop;
       let dragged = false;
       function handleMove(ev) {
         const dy = ev.clientY - startY;
         if (Math.abs(dy) > 3) dragged = true;
-        if (dragged) container.scrollTop = startScrollTop - dy;
+        if (dragged) {
+          if (isTouch) ev.preventDefault();
+          container.scrollTop = startScrollTop - dy;
+        }
       }
       function handleUp() {
         document.removeEventListener('pointermove', handleMove);
         document.removeEventListener('pointerup', handleUp);
-        container.style.cursor = 'grab';
-        // Set back to 'none' rather than removeProperty()'d away: this
-        // element's JSX also declares userSelect:'none' as its permanent
-        // default, and React only re-touches a style property on render
-        // when ITS OWN last-known value for it changed — since that JSX
-        // value never changes, a later render wouldn't notice (or undo) a
-        // removeProperty() done here outside React, permanently reverting
-        // to selectable text after the very first drag.
+        if (!isTouch) {
+          container.style.cursor = 'grab';
+          // Set back to 'none' rather than removeProperty()'d away: this
+          // element's JSX also declares userSelect:'none' as its permanent
+          // default, and React only re-touches a style property on render
+          // when ITS OWN last-known value for it changed — since that JSX
+          // value never changes, a later render wouldn't notice (or undo) a
+          // removeProperty() done here outside React, permanently reverting
+          // to selectable text after the very first drag.
+          container.style.userSelect = 'none';
+        }
+      }
+      if (!isTouch) {
+        container.style.cursor = 'grabbing';
         container.style.userSelect = 'none';
       }
-      container.style.cursor = 'grabbing';
-      container.style.userSelect = 'none';
-      document.addEventListener('pointermove', handleMove);
+      // passive:false only matters for the touch case — that's the one
+      // where handleMove calls preventDefault, which a passive listener
+      // would silently ignore.
+      document.addEventListener('pointermove', handleMove, isTouch ? { passive: false } : undefined);
       document.addEventListener('pointerup', handleUp, { once: true });
     }
     container.addEventListener('pointerdown', handlePointerDown);
@@ -1480,6 +1503,8 @@ export default function VideoFeedView({ onExit }) {
   const sharedYtPlayerRef = useRef(null);
   const sharedYtLoadedIdRef = useRef(null);
   const sharedYtSeekingRef = useRef(false);
+  // Guards a fast-swipe race on loadVideoById — see the effect below.
+  const sharedYtPendingLoadRef = useRef(null);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
 
   // The video box's own width/height:auto + max-width/max-height:100% +
@@ -1561,23 +1586,39 @@ export default function VideoFeedView({ onExit }) {
       const player = sharedYtPlayerRef.current;
       try {
         if (sharedYtLoadedIdRef.current !== videoId) {
-          sharedYtLoadedIdRef.current = videoId;
-          // Duration/currentTime otherwise keep showing the PREVIOUS
-          // video's values until the next onStateChange event happens to
-          // fire — confirmed live as the scrub bar/time readout briefly
-          // (sometimes for a couple seconds) reporting the wrong length
-          // right after scrolling to a new YouTube video. Zeroing here
-          // hides the scrub bar/time text for that split second instead
-          // (see effectiveDuration > 0 guards below) rather than show a
-          // number that's flat wrong; the poll below repopulates the real
-          // value continuously once it's available, not just on the next
-          // state-change event.
-          setSharedYt(s => ({ ...s, duration: 0, currentTime: 0 }));
-          player.loadVideoById(videoId);
-          if (startUnmuted) player.unMute(); else player.mute();
+          // Debounced — loadVideoById() has no completion callback, so
+          // firing it on every single index change let a fast multi-slide
+          // swipe queue up several overlapping loads on the one shared
+          // iframe with no reliable way to know which actually "won".
+          // Confirmed live as the bug where a swiped-past video's audio
+          // kept playing behind the newly-shown slide's thumbnail/UI after
+          // scrolling quickly. Waiting for the index to actually settle
+          // before loading avoids the race outright rather than resolving
+          // it after the fact.
+          clearTimeout(sharedYtPendingLoadRef.current);
+          sharedYtPendingLoadRef.current = setTimeout(() => {
+            if (cancelled) return;
+            sharedYtLoadedIdRef.current = videoId;
+            // Duration/currentTime otherwise keep showing the PREVIOUS
+            // video's values until the next onStateChange event happens to
+            // fire — confirmed live as the scrub bar/time readout briefly
+            // (sometimes for a couple seconds) reporting the wrong length
+            // right after scrolling to a new YouTube video. Zeroing here
+            // hides the scrub bar/time text for that split second instead
+            // (see effectiveDuration > 0 guards below) rather than show a
+            // number that's flat wrong; the poll below repopulates the real
+            // value continuously once it's available, not just on the next
+            // state-change event.
+            setSharedYt(s => ({ ...s, duration: 0, currentTime: 0 }));
+            player.loadVideoById(videoId);
+            if (startUnmuted) player.unMute(); else player.mute();
+            player.playVideo();
+            startAutoplayRetry(player);
+          }, 180);
+        } else {
+          player.playVideo();
+          startAutoplayRetry(player);
         }
-        player.playVideo();
-        startAutoplayRetry(player);
       } catch {}
     } else {
       // First time this session actually needing a YouTube player.
