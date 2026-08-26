@@ -663,7 +663,14 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           covers it as a plain absolutely-positioned overlay instead,
           which — being a normal React-owned element nothing external ever
           takes ownership of — is always safe to conditionally render. */}
-      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight }} />
+      {/* pointerEvents: 'none' — controls: 0 above means there's no native
+          YouTube chrome to click inside this iframe anyway (mute/maximize
+          are the separate custom buttons below, unaffected since they're
+          siblings, not descendants, of this div), so nothing is lost by
+          letting scroll/touch pass through to the feed underneath instead
+          of the iframe's own document swallowing it — same fix
+          VideoFeedView and ImageLightbox's own YouTube mounts already use. */}
+      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none' }} />
       {showPoster && (
         <div style={{ position: 'absolute', inset: 0 }}>
           {poster && <img src={poster} alt={title} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
