@@ -18536,9 +18536,10 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
 // signed string unchecked would let a client sign an upload into an
 // arbitrary Cloudinary folder.
 const UPLOAD_FOLDERS = {
-  posts:   'uficonnect-posts',
-  avatars: 'uficonnect-avatars',
-  covers:  'uficonnect-covers',
+  posts:    'uficonnect-posts',
+  avatars:  'uficonnect-avatars',
+  covers:   'uficonnect-covers',
+  messages: 'uficonnect-messages',
 };
 app.get('/media/upload-signature', authenticate, (req, res) => {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -20127,6 +20128,7 @@ async function getDirectMessageSummariesFromDB(userId) {
         participant: other ? sanitizeUser(other) : null,
         lastMessage: {
           content: group.last.content || '',
+          hasAttachment: !!group.last.attachment,
           createdAt: group.last.created_at,
           isMe: group.last.sender_id === userId,
         },
@@ -20174,7 +20176,7 @@ app.get('/messages', authenticate, async (req, res) => {
       return {
         id: c.id,
         participant: other ? { id: other.id, name: other.name, title: other.title, organization: other.organization } : null,
-        lastMessage: last ? { content: last.content, createdAt: last.createdAt, isMe: last.senderId === uid } : null,
+        lastMessage: last ? { content: last.content, hasAttachment: !!last.attachment, createdAt: last.createdAt, isMe: last.senderId === uid } : null,
         unreadCount: unread,
       };
     });

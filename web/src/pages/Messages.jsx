@@ -228,7 +228,7 @@ export default function Messages() {
                 <div className="conv-name">{conv.participant?.name || 'Unknown'}</div>
                 <div className="conv-last">
                   {conv.lastMessage?.isMe && '↑ '}
-                  {conv.lastMessage?.content || 'No messages yet'}
+                  {conv.lastMessage?.content || (conv.lastMessage?.hasAttachment ? '📷 Photo' : 'No messages yet')}
                 </div>
               </div>
               <div className="conv-right">
