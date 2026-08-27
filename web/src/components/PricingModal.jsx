@@ -2,16 +2,17 @@ const TIERS = [
   {
     tier: 'pro',
     name: 'Pro',
-    price: '5.94',
+    price: '20',
     tagline: 'For individuals',
     icon: '⭐',
   },
   {
     tier: 'business',
     name: 'Business',
-    price: '19.94',
+    price: '200',
     tagline: 'For teams',
     icon: '🏢',
+    locked: true,
   },
 ];
 
@@ -53,6 +54,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
               style={{
                 display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px',
                 borderRadius: 12, border: '1.5px solid var(--border)',
+                opacity: t.locked ? 0.6 : 1,
               }}
             >
               <div style={{
@@ -61,7 +63,15 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
                 justifyContent: 'center', fontSize: '1.3rem',
               }}>{t.icon}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{t.name}</div>
+                <div style={{ fontWeight: 700, fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {t.name}
+                  {t.locked && (
+                    <span style={{
+                      fontSize: '.65rem', fontWeight: 700, color: 'var(--muted)',
+                      background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 6px',
+                    }}>COMING SOON</span>
+                  )}
+                </div>
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{t.tagline}</div>
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -71,11 +81,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
-                disabled={!!loadingTier}
+                disabled={!!loadingTier || t.locked}
                 onClick={() => onSelectTier(t.tier)}
                 style={{ flexShrink: 0 }}
               >
-                {loadingTier === t.tier ? '…' : 'Choose'}
+                {t.locked ? 'Locked' : (loadingTier === t.tier ? '…' : 'Choose')}
               </button>
             </div>
           ))}

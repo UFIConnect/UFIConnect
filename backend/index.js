@@ -14066,6 +14066,11 @@ const TIER_PRICE_IDS = {
 };
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   const tier = ['pro', 'business'].includes(req.body?.tier) ? req.body.tier : 'pro';
+  // Business is locked in the UI (not yet ready to sell) — reject it
+  // server-side too so it can't be reached by POSTing directly.
+  if (tier === 'business') {
+    return res.status(400).json({ message: 'Business is not available yet.' });
+  }
   const priceId = TIER_PRICE_IDS[tier]();
   if (!stripe || !priceId) {
     return res.status(503).json({ message: 'Billing is not configured yet.' });
