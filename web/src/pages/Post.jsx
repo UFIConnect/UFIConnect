@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
@@ -186,7 +186,7 @@ export default function Post() {
     <Layout>
       <div className="page-header">
         <h1 className="page-title">Posts</h1>
-        <p className="page-subtitle">Write a post and see what the UFconnect community is sharing.</p>
+        <p className="page-subtitle">Write a post and see what the UFIconnect community is sharing.</p>
       </div>
 
       {/* ── Compose card ── */}
@@ -223,7 +223,7 @@ export default function Post() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: '.85rem', marginBottom: 2 }}>{profile?.name || 'You'}</div>
                 <div style={{ fontSize: '.75rem', color: 'var(--muted)' }}>
-                  {profile?.preferences?.role || profile?.title || 'UFconnect Member'}
+                  {profile?.preferences?.role || profile?.title || 'UFIconnect Member'}
                 </div>
               </div>
             </div>
@@ -328,7 +328,7 @@ export default function Post() {
           posts={feed}
           loading={feedLoading}
           emptyTitle="Nothing here yet"
-          emptyDesc="Be the first to post to the UFconnect community."
+          emptyDesc="Be the first to post to the UFIconnect community."
           emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
           currentUserId={profile?.id}
           onNearEnd={loadMoreFeed}

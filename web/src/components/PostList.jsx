@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+﻿import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
@@ -216,7 +216,7 @@ export default function PostList({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: '.85rem' }}>{post.author?.name || 'Member'}</div>
                     <div style={{ fontSize: '.72rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {post.author?.title || 'UFconnect Member'}{post.group ? ` - ${post.group.name}` : ''}
+                      {post.author?.title || 'UFIconnect Member'}{post.group ? ` - ${post.group.name}` : ''}
                     </div>
                   </div>
                 </Link>
@@ -240,7 +240,7 @@ export default function PostList({
             ) : (
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
                 <span style={{ fontSize: '.76rem', fontWeight: 700, color: 'var(--primary)' }}>
-                  {post.group?.name || 'UFconnect'}
+                  {post.group?.name || 'UFIconnect'}
                 </span>
                 <span style={{ fontSize: '.7rem', color: 'var(--muted)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ color: 'inherit', textDecoration: 'none' }}>

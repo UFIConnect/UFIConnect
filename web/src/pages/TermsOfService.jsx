@@ -1,9 +1,9 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
 const EFFECTIVE_DATE = 'August 20, 2026';
 const CONTACT_EMAIL  = 'support@uficonnect.org';
-const APP_NAME       = 'UFconnect';
+const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,13 +39,13 @@ export default function TermsOfService() {
   return (
     <>
       <Helmet>
-        <title>Terms of Service — UFconnect</title>
-        <meta name="description" content="UFconnect terms of service — the rules for using the platform." />
+        <title>Terms of Service — UFIconnect</title>
+        <meta name="description" content="UFIconnect terms of service — the rules for using the platform." />
         <link rel="canonical" href="https://uficonnect.org/terms" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/terms" />
-        <meta property="og:title" content="Terms of Service | UFconnect" />
-        <meta property="og:description" content="The rules for using UFconnect." />
+        <meta property="og:title" content="Terms of Service | UFIconnect" />
+        <meta property="og:description" content="The rules for using UFIconnect." />
       </Helmet>
 
       {/* Nav bar */}

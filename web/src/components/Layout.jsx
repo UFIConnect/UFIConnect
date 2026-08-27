@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
@@ -93,10 +93,10 @@ export default function Layout({ children }) {
     <div className="shell">
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <div className="sidebar-logo">
+        <Link to="/" className="sidebar-logo" onClick={() => handleNavClick('/')} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-logo-icon">UF</div>
-          <span className="sidebar-logo-text">UFconnect</span>
-        </div>
+          <span className="sidebar-logo-text">UFIconnect</span>
+        </Link>
 
         <nav className="sidebar-nav">
           {NAV.map(({ to, icon, label }) => (

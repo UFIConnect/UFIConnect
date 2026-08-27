@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -159,13 +159,13 @@ export default function Search() {
   return (
     <Layout>
       <Helmet>
-        <title>Find People & Communities | UFconnect</title>
+        <title>Find People & Communities | UFIconnect</title>
         <meta name="description" content="Search professionals by role, skill, or organization. Discover 160+ communities across tech, design, startups, and more." />
         <link rel="canonical" href="https://uficonnect.org/search" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/search" />
-        <meta property="og:title" content="Find People & Communities | UFconnect" />
-        <meta property="og:description" content="Search professionals by role, skill, or organization. Discover UFconnect communities across tech, design, startups, and more." />
+        <meta property="og:title" content="Find People & Communities | UFIconnect" />
+        <meta property="og:description" content="Search professionals by role, skill, or organization. Discover UFIconnect communities across tech, design, startups, and more." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
       </Helmet>

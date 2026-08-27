@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import client from '../api/client';
@@ -29,14 +29,14 @@ export default function ForgotPassword() {
   return (
     <>
       <Helmet>
-        <title>Forgot Password | UFconnect</title>
+        <title>Forgot Password | UFIconnect</title>
         <meta name="robots" content="noindex" />
       </Helmet>
       <div className="auth-page">
         <div className="auth-card">
           <div className="auth-logo">
             <div className="auth-logo-icon">UF</div>
-            <span className="auth-logo-name">UFconnect</span>
+            <span className="auth-logo-name">UFIconnect</span>
           </div>
 
           <h1 className="auth-heading">Reset your password</h1>

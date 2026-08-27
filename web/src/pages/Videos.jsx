@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+﻿import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import VideoFeedView from '../components/VideoFeedView';
 
@@ -11,7 +11,7 @@ export default function Videos() {
   return (
     <>
       <Helmet>
-        <title>Videos | UFconnect</title>
+        <title>Videos | UFIconnect</title>
       </Helmet>
       <VideoFeedView onExit={() => navigate('/')} />
     </>

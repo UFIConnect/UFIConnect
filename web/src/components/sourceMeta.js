@@ -1,4 +1,4 @@
-export const SOURCE_META = {
+﻿export const SOURCE_META = {
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: '🟠' },
   hackernews:    { label: 'News',          color: '#FF6600', icon: '🗞' },
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: '👩‍💻' },
@@ -38,7 +38,7 @@ export const SOURCE_META = {
   designweb:     { label: 'Design Web',      color: '#DB2777', icon: 'UX' },
   twitch:        { label: 'Twitch',          color: '#9146FF', icon: '🕹' },
   threads:       { label: 'Threads',         color: '#000000', icon: '🧵' },
-  uficonnect:    { label: 'UFconnect',      color: 'var(--primary)', icon: '🌐' },
+  uficonnect:    { label: 'UFIconnect',      color: 'var(--primary)', icon: '🌐' },
 };
 
 // Every platform a user can link via Connected Accounts (mirrors

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+﻿import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,7 +22,7 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-// A page dedicated to a single post — the "View on UFconnect" button in the
+// A page dedicated to a single post — the "View on UFIconnect" button in the
 // maximized media viewer (ImageLightbox) routes here instead of sending
 // people straight off-site to the original source, so there's somewhere to
 // land, read the full content, and see/leave comments without ever leaving
@@ -203,7 +203,7 @@ export default function PostDetail() {
     );
   }
 
-  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: '🌐', label: 'UFconnect', color: 'var(--primary)' };
+  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: '🌐', label: 'UFIconnect', color: 'var(--primary)' };
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
@@ -213,7 +213,7 @@ export default function PostDetail() {
   return (
     <Shell>
       <Helmet>
-        <title>{post.title ? `${post.title} | UFconnect` : 'Post | UFconnect'}</title>
+        <title>{post.title ? `${post.title} | UFIconnect` : 'Post | UFIconnect'}</title>
       </Helmet>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px' }}>
         <button onClick={() => navigate(-1)} className="btn btn-ghost btn-sm" style={{ marginBottom: 16 }}>

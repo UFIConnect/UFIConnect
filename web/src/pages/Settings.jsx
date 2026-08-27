@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+﻿import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -78,7 +78,7 @@ const ROLE_META = {
   'Content Creator':         { icon: '🎬', color: '#D97706', bg: '#FFFBEB', tagline: 'Video, writing, podcasts',      fields: [{ key: 'platforms', label: 'Platforms', placeholder: 'e.g. YouTube, Newsletter, Podcast, TikTok' }, { key: 'niche', label: 'Niche / topic', placeholder: 'e.g. Tech, Finance, Productivity, Fitness' }, { key: 'audienceSize', label: 'Audience size', placeholder: 'e.g. 10k followers' }, { key: 'openToCollabs', label: 'Open to collaborations', type: 'toggle' }] },
   'HR / People Ops':         { icon: '👥', color: '#DB2777', bg: '#FDF2F8', tagline: 'Recruiting, culture, L&D',      fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Recruiting, L&D, HRBP, Comp & Ben' }, { key: 'companySize', label: 'Company size focus', placeholder: 'e.g. Startup, Mid-size, Enterprise' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Finance, Healthcare' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
 };
-const DEFAULT_META = { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFconnect Member', fields: [] };
+const DEFAULT_META = { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIconnect Member', fields: [] };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 function Toggle({ value, onChange }) {
@@ -141,7 +141,7 @@ function PushNotificationsCard() {
               ? "This browser doesn't support push notifications."
               : state.permission === 'denied'
               ? 'Blocked in your browser settings — re-enable it there to turn this back on.'
-              : 'Get a real-time alert for new messages, likes, comments, follows, and connection requests, even when UFconnect isn\'t open.'}
+              : 'Get a real-time alert for new messages, likes, comments, follows, and connection requests, even when UFIconnect isn\'t open.'}
           </div>
         </div>
         {state.supported && state.permission !== 'denied' && (
@@ -616,8 +616,8 @@ export default function Settings() {
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
                 {profile.plan === 'free'
-                  ? 'Support UFconnect with a paid plan.'
-                  : 'Thanks for supporting UFconnect — manage your subscription anytime.'}
+                  ? 'Support UFIconnect with a paid plan.'
+                  : 'Thanks for supporting UFIconnect — manage your subscription anytime.'}
               </div>
             </div>
             {profile.plan !== 'free' ? (
@@ -764,7 +764,7 @@ export default function Settings() {
             <SectionHeading>🔒 Password</SectionHeading>
             {!isLocalAuth ? (
               <div style={{ fontSize: '.85rem', color: 'var(--muted)' }}>
-                Your password is managed by your sign-in provider, not UFconnect — there's nothing to change here.
+                Your password is managed by your sign-in provider, not UFIconnect — there's nothing to change here.
               </div>
             ) : (
               <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -804,7 +804,7 @@ export default function Settings() {
           <div className="card">
             <SectionHeading>🔒 Privacy</SectionHeading>
             {[
-              { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFconnect to view your profile.' },
+              { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFIconnect to view your profile.' },
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
               { key: 'showSkills',      label: 'Show skills',         desc: 'Display your skill tags on your profile card.' },
               { key: 'showGroups',      label: 'Show groups',         desc: 'Let others see which groups you belong to.' },

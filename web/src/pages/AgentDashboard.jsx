@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Layout from '../components/Layout';
 import client from '../api/client';
 
@@ -1147,7 +1147,7 @@ export default function AgentDashboard() {
 
   /* ── Bootstrap ────────────────────────────────────────────────────────────── */
   useEffect(() => {
-    addLog('🚀', 'UFconnect Agent System initialized', '#60A5FA');
+    addLog('🚀', 'UFIconnect Agent System initialized', '#60A5FA');
     addLog('✅', `All ${AGENT_DEFS.length} ops agents online — autonomous mode active`, '#4ADE80');
     addLog('🔒', 'Security Agent: initial scan complete, 0 threats', '#4ADE80');
 
@@ -1323,7 +1323,7 @@ export default function AgentDashboard() {
       `}</style>
 
       <div className="page-header">
-        <h1 className="page-title">🏢 UFconnect HQ</h1>
+        <h1 className="page-title">🏢 UFIconnect HQ</h1>
         <p className="page-subtitle">
           {techAgents.length + socialAgents.length} data agents + {AGENT_DEFS.length} ops agents — fully autonomous 24/7
         </p>

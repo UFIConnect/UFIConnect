@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -36,15 +36,15 @@ export default function Login() {
   return (
     <>
       <Helmet>
-        <title>Sign In | UFconnect</title>
-        <meta name="description" content="Sign in to your UFconnect account to access your personalized feed, manage your profile, and follow communities." />
+        <title>Sign In | UFIconnect</title>
+        <meta name="description" content="Sign in to your UFIconnect account to access your personalized feed, manage your profile, and follow communities." />
         <meta name="robots" content="noindex" />
       </Helmet>
       <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
           <div className="auth-logo-icon">UF</div>
-          <span className="auth-logo-name">UFconnect</span>
+          <span className="auth-logo-name">UFIconnect</span>
         </div>
         <p className="auth-tagline">Professional networking, no ads.</p>
 

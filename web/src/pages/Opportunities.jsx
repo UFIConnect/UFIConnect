@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -204,7 +204,7 @@ export default function Opportunities() {
   return (
     <>
       <Helmet>
-        <title>Jobs, Gigs, Grants, Events & Career Opportunities | UFconnect</title>
+        <title>Jobs, Gigs, Grants, Events & Career Opportunities | UFIconnect</title>
         <meta name="description" content="Browse all career opportunities: full-time jobs, gigs, grants, hackathons, events, open-source opportunities, and learning resources. Discover positions and opportunities for engineers, designers, founders, marketers, product managers, and creatives worldwide." />
         <meta name="keywords" content="job opportunities, career opportunities, gigs, grants, hackathons, events, open source opportunities, learning opportunities, tech jobs, startup jobs, freelance work, internships, positions, career growth, job listings, employment opportunities, career development, work opportunities" />
         <link rel="canonical" href="https://uficonnect.org/opportunities" />

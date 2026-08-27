@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -619,7 +619,7 @@ function fetchJSON(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'User-Agent':      'UFIconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/json',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control':   'no-cache',
@@ -667,7 +667,7 @@ function fetchJSONWithHeaders(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'User-Agent':      'UFIconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/json',
         'Accept-Language': 'en-US,en;q=0.9',
         'Cache-Control':   'no-cache',
@@ -1127,7 +1127,7 @@ app.get('/oauth/bluesky/client-metadata.json', (_req, res) => {
   if (!BLUESKY_SIGNING_KEY) return res.status(501).json({ error: 'Bluesky OAuth not configured' });
   res.json({
     client_id: blueskyClientId(),
-    client_name: 'UFconnect',
+    client_name: 'UFIconnect',
     // Must share the same origin as client_id itself (both live on the API
     // host) — AT Protocol's client metadata validation rejects a client_uri
     // pointing at a different origin (e.g. the separate frontend domain).
@@ -1311,8 +1311,8 @@ async function sendPasswordResetEmail(toEmail, resetUrl) {
   await transport.sendMail({
     from: process.env.EMAIL_FROM || process.env.SMTP_USER,
     to: toEmail,
-    subject: 'Reset your UFconnect password',
-    html: `<p>We received a request to reset your UFconnect password.</p>
+    subject: 'Reset your UFIconnect password',
+    html: `<p>We received a request to reset your UFIconnect password.</p>
       <p><a href="${resetUrl}">Reset your password</a></p>
       <p>This link expires in 30 minutes. If you didn't request this, you can safely ignore this email.</p>`,
   });
@@ -2410,7 +2410,7 @@ async function fetchRedditSub(sub, keyword) {
     try {
       const data = await fetchJSON(
         `https://oauth.reddit.com/r/${sub}/new.json?limit=100&raw_json=1`,
-        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
+        { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' }
       );
       const posts = parseRedditJSON(data, keyword);
       if (posts.length) {
@@ -2563,7 +2563,7 @@ async function fetchRedditHomeFeed(token, { bust = false } = {}) {
     const lookbackCutoff = Date.now() - FOLLOWING_LOOKBACK_MS;
     for (let page = 0; page < REDDIT_HOME_MAX_PAGES; page++) {
       const url = `https://oauth.reddit.com/.json?limit=100&raw_json=1${after ? `&after=${after}` : ''}`;
-      const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' });
+      const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' });
       const pagePosts = parseRedditJSON(data, null);
       posts.push(...pagePosts);
       after = data?.data?.after || null;
@@ -3055,7 +3055,7 @@ function fetchText(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
-        'User-Agent':      'UFconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
+        'User-Agent':      'UFIconnect/1.0 (https://uficonnect.org; contact: yosufkaka99@gmail.com)',
         'Accept':          'application/rss+xml, application/xml, text/xml',
         'Accept-Language': 'en-US,en;q=0.9',
         ...extraHeaders,
@@ -3080,12 +3080,12 @@ function fetchText(url, extraHeaders = {}) {
 // Reddit blocks anonymous server requests with 429. Use OAuth client_credentials
 // when REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET are set in env.
 const REDDIT_HEADERS = {
-  'User-Agent':      'UFconnect/1.0 by /u/uficonnect',
+  'User-Agent':      'UFIconnect/1.0 by /u/uficonnect',
   'Accept':          'application/json',
   'Accept-Language': 'en-US,en;q=0.9',
 };
 const REDDIT_RSS_HEADERS = {
-  'User-Agent':      'UFconnect/1.0 by /u/uficonnect',
+  'User-Agent':      'UFIconnect/1.0 by /u/uficonnect',
   'Accept':          'application/atom+xml, text/xml, application/xml, */*',
   'Accept-Language': 'en-US,en;q=0.9',
 };
@@ -3122,7 +3122,7 @@ async function getRedditToken() {
         method: 'POST',
         headers: {
           'Authorization':  `Basic ${auth}`,
-          'User-Agent':     'UFconnect/1.0 by /u/uficonnect',
+          'User-Agent':     'UFIconnect/1.0 by /u/uficonnect',
           'Content-Type':   'application/x-www-form-urlencoded',
           'Content-Length': Buffer.byteLength(body),
         },
@@ -4584,7 +4584,7 @@ async function fetchIndieHackers(keyword) {
   ];
   for (const url of IH_RSS_URLS) {
     try {
-      const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+      const xml   = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
       const items = parseRSSItems(xml);
       if (!items.length) continue;
       const posts = filterAndSlice(items, keyword, 1000).map(it => rssPost(it, 'indiehackers', 'Indie Hackers', 'ext_indiehackers', 'Indie Hackers', 'Startups', keyword));
@@ -4679,7 +4679,7 @@ async function fetchTheRegister(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.theregister.com/headlines.atom', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -4713,7 +4713,7 @@ async function fetchVentureBeat(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://venturebeat.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -4752,7 +4752,7 @@ async function fetchSmashingMagazine(keyword) {
   let lastError = null;
   for (const url of FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
       const items = parseRSSItems(xml);
       lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
@@ -4778,7 +4778,7 @@ async function fetchPhoronix(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.phoronix.com/rss.php', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -4817,7 +4817,7 @@ async function fetchInfoQ(keyword) {
   let lastError = null;
   for (const url of FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
       const items = parseRSSItems(xml);
       lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
@@ -4843,7 +4843,7 @@ async function fetchMITTechReview(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.technologyreview.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -4883,7 +4883,7 @@ async function fetchArsTechnica(keyword) {
   let lastError = null;
   for (const url of ARS_FEEDS) {
     try {
-      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+      const xml = await fetchText(url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
       const items = parseRSSItems(xml);
       lastError = null; // this feed answered, even if with nothing new
       if (!items.length) continue;
@@ -4909,7 +4909,7 @@ async function fetchWired(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.wired.com/feed/rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
@@ -5132,7 +5132,7 @@ async function fetchRemoteOKJobs(keyword) {
     // check HTTP status, so it silently parsed the error page as "no items"
     // on every single fetch, forever, with no visible error. Their public
     // JSON API is still live and includes real per-job apply URLs.
-    const jobs = await fetchJSON('https://remoteok.com/api', { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+    const jobs = await fetchJSON('https://remoteok.com/api', { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
     // Multi-word queries (role fallbacks like "software engineer developer",
     // "growth marketing manager") were matched as one literal phrase — real
     // postings almost never contain that exact run of words back to back, so
@@ -5258,7 +5258,7 @@ async function fetchYCombinator(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.ycombinator.com/blog/rss', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -5292,7 +5292,7 @@ async function fetchCrunchbaseNews(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://news.crunchbase.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -5326,7 +5326,7 @@ async function fetchBehanceProjects(keyword) {
   if (cached) return cached;
   try {
     const xml = await fetchText('https://www.behance.net/feeds/projects', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)',
+      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
     });
     const items = parseRSSItems(xml);
     const posts = filterAndSlice(items, keyword, 1000)
@@ -5368,7 +5368,7 @@ async function fetchDesignWeb(keyword) {
   let lastError = null;
   for (const feed of feeds) {
     try {
-      const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFconnect/1.0)' });
+      const xml = await fetchText(feed.url, { 'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)' });
       const items = parseRSSItems(xml);
       lastError = null; // this feed answered, even if with nothing new
       posts.push(...filterAndSlice(items, keyword, 250).map(it =>
@@ -5471,7 +5471,7 @@ async function fetchBlueskyByKeyword(keyword) {
   const key = `bluesky_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
-  // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFconnect/1.0 which bsky rate-limits)
+  // Use raw https.get so we can set a browser User-Agent (fetchJSON sends UFIconnect/1.0 which bsky rate-limits)
   const mapPost = (p) => {
     const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
     const handle = p.author?.handle || p.author?.did || 'unknown';
@@ -6929,7 +6929,18 @@ const globalFeedCache = { posts: [], refreshedAt: 0 };
 // held still. This snapshot makes the sort run at most once per TTL window;
 // every request inside that window gets byte-identical external-post order,
 // keyed by sortMode since 'ranked'/'newest'/'balanced' order differently.
-const MAIN_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
+// Was 5 minutes — real freshness during that window is already handled by
+// the separate SSE live-splice this comment references, so the TTL here is
+// purely about pagination continuity, not staleness. A user genuinely
+// scrolling for more than 5 minutes hit the snapshot expiring mid-session:
+// the next page request (see its own read site) found no valid snapshot
+// and fell back to an entirely different, independently-computed query
+// path, which reads exactly like "the feed reset" — confirmed as the cause
+// live. 45 minutes comfortably covers a real scroll session; an explicit
+// refresh already invalidates this per-user regardless (see the prefix
+// delete in the following-mode refresh path), so nothing here blocks
+// getting genuinely fresh content on demand.
+const MAIN_FEED_SNAPSHOT_TTL = 45 * 60 * 1000;
 // The snapshot has to hold enough posts to cover several pages of
 // infinite-scroll, not just page 1 — page 2+ used to run its own,
 // independently-windowed balanced query that didn't line up with what page
@@ -7038,9 +7049,10 @@ async function computePersonalizedFeedPool(userId, prefs, skills, title, organiz
 // than it did moments earlier — live-tested scrolling 15 pages deep into a
 // single-source tab and got a 68% duplicate rate even though the pool held
 // 300+ genuinely distinct posts. Freezing the pool for a TTL window (same
-// 5-minute cadence as the main feed) makes every page within that window
-// slice the identical, stable array.
-const FILTERED_FEED_SNAPSHOT_TTL = 5 * 60 * 1000;
+// cadence as MAIN_FEED_SNAPSHOT_TTL, see its own comment for why this moved
+// from 5 minutes to 45) makes every page within that window slice the
+// identical, stable array.
+const FILTERED_FEED_SNAPSHOT_TTL = 45 * 60 * 1000;
 const FILTERED_FEED_SNAPSHOT_MAX_KEYS = 200; // bounds memory — arbitrary multi-source combos could otherwise grow unbounded
 const filteredFeedSnapshots = new Map();
 function filteredFeedSnapshotKey(sources, sortMode, timeRange) {
@@ -8573,7 +8585,7 @@ function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
     }
     // Per-source engagement leveling is the whole point of the "true mix"
     // design (a Reddit post with 50k upvotes shouldn't permanently bury a
-    // UFconnect-native post with 20 likes) — but this used to be opt-in via
+    // UFIconnect-native post with 20 likes) — but this used to be opt-in via
     // levelSources, and only the one call site that builds the main feed
     // snapshot ever opted in. Every other path through this function (single
     // -source tabs, search results, sort_agent's periodic maintenance pass,
@@ -8977,65 +8989,6 @@ async function drainSourceRefreshQueue() {
     sourceRefreshQueue.lastFinished = Date.now();
     logAgentAction('refresh_queue', '✅',
       `Refresh queue complete - ${stats.processed} source(s) processed`, '#4ADE80');
-  }
-}
-
-async function refreshGlobalFeedCache() {
-  // 36 topics × 10 source types = 360 live endpoint calls per refresh cycle
-  const commonInterests = [
-    // Tech & Engineering
-    'AI & Machine Learning','Generative AI','LLMs & Chatbots','Computer Vision',
-    'Data Science','Developer Tools','Open Source','Cybersecurity',
-    'Cloud & DevOps','Frontend Dev','Backend Dev','Mobile Dev',
-    'Web3 / Crypto','Game Dev','No-Code / Low-Code',
-    // Business & Startups
-    'SaaS','Venture Capital','Growth Marketing','Design Systems',
-    'UI/UX Design','SEO & Content','Newsletter & Writing',
-    // Finance & Career
-    'FinTech','Career Growth','Productivity','Freelancing','Side Projects',
-    // Media & Community
-    'Content Creator','Remote Work','EdTech','Health Tech','Climate Tech',
-    // Lifestyle (broad appeal)
-    'Fitness & Gym','Travel & Adventure','Cooking & Recipes','Music Discovery',
-  ];
-  const commonRole = 'Engineer / Developer';
-  if (isStabilityCritical()) {
-    logAgentAction('stability', '⏸️', 'Skipped full feed refresh while stability guard is critical', '#FBBF24');
-    return;
-  }
-  const interestsForCycle = refreshControl.mode === 'pressure'
-    ? commonInterests.slice(0, PRESSURE_MANUAL_TOPIC_LIMIT)
-    : commonInterests;
-  try {
-    const result = await fetchAllTopicPosts(interestsForCycle, commonRole);
-    const all = realFeedPosts([
-      ...result.reddit, ...result.hn, ...result.github, ...result.devto,
-      ...result.medium, ...result.youtube, ...result.stackoverflow,
-      ...result.mastodon, ...result.lobsters, ...result.arxiv,
-    ]);
-    if (all.length > 0) {
-      globalFeedCache.posts = sortFeedBatch(all, 'full-feed-refresh', {
-        limit: GLOBAL_FEED_CACHE_LIMIT,
-        diversify: true,
-      });
-      globalFeedCache.refreshedAt = Date.now();
-      logAgentAction('feed', '✅', `Feed cache refreshed — ${all.length} posts from 10 sources`, '#4ADE80');
-      // Persist to DB in background (only if connected). Currently
-      // unreachable in production (this whole function only runs behind
-      // STARTUP_FULL_FEED_WARMUP=1 && IS_PIPELINE_ROLE, and that env var
-      // isn't set anywhere — see this function's own call site) — targeting
-      // SERVICE_ROLE's table here anyway so a future STARTUP_FULL_FEED_WARMUP
-      // use doesn't silently write pipeline-fetched posts straight into
-      // feed_posts_cache, bypassing staging the way runWebStorageSubAgent did.
-      if (db.isConnected()) {
-        savePostsToDB(all, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache').then(n => {
-          if (n) logAgentAction('feed', '💾', `Saved ${n} posts to DB cache`, '#60A5FA');
-        }).catch(() => {});
-      }
-    }
-  } catch (e) {
-    console.warn('globalFeedCache refresh error:', e.message);
-    logAgentAction('feed', '⚠️', `Feed refresh error: ${e.message}`, '#F87171');
   }
 }
 
@@ -9680,7 +9633,7 @@ function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3, headers = {
       hostname: requestUrl.hostname,
       port: requestUrl.port || (requestUrl.protocol === 'http:' ? 80 : 443),
       path: requestUrl.pathname + requestUrl.search,
-      headers: { 'User-Agent': 'UFconnect-WebOptimizer/1.0', ...headers },
+      headers: { 'User-Agent': 'UFIconnect-WebOptimizer/1.0', ...headers },
     }, (res) => {
       const location = res.headers.location;
       if ([301, 302, 307, 308].includes(res.statusCode) && location && redirects > 0) {
@@ -10264,7 +10217,7 @@ function runAgentActivityCheck(fullSweep = false) {
 // Seed immediately on startup (non-blocking)
 installCrashGuard();
 runStabilityGuard();
-logAgentAction('feed',      '🚀', 'UFconnect Agent System initialized', '#60A5FA');
+logAgentAction('feed',      '🚀', 'UFIconnect Agent System initialized', '#60A5FA');
 logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
 // Warm Reddit OAuth token on startup so the first fetch uses authenticated access
 if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
@@ -10296,17 +10249,6 @@ setImmediate(() => {
   // Live workers populate source caches.
 });
 
-// Code-level gate on top of the env var — never set STARTUP_FULL_FEED_WARMUP=1
-// on the api service, but env-var hygiene alone is fragile across service
-// configs, and refreshGlobalFeedCache calls fetchAllTopicPosts directly
-// (real external calls), so this stays belt-and-suspenders.
-if (process.env.STARTUP_FULL_FEED_WARMUP === '1' && IS_PIPELINE_ROLE) {
-  setTimeout(() => {
-    refreshGlobalFeedCache()
-      .then(() => realFeedPosts(globalFeedCache.posts).forEach(p => p?.id && seenPostIds.add(p.id)))
-      .catch((e) => console.warn('Initial feed warm-up:', e.message));
-  }, 15000);
-}
 runSecurityScan();
 // Operational agents — staggered starts so startup isn't a burst
 setTimeout(runPerfCheck,      5000);
@@ -10882,7 +10824,7 @@ const INTERNAL_GROUPS_SEED = [
     id: 'ufi-general',
     category: 'Community',
     name: 'General',
-    description: 'Open discussion for UFconnect members.',
+    description: 'Open discussion for UFIconnect members.',
     members: 0,
     isExternal: false,
   },
@@ -10987,7 +10929,7 @@ function serializeCommunityPost(post, viewerId = null) {
     likesCount:  (post.likes || []).length,
     commentsCount: Math.max(post.commentsCount || 0, postComments.filter(c => c.postId === post.id).length),
     source:      post.source || 'uficonnect',
-    sourceLabel: post.sourceLabel || 'UFconnect',
+    sourceLabel: post.sourceLabel || 'UFIconnect',
     sourceUrl:   post.sourceUrl || null,
     isExternal:  false,
   };
@@ -10995,7 +10937,7 @@ function serializeCommunityPost(post, viewerId = null) {
 
 // ─── Following feed ───────────────────────────────────────────────────────
 // UFI's own follow graph (the `follows` array/table) is real and populated
-// today, so posts from people you follow on UFconnect itself work now.
+// today, so posts from people you follow on UFIconnect itself work now.
 // "Include followers from all the platforms" is real per-platform work each
 // requires: (1) that platform's OAuth actually configured, and (2) a
 // genuine "posts from accounts I follow"/"my own activity" API — which
@@ -11081,7 +11023,7 @@ async function refreshFollowingSourceCaches() {
 
 // Twitter/LinkedIn/Instagram/Facebook have no real "following timeline" API
 // available to third-party apps at all (see the block comment above) — the
-// closest thing UFconnect can actually offer once one of these is
+// closest thing UFIconnect can actually offer once one of these is
 // connected is a keyword search scoped to the user's own interests, run
 // with their token. That used to be merged straight into the *main* true-
 // mix feed (as a live, per-request, un-cached fetch) as one raw
@@ -11089,7 +11031,7 @@ async function refreshFollowingSourceCaches() {
 // as the reason "true mix" broke down for anyone with a connected account:
 // the diversify/rank pipeline never saw this content at all, it was just
 // concatenated in front of it. It belongs here instead, alongside genuine
-// UFconnect-follow-graph posts, not in the algorithmically mixed feed — and
+// UFIconnect-follow-graph posts, not in the algorithmically mixed feed — and
 // tagged `matchedByInterest: true` so the client can label it honestly
 // (interest-matched, not literally "people you follow on X") rather than
 // implying it's a real following timeline the way the internal posts are.
@@ -11266,7 +11208,7 @@ function dbCommunityPostToMemPost(row) {
     commentsCount: row.comments_count || 0,
     createdAt: row.created_at,
     source: row.source || 'uficonnect',
-    sourceLabel: row.source_label || 'UFconnect',
+    sourceLabel: row.source_label || 'UFIconnect',
     url: row.url,
     mediaUrl: row.media_url || null,
     mediaType: row.media_type || null,
@@ -11560,7 +11502,7 @@ async function verifyAuth0Token(token) {
 async function provisionAuth0User(payload) {
   const subject = payload.sub;
   const email = (payload.email || `${subject.replace(/[^a-z0-9_-]/gi, '_')}@auth0.local`).toLowerCase();
-  const name = payload.name || payload.nickname || email.split('@')[0] || 'UFconnect Member';
+  const name = payload.name || payload.nickname || email.split('@')[0] || 'UFIconnect Member';
   const avatarUrl = payload.picture || '';
 
   const existingBySubject = users.find(u => u.authProvider === 'auth0' && u.authSubject === subject);
@@ -12119,6 +12061,42 @@ async function migrateDB() {
     // table actually needs for its one real access pattern.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
 
+    // ─── Trim archive — where feed_posts_cache rows go instead of vanishing ──
+    // trimFeedPostsCache (below) used to be a pure DELETE — once a row
+    // crossed the count cap or one of the age/share thresholds, it was gone
+    // for good, with no way to recover it short of the original source
+    // re-fetching it, which for most external sources never happens once
+    // content ages off their own API. Trimmed rows land here first instead
+    // — same columns as feed_posts_cache, a real (if secondary) record of
+    // everything this app has ever ingested rather than a permanent
+    // deletion. Deliberately not read by anything user-facing (no query in
+    // this file selects from it for serving) — a safety net, not a second
+    // serving path. Still has its own MAX_ARCHIVE_POSTS ceiling (see
+    // trimFeedPostsCache) rather than growing forever — real storage is
+    // finite regardless — just a far more generous one, since the entire
+    // point is to buy real headroom before anything is actually lost.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS feed_posts_archive (
+        id              TEXT PRIMARY KEY,
+        source          TEXT NOT NULL,
+        title           TEXT,
+        content         TEXT,
+        author_name     TEXT,
+        source_url      TEXT,
+        media_url       TEXT,
+        media_type      TEXT,
+        topic           TEXT,
+        likes_count     INTEGER DEFAULT 0,
+        comments_count  INTEGER DEFAULT 0,
+        post_created_at TIMESTAMPTZ,
+        fetched_at      TIMESTAMPTZ,
+        location        TEXT,
+        media_poster    TEXT,
+        archived_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
+
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
     await db.query(`
       CREATE TABLE IF NOT EXISTS website_optimization_runs (
@@ -12313,19 +12291,33 @@ const UNSEEN_POST_MAX_AGE_MS = envNumber('UNSEEN_POST_MAX_AGE_MS', 20 * 24 * 60 
 // gone quiet keeps up to 20 days of its own backlog servable instead of
 // disappearing early just because other sources fetch more.
 const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
+// See feed_posts_archive's own comment (migrateDB) — every DELETE below now
+// moves its rows there first instead of just discarding them, via a single
+// atomic "DELETE ... RETURNING, INSERT INTO archive FROM that" statement
+// (one round trip, no risk of a row falling through a gap between two
+// separate queries). ON CONFLICT DO NOTHING covers a row that somehow
+// already made it to the archive (re-ingested, then trimmed again).
+const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 2000000, 250000, 20000000);
 function trimFeedPostsCache() {
   if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
   db.query(
-    `DELETE FROM feed_posts_cache WHERE id IN (
-       SELECT id FROM (
-         SELECT id,
-                ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
-                ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
-         FROM feed_posts_cache
-       ) ranked
-       WHERE global_rank > $1 AND source_rank > $2
-     )`, [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
+    `WITH moved AS (
+       DELETE FROM feed_posts_cache WHERE id IN (
+         SELECT id FROM (
+           SELECT id,
+                  ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
+                  ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
+           FROM feed_posts_cache
+         ) ranked
+         WHERE global_rank > $1 AND source_rank > $2
+       )
+       RETURNING ${ARCHIVE_COLUMNS}
+     )
+     INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
+     SELECT ${ARCHIVE_COLUMNS} FROM moved
+     ON CONFLICT (id) DO NOTHING`, [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
   ).catch(() => {});
   // Replaces the old flat 20-day-for-everyone rule — share is recomputed
   // fresh every trim pass over the *whole* table (not a recent window), so
@@ -12351,20 +12343,41 @@ function trimFeedPostsCache() {
        SELECT source, COUNT(*)::float / NULLIF(SUM(COUNT(*)) OVER (), 0) AS share
        FROM feed_posts_cache
        GROUP BY source
+     ),
+     moved AS (
+       DELETE FROM feed_posts_cache fp
+       USING source_counts sc
+       WHERE fp.source = sc.source
+         AND (
+           (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+           OR
+           ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+         )
+       RETURNING ${ARCHIVE_COLUMNS}
      )
-     DELETE FROM feed_posts_cache fp
-     USING source_counts sc
-     WHERE fp.source = sc.source
-       AND (
-         (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
-         OR
-         ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
-       )`, [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES]
+     INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
+     SELECT ${ARCHIVE_COLUMNS} FROM moved
+     ON CONFLICT (id) DO NOTHING`, [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES]
   ).catch(() => {});
   db.query(
-    `DELETE FROM feed_posts_cache fp
-     WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
-       AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
+    `WITH moved AS (
+       DELETE FROM feed_posts_cache fp
+       WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
+         AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)
+       RETURNING ${ARCHIVE_COLUMNS}
+     )
+     INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
+     SELECT ${ARCHIVE_COLUMNS} FROM moved
+     ON CONFLICT (id) DO NOTHING`
+  ).catch(() => {});
+  // The archive's own, far more generous ceiling — real storage is still
+  // finite, so this isn't "never delete anything," it's "only delete once
+  // there's genuinely no room left," ordered oldest-archived-first so
+  // whatever's been sitting there longest goes first if it ever comes to that.
+  db.query(
+    `DELETE FROM feed_posts_archive WHERE id IN (
+       SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
+     )`, [MAX_ARCHIVE_POSTS]
   ).catch(() => {});
 }
 
@@ -12707,7 +12720,7 @@ function cursorTsOf(cur) {
   return typeof cur === 'string' ? cur : (cur.ts || null);
 }
 // extraLists: pre-fetched { [sourceKey]: post[] } for content that isn't in
-// feed_posts_cache and needs its own fetch path (e.g. native UFconnect
+// feed_posts_cache and needs its own fetch path (e.g. native UFIconnect
 // community posts — see the unfiltered branch in handleFeedRequest) but
 // should still be merged into the SAME recency pass and get the SAME
 // per-source cursor bookkeeping as everything else, rather than being
@@ -13271,7 +13284,7 @@ async function authenticate(req, res, next) {
     lastRealUserActivityAt = Date.now();
     return next();
   } catch {
-    // Not a local UFconnect JWT; try Auth0 when configured.
+    // Not a local UFIconnect JWT; try Auth0 when configured.
   }
 
   try {
@@ -13300,7 +13313,7 @@ async function authenticateOptional(req, res, next) {
     lastRealUserActivityAt = Date.now();
     return next();
   } catch {
-    // Not a local UFconnect JWT; try Auth0 when configured.
+    // Not a local UFIconnect JWT; try Auth0 when configured.
   }
   try {
     const payload = await verifyAuth0Token(token);
@@ -14077,7 +14090,7 @@ app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   if (user.authProvider === 'auth0') {
-    return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFconnect.' });
+    return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFIconnect.' });
   }
   const { currentPassword, newPassword } = req.body || {};
   if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Current and new password are required.' });
@@ -14362,7 +14375,7 @@ function optionalViewerId(req) {
 }
 // Mirrors Groups.jsx's own origin-badge logic (platform field wins, a
 // subreddit-only external group is Reddit, anything non-external is a
-// native UFconnect group) — kept as one function so the round-robin key
+// native UFIconnect group) — kept as one function so the round-robin key
 // below and the frontend's badge can never quietly drift apart again.
 function groupPlatformKey(g) {
   if (g.platform) return g.platform;
@@ -14723,7 +14736,7 @@ async function handleFeedRequest(req, res) {
 
     let extraLists = {};
     if (isUnfiltered) {
-      // Native UFconnect community posts aren't in feed_posts_cache, so
+      // Native UFIconnect community posts aren't in feed_posts_cache, so
       // they need their own fetch path — merged into the SAME recency pass
       // as everything else (see getCursorFeedPage's extraLists) rather
       // than force-pinned to the top regardless of actual age, which is
@@ -14843,7 +14856,7 @@ async function handleFeedRequest(req, res) {
       let extraLists = {};
       if (isUnfiltered) {
         // "All Collected" means literally all collected content, including
-        // native UFconnect posts — same extraLists merge the Feed's own
+        // native UFIconnect posts — same extraLists merge the Feed's own
         // unfiltered cursor branch uses, so a community post competes on
         // actual recency instead of being force-pinned ahead of everything
         // else regardless of age.
@@ -16288,7 +16301,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
 });
 
 // ─── Single post detail — internal page for a post's max view (the "View on
-// UFconnect" button in the lightbox), so a post stays viewable inside the
+// UFIconnect" button in the lightbox), so a post stays viewable inside the
 // app even after it's rotated out of the live in-memory caches every other
 // feed endpoint reads from. Falls back to the DB for exactly that case.
 // Registered after every other literal /feed/* route (videos, stream,
@@ -16296,7 +16309,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
 // order, so a /feed/:postId declared earlier would have shadowed all of
 // those, matching e.g. "videos" as a postId instead of hitting their own
 // handlers.
-// authenticateOptional, not authenticate — the "View on UFconnect"/share
+// authenticateOptional, not authenticate — the "View on UFIconnect"/share
 // link off a post needs to actually work for whoever clicks it, logged in
 // or not (confirmed as the actual complaint: a shared link 404-redirected
 // anyone without an account straight to login instead of the post itself).
@@ -16629,7 +16642,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
           try {
             const data = await fetchJSON(
               `https://oauth.reddit.com/comments/${cleanId}?limit=100&depth=2&raw_json=1`,
-              { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' }
+              { 'Authorization': `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' }
             );
             return mapChildren(data);
           } catch (e) {
@@ -17365,7 +17378,7 @@ function githubApiRequest(pathAndQuery, method, body) {
       headers: {
         'Authorization': `Bearer ${process.env.AUTOFIX_GITHUB_TOKEN}`,
         'Accept': 'application/vnd.github+json',
-        'User-Agent': 'UFconnect-Autofix/1.0',
+        'User-Agent': 'UFIconnect-Autofix/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
       },
@@ -17484,7 +17497,6 @@ async function runBootSmokeTest(content) {
           JWT_SECRET: 'autofix-smoke-test-secret',
           AUTOFIX_ENABLED: 'false',
           AUTOFIX_SMOKE_TEST: '1',
-          STARTUP_FULL_FEED_WARMUP: '',
         },
         stdio: 'ignore',
         silent: true,
@@ -18346,7 +18358,7 @@ async function triggerRenderServiceDeploy(service, hook) {
         hostname: url.hostname,
         port: url.port || undefined,
         path: `${url.pathname}${url.search}`,
-        headers: { 'User-Agent': 'UFconnect-Office/1.0' },
+        headers: { 'User-Agent': 'UFIconnect-Office/1.0' },
       })),
     };
   }
@@ -18369,7 +18381,7 @@ async function triggerRenderServiceDeploy(service, hook) {
       headers: {
         'Authorization': `Bearer ${process.env.RENDER_API_KEY}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'UFconnect-Office/1.0',
+        'User-Agent': 'UFIconnect-Office/1.0',
       },
     }, { clearCache: 'do_not_clear' })),
   };
@@ -18631,7 +18643,7 @@ async function toggleCommunityPostLike(req, res) {
 
 app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
 
-// Who liked a native UFconnect post — post.likes is already a plain array
+// Who liked a native UFIconnect post — post.likes is already a plain array
 // of user ids (see toggleCommunityPostLike), this just resolves it to
 // display-ready profiles. Same hidden-profile filter /users/:id/followers
 // already applies, for the same reason: a hidden third party shouldn't
@@ -18722,7 +18734,7 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// Author-only. Only ever applies to UFconnect-native posts (community_posts) —
+// Author-only. Only ever applies to UFIconnect-native posts (community_posts) —
 // external aggregated content has no delete concept here.
 app.delete('/posts/:postId', authenticate, async (req, res) => {
   try {
@@ -19068,7 +19080,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       id, authorId: user.id, groupId: group.id,
       content: (content || '').trim(), likes: [], commentsCount: 0,
       createdAt: new Date().toISOString(),
-      source: 'uficonnect', sourceLabel: 'UFconnect',
+      source: 'uficonnect', sourceLabel: 'UFIconnect',
       mediaUrl: safeMediaUrl, mediaType: safeMediaType,
     };
     // Confirm the DB write before mutating in-memory state / broadcasting to
@@ -19085,7 +19097,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     }
     await db.query(
       `INSERT INTO community_posts (id,group_id,author_id,author_name,content,source,source_label,created_at,media_url,media_type)
-       VALUES ($1,$2,$3,$4,$5,'uficonnect','UFconnect',$6,$7,$8) ON CONFLICT DO NOTHING`,
+       VALUES ($1,$2,$3,$4,$5,'uficonnect','UFIconnect',$6,$7,$8) ON CONFLICT DO NOTHING`,
       [id, group.id, user.id, user.name, post.content, post.createdAt, safeMediaUrl, safeMediaType]
     );
     posts.unshift(post);
@@ -19542,7 +19554,7 @@ const REPORT_TARGET_TYPES = ['post', 'comment', 'user'];
 async function sendChildSafetyAlertEmail(report) {
   const transport = getMailTransport();
   const to = process.env.SAFETY_ALERT_EMAIL || 'support@uficonnect.org';
-  const body = `A child-safety report was just submitted on UFconnect.
+  const body = `A child-safety report was just submitted on UFIconnect.
 
 Target: ${report.targetType} ${report.targetId}
 Reporter: ${report.reporterId}
@@ -19558,7 +19570,7 @@ Review it in the office dashboard under Reports.`;
     await transport.sendMail({
       from: process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
-      subject: '⚠️ UFconnect child-safety report submitted',
+      subject: '⚠️ UFIconnect child-safety report submitted',
       text: body,
     });
   } catch (e) { console.error('[email] child-safety alert failed:', e.message); }
@@ -20146,26 +20158,49 @@ function startJobBoardSweeps() {
     if (isStabilityCritical() || isAppIdle()) return;
     const category = REMOTIVE_CATEGORIES[remotiveSweepIdx % REMOTIVE_CATEGORIES.length];
     remotiveSweepIdx++;
-    const posts = await fetchRemotiveByCategory(category);
     const health = workerHealth.get('remotive');
     health.fetchCount++;
-    if (posts.length) {
-      health.lastSuccess = Date.now();
-      addAndBroadcast(posts);
-      logAgentAction('remotive', '🛰️', `${category}: ${posts.length} listing(s)`, '#00A876');
+    // Was a bare await with no try/catch — unlike every other source's own
+    // fetchNextTopic, a thrown error here never reached workerHealth at
+    // all: the global unhandledRejection handler swallowed it (no crash),
+    // but lastError/consecutiveErrors stayed frozen at whatever they were
+    // last time this source happened to succeed, so a persistently-failing
+    // Remotive/Muse looked "healthy" (or just silently stale) on the office
+    // dashboard indefinitely.
+    try {
+      const posts = await fetchRemotiveByCategory(category);
+      if (posts.length) {
+        health.lastSuccess = Date.now();
+        health.consecutiveErrors = 0;
+        addAndBroadcast(posts);
+        logAgentAction('remotive', '🛰️', `${category}: ${posts.length} listing(s)`, '#00A876');
+      }
+    } catch (err) {
+      health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
+      health.totalErrors = (health.totalErrors || 0) + 1;
+      health.lastError = err?.message || String(err);
+      console.warn(`[remotive] ${category}:`, health.lastError);
     }
   }, JOB_BOARD_SWEEP_INTERVAL_MS);
   setInterval(async () => {
     if (isStabilityCritical() || isAppIdle()) return;
     const [category, level] = MUSE_SWEEP_PAIRS[museSweepIdx % MUSE_SWEEP_PAIRS.length];
     museSweepIdx++;
-    const posts = await fetchMuseByCategoryLevel(category, level);
     const health = workerHealth.get('muse');
     health.fetchCount++;
-    if (posts.length) {
-      health.lastSuccess = Date.now();
-      addAndBroadcast(posts);
-      logAgentAction('muse', '🎭', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
+    try {
+      const posts = await fetchMuseByCategoryLevel(category, level);
+      if (posts.length) {
+        health.lastSuccess = Date.now();
+        health.consecutiveErrors = 0;
+        addAndBroadcast(posts);
+        logAgentAction('muse', '🎭', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
+      }
+    } catch (err) {
+      health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
+      health.totalErrors = (health.totalErrors || 0) + 1;
+      health.lastError = err?.message || String(err);
+      console.warn(`[muse] ${category}/${level}:`, health.lastError);
     }
   }, JOB_BOARD_SWEEP_INTERVAL_MS);
 }
@@ -21111,7 +21146,7 @@ async function preloadUsersFromDB() {
 
 // Start server immediately, load data in background
 app.listen(PORT, () =>
-  console.log(`UFconnect backend listening on http://localhost:${PORT}`)
+  console.log(`UFIconnect backend listening on http://localhost:${PORT}`)
 );
 
 // Run heavy initialization in background without blocking startup

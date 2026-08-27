@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
@@ -31,7 +31,7 @@ const FEATURES = [
   {
     icon: '✏️',
     title: 'Community Publishing',
-    desc: 'Share what you know, ask questions, and showcase your work within UFconnect communities. Engage directly with people who get it.',
+    desc: 'Share what you know, ask questions, and showcase your work within UFIconnect communities. Engage directly with people who get it.',
   },
 ];
 
@@ -77,7 +77,7 @@ const CONTENT_PLATFORMS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'UFconnect is a personalized network featuring content feeds, communities, secure messaging, and curated opportunities built around whatever you do.';
+const SHARE_TEXT = 'UFIconnect is a personalized network featuring content feeds, communities, secure messaging, and curated opportunities built around whatever you do.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -89,7 +89,7 @@ const SHARE_LINKS = [
   },
   {
     label: 'Email',
-    href: `mailto:?subject=${encodeURIComponent('Join me on UFconnect')}&body=${encodeURIComponent(`${SHARE_TEXT}\n\n${SHARE_URL}`)}`,
+    href: `mailto:?subject=${encodeURIComponent('Join me on UFIconnect')}&body=${encodeURIComponent(`${SHARE_TEXT}\n\n${SHARE_URL}`)}`,
   },
 ];
 
@@ -113,7 +113,7 @@ export default function Landing() {
   async function handleShare() {
     try {
       if (navigator.share) {
-        await navigator.share({ title: 'UFconnect', text: SHARE_TEXT, url: SHARE_URL });
+        await navigator.share({ title: 'UFIconnect', text: SHARE_TEXT, url: SHARE_URL });
         return;
       }
       await navigator.clipboard.writeText(SHARE_URL);
@@ -127,10 +127,10 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFconnect — A Network Built Around What You Do</title>
-        <meta name="description" content="UFconnect is a personalized network offering feeds, communities, messaging, and opportunities tailored to whatever you do — tech, creative, business, or anything else." />
+        <title>UFIconnect — A Network Built Around What You Do</title>
+        <meta name="description" content="UFIconnect is a personalized network offering feeds, communities, messaging, and opportunities tailored to whatever you do — tech, creative, business, or anything else." />
         <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news, interest based communities, hobby communities, creator community, social network for everyone, community app for any interest, personalized social feed" />
-        <meta name="author" content="UFconnect" />
+        <meta name="author" content="UFIconnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -151,7 +151,7 @@ export default function Landing() {
               <div style={{ width: '40px', height: '40px', background: 'var(--primary)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: '900', fontSize: '1.1rem' }}>
                 UF
               </div>
-              <span className="landing-logo-text" style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFconnect</span>
+              <span className="landing-logo-text" style={{ fontWeight: '900', fontSize: '1.2rem' }}>UFIconnect</span>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <Link to="/login" className="btn btn-outline">
@@ -262,7 +262,7 @@ export default function Landing() {
                   border: '8px solid #0F172A', boxShadow: '0 34px 70px -16px rgba(15,23,42,.4)',
                   background: '#0F172A',
                 }}>
-                  <img src="/hero-feed-screenshot.png" alt="UFconnect's personalized feed, showing real posts pulled from GitHub" style={{ display: 'block', width: '100%' }} />
+                  <img src="/hero-feed-screenshot.png" alt="UFIconnect's personalized feed, showing real posts pulled from GitHub" style={{ display: 'block', width: '100%' }} />
                   <div style={{
                     position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)',
                     width: '36%', height: 18, background: '#0F172A', borderRadius: '0 0 14px 14px',
@@ -305,7 +305,7 @@ export default function Landing() {
                 Key features
               </h2>
               <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
-                UFconnect combines your feed, network, and opportunities in one platform — tailored to your role and interests, whatever they are.
+                UFIconnect combines your feed, network, and opportunities in one platform — tailored to your role and interests, whatever they are.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
                 {FEATURES.map(({ icon, title, desc }) => (
@@ -343,13 +343,13 @@ export default function Landing() {
             <div style={{ maxWidth: 960, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 28, alignItems: 'center' }}>
               <div>
                 <div style={{ fontSize: '.78rem', fontWeight: 800, letterSpacing: 0, textTransform: 'uppercase', color: '#93C5FD', marginBottom: 10 }}>
-                  Share UFconnect
+                  Share UFIconnect
                 </div>
                 <h2 style={{ fontSize: '1.55rem', fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>
                   Invite people to join the platform.
                 </h2>
                 <p style={{ color: '#CBD5E1', fontSize: '.95rem', lineHeight: 1.65, margin: 0, maxWidth: 650 }}>
-                  Share UFconnect with people in your life who'd get value from a feed and community built around what they actually do.
+                  Share UFIconnect with people in your life who'd get value from a feed and community built around what they actually do.
                 </p>
               </div>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -412,7 +412,7 @@ export default function Landing() {
 
         {/* Footer */}
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
-          <p style={{ marginBottom: 8 }}>© {new Date().getFullYear()} UFconnect</p>
+          <p style={{ marginBottom: 8 }}>© {new Date().getFullYear()} UFIconnect</p>
           <p>
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+﻿import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -558,13 +558,13 @@ export default function Register() {
   return (
     <>
       <Helmet>
-        <title>Join UFconnect — Professional Network for All Careers</title>
-        <meta name="description" content="Create your UFconnect account and get a personalized feed from day one." />
+        <title>Join UFIconnect — Professional Network for All Careers</title>
+        <meta name="description" content="Create your UFIconnect account and get a personalized feed from day one." />
         <link rel="canonical" href="https://uficonnect.org/register" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/register" />
-        <meta property="og:title" content="Join UFconnect | Free Professional Network" />
-        <meta property="og:description" content="Create your UFconnect account and get a personalized feed, communities, posts, messaging, and opportunities from day one." />
+        <meta property="og:title" content="Join UFIconnect | Free Professional Network" />
+        <meta property="og:description" content="Create your UFIconnect account and get a personalized feed, communities, posts, messaging, and opportunities from day one." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
@@ -573,7 +573,7 @@ export default function Register() {
         <div className="auth-card" style={{ maxWidth: step === 0 ? 460 : 620 }}>
           <div className="auth-logo">
             <div className="auth-logo-icon">UF</div>
-            <span className="auth-logo-name">UFconnect</span>
+            <span className="auth-logo-name">UFIconnect</span>
           </div>
 
           {/* ── Step indicator ── */}
@@ -597,7 +597,7 @@ export default function Register() {
           {step === 0 && (
             <>
               <h1 className="auth-heading" style={{ marginBottom: 6 }}>Create your account</h1>
-              <p className="auth-sub" style={{ marginBottom: 24 }}>Join thousands of professionals on UFconnect — free forever.</p>
+              <p className="auth-sub" style={{ marginBottom: 24 }}>Join thousands of professionals on UFIconnect — free forever.</p>
 
               {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
@@ -49,12 +49,12 @@ const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'dribbble', 'instagram'];
 // one — see rssPost/parseRSSItems server-side, which is shared by ~20 RSS
 // sources, not just the handful that were originally assumed to be the only
 // ones capable of it). Excludes the Following-only sources (native
-// UFconnect posts + connected-account platforms with no aggregate
+// UFIconnect posts + connected-account platforms with no aggregate
 // fetcher), which have their own separate filter row below with a
 // different pool entirely.
 const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(k => !FEED_ONLY_EXCLUDED_SOURCES.includes(k));
 // Following mode's own filter set — every platform Connected Accounts
-// offers (CONNECTED_SOCIAL_PLATFORMS), plus native UFconnect, an entirely
+// offers (CONNECTED_SOCIAL_PLATFORMS), plus native UFIconnect, an entirely
 // different pool from FEED_VIDEO_SOURCES above (see getFollowingFeedPosts
 // server-side). This used to be hand-limited to LinkedIn/Twitter/
 // Instagram/Facebook/TikTok, so a user who'd connected e.g. GitHub or

@@ -1,4 +1,4 @@
-const TIERS = [
+﻿const TIERS = [
   {
     tier: 'pro',
     name: 'Pro',
@@ -37,7 +37,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
         boxShadow: '0 12px 40px rgba(0,0,0,.25)',
       }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
-          <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Upgrade UFconnect</h3>
+          <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Upgrade UFIconnect</h3>
           <button
             onClick={onClose}
             aria-label="Close"
@@ -45,7 +45,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
           >✕</button>
         </div>
         <p style={{ margin: '0 0 20px', fontSize: '.85rem', color: 'var(--muted)' }}>
-          Choose a plan to support UFconnect and unlock what's coming next.
+          Choose a plan to support UFIconnect and unlock what's coming next.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

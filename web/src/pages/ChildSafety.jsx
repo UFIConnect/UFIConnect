@@ -1,9 +1,9 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
 const EFFECTIVE_DATE = 'August 25, 2026';
 const CONTACT_EMAIL  = 'support@uficonnect.org';
-const APP_NAME       = 'UFconnect';
+const APP_NAME       = 'UFIconnect';
 const APP_URL        = 'https://uficonnect.org';
 
 function Section({ title, children }) {
@@ -39,12 +39,12 @@ export default function ChildSafety() {
   return (
     <>
       <Helmet>
-        <title>Child Safety Standards — UFconnect</title>
-        <meta name="description" content="UFconnect's standards on child sexual abuse and exploitation (CSAE): what we prohibit, how to report a concern, and what happens next." />
+        <title>Child Safety Standards — UFIconnect</title>
+        <meta name="description" content="UFIconnect's standards on child sexual abuse and exploitation (CSAE): what we prohibit, how to report a concern, and what happens next." />
         <link rel="canonical" href="https://uficonnect.org/child-safety" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/child-safety" />
-        <meta property="og:title" content="Child Safety Standards | UFconnect" />
+        <meta property="og:title" content="Child Safety Standards | UFIconnect" />
         <meta property="og:description" content="Our standards on child sexual abuse and exploitation, and how to report a concern." />
       </Helmet>
 
@@ -90,7 +90,7 @@ export default function ChildSafety() {
           </P>
         </Section>
 
-        <Section title="2. Who can use UFconnect">
+        <Section title="2. Who can use UFIconnect">
           <P>
             {APP_NAME} is a professional networking platform intended for users who are at least 13
             years old (16 in the EU/EEA/UK), consistent with our{' '}

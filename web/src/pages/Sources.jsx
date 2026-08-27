@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
@@ -48,7 +48,7 @@ const SOURCE_META = {
   designweb:     { label: 'Design & Web',      icon: '✏️', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
   indeed:        { label: 'Indeed',            icon: '💼', color: '#2557A7', desc: 'Remote job listings' },
   usajobs:       { label: 'USAJobs',           icon: '🏛️', color: '#005EA8', desc: 'U.S. federal government job openings' },
-  uficonnect:    { label: 'UFconnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
+  uficonnect:    { label: 'UFIconnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
 };
 
 const CATEGORIES = [
@@ -59,7 +59,7 @@ const CATEGORIES = [
   { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
   { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'usajobs'] },
   { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
-  { id: 'community',  label: 'UFconnect',            sources: ['uficonnect'] },
+  { id: 'community',  label: 'UFIconnect',            sources: ['uficonnect'] },
 ];
 
 function Toggle({ enabled, onChange }) {
@@ -290,8 +290,8 @@ export default function Sources() {
   return (
     <Layout>
       <Helmet>
-        <title>Feed Sources | UFconnect</title>
-        <meta name="description" content="Control which sources appear in your UFconnect feed." />
+        <title>Feed Sources | UFIconnect</title>
+        <meta name="description" content="Control which sources appear in your UFIconnect feed." />
       </Helmet>
 
       <Link to="/profile" className="btn-back" style={{ marginBottom: 14 }}><span className="btn-back-icon">‹</span> Back to Profile</Link>

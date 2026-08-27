@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 
 // Minimal top bar for a visitor with no session — the full app Layout
 // (sidebar, nav, profile menu) assumes an authenticated member everywhere
@@ -15,11 +15,11 @@ export default function GuestShell({ children }) {
         padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
       }}>
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)', fontWeight: 800, fontSize: '1.05rem' }}>
-          🌐 UFconnect
+          🌐 UFIconnect
         </Link>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link to="/login"><button className="btn btn-ghost btn-sm" type="button">Sign in</button></Link>
-          <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join UFconnect</button></Link>
+          <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join UFIconnect</button></Link>
         </div>
       </div>
       {children}

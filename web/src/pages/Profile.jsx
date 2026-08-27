@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -339,7 +339,7 @@ export default function Profile() {
           />
         </div>
         <div className="profile-name">{profile.name}</div>
-        <div className="profile-title">{profile.title || 'UFconnect Member'}</div>
+        <div className="profile-title">{profile.title || 'UFIconnect Member'}</div>
         {profile.organization && <div className="profile-org">🏢 {profile.organization}</div>}
 
         {/* Follow stats */}
@@ -495,7 +495,7 @@ export default function Profile() {
               <div>
                 <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Connected Accounts</h3>
                 <p style={{ fontSize:'.78rem', color:'var(--muted)', margin:0, lineHeight:1.5 }}>
-                  Connect your social accounts to bring your existing feeds into UFconnect.
+                  Connect your social accounts to bring your existing feeds into UFIconnect.
                 </p>
               </div>
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => navigate('/connected-accounts')} style={{ flexShrink:0 }}>
@@ -584,7 +584,7 @@ export default function Profile() {
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
               <div>
                 <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:4 }}>Your Posts</h3>
-                <p style={{ fontSize:'.84rem', color:'var(--muted)', margin:0 }}>Posts you share with the UFconnect community appear here.</p>
+                <p style={{ fontSize:'.84rem', color:'var(--muted)', margin:0 }}>Posts you share with the UFIconnect community appear here.</p>
               </div>
               <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration:'none' }}>Write a post</Link>
             </div>

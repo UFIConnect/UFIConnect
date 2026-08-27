@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
+﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
@@ -127,7 +127,7 @@ const SOURCE_TABS = [
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
 // this is exactly the content SOURCE_TABS deliberately excludes (native
-// UFconnect posts from people you follow, plus whichever connected social
+// UFIconnect posts from people you follow, plus whichever connected social
 // accounts you've linked), so it gets its own tab vocabulary rather than
 // reusing the aggregate Feed's. Covers every platform Connected Accounts
 // offers (CONNECTED_SOCIAL_PLATFORMS), not just the 4 with a live
@@ -136,7 +136,7 @@ const SOURCE_TABS = [
 // GitHub or Reddit had no way to even select it here.
 const FOLLOWING_SOURCE_TABS = [
   { key: 'all', label: 'All', icon: '⚡' },
-  { key: 'uficonnect', label: 'UFconnect', icon: '🌐' },
+  { key: 'uficonnect', label: 'UFIconnect', icon: '🌐' },
   ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' })),
 ];
 
@@ -191,7 +191,7 @@ const ALL_FILTER_SOURCES = [
   'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
 ];
 
-// Following's filter-panel options — native UFconnect posts from people you
+// Following's filter-panel options — native UFIconnect posts from people you
 // follow, plus every platform Connected Accounts offers (see
 // FOLLOWING_SOURCE_TABS above for why this now matches that full list
 // instead of just the 4 with a live keyword-search fallback). Deliberately
@@ -440,7 +440,7 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
   const meta = SOURCE_META[platform] || {};
   const descriptions = {
     twitter:   'See posts, threads, and trending topics from the people you follow on X (Twitter).',
-    linkedin:  'Bring your LinkedIn feed into UFconnect — professional updates, articles, and job posts.',
+    linkedin:  'Bring your LinkedIn feed into UFIconnect — professional updates, articles, and job posts.',
     instagram: 'View posts and reels from the creators and brands you follow on Instagram.',
     facebook:  'See updates from your Facebook friends and the pages you follow.',
   };
@@ -2170,7 +2170,7 @@ export default function Feed() {
   return (
     <Layout>
       <Helmet>
-        <title>Professional News Feed | News & Updates for Your Career | UFconnect</title>
+        <title>Professional News Feed | News & Updates for Your Career | UFIconnect</title>
         <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         <link rel="canonical" href="https://uficonnect.org/feed" />
@@ -2282,7 +2282,7 @@ export default function Feed() {
 
       {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
           stable, server-sorted view) and Following (posts from people you
-          follow on UFconnect). Videos lives as its own top-level nav item
+          follow on UFIconnect). Videos lives as its own top-level nav item
           (see Layout.jsx / pages/Videos.jsx) rather than nested in here. */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {[
@@ -2579,7 +2579,7 @@ export default function Feed() {
               </>
             ) : viewMode === 'following' ? (
               <>
-                <p style={{ marginBottom: 12 }}>Follow people on UFconnect to see their posts here.</p>
+                <p style={{ marginBottom: 12 }}>Follow people on UFIconnect to see their posts here.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <Link to="/search" className="btn btn-primary btn-sm">Find people</Link>
                   <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Feed</button>

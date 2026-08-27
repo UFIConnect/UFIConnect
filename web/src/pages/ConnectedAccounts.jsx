@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -143,7 +143,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Connect your social accounts through each provider's permission screen, then return to UFconnect automatically.
+          Connect your social accounts through each provider's permission screen, then return to UFIconnect automatically.
         </p>
       </div>
 
@@ -395,7 +395,7 @@ function PlatformCard({
               // "waiting on server credentials" would be simply false for
               // a platform whose OAuth is already fully configured.
               ? (p.note || `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`)
-              : `Connect opens ${p.name}'s authorization page so you can approve UFconnect access at the original source.`}
+              : `Connect opens ${p.name}'s authorization page so you can approve UFIconnect access at the original source.`}
           </div>
 
           {/* Benefits */}
