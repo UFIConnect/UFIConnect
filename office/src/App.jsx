@@ -1735,7 +1735,12 @@ function PipelineView({ status, pipelineStatus }) {
               {(staging?.pendingCount ?? 0).toLocaleString()} pending
             </div>
             <div style={{ fontSize: 11, color: '#64748b' }}>
-              {staging?.lastRun ? `Moved ${staging.lastCount ?? 0} · ${fmtAgo(staging.lastRun)}` : 'Not run yet'}
+              {staging?.inFlight
+                ? `Draining now · ${Math.round((staging.lockAgeMs || 0) / 1000)}s`
+                : staging?.lastRun ? `Moved ${staging.lastCount ?? 0} · ${fmtAgo(staging.lastRun)}` : 'Not run yet'}
+            </div>
+            <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
+              {(staging?.totalTransferred ?? 0).toLocaleString()} total transferred
             </div>
           </PipelineNode>
 
@@ -2128,9 +2133,15 @@ function StagingTransferDetailCard({ staging }) {
         <DetailStat label="pending in staging" value={staging?.pendingCount != null ? staging.pendingCount.toLocaleString() : '—'} color="#38bdf8" />
         <DetailStat label="last run moved" value={(staging?.lastCount ?? 0).toLocaleString()} />
         <DetailStat label="total transferred" value={(staging?.totalTransferred ?? 0).toLocaleString()} color="#4ade80" />
+        <DetailStat label="transfer lock" value={staging?.inFlight ? 'active' : 'clear'} color={staging?.inFlight ? '#fbbf24' : '#4ade80'} />
       </div>
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Last run: <span style={{ color: '#94a3b8' }}>{staging?.lastRun ? fmtAgo(staging.lastRun) : 'not run yet'}</span></div>
+        {staging?.inFlight && (
+          <div style={{ color: '#fbbf24' }}>
+            Transfer lock active for {Math.round((staging.lockAgeMs || 0) / 1000)}s
+          </div>
+        )}
         {staging?.lastError && <div style={{ color: '#f87171' }}>⚠ {staging.lastError}</div>}
       </div>
     </Card>

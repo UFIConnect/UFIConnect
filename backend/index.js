@@ -94,9 +94,23 @@ function buildHealthPayload() {
       lastCount: stagingTransferState?.lastCount ?? 0,
       totalTransferred: stagingTransferState?.totalTransferred ?? 0,
       lastError: stagingTransferState?.lastError || null,
+      inFlight: !!transferInFlight,
+      lockStartedAt: transferStartedAt ? new Date(transferStartedAt).toISOString() : null,
+      lockAgeMs: transferStartedAt ? Date.now() - transferStartedAt : 0,
     };
   } catch {
     payload.staging = null;
+  }
+  try {
+    payload.dbSize = {
+      mb: dbSizeState?.mb ?? null,
+      status: dbSizeState?.status || 'unknown',
+      warnMb: DB_SIZE_WARN_MB,
+      criticalMb: DB_SIZE_CRITICAL_MB,
+      lastCheckedAt: dbSizeState?.lastCheckedAt || null,
+    };
+  } catch {
+    payload.dbSize = null;
   }
   return payload;
 }
@@ -12738,9 +12752,26 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
 const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
-const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 2000000, 250000, 20000000);
-function trimFeedPostsCache() {
-  if (Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
+// Was 2,000,000 — sized purely as "a number that felt generous," never
+// checked against what that actually costs in real disk space, and never
+// backstopped by any check of the database's actual size (see
+// checkDatabaseSize/DB_SIZE_*_MB below, which didn't exist until now
+// either). 2M archived rows at a realistic ~1-2KB/row (title+content+URLs+
+// index overhead) is itself multiple GB — on a 4GB-plan database that's
+// large enough on its own to plausibly explain silent INSERT failures
+// elsewhere (see recordFeedWriteOutcome) if disk filled up. 500,000 is
+// still a large safety net (2x the live cache's own MAX_CACHED_DB_POSTS)
+// while leaving real headroom; raise it back via the env var if the DB
+// plan is upgraded, ideally alongside actually watching dbSizeState.
+const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 20000000);
+// force skips the normal 10-minute throttle (used by checkDatabaseSize's
+// critical-path response, where waiting up to 10 minutes to actually free
+// space isn't acceptable) and archiveCapOverride lets that same critical
+// path shrink the archive table much harder than its configured steady-
+// state cap for one pass, rather than only ever trimming down to whatever
+// already wasn't enough to prevent the critical state in the first place.
+function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
+  if (!force && Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
   lastFeedPostsTrimAt = Date.now();
   db.query(
     `WITH moved AS (
@@ -12817,19 +12848,102 @@ function trimFeedPostsCache() {
   db.query(
     `DELETE FROM feed_posts_archive WHERE id IN (
        SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
-     )`, [MAX_ARCHIVE_POSTS]
+     )`, [archiveCapOverride ?? MAX_ARCHIVE_POSTS]
   ).catch(() => {});
 }
+
+// ─── Database size guard ────────────────────────────────────────────────────
+// Nothing anywhere in this file previously checked the database's actual
+// disk usage — every existing cap (MAX_CACHED_DB_POSTS, MAX_ARCHIVE_POSTS)
+// is row-count-based, which only bounds size if the assumed per-row cost
+// stays right; it never once asked Postgres how big it actually is or
+// reacted if that grew close to the real provisioned limit (the render.yaml
+// database plan is basic-4gb — see its own comment on `plan:` for why that
+// number is real and Blueprint-sync-sensitive, not a placeholder). This runs
+// on both roles (cheap read-only query, no reason to gate by SERVICE_ROLE)
+// and reacts locally: 'warn' just logs once per transition; 'critical'
+// forces an immediate, harder-than-normal trim pass (bypassing the usual
+// 10-minute throttle — waiting up to 10 minutes to start freeing space once
+// actually critical isn't acceptable) rather than waiting for the next
+// scheduled maintenance window.
+const DB_SIZE_WARN_MB     = envNumber('DB_SIZE_WARN_MB', 3200, 100, 1000000);
+const DB_SIZE_CRITICAL_MB = envNumber('DB_SIZE_CRITICAL_MB', 3700, DB_SIZE_WARN_MB, 1000000);
+const DB_SIZE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const dbSizeState = { mb: null, status: 'unknown', lastCheckedAt: null, lastError: null };
+async function checkDatabaseSize() {
+  if (!db.isConnected()) return;
+  try {
+    // Always the primary (db.query, not db.readQuery/its backup failover) —
+    // a capacity check needs to reflect the actual constrained database, not
+    // whichever one happens to be serving hot reads at the moment.
+    const { rows } = await db.query(`SELECT pg_database_size(current_database()) AS bytes`, []);
+    const mb = Math.round((Number(rows[0]?.bytes) || 0) / (1024 * 1024));
+    const prevStatus = dbSizeState.status;
+    dbSizeState.mb = mb;
+    dbSizeState.lastCheckedAt = new Date().toISOString();
+    dbSizeState.lastError = null;
+    dbSizeState.status = mb >= DB_SIZE_CRITICAL_MB ? 'critical' : mb >= DB_SIZE_WARN_MB ? 'warn' : 'ok';
+    if (dbSizeState.status !== 'ok' && dbSizeState.status !== prevStatus) {
+      logAgentAction('feed', dbSizeState.status === 'critical' ? '🛑' : '⚠️',
+        `Database size ${mb.toLocaleString()}MB (${dbSizeState.status}, warn ${DB_SIZE_WARN_MB.toLocaleString()}/critical ${DB_SIZE_CRITICAL_MB.toLocaleString()})` +
+        (dbSizeState.status === 'critical' ? ' — forcing an aggressive archive trim now' : ''),
+        dbSizeState.status === 'critical' ? '#EF4444' : '#FBBF24');
+    }
+    if (dbSizeState.status === 'critical') {
+      // A quarter of the configured archive cap — meaningfully more
+      // aggressive than the steady-state pass that already wasn't enough
+      // to prevent reaching critical, not just a repeat of it.
+      trimFeedPostsCache({ force: true, archiveCapOverride: Math.floor(MAX_ARCHIVE_POSTS / 4) });
+    }
+  } catch (e) {
+    dbSizeState.lastError = e.message;
+    console.warn('[checkDatabaseSize]', e.message);
+  }
+}
+setInterval(checkDatabaseSize, DB_SIZE_CHECK_INTERVAL_MS);
+checkDatabaseSize();
 
 // targetTable defaults to the live production table (today's behavior,
 // unchanged for the api role) — SERVICE_ROLE=pipeline callers pass
 // 'feed_posts_staging' instead. Always one of these two hardcoded internal
 // constants, never request input, so safe to interpolate directly into the
 // query text (a table name can't be a $N placeholder).
+// Repurposes filterAgentState.status/lastError (declared with this same
+// function's other stats, never actually written to before this — grepped
+// to confirm nothing else ever set them, so "Filter" always silently read
+// as status:'idle' regardless of what actually happened) to also reflect
+// this function's own DB write outcome, not just the drop/dedupe counts
+// above it. This is the exact function addAndBroadcast fires-and-forgets
+// into (`.catch(() => {})`, no logging) — a sustained failure here (e.g.
+// the database out of storage) previously had zero visibility anywhere:
+// Sources/Equalizer/Filter/Sort & Rank all kept reporting real throughput
+// right up to the DB write itself, while feed_posts_staging silently never
+// received a single row and nothing on the dashboard or in the logs said
+// why. One bad row (malformed content, a stray null byte) still doesn't
+// flag the whole pipeline — only a run where every single row failed does,
+// since that's the actual "nothing is getting through" signal.
+function recordFeedWriteOutcome(targetTable, attempted, saved, lastRowError) {
+  const totalFailure = attempted > 0 && saved === 0 && !!lastRowError;
+  filterAgentState.status = totalFailure ? 'degraded' : 'healthy';
+  filterAgentState.lastError = totalFailure ? `${targetTable}: ${lastRowError}` : null;
+  if (totalFailure) {
+    const now = Date.now();
+    // Rate-limited — a sustained failure fails identically on every ~2s
+    // equalizer drain, and logging that every single tick would flood the
+    // office activity feed with the same line hundreds of times an hour.
+    if (now - (filterAgentState.lastErrorLoggedAt || 0) > 60000) {
+      filterAgentState.lastErrorLoggedAt = now;
+      logAgentAction('feed', '🛑', `All ${attempted} save(s) to ${targetTable} failed: ${lastRowError}`, '#EF4444');
+    }
+  }
+}
+
 async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   if (!db.isConnected() || !posts.length) return;
   let saved = 0;
-  for (const rawPost of realFeedPosts(posts)) {
+  let lastRowError = null;
+  const realPosts = realFeedPosts(posts);
+  for (const rawPost of realPosts) {
     const p = normalizeFeedPost(rawPost);
     try {
       await db.query(
@@ -12867,8 +12981,9 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
         ]
       );
       saved++;
-    } catch { /* skip individual bad rows */ }
+    } catch (e) { lastRowError = e.message; /* keep going — one bad row shouldn't drop the rest of the batch */ }
   }
+  recordFeedWriteOutcome(targetTable, realPosts.length, saved, lastRowError);
   trimFeedPostsCache();
   return saved;
 }
@@ -13022,10 +13137,10 @@ function dbRowToFeedPost(r) {
     source:      r.source,
     title:       r.title,
     content:     r.content,
-    sourceUrl:   r.source_url,
-    mediaUrl:    r.media_url,
+    sourceUrl:   r.source_url ? decodeHTMLEntities(r.source_url) : r.source_url,
+    mediaUrl:    r.media_url ? decodeHTMLEntities(r.media_url) : r.media_url,
     mediaType:   r.media_type,
-    mediaPoster: r.media_poster,
+    mediaPoster: r.media_poster ? decodeHTMLEntities(r.media_poster) : r.media_poster,
     location:    r.location,
     topic:       r.topic,
     likesCount:  normalizeCount(r.likes_count),
@@ -18375,6 +18490,19 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastCount: stagingTransferState.lastCount,
       totalTransferred: stagingTransferState.totalTransferred,
       lastError: stagingTransferState.lastError,
+      inFlight: !!transferInFlight,
+      lockStartedAt: transferStartedAt ? new Date(transferStartedAt).toISOString() : null,
+      lockAgeMs: transferStartedAt ? Date.now() - transferStartedAt : 0,
+    },
+    // See "Database size guard" (checkDatabaseSize) — status is 'ok' /
+    // 'warn' / 'critical' against DB_SIZE_WARN_MB/DB_SIZE_CRITICAL_MB.
+    dbSize: {
+      mb: dbSizeState.mb,
+      status: dbSizeState.status,
+      warnMb: DB_SIZE_WARN_MB,
+      criticalMb: DB_SIZE_CRITICAL_MB,
+      lastCheckedAt: dbSizeState.lastCheckedAt,
+      lastError: dbSizeState.lastError,
     },
     // Sits before Filter in the real pipeline — see runEqualizerDrain's own
     // comment. bufferedBySource is live (computed on read, same pattern as
@@ -18714,9 +18842,11 @@ async function refreshStagingPostCount() {
 // Guards against two overlapping drains on the same staging rows — a real
 // risk now that the interval below is 1 minute instead of the original 15.
 let transferInFlight = false;
+let transferStartedAt = null;
 async function transferStagedPosts() {
   if (!db.isConnected() || transferInFlight) return;
   transferInFlight = true;
+  transferStartedAt = Date.now();
   try {
     // Drains in a tight loop within one invocation, capped at 20 batches
     // (100k rows), instead of one fixed 5000-row batch per tick — after
@@ -18749,6 +18879,7 @@ async function transferStagedPosts() {
     console.warn('[transfer] failed:', e.message);
   } finally {
     transferInFlight = false;
+    transferStartedAt = null;
   }
 }
 
