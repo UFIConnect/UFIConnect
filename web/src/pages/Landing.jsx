@@ -96,18 +96,8 @@ const SHARE_LINKS = [
 export default function Landing() {
   const [shareCopied, setShareCopied] = useState(false);
 
-  // Session-only, not persistent — a fresh visit later still lands on
-  // Landing rather than permanently treating this browser as guest-mode.
-  // See HomeRoute in App.jsx for where this flag is actually read. A full
-  // window.location assignment, not React Router's navigate('/') — Landing
-  // is already rendered AT path '/' (HomeRoute picks it vs. Feed/GuestFeed
-  // based on auth state), so navigate('/') is a no-op to react-router-dom
-  // (identical path, no location change, nothing re-renders) and the button
-  // silently did nothing. A hard navigation forces the whole app to
-  // actually remount and re-evaluate HomeRoute's logic from scratch.
   function continueAsGuest() {
-    sessionStorage.setItem('ufi_guest', '1');
-    window.location.href = '/';
+    window.location.href = '/global';
   }
 
   async function handleShare() {
@@ -127,7 +117,7 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFIconnect — A Network Built Around What You Do</title>
+        <title>UFIconnect - Official Home</title>
         <meta name="description" content="UFIconnect is a personalized network offering feeds, communities, messaging, and opportunities tailored to whatever you do — tech, creative, business, or anything else." />
         <meta name="keywords" content="professional network, connect with professionals, networking platform, news feed, career networking, tech community, engineers, designers, founders, creatives, job listings, remote jobs, professional communities, networking app, LinkedIn alternative, Facebook Groups alternative, Twitter communities, career opportunities, tech careers, startup community, developer network, UX design community, product managers, marketing professionals, business networking, online communities, professional connections, industry news, career development, business connections, professional growth, networking solutions, community platform, tech professionals, talent network, ufi connect, connect professionals, networking news, professional news, interest based communities, hobby communities, creator community, social network for everyone, community app for any interest, personalized social feed" />
         <meta name="author" content="UFIconnect" />
@@ -165,10 +155,10 @@ export default function Landing() {
             <div className="landing-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 48, alignItems: 'center' }}>
               <div style={{ textAlign: 'left' }}>
                 <div style={{ display: 'inline-block', padding: '6px 16px', borderRadius: 20, background: 'var(--primary-light)', color: 'var(--primary)', fontSize: '.82rem', fontWeight: 700, marginBottom: 20, border: '1px solid var(--primary)' }}>
-                  One place, whatever you do
+                  Official UFIconnect home
                 </div>
                 <h1 style={{ fontSize: 'clamp(2rem, 4.4vw, 3rem)', fontWeight: '900', letterSpacing: '-.4px', marginBottom: '20px', lineHeight: '1.1' }}>
-                  The Network Built Around What You Do
+                  UFIconnect
                 </h1>
                 <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '520px' }}>
                   A personalized feed, communities, messaging, and real opportunities — tailored to your role, whatever that is.
@@ -177,9 +167,9 @@ export default function Landing() {
                   <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
                     Get Started Free →
                   </Link>
-                  <a href="#features" className="btn btn-outline btn-lg" style={{ padding: '13px 36px' }}>
-                    Learn More
-                  </a>
+                  <Link to="/global" className="btn btn-outline btn-lg" style={{ padding: '13px 36px' }}>
+                    Skip sign up - Global Feed →
+                  </Link>
                 </div>
                 <button
                   type="button"
@@ -189,7 +179,7 @@ export default function Landing() {
                     color: 'var(--muted)', textDecoration: 'underline', marginBottom: '44px', display: 'inline-block',
                   }}
                 >
-                  Or continue browsing without an account →
+                  Skip sign up and open Global Feed →
                 </button>
 
                 {/* Role pills preview — a deliberately mixed slice (not just

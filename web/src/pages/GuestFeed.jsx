@@ -16,6 +16,26 @@ function timeAgo(iso) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+const GUEST_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
+const GUEST_DEDUP_WINDOW = 500;
+const GUEST_EMPTY_STREAK_LIMIT = 6;
+
+function guestPostIdentity(post) {
+  return post?.id || `${post?.source || 'feed'}:${post?.sourceUrl || post?.title || ''}:${post?.createdAt || ''}`;
+}
+
+function mergeGuestPosts(primary = [], secondary = []) {
+  const seen = new Set();
+  const merged = [];
+  for (const post of [...primary, ...secondary]) {
+    const key = guestPostIdentity(post);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(post);
+  }
+  return merged;
+}
+
 // Lighter than VideoFeedView's own player — no shared cross-slide YouTube
 // instance, no scrub bar. This is a plain scrolling list, not a snap-scroll
 // feed, so each card owning its own (auto-destroyed-when-inactive) player
@@ -136,21 +156,49 @@ export default function GuestFeed() {
   const [muted, toggleMuted] = useGlobalMuted();
   const loadingMoreRef = useRef(false);
   const knownIds = useRef(new Set());
+  const knownIdsQueue = useRef([]);
+  const emptyStreakRef = useRef(0);
   const sentinelRef = useRef(null);
   const cardRefs = useRef(new Map());
 
-  const loadPage = useCallback(async (reset = false) => {
+  const markKnownId = useCallback((id) => {
+    if (!id || knownIds.current.has(id)) return;
+    knownIds.current.add(id);
+    knownIdsQueue.current.push(id);
+    if (knownIdsQueue.current.length > GUEST_DEDUP_WINDOW) {
+      knownIds.current.delete(knownIdsQueue.current.shift());
+    }
+  }, []);
+
+  const loadPage = useCallback(async (reset = false, options = {}) => {
+    const { merge = false } = options || {};
     if (loadingMoreRef.current) return;
     loadingMoreRef.current = true;
     try {
       const params = { limit: 20 };
       if (!reset && cursor) params.cursor = cursor;
       const { data } = await client.get('/feed/guest', { params });
-      const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
-      incoming.forEach(p => knownIds.current.add(p.id));
-      setPosts(prev => (reset ? incoming : [...prev, ...incoming]));
+      if (reset && !merge) {
+        knownIds.current = new Set();
+        knownIdsQueue.current = [];
+        emptyStreakRef.current = 0;
+      }
+      const rawIncoming = (data.posts || []).filter(p => p?.id);
+      const incoming = reset && merge
+        ? rawIncoming
+        : rawIncoming.filter(p => !knownIds.current.has(p.id));
+      incoming.forEach(p => markKnownId(p.id));
+      setPosts(prev => {
+        if (reset) return merge ? mergeGuestPosts(incoming, prev).slice(0, 120) : incoming;
+        return [...prev, ...incoming];
+      });
       setCursor(data.cursor || null);
-      setHasMore(data.hasMore !== false);
+      if (reset) {
+        if (rawIncoming.length > 0) emptyStreakRef.current = 0;
+      } else {
+        emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
+      }
+      setHasMore(data.hasMore !== false && emptyStreakRef.current < GUEST_EMPTY_STREAK_LIMIT);
     } catch {
       setHasMore(false);
     } finally {
@@ -159,7 +207,7 @@ export default function GuestFeed() {
       loadingMoreRef.current = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cursor]);
+  }, [cursor, markKnownId]);
 
   useEffect(() => { loadPage(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -174,12 +222,30 @@ export default function GuestFeed() {
     if (refreshing) return;
     setRefreshing(true);
     knownIds.current = new Set();
+    knownIdsQueue.current = [];
+    emptyStreakRef.current = 0;
     setCursor(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     await loadPage(true);
     setRefreshing(false);
   }, [refreshing, loadPage]);
   useScrollToRefresh(handleRefresh, { enabled: !loading });
+
+  useEffect(() => {
+    const refreshQuietly = () => {
+      if (document.hidden || loading || refreshing || loadingMoreRef.current) return;
+      if (window.scrollY > 900) return;
+      loadPage(true, { merge: true });
+    };
+    const interval = window.setInterval(refreshQuietly, GUEST_FEED_AUTO_REFRESH_MS);
+    window.addEventListener('focus', refreshQuietly);
+    document.addEventListener('visibilitychange', refreshQuietly);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshQuietly);
+      document.removeEventListener('visibilitychange', refreshQuietly);
+    };
+  }, [loading, refreshing, loadPage]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -213,7 +279,7 @@ export default function GuestFeed() {
   return (
     <GuestShell>
       <Helmet>
-        <title>UFIconnect — Browse as a guest</title>
+        <title>UFIconnect - Global Scroll</title>
       </Helmet>
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 60px' }}>
         <div style={{

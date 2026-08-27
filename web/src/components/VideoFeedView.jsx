@@ -117,6 +117,9 @@ function resolveVideoSource(post) {
 // enough that a normal scroll session never sees a near-term repeat caused
 // by the server's video pool being rebuilt mid-session.
 const VIDEO_DEDUP_WINDOW = 400;
+const VIDEO_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
+const VIDEO_COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
+const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 
 // How many slides on either side of the active one actually mount a real
 // VideoSlide (video/iframe element, engagement tracking, comments wiring,
@@ -790,6 +793,22 @@ function timeAgo(iso) {
 // comes back with an empty list (live: false) rather than anything
 // fabricated, so that's shown as its own state instead of pretending the
 // section is just loading forever.
+function videoCommentIdentity(comment) {
+  return comment?.id || `${comment?.author || ''}:${comment?.created || ''}:${comment?.body || ''}`;
+}
+
+function mergeVideoCommentLists(primary = [], secondary = []) {
+  const seen = new Set();
+  const merged = [];
+  for (const comment of [...primary, ...secondary]) {
+    const key = videoCommentIdentity(comment);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(comment);
+  }
+  return merged;
+}
+
 function CommentsSheet({ post, onClose }) {
   const [comments, setComments] = useState(null);
   const [live, setLive] = useState(false);
@@ -809,21 +828,48 @@ function CommentsSheet({ post, onClose }) {
     };
   }, [post.id, post.source, post.topic]);
 
+  const commentsRef = useRef(comments);
+  const commentsRequestRef = useRef(0);
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setComments(null);
-    client.get(`/feed/${encodeURIComponent(post.id)}/comments`)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setComments(data.comments || []);
-        setLive(!!data.live);
-        setHasMore(!!data.hasMore);
-      })
-      .catch(() => { if (!cancelled) setComments([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    commentsRef.current = comments;
+  }, [comments]);
+
+  const fetchCommentsPage = useCallback(async ({ background = false } = {}) => {
+    const requestId = ++commentsRequestRef.current;
+    if (!background) {
+      setLoading(true);
+      setComments(null);
+    }
+    try {
+      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
+      const limit = Math.min(50, Math.max(20, currentCount || 20));
+      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
+        params: { limit },
+      });
+      if (requestId !== commentsRequestRef.current) return;
+      const incoming = data.comments || [];
+      setComments(prev => background ? mergeVideoCommentLists(incoming, prev || []) : incoming);
+      setLive(!!data.live);
+      setHasMore(!!data.hasMore);
+    } catch {
+      if (requestId === commentsRequestRef.current && !background) setComments([]);
+    } finally {
+      if (requestId === commentsRequestRef.current && !background) setLoading(false);
+    }
   }, [post.id]);
+
+  useEffect(() => {
+    fetchCommentsPage({ background: false });
+    return () => { commentsRequestRef.current += 1; };
+  }, [fetchCommentsPage]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.hidden || loading || loadingMore) return;
+      fetchCommentsPage({ background: true });
+    }, live ? VIDEO_COMMENTS_LIVE_REFRESH_MS : VIDEO_COMMENTS_PASSIVE_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [fetchCommentsPage, live, loading, loadingMore]);
 
   async function loadMore() {
     if (loadingMore || !comments) return;
@@ -832,7 +878,7 @@ function CommentsSheet({ post, onClose }) {
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
         params: { offset: comments.length },
       });
-      setComments(prev => [...(prev || []), ...(data.comments || [])]);
+      setComments(prev => mergeVideoCommentLists([...(prev || []), ...(data.comments || [])]));
       setHasMore(!!data.hasMore);
     } catch {
       // Leave existing comments in place — button stays clickable to retry.
@@ -1046,7 +1092,7 @@ export default function VideoFeedView({ onExit }) {
     }
   }, []);
 
-  const loadPage = useCallback(async ({ reset = false, bust = false } = {}) => {
+  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, quiet = false } = {}) => {
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
       // streak left over from whatever was applied before it — otherwise
@@ -1126,7 +1172,9 @@ export default function VideoFeedView({ onExit }) {
         // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
         // old and new videos interleaved indefinitely.
-        return reset ? fresh : [...prev, ...fresh];
+        return reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0
+          ? prev
+          : (reset ? fresh : [...prev, ...fresh]);
       });
       if (mode === 'following') followingPageRef.current += 1;
       else if (sortModeRef.current === 'balanced') balancedPageRef.current += 1;
@@ -1145,17 +1193,41 @@ export default function VideoFeedView({ onExit }) {
       // emptyStreakRef (below) is what keeps this from turning into an
       // unbounded background hammering loop for a term with genuinely no
       // matches anywhere.
-      setHasMore(data.hasMore !== false);
-      emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
+      if (!preserveOnEmpty || incoming.length > 0) {
+        setHasMore(data.hasMore !== false);
+        emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
+      }
       setError(false);
     } catch {
-      setError(true);
+      if (!quiet) setError(true);
     } finally {
       setLoading(false);
     }
   }, [markKnownId]);
 
   useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
+
+  const videoLiveStateRef = useRef({ loading: false, refreshing: false, activeIndex: 0 });
+  useEffect(() => {
+    videoLiveStateRef.current = { loading, refreshing, activeIndex };
+  }, [loading, refreshing, activeIndex]);
+
+  useEffect(() => {
+    const refreshQuietly = () => {
+      const state = videoLiveStateRef.current;
+      if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current) return;
+      if (state.activeIndex > 1) return;
+      loadPage({ reset: true, bust: false, preserveOnEmpty: true, quiet: true });
+    };
+    const interval = window.setInterval(refreshQuietly, VIDEO_FEED_AUTO_REFRESH_MS);
+    window.addEventListener('focus', refreshQuietly);
+    document.addEventListener('visibilitychange', refreshQuietly);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshQuietly);
+      document.removeEventListener('visibilitychange', refreshQuietly);
+    };
+  }, [loadPage]);
 
   // Manual refresh — fully replaces the queue with a fresh first page, same
   // as the main Feed's refresh — the view is already jumping back to the

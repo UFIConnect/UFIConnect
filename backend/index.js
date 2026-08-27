@@ -78,13 +78,30 @@ process.on('unhandledRejection', (reason, promise) => {
 
 const app = express();
 
+function buildHealthPayload() {
+  const payload = {
+    status: 'ok',
+    role: SERVICE_ROLE,
+    db: db.isConnected(),
+    dbBackup: db.isBackupConnected(),
+    dbReadFailoverActive: db.isReadFailoverActive(),
+  };
+  try {
+    payload.staging = {
+      pendingCount: stagingPostCount ?? null,
+      lastRun: stagingTransferState?.lastRun || null,
+      lastCount: stagingTransferState?.lastCount ?? 0,
+      totalTransferred: stagingTransferState?.totalTransferred ?? 0,
+      lastError: stagingTransferState?.lastError || null,
+    };
+  } catch {
+    payload.staging = null;
+  }
+  return payload;
+}
+
 // Health-check endpoint FIRST - before any middleware
-app.get('/health', (_req, res) => res.json({
-  status: 'ok',
-  db: db.isConnected(),
-  dbBackup: db.isBackupConnected(),
-  dbReadFailoverActive: db.isReadFailoverActive(),
-}));
+app.get('/health', (_req, res) => res.json(buildHealthPayload()));
 
 // Stripe webhook — registered before express.json() below, with its own raw
 // body parser instead: Stripe's signature verification hashes the exact raw
@@ -6356,6 +6373,8 @@ function realFeedPosts(posts = []) {
 // SSE batch buffer: collect posts for 2s (debounce) and flush in batches of up to 10
 const SSE_BATCH_DEBOUNCE = 2000;   // 2-second debounce
 const SSE_BATCH_MAX      = 10;     // max posts per SSE message
+const SSE_BATCH_BUFFER_MAX = 300;  // hard cap so a transfer burst cannot grow unbounded
+const SSE_BROADCAST_POST_MAX_PER_CALL = 100;
 let sseBatchBuffer = [];
 let sseBatchTimer  = null;
 
@@ -6374,8 +6393,13 @@ function flushSSEBatch() {
 }
 
 function broadcastSSE(posts) {
-  if (!posts.length || !sseClients.size) return;
-  sseBatchBuffer.push(...posts);
+  if (!sseClients.size) return;
+  const safePosts = realFeedPosts(posts).slice(0, SSE_BROADCAST_POST_MAX_PER_CALL);
+  if (!safePosts.length) return;
+  sseBatchBuffer.push(...safePosts);
+  if (sseBatchBuffer.length > SSE_BATCH_BUFFER_MAX) {
+    sseBatchBuffer = sseBatchBuffer.slice(-SSE_BATCH_BUFFER_MAX);
+  }
   // Reset debounce timer on every new post
   if (sseBatchTimer) clearTimeout(sseBatchTimer);
   sseBatchTimer = setTimeout(flushSSEBatch, SSE_BATCH_DEBOUNCE);
@@ -12056,10 +12080,9 @@ async function migrateDB() {
         media_poster    TEXT
       )
     `);
-    // fetched_at is what the transfer job's own cursor filters on
-    // (WHERE fetched_at > $lastTransferCursor) — this is the one index this
-    // table actually needs for its one real access pattern.
+    // fetched_at + id matches the transfer job's oldest-first drain order.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
 
     // ─── Trim archive — where feed_posts_cache rows go instead of vanishing ──
     // trimFeedPostsCache (below) used to be a pure DELETE — once a row
@@ -16109,8 +16132,25 @@ setInterval(() => {
   warmMainFeedSnapshot('ranked', 'all');
 }, MAIN_FEED_SNAPSHOT_TTL - 30 * 1000);
 
+async function getInitialSSEPosts(limit = 200) {
+  const cached = realFeedPosts(globalFeedCache.posts).slice(0, limit);
+  if (cached.length || !db.isConnected()) return cached;
+  try {
+    const { rows } = await db.readQuery(
+      `SELECT * FROM feed_posts_cache
+       WHERE post_created_at IS NOT NULL
+       ORDER BY post_created_at DESC, id DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return realFeedPosts(rows.map(dbRowToFeedPost));
+  } catch {
+    return [];
+  }
+}
+
 // ─── SSE endpoint — streams new posts to every connected browser in real time ──
-app.get('/feed/stream', authenticateSSE, (req, res) => {
+app.get('/feed/stream', authenticateSSE, async (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection',    'keep-alive');
@@ -16124,7 +16164,7 @@ app.get('/feed/stream', authenticateSSE, (req, res) => {
 
   // Send the most recent posts immediately so the client has something to show
   try {
-    const initial = realFeedPosts(globalFeedCache.posts).slice(0, 200);
+    const initial = await getInitialSSEPosts(200);
     if (initial.length) res.write(`data: ${JSON.stringify({ init: true, posts: initial })}\n\n`);
   } catch { cleanup(); return; }
 
@@ -16568,17 +16608,18 @@ function findKnownFeedPost(postId) {
   ]).find(p => p?.id === postId) || null;
 }
 
+const COMMENT_CACHE_TTL_MS = envNumber('COMMENT_CACHE_TTL_MS', 2 * 60 * 1000, 30 * 1000, 10 * 60 * 1000);
+
 // Every source below used to fetch once and hard-slice to whatever fit on
 // screen (8-15 comments), with no way to see the rest even though most of
 // these APIs hand back far more in that same single call. Caches the full
-// processed list per post (short TTL — comments don't need to be
-// second-fresh) and paginates off of it, so "load more" is just a slice of
+// processed list per post (short TTL) and paginates off of it, so "load more" is just a slice of
 // what's already fetched instead of a new upstream call every click.
 async function paginateComments(cacheKey, fetchFullList, offset, limit) {
   let full = getCached(cacheKey);
   if (!full) {
     full = await fetchFullList();
-    setCached(cacheKey, full, 10 * 60000);
+    setCached(cacheKey, full, COMMENT_CACHE_TTL_MS);
   }
   return {
     comments: full.slice(offset, offset + limit),
@@ -17819,6 +17860,9 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       nodeVersion: process.version,
       env:         process.env.NODE_ENV || 'development',
       db:          db.isConnected() ? 'connected' : 'fallback',
+      dbBackup:    db.isBackupConnected(),
+      dbReadFailoverActive: db.isReadFailoverActive(),
+      serviceRole: SERVICE_ROLE,
       port:        PORT,
     },
     feed: {
@@ -18220,11 +18264,9 @@ app.get('/office/autofix/attempts', requireOfficeToken, async (req, res) => {
 // in-memory cache (which stays empty on the api role now — nothing feeds
 // it anymore, see the gated startContinuousWorkers() call at boot). This is
 // the one place real fetched content actually reaches what users are served
-// from: pull whatever pipeline has staged since the last run, upsert it
-// into feed_posts_cache, then remove exactly those rows from staging so it
-// stays a small rolling buffer rather than an ever-growing duplicate of the
-// real table.
-let lastTransferCursor = new Date(0).toISOString();
+// from: pull the oldest staged rows, upsert them into feed_posts_cache, then
+// remove exactly those rows from staging so it stays a small rolling buffer
+// rather than an ever-growing duplicate of the real table.
 // Surfaced via /office/status' new `staging` key (api role only — see its
 // own comment) so the office Pipeline view has something real to show for
 // this stage. Before this, the ONLY mechanism that actually moves fetched
@@ -18242,9 +18284,7 @@ async function refreshStagingPostCount() {
     console.warn('[refreshStagingPostCount] query failed:', e.message);
   }
 }
-// Guards against two overlapping runs racing on the shared lastTransferCursor
-// (whichever finishes last wins, which can walk the cursor backward and make
-// the job re-process the same window instead of draining forward) — a real
+// Guards against two overlapping drains on the same staging rows — a real
 // risk now that the interval below is 1 minute instead of the original 15.
 let transferInFlight = false;
 async function transferStagedPosts() {
@@ -18260,8 +18300,7 @@ async function transferStagedPosts() {
     // — an unusually large backlog keeps draining on the next tick.
     for (let batch = 0; batch < 20; batch++) {
       const { rows } = await db.query(
-        `SELECT * FROM feed_posts_staging WHERE fetched_at > $1 ORDER BY fetched_at ASC LIMIT 5000`,
-        [lastTransferCursor]
+        `SELECT * FROM feed_posts_staging ORDER BY fetched_at ASC, id ASC LIMIT 5000`
       );
       stagingTransferState.lastRun = new Date().toISOString();
       if (!rows.length) { stagingTransferState.lastCount = 0; break; }
@@ -18271,10 +18310,10 @@ async function transferStagedPosts() {
       // cycling source between the SELECT above and this DELETE can't be
       // silently dropped just because its fetched_at briefly overlapped.
       await db.query(`DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`, [rows.map(r => r.id)]).catch(() => {});
-      lastTransferCursor = rows[rows.length - 1].fetched_at;
       const count = saved || rows.length;
       stagingTransferState.lastCount = count;
       stagingTransferState.totalTransferred += count;
+      broadcastSSE(rows.map(dbRowToFeedPost));
       logAgentAction('feed', '📦', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
       if (rows.length < 5000) break; // caught up — no need to keep looping this tick
     }

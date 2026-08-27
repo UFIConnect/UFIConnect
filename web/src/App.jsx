@@ -84,17 +84,10 @@ function PageviewTracker() {
   return null;
 }
 
-// GUEST_SESSION_KEY set by Landing/Login's own "Continue as guest" — a
-// session (not persistent) flag, so closing the tab and coming back fresh
-// shows Landing again rather than permanently treating this browser as
-// guest-mode. Checked only when there's genuinely no token; an actual
-// signed-in session always wins regardless of what this flag says.
-const GUEST_SESSION_KEY = 'ufi_guest';
 function HomeRoute() {
   const { token, profile, loading } = useAuth();
   if (loading) return <div className="splash">Loading…</div>;
   if (!token) {
-    if (sessionStorage.getItem(GUEST_SESSION_KEY) === '1') return <GuestFeed />;
     return <Landing />;
   }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
@@ -132,6 +125,8 @@ export default function App() {
 
       {/* Home: Landing for public, Feed for authenticated */}
       <Route path="/" element={<HomeRoute />} />
+      <Route path="/global" element={<GuestFeed />} />
+      <Route path="/global-scroll" element={<Navigate to="/global" replace />} />
       <Route path="/videos" element={
         <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
       }/>

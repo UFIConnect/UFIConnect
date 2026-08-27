@@ -160,9 +160,12 @@ function loadFeedState() {
     const raw = sessionStorage.getItem(FEED_STATE_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw);
+    const activeTabs = Array.isArray(s.activeTabs) ? s.activeTabs : [];
+    const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
+    if (activeTabs.length) filters.sources = [];
     return {
-      filters:    { ...DEFAULT_FILTERS, ...(s.filters || {}) },
-      activeTabs: Array.isArray(s.activeTabs) ? s.activeTabs : [],
+      filters,
+      activeTabs,
       search:     typeof s.search === 'string' ? s.search : '',
       viewMode:   s.viewMode === 'following' ? 'following' : 'feed',
     };
@@ -842,6 +845,8 @@ const ARTICLE_SOURCES = new Set([
 // Job-listing sources — sourceUrl is the specific posting, so the card gets
 // an explicit "Job" badge + "Apply" CTA instead of blending in as an article.
 const JOB_SOURCES = new Set(['indeed', 'remoteok']);
+const COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
+const COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
 
 function commentSectionLabel(source) {
   if (source === 'stackoverflow') return 'Answers';
@@ -859,6 +864,22 @@ function commentToFeedComment(comment) {
     score: 0,
     created: comment?.createdAt || new Date().toISOString(),
   };
+}
+
+function commentIdentity(comment) {
+  return comment?.id || `${comment?.author || ''}:${comment?.created || ''}:${comment?.body || ''}`;
+}
+
+function mergeCommentLists(primary = [], secondary = []) {
+  const seen = new Set();
+  const merged = [];
+  for (const comment of [...primary, ...secondary]) {
+    const key = commentIdentity(comment);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(comment);
+  }
+  return merged;
 }
 
 /** Unified post card */
@@ -932,6 +953,52 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const commentsRef = useRef(comments);
+  useEffect(() => {
+    commentsRef.current = comments;
+  }, [comments]);
+
+  const fetchComments = useCallback(async ({ background = false } = {}) => {
+    if (!post?.id) return;
+    if (!background) {
+      setCommentsLoading(true);
+      setCommentsError(false);
+    }
+    try {
+      const currentCount = Array.isArray(commentsRef.current) ? commentsRef.current.length : 0;
+      const limit = Math.min(50, Math.max(20, currentCount || 20));
+      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
+        params: { limit },
+      });
+      const incoming = data.comments || [];
+      setComments(prev => background ? mergeCommentLists(incoming, prev || []) : incoming);
+      setCommentsLive(!!data.live);
+      setCommentsHasMore(!!data.hasMore);
+      const nextCount = Number.isFinite(data.commentsCount)
+        ? data.commentsCount
+        : (Number.isFinite(data.total) ? data.total : null);
+      if (nextCount != null && nextCount !== post.commentsCount) {
+        onPostUpdated?.({ id: post.id, commentsCount: nextCount });
+      }
+    } catch {
+      if (!background) {
+        setCommentsError(true);
+        setComments([]);
+      }
+    } finally {
+      if (!background) setCommentsLoading(false);
+    }
+  }, [post?.id, post?.commentsCount, onPostUpdated]);
+
+  useEffect(() => {
+    if (!showComments || !post?.id) return;
+    const interval = window.setInterval(() => {
+      if (document.hidden || commentsLoading || commentsLoadingMore || commentSending) return;
+      fetchComments({ background: true });
+    }, commentsLive ? COMMENTS_LIVE_REFRESH_MS : COMMENTS_PASSIVE_REFRESH_MS);
+    return () => window.clearInterval(interval);
+  }, [showComments, post?.id, commentsLive, commentsLoading, commentsLoadingMore, commentSending, fetchComments]);
+
   // Close the "more options" menu on an outside click (same pattern as
   // PublicProfile's). Listener is only attached while open — PostCard is
   // repeated for every post on screen, so a permanently-mounted document
@@ -976,21 +1043,6 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const isArticle      = ARTICLE_SOURCES.has(post.source);
   const canWriteComment = !post.isExternal && (post.source || 'uficonnect') === 'uficonnect' && !!token;
 
-  async function fetchComments() {
-    setCommentsLoading(true);
-    setCommentsError(false);
-    try {
-      const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`);
-      setComments(data.comments || []);
-      setCommentsLive(!!data.live);
-      setCommentsHasMore(!!data.hasMore);
-    } catch {
-      setCommentsError(true);
-      setComments([]);
-    }
-    finally { setCommentsLoading(false); }
-  }
-
   async function loadMoreComments() {
     if (commentsLoadingMore || !comments) return;
     setCommentsLoadingMore(true);
@@ -998,7 +1050,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       const { data } = await client.get(`/feed/${encodeURIComponent(post.id)}/comments`, {
         params: { offset: comments.length },
       });
-      setComments(prev => [...(prev || []), ...(data.comments || [])]);
+      setComments(prev => mergeCommentLists([...(prev || []), ...(data.comments || [])]));
       setCommentsHasMore(!!data.hasMore);
     } catch {
       // Leave existing comments in place — the button just stays clickable to retry.
@@ -1032,7 +1084,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
     setCommentPostError(false);
     try {
       const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
-      setComments(prev => [...(prev || []), commentToFeedComment(data.comment)]);
+      setComments(prev => mergeCommentLists([...(prev || []), commentToFeedComment(data.comment)]));
       setCommentsLive(true);
       setCommentDraft('');
       onPostUpdated?.(data.post || { ...post, commentsCount: data.commentsCount });
@@ -1496,6 +1548,7 @@ export default function Feed() {
   // failure reading identically to "this account just has nothing new."
   const [sourceErrors,  setSourceErrors]  = useState({});
   const [loading,       setLoading]      = useState(!_cache);
+  const [feedError,     setFeedError]    = useState(null);
   const [refreshing,    setRefreshing]   = useState(false);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
@@ -1543,6 +1596,7 @@ export default function Feed() {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
+  const liveRefreshTimeoutRef = useRef(null);
   // Sent as ?seed= on every feed request — the backend folds it into this
   // user's rotation offset into the shared pool (see rotateForUser
   // server-side). Regenerated only on an explicit refresh (inside loadFeed,
@@ -1611,6 +1665,7 @@ export default function Feed() {
       const url = `/office/feed?${params.toString()}`;
       const { data } = await client.get(url);
       if (data.locked) {
+        setFeedError(null);
         // Single gated-source tab, not connected — show the connect wall
         // instead of an empty/broken post list. Clears itself the moment
         // any other view is loaded (tab switch, viewMode switch, etc.) since
@@ -1623,6 +1678,7 @@ export default function Feed() {
         return;
       }
       setLockedPlatform(null);
+      setFeedError(null);
       const incoming = data.posts || [];
       const previous = postsRef.current;
       // "Updated Xm ago" used to always show however long ago the browser
@@ -1691,7 +1747,16 @@ export default function Feed() {
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date(refreshTimestamp));
       setSourceErrors(data.sourceErrors || {});
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      const status = e?.response?.status;
+      const message = status === 401
+        ? 'Your session could not load the feed. Sign in again to refresh your access.'
+        : status
+          ? `The feed request failed with HTTP ${status}.`
+          : 'The feed request did not complete. Check the API connection and try again.';
+      if (!silent || postsRef.current.length === 0) setFeedError(message);
+    }
     finally { setLoading(false); setRefreshing(false); }
   }, []); // eslint-disable-line
 
@@ -1754,6 +1819,10 @@ export default function Feed() {
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
     next.sort = normalizeFeedSort(next.sort);
+    if (next.sources.length > 0) {
+      activeTabsRef.current = [];
+      setActiveTabs([]);
+    }
     filtersRef.current = next;
     setFilters(next);
     setRemotePage(2);
@@ -1823,9 +1892,13 @@ export default function Feed() {
     }
     const prev = activeTabsRef.current;
     const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+    const sourceClearedFilters = { ...filtersRef.current, sources: [] };
     activeTabsRef.current = next;
+    filtersRef.current = sourceClearedFilters;
     setActiveTabs(next);
+    setFilters(sourceClearedFilters);
     loadFeed(false, next, {
+      filters: sourceClearedFilters,
       replace: true,
     });
   }, [loadFeed]); // eslint-disable-line
@@ -1923,7 +1996,7 @@ export default function Feed() {
   // Load initial feed — if cache is fresh, show it instantly and stream new posts on top silently
   useEffect(() => {
     const c = readFeedCache();
-    loadFeed(false, [], { silent: !!c?.fresh, live: !!c?.fresh });
+    loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
   }, [loadFeed]); // eslint-disable-line
 
   useEffect(() => {
@@ -1997,18 +2070,33 @@ export default function Feed() {
           reconnectAttempt = 0; // Reset backoff on successful connection
         };
 
-        // SSE used to splice each incoming batch straight into the visible
-        // list (~every 2s whenever any of the 30+ sources found something
-        // new), which is what made the feed feel like it never held still.
-        // The feed's sort now lives server-side in a 10-minute snapshot
-        // (see FEED_AUTO_REFRESH_MS below), so this stream is kept only to
-        // track known ids for de-dup and to drive the "LIVE" connection
-        // badge — it no longer touches the rendered post list directly.
+        // SSE wakes a quiet server refresh instead of splicing batches
+        // straight into the visible list. That keeps scrolling stable while
+        // still letting transferred pipeline posts appear without waiting
+        // for the normal two-minute refresh tick.
         es.onmessage = (e) => {
           try {
             const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
-            incoming.forEach(p => p?.id && markKnownId(p.id));
+            let sawFresh = false;
+            incoming.forEach(p => {
+              if (!p?.id) return;
+              if (!knownIds.current.has(p.id)) sawFresh = true;
+              markKnownId(p.id);
+            });
+            if (!sawFresh || liveRefreshTimeoutRef.current) return;
+            liveRefreshTimeoutRef.current = window.setTimeout(() => {
+              liveRefreshTimeoutRef.current = null;
+              const state = loadStateRef.current;
+              if (viewModeRef.current !== 'feed') return;
+              if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
+              loadFeed(false, activeTabsRef.current, {
+                silent: true,
+                live: true,
+                preserveScroll: true,
+                bust: false,
+              });
+            }, 1200);
           } catch (err) {
             console.error('[SSE] Error parsing message:', err);
           }
@@ -2037,13 +2125,17 @@ export default function Feed() {
 
     return () => {
       if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
+      if (liveRefreshTimeoutRef.current) {
+        clearTimeout(liveRefreshTimeoutRef.current);
+        liveRefreshTimeoutRef.current = null;
+      }
       if (es) {
         es.close();
         es = null;
       }
       setLiveActive(false);
     };
-  }, []);
+  }, [loadFeed, markKnownId]);
 
   // Time range cutoff helper
   function timeRangeCutoff(range) {
@@ -2529,6 +2621,18 @@ export default function Feed() {
           <PostCardSkeleton />
           <PostCardSkeleton />
           <PostCardSkeleton />
+        </div>
+      ) : feedError && displayed.length === 0 ? (
+        <div className="empty-state">
+          <div className="empty-icon">⚠️</div>
+          <div className="empty-title">Couldn't load posts</div>
+          <div className="empty-desc">
+            <p style={{ marginBottom: 12 }}>{feedError}</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Try again</button>
+              <Link to="/login" className="btn btn-ghost btn-sm">Sign in</Link>
+            </div>
+          </div>
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">

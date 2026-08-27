@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
+Allow: /global
 Disallow: /api/
 Disallow: /hq
 Disallow: /onboarding

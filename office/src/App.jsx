@@ -2706,6 +2706,8 @@ export default function App() {
     { id: 'autofix',  label: 'Autofix',       icon: '🩹' },
     { id: 'versions', label: 'Versions',      icon: '≡' },
   ];
+  const apiDbFailover = !!status?.server?.dbReadFailoverActive;
+  const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
 
   return (
     <>
@@ -2782,14 +2784,14 @@ export default function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Dot ok={!!status?.server} pulse={false} />
-                <span style={{ fontSize: 10.5, color: '#64748b' }}>
-                  API{status?.server ? ` · up ${formatUptime(status.server.uptime)}` : ' · unreachable'}
+                <span style={{ fontSize: 10.5, color: apiDbFailover ? '#fbbf24' : '#64748b' }}>
+                  API{status?.server ? ` · up ${formatUptime(status.server.uptime)}${apiDbFailover ? ' · db failover' : ''}` : ' · unreachable'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Dot ok={!!pipelineStatus?.server} pulse={false} />
-                <span style={{ fontSize: 10.5, color: '#64748b' }}>
-                  Pipeline{pipelineStatus?.server ? ` · up ${formatUptime(pipelineStatus.server.uptime)}` : ' · unreachable'}
+                <span style={{ fontSize: 10.5, color: pipelineDbFailover ? '#fbbf24' : '#64748b' }}>
+                  Pipeline{pipelineStatus?.server ? ` · up ${formatUptime(pipelineStatus.server.uptime)}${pipelineDbFailover ? ' · db failover' : ''}` : ' · unreachable'}
                 </span>
               </div>
               {status?.staging && (
