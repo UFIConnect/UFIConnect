@@ -1,9 +1,11 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import GuestShell from '../components/GuestShell';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted } from '../components/videoMedia';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -14,61 +16,107 @@ function timeAgo(iso) {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-// Deliberately simpler than Feed.jsx's own PostCard — no inline video
-// playback, no comments, no like/report actions. Tapping through to
-// PostDetail (already guest-safe — see its own GuestShell branch) is where
-// a guest gets the real reading/watching experience; this card's only job
-// is to be a fast, honest preview that makes tapping through worth it.
-function GuestPostCard({ post }) {
+// Lighter than VideoFeedView's own player — no shared cross-slide YouTube
+// instance, no scrub bar. This is a plain scrolling list, not a snap-scroll
+// feed, so each card owning its own (auto-destroyed-when-inactive) player
+// is the right tradeoff here: simplicity over the reuse machinery
+// VideoFeedView needs for rapid slide-to-slide swiping. `active` (only the
+// card currently ~60% in view, see the IntersectionObserver below) gates
+// whether anything actually plays, so scrolling past a video stops it the
+// same way it does everywhere else in the app.
+function GuestVideoPlayer({ post, active, muted }) {
+  const youtubeId = post.source === 'youtube'
+    ? (post.embedId || extractYouTubeId(post.sourceUrl))
+    : extractYouTubeId(post.mediaUrl);
+  const playlistUrl = !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
+  const directUrl = !youtubeId && !playlistUrl && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
+  const poster = post.mediaPoster || (youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : post.mediaUrl);
+
+  if (youtubeId) {
+    return (
+      <div style={{ width: '100%', aspectRatio: '16/9', background: '#000', position: 'relative' }}>
+        {active ? (
+          <iframe
+            key={muted ? 'muted' : 'unmuted'}
+            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&playsinline=1&modestbranding=1&rel=0`}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+            allow="autoplay; encrypted-media"
+            title={post.title}
+          />
+        ) : (
+          <img src={poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+        )}
+      </div>
+    );
+  }
+  if (playlistUrl) {
+    return active ? (
+      <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={muted} loop
+        style={{ width: '100%', display: 'block', maxHeight: 400 }} />
+    ) : (
+      <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 400, objectFit: 'cover' }} />
+    );
+  }
+  if (directUrl) {
+    return (
+      <video
+        src={directUrl} poster={poster || undefined}
+        autoPlay={active} muted={muted} loop playsInline
+        preload={active ? 'auto' : 'metadata'}
+        style={{ width: '100%', display: 'block', maxHeight: 400, background: '#000' }}
+      />
+    );
+  }
+  return null;
+}
+
+// Deliberately simpler than Feed.jsx's own PostCard — no comments, no
+// like/report actions (those still route through PostDetail, already
+// guest-safe — see its own GuestShell branch). Video now plays inline
+// (see GuestVideoPlayer) since a static "tap to watch" tile read as dead
+// weight in a feed that's supposed to feel alive while scrolling.
+function GuestPostCard({ post, active, muted, registerRef }) {
   const src = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   return (
-    <Link
-      to={`/p/${encodeURIComponent(post.id)}`}
-      className="card post-card"
-      style={{ display: 'block', marginBottom: 12, textDecoration: 'none', color: 'inherit' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-        <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
-        <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
-        <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
-      </div>
-      {post.title && <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>}
-      {post.content && (
-        <p style={{
-          fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: '0 0 4px',
-          display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-        }}>
-          {post.content}
-        </p>
-      )}
-      {isImage && post.mediaUrl && (
-        <div style={{ borderRadius: 12, overflow: 'hidden', marginTop: 8, background: 'var(--border)' }}>
-          <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 320, objectFit: 'cover' }} />
+    <div ref={registerRef} data-post-id={post.id} className="card post-card" style={{ marginBottom: 12, overflow: 'hidden' }}>
+      <Link
+        to={`/p/${encodeURIComponent(post.id)}`}
+        style={{ display: 'block', padding: '14px 14px 0', textDecoration: 'none', color: 'inherit' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
+          <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
+          <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
         </div>
+        {post.title && <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>}
+        {post.content && (
+          <p style={{
+            fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: '0 0 4px',
+            display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}>
+            {post.content}
+          </p>
+        )}
+      </Link>
+      {isImage && post.mediaUrl && (
+        <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ display: 'block', marginTop: 8 }}>
+          <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 320, objectFit: 'cover', background: 'var(--border)' }} />
+        </Link>
       )}
       {isVideo && (
-        <div style={{
-          borderRadius: 12, overflow: 'hidden', marginTop: 8, position: 'relative',
-          background: '#000', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          {(post.mediaPoster || post.mediaUrl) && (
-            <img
-              src={post.mediaPoster || post.mediaUrl} alt=""
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', opacity: 0.7 }}
-            />
-          )}
-          <span style={{ position: 'relative', fontSize: '2.2rem' }}>▶️</span>
+        <div style={{ marginTop: 8 }}>
+          <GuestVideoPlayer post={post} active={active} muted={muted} />
         </div>
       )}
       {(post.likesCount > 0 || post.commentsCount > 0) && (
-        <div style={{ display: 'flex', gap: 14, marginTop: 10, fontSize: '.75rem', color: 'var(--muted)' }}>
+        <div style={{ display: 'flex', gap: 14, padding: '10px 14px 14px', fontSize: '.75rem', color: 'var(--muted)' }}>
           {post.likesCount > 0 && <span>❤️ {post.likesCount.toLocaleString()}</span>}
           {post.commentsCount > 0 && <span>💬 {post.commentsCount.toLocaleString()}</span>}
         </div>
       )}
-    </Link>
+    </div>
   );
 }
 
@@ -83,9 +131,13 @@ export default function GuestFeed() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [activePostId, setActivePostId] = useState(null);
+  const [muted, toggleMuted] = useGlobalMuted();
   const loadingMoreRef = useRef(false);
   const knownIds = useRef(new Set());
   const sentinelRef = useRef(null);
+  const cardRefs = useRef(new Map());
 
   const loadPage = useCallback(async (reset = false) => {
     if (loadingMoreRef.current) return;
@@ -111,6 +163,24 @@ export default function GuestFeed() {
 
   useEffect(() => { loadPage(true); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Full reset back to the freshest page 1 rather than merging, same as the
+  // authenticated Feed's own manual refresh, so it actually reads as "live"
+  // instead of old and new content interleaving. Two ways in: the explicit
+  // button (see the banner below — scroll-to-refresh alone isn't
+  // discoverable enough on a page with no other chrome hinting it exists)
+  // and scrolling back to the top, same convention every other list-style
+  // page in the app uses (see useScrollToRefresh's own comment).
+  const handleRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    knownIds.current = new Set();
+    setCursor(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    await loadPage(true);
+    setRefreshing(false);
+  }, [refreshing, loadPage]);
+  useScrollToRefresh(handleRefresh, { enabled: !loading });
+
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || !hasMore) return;
@@ -124,6 +194,22 @@ export default function GuestFeed() {
     return () => observer.disconnect();
   }, [hasMore, loadPage]);
 
+  // Which video card is "active" (the only one that actually plays) — the
+  // one nearest 60% in view, same threshold VideoFeedView's own swipe feed
+  // uses, just applied to a normal scrolling list instead of a snap-scroll
+  // one. Re-observes whenever the post list changes (new page loaded).
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
+          setActivePostId(entry.target.dataset.postId);
+        }
+      }
+    }, { threshold: [0.6] });
+    for (const el of cardRefs.current.values()) if (el) observer.observe(el);
+    return () => observer.disconnect();
+  }, [posts]);
+
   return (
     <GuestShell>
       <Helmet>
@@ -136,16 +222,45 @@ export default function GuestFeed() {
           borderRadius: 12, padding: '12px 16px', marginBottom: 18,
         }}>
           <span style={{ fontSize: '.82rem', color: 'var(--text)' }}>
-            You're browsing as a guest — sign in or join to like, comment, and personalize your feed.
+            {refreshing ? 'Refreshing…' : "You're browsing as a guest — sign in or join to like, comment, and personalize your feed."}
           </span>
-          <Link to="/register"><button className="btn btn-primary btn-sm" type="button" style={{ flexShrink: 0 }}>Join free</button></Link>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button
+              type="button" onClick={handleRefresh} disabled={refreshing || loading}
+              className="btn btn-ghost btn-sm"
+              aria-label="Refresh feed"
+              title="Refresh feed"
+            >
+              <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }}>🔄</span>
+            </button>
+            <button
+              type="button" onClick={() => toggleMuted()}
+              className="btn btn-ghost btn-sm"
+              aria-label={muted ? 'Unmute videos' : 'Mute videos'}
+            >
+              {muted ? '🔇' : '🔊'}
+            </button>
+            <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join free</button></Link>
+          </div>
         </div>
+        <style>{'@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>
 
         {loading && (
           <div style={{ textAlign: 'center', padding: 40 }}><span className="spinner spinner-primary" /></div>
         )}
 
-        {!loading && posts.map((p, i) => <GuestPostCard key={`${p.id}-${i}`} post={p} />)}
+        {!loading && posts.map((p, i) => (
+          <GuestPostCard
+            key={`${p.id}-${i}`}
+            post={p}
+            active={activePostId === p.id}
+            muted={muted}
+            registerRef={el => {
+              if (el) cardRefs.current.set(p.id, el);
+              else cardRefs.current.delete(p.id);
+            }}
+          />
+        ))}
 
         {!loading && !posts.length && (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>

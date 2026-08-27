@@ -15,7 +15,16 @@ export default function GuestShell({ children }) {
         padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
       }}>
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)', fontWeight: 800, fontSize: '1.05rem' }}>
-          🌐 UFIconnect
+          {/* Same branded mark as the authenticated sidebar's logo (see
+              Layout.jsx's sidebar-logo-icon) instead of a generic globe
+              emoji placeholder, so a guest sees the same identity a member
+              does. */}
+          <span style={{
+            width: 28, height: 28, borderRadius: 8, background: 'var(--primary)', color: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '.68rem', fontWeight: 800, letterSpacing: '-.5px', flexShrink: 0,
+          }}>UFI</span>
+          UFIconnect
         </Link>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link to="/login"><button className="btn btn-ghost btn-sm" type="button">Sign in</button></Link>

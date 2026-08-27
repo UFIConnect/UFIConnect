@@ -94,7 +94,7 @@ export default function Layout({ children }) {
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to="/" className="sidebar-logo" onClick={() => handleNavClick('/')} style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div className="sidebar-logo-icon">UF</div>
+          <div className="sidebar-logo-icon">UFI</div>
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
 

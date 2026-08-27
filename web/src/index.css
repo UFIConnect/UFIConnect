@@ -82,7 +82,10 @@ input, textarea, select { font-family: inherit; }
   display: flex; align-items: center; justify-content: center;
   color: #fff;
   font-weight: 800;
-  font-size: .95rem;
+  /* 3 letters ("UFI") in the same fixed 34px box 2 ("UF") used to fill —
+     shrunk to keep it comfortably inside instead of crowding the edges. */
+  font-size: .78rem;
+  letter-spacing: -.5px;
 }
 
 .sidebar-logo-text {
