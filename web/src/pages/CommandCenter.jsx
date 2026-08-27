@@ -17,11 +17,13 @@ const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch'
 // REAL_PUBLISH_PLATFORMS server-side) — every other connected platform can
 // still be selected in Cross-Post, it just gets queued instead of posted.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit'];
+const OFFICE_APP_URL = import.meta.env.VITE_OFFICE_URL || 'https://office.uficonnect.org';
 
 const SECTIONS = [
   { key: 'feed',      label: 'Connected Feed', icon: '📡' },
-  { key: 'content',   label: 'AI Content Hub', icon: '✨' },
   { key: 'yourfeed',  label: 'Your Feed',      icon: '🗂️' },
+  { key: 'automation', label: 'Automation',     icon: '⚙️' },
+  { key: 'content',   label: 'AI Content Hub', icon: '✨' },
   { key: 'jobs',      label: 'Job Tracker',    icon: '💼' },
   { key: 'crosspost', label: 'Cross-Post',     icon: '📤' },
 ];
@@ -150,10 +152,22 @@ function ConnectedFeedSection() {
 
   useEffect(() => {
     let cancelled = false;
-    client.get('/office/feed', { params: { mode: 'following', limit: 60, sort: 'newest', seed: 'command-center' } })
-      .then(({ data }) => { if (!cancelled) setPosts((data.posts || []).filter(p => p?.id)); })
-      .catch(() => { if (!cancelled) setError(true); });
-    return () => { cancelled = true; };
+    let hasLoaded = false;
+    function loadPosts() {
+      client.get('/office/feed', { params: { mode: 'following', limit: 60, sort: 'newest', seed: 'command-center' } })
+        .then(({ data }) => {
+          if (cancelled) return;
+          hasLoaded = true;
+          setError(false);
+          setPosts((data.posts || []).filter(p => p?.id));
+        })
+        .catch(() => {
+          if (!cancelled && !hasLoaded) setError(true);
+        });
+    }
+    loadPosts();
+    const id = setInterval(loadPosts, 30000);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   if (posts === null && !error) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
@@ -394,20 +408,35 @@ function YourFeedSection() {
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
 
   const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+  const liveFeedButton = (
+    <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>🫵 Live You Feed</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.5 }}>
+          Open the live equalizer feed for the accounts and people you follow.
+        </p>
+      </div>
+      <Link to="/you" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>Open You Feed →</Link>
+    </div>
+  );
 
   if (!connectedPlatforms.length) {
     return (
-      <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-        <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔗</div>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>No connected accounts yet</div>
-        <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect a platform to review and download your own posts from it here.</div>
-        <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {liveFeedButton}
+        <div className="card" style={{ textAlign: 'center', padding: 32 }}>
+          <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔗</div>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>No connected accounts yet</div>
+          <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect a platform to review and download your own posts from it here.</div>
+          <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+        </div>
       </div>
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {liveFeedButton}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {connectedPlatforms.map(p => {
           const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
@@ -754,6 +783,205 @@ function CrossPostSection() {
   );
 }
 
+function metricValue(value) {
+  return Number.isFinite(value) ? value.toLocaleString() : '-';
+}
+
+function AutomationToolCard({ icon, title, description, status, actionLabel, to, href, onClick, primary = false }) {
+  const action = href ? (
+    <a href={href} className={`btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm`} style={{ alignSelf: 'flex-start' }}>
+      {actionLabel}
+    </a>
+  ) : to ? (
+    <Link to={to} className={`btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm`} style={{ alignSelf: 'flex-start' }}>
+      {actionLabel}
+    </Link>
+  ) : (
+    <button
+      type="button"
+      className={`btn ${primary ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+      onClick={onClick}
+      style={{ alignSelf: 'flex-start' }}
+    >
+      {actionLabel}
+    </button>
+  );
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 164 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h3 style={{ margin: 0, fontSize: '.95rem', lineHeight: 1.25 }}>{icon} {title}</h3>
+          <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
+            {description}
+          </p>
+        </div>
+        <span style={{
+          flexShrink: 0, fontSize: '.68rem', fontWeight: 800, color: primary ? '#059669' : 'var(--muted)',
+          background: primary ? '#ECFDF5' : 'var(--bg-secondary)', borderRadius: 10, padding: '4px 8px',
+          whiteSpace: 'nowrap',
+        }}>
+          {status}
+        </span>
+      </div>
+      <div style={{ marginTop: 'auto' }}>{action}</div>
+    </div>
+  );
+}
+
+function AutomationSection({ onSelectSection }) {
+  const [snapshot, setSnapshot] = useState({ loading: true });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSnapshot() {
+      setChecking(true);
+      const [socialRes, feedRes, historyRes, jobsRes, hqRes] = await Promise.allSettled([
+        client.get('/social/platforms'),
+        client.get('/office/feed', { params: { mode: 'following', limit: 1, sort: 'newest', seed: 'command-center-automation' } }),
+        client.get('/command-center/cross-post/history'),
+        client.get('/jobs/tracking'),
+        client.get('/hq/status'),
+      ]);
+      if (cancelled) return;
+
+      const social = socialRes.status === 'fulfilled' ? socialRes.value.data : {};
+      const feedPosts = feedRes.status === 'fulfilled' ? (feedRes.value.data.posts || []) : [];
+      const history = historyRes.status === 'fulfilled' ? (historyRes.value.data.posts || []) : [];
+      const jobs = jobsRes.status === 'fulfilled' ? (jobsRes.value.data.jobs || []) : [];
+      const hq = hqRes.status === 'fulfilled' ? hqRes.value.data : {};
+      const connected = social.connected || {};
+
+      setSnapshot({
+        loading: false,
+        connectedPlatforms: Object.values(connected).filter(Boolean).length,
+        feedPosts: feedPosts.length,
+        newestFeedAt: feedPosts[0]?.createdAt || null,
+        crossPostRuns: history.length,
+        lastCrossPostAt: history[0]?.createdAt || null,
+        trackedJobs: jobs.length,
+        savedJobs: jobs.filter(j => j.status === 'saved').length,
+        appliedJobs: jobs.filter(j => j.status === 'applied').length,
+        hqHealthy: hq.agentHealth?.healthy ?? null,
+        hqTotal: hq.agentHealth?.total ?? null,
+        hqFeedPosts: hq.feedPostCount ?? null,
+        queuePending: hq.refreshQueue?.pending ?? null,
+        refreshedAt: new Date().toISOString(),
+      });
+      setChecking(false);
+    }
+
+    loadSnapshot();
+    const id = setInterval(loadSnapshot, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [refreshKey]);
+
+  const feedStatus = snapshot.newestFeedAt ? `Latest ${timeAgo(snapshot.newestFeedAt)}` : 'Live route ready';
+  const crossPostStatus = snapshot.lastCrossPostAt ? `Last ${timeAgo(snapshot.lastCrossPostAt)}` : `${metricValue(snapshot.crossPostRuns)} saved`;
+  const jobsStatus = `${metricValue(snapshot.trackedJobs)} tracked`;
+  const hqStatus = Number.isFinite(snapshot.hqHealthy) && Number.isFinite(snapshot.hqTotal)
+    ? `${snapshot.hqHealthy}/${snapshot.hqTotal} healthy`
+    : 'Ops console';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <StatChip label="Accounts" value={snapshot.loading ? '...' : metricValue(snapshot.connectedPlatforms)} />
+        <StatChip label="Tracked Jobs" value={snapshot.loading ? '...' : metricValue(snapshot.trackedJobs)} />
+        <StatChip label="Cross-Posts" value={snapshot.loading ? '...' : metricValue(snapshot.crossPostRuns)} />
+        <StatChip label="HQ Posts" value={snapshot.loading ? '...' : metricValue(snapshot.hqFeedPosts)} />
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          onClick={() => setRefreshKey(k => k + 1)}
+          style={{ marginLeft: 'auto' }}
+        >
+          {checking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🔄 Refresh'}
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
+        <AutomationToolCard
+          icon="🫵"
+          title="You Feed"
+          description="Open the live equalizer feed for followed people and connected platform activity."
+          status={feedStatus}
+          actionLabel="Open You Feed →"
+          to="/you"
+          primary
+        />
+        <AutomationToolCard
+          icon="📡"
+          title="Connected Feed"
+          description="Review the live following pool grouped by source and refresh status."
+          status={feedStatus}
+          actionLabel="Open Connected Feed"
+          onClick={() => onSelectSection('feed')}
+        />
+        <AutomationToolCard
+          icon="🗂️"
+          title="Your Content"
+          description="Review and download your own connected-platform posts where the API supports it."
+          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
+          actionLabel="Open Your Feed"
+          onClick={() => onSelectSection('yourfeed')}
+        />
+        <AutomationToolCard
+          icon="✨"
+          title="AI Drafts"
+          description="Generate captions and post drafts for the platform you plan to publish on."
+          status="Ready"
+          actionLabel="Open AI Hub"
+          onClick={() => onSelectSection('content')}
+        />
+        <AutomationToolCard
+          icon="📤"
+          title="Cross-Post Queue"
+          description="Post to supported platforms and keep pending-platform posts saved in history."
+          status={crossPostStatus}
+          actionLabel="Open Cross-Post"
+          onClick={() => onSelectSection('crosspost')}
+        />
+        <AutomationToolCard
+          icon="💼"
+          title="Job Tracker"
+          description="Track saved, viewed, and applied opportunities from the live listings system."
+          status={jobsStatus}
+          actionLabel="Open Job Tracker"
+          onClick={() => onSelectSection('jobs')}
+        />
+        <AutomationToolCard
+          icon="🏢"
+          title="Automation HQ"
+          description="Open the data/ops agents console for live source, deploy, autofix, and activity tools."
+          status={hqStatus}
+          actionLabel="Open HQ →"
+          href={OFFICE_APP_URL}
+        />
+        <AutomationToolCard
+          icon="🔗"
+          title="Connected Accounts"
+          description="Manage OAuth connections that power the personalized feed and content tools."
+          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
+          actionLabel="Manage Accounts →"
+          to="/connected-accounts"
+        />
+        <AutomationToolCard
+          icon="📄"
+          title="Resume Builder"
+          description="Maintain your resume draft and feed it into the ATS/job matching workflow."
+          status="Add-on"
+          actionLabel="Open Resume Builder →"
+          to="/resume-builder"
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function CommandCenter() {
   const { profile } = useAuth();
   const { showToast } = useToast();
@@ -816,6 +1044,7 @@ export default function CommandCenter() {
           {section === 'feed' && <ConnectedFeedSection />}
           {section === 'content' && <ContentHubSection />}
           {section === 'yourfeed' && <YourFeedSection />}
+          {section === 'automation' && <AutomationSection onSelectSection={setSection} />}
           {section === 'jobs' && <JobTrackerSection />}
           {section === 'crosspost' && <CrossPostSection />}
         </>

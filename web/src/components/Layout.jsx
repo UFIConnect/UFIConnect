@@ -9,10 +9,6 @@ import client from '../api/client';
 // "Opportunities" (13 characters each) wrap badly at that width. The
 // desktop sidebar has room to spare, so it always uses the full label.
 const NAV = [
-  // Full equalizer feed of the member's connected-platform activity — see
-  // Feed.jsx's forcedMode prop. Listed first so it's the leftmost sidebar
-  // item / leftmost bottom-nav tab, as asked.
-  { to: '/you',           icon: '🫵', label: 'You'          },
   { to: '/',              icon: '📰', label: 'Feed'         },
   { to: '/videos',        icon: '▶️', label: 'Videos'       },
   { to: '/post',          icon: '✏️', label: 'Posts'        },
