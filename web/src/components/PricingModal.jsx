@@ -13,6 +13,7 @@ const TIERS = [
     tagline: 'For teams',
     icon: '🏢',
     locked: true,
+    note: 'Final pricing is based on how many employers your business has logged.',
   },
 ];
 
@@ -90,6 +91,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
             </div>
           ))}
         </div>
+        {TIERS.filter(t => t.note).map(t => (
+          <p key={t.tier} style={{ margin: '12px 2px 0', fontSize: '.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
+            {t.name}: {t.note}
+          </p>
+        ))}
       </div>
     </div>
   );
