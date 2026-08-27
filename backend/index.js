@@ -2546,9 +2546,12 @@ async function fetchRedditByKeyword(keyword) {
 // was a fetch-depth choice, not an API limitation. Capped at
 // REDDIT_HOME_MAX_PAGES pages (still one real API call per page, same
 // rate-limit footprint per page as before) rather than paging until
-// exhausted — a home feed is unbounded, this just needs to be "deep enough
-// to feel like a real feed," not literally everything.
-const REDDIT_HOME_MAX_PAGES = 3;
+// exhausted, with an earlier date-based exit once a page's own oldest post
+// is already past FOLLOWING_LOOKBACK_DAYS — no reason to keep paging for
+// content capFollowingPosts would just discard anyway. The page ceiling
+// itself is still what lets a genuinely quiet home feed reach that same
+// window on the other end.
+const REDDIT_HOME_MAX_PAGES = 8;
 async function fetchRedditHomeFeed(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `reddit_home_${token.slice(-12)}`;
@@ -2557,11 +2560,16 @@ async function fetchRedditHomeFeed(token, { bust = false } = {}) {
   try {
     const posts = [];
     let after = null;
+    const lookbackCutoff = Date.now() - FOLLOWING_LOOKBACK_MS;
     for (let page = 0; page < REDDIT_HOME_MAX_PAGES; page++) {
       const url = `https://oauth.reddit.com/.json?limit=100&raw_json=1${after ? `&after=${after}` : ''}`;
       const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFconnect/1.0 by /u/uficonnect' });
-      posts.push(...parseRedditJSON(data, null));
+      const pagePosts = parseRedditJSON(data, null);
+      posts.push(...pagePosts);
       after = data?.data?.after || null;
+      const oldestOnPage = pagePosts[pagePosts.length - 1];
+      const oldestTime = oldestOnPage ? new Date(oldestOnPage.createdAt || 0).getTime() : 0;
+      if (oldestTime && oldestTime < lookbackCutoff) break;
       if (!after) break; // genuinely out of history, not just out of pages
     }
     setCached(key, posts);
@@ -4983,30 +4991,55 @@ async function fetchGitLabByKeyword(keyword) {
   }
 }
 
-// ─── GitLab: a connected member's own activity feed ───────────────────────────
-// GET /events (authenticated user, no :id) is GitLab's own dashboard
-// activity feed — real, documented, works off the read_user scope this app
-// already requests. Accepts either PRIVATE-TOKEN (personal access tokens)
-// or a standard OAuth Bearer, same convention every other OAuth-token
-// fetcher in this file already uses.
+// ─── GitLab: activity from people the member actually follows ─────────────────
+// GitLab has no single "aggregated events from everyone I follow" call the
+// way GitHub's received_events is — GET /events with no :id (what this
+// fetcher used to call) is the AUTHENTICATED member's own personal activity
+// feed, not a following feed at all, confirmed against GitLab's own API
+// docs. That meant a member's own GitLab activity was showing up under
+// "Following" instead of the people they actually follow. Built properly
+// here instead: GET /user for the member's own id, GET /users/:id/following
+// for who they actually follow (a real, documented endpoint alongside
+// GitLab's own Followers feature), then GET /users/:id/events per followed
+// user (also real/documented, works for any account with public activity)
+// — the same "list who they follow, then read each one's own feed" shape
+// GitHub's API gives for free via received_events, GitLab just doesn't
+// offer as a single call.
 async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
   if (!token) return [];
   const key = `gitlab_following_${token.slice(-12)}`;
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
-    // 3 pages of 100 instead of one — GitLab's events endpoint supports
-    // real page-based pagination, no reason to stop at the first 100.
-    const events = [];
-    for (let page = 1; page <= 3; page++) {
-      const data = await fetchJSON(
-        `https://gitlab.com/api/v4/events?per_page=100&sort=desc&page=${page}`,
-        { Authorization: `Bearer ${token}` }
-      );
-      if (!Array.isArray(data) || !data.length) break;
-      events.push(...data);
-      if (data.length < 100) break;
-    }
+    const auth = { Authorization: `Bearer ${token}` };
+    const me = await fetchJSON('https://gitlab.com/api/v4/user', auth);
+    if (!me?.id) return [];
+
+    // Bounded to the first 50 followed accounts (GitLab's own API gives no
+    // meaningful ordering here) — following hundreds of people would mean
+    // hundreds of extra calls below for diminishing return, same tradeoff
+    // any "fan out per followed account" fetcher has to accept somewhere.
+    const following = await fetchJSON(
+      `https://gitlab.com/api/v4/users/${me.id}/following?per_page=50`,
+      auth
+    ).catch(() => []);
+    const followedIds = (Array.isArray(following) ? following : []).map(u => u?.id).filter(Boolean);
+    if (!followedIds.length) { setCached(key, []); return []; }
+
+    // One page of each followed account's own events — aggregating across
+    // potentially dozens of people is what reaches real depth here, not
+    // paginating any single one of them deeply (see FOLLOWING_LOOKBACK_DAYS/
+    // capFollowingPosts, applied after this returns, for the actual
+    // time-window cut). One failed/private account's events call shouldn't
+    // drop everyone else's, same resilience pattern the YouTube
+    // per-channel fetch above already uses.
+    const perUserEvents = await Promise.all(
+      followedIds.map(id =>
+        fetchJSON(`https://gitlab.com/api/v4/users/${id}/events?per_page=20&sort=desc`, auth).catch(() => [])
+      )
+    );
+    const events = perUserEvents.flat().filter(e => e?.id);
+
     const posts = events
       .filter(e => e?.action_name)
       .map(e => {
@@ -5028,66 +5061,12 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
           isExternal:  true,
           group:       { id: 'ext_gitlab', name: 'GitLab', category: 'Engineering' },
         };
-      });
+      })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     setCached(key, posts);
     return posts;
   } catch (e) {
     console.warn('GitLab following activity fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
-    throw e;
-  }
-}
-
-// ─── Dribbble: a connected member's own shots ─────────────────────────────────
-// Dribbble's v2 API dropped every aggregated-discovery endpoint (no public
-// "browse shots" feed for third-party apps anymore, same shape as GitHub's
-// search-vs-received_events split) — GET /user/shots off the member's own
-// public-scope token is what's left, and it's exactly the "showcase your
-// design work" use case Connected Accounts already describes for this
-// platform. No app-level worker exists for Dribbble at all today (no
-// SOURCE_CONFIG entry), so this is its first real content source.
-async function fetchDribbbleOwnShots(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `dribbble_own_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  try {
-    // 3 pages of 100 instead of one — a member's own shot history goes back
-    // as far as their account does, not just their most recent 100.
-    const shots = [];
-    for (let page = 1; page <= 3; page++) {
-      const data = await fetchJSON(
-        `https://api.dribbble.com/v2/user/shots?per_page=100&page=${page}`,
-        { Authorization: `Bearer ${token}` }
-      );
-      if (!Array.isArray(data) || !data.length) break;
-      shots.push(...data);
-      if (data.length < 100) break;
-    }
-    const posts = shots
-      .filter(s => s?.id && s?.html_url)
-      .map(s => ({
-        id:          `dribbble_${s.id}`,
-        authorId:    `dribbble_${s.user?.id || 'member'}`,
-        groupId:     'ext_dribbble',
-        content:     stripAndDecodeHTML(s.description || '') || s.title || 'Dribbble shot',
-        title:       s.title || 'Dribbble shot',
-        source:      'dribbble', sourceLabel: 'Dribbble',
-        sourceUrl:   s.html_url,
-        topic:       null,
-        author:      { name: s.user?.name || 'Dribbble', title: 'Designer' },
-        likes: [], likesCount: s.likes_count || 0, commentsCount: s.comments_count || 0,
-        createdAt:   normalizeTimestamp(s.published_at || s.created_at),
-        isExternal:  true,
-        mediaType:   'image',
-        mediaUrl:    s.images?.normal || s.images?.teaser || s.images?.hidpi || null,
-        group:       { id: 'ext_dribbble', name: 'Dribbble', category: 'Design' },
-      }));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('Dribbble own shots fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -5137,63 +5116,6 @@ async function fetchTwitchFollowedStreams(token, { bust = false } = {}) {
     return posts;
   } catch (e) {
     console.warn('Twitch followed streams fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
-    throw e;
-  }
-}
-
-// Threads: the member's own published threads, via Graph API's GET
-// /v1.0/me/threads (requires threads_basic) — same own-content shape as
-// Dribbble/Twitch above; there's no third-party "home timeline" endpoint
-// on the Threads API at all, only own-account content.
-async function fetchThreadsOwnPosts(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `threads_own_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  try {
-    // 3 pages of 100 instead of one — the Graph API hands back a ready-to-
-    // use paging.next URL (already carries its own cursor/token), simpler
-    // to just follow it than reconstruct the cursor param by hand.
-    const fields = 'id,text,permalink,timestamp,media_type,media_url,thumbnail_url,username';
-    const items = [];
-    let url = `https://graph.threads.net/v1.0/me/threads?fields=${fields}&limit=100&access_token=${encodeURIComponent(token)}`;
-    for (let page = 0; page < 3 && url; page++) {
-      const data = await fetchJSON(url);
-      const pageItems = Array.isArray(data?.data) ? data.data : [];
-      if (!pageItems.length) break;
-      items.push(...pageItems);
-      url = data?.paging?.next || null;
-    }
-    const posts = items
-      .filter(t => t?.id)
-      .map(t => ({
-        id:          `threads_${t.id}`,
-        authorId:    `threads_${t.username || 'member'}`,
-        groupId:     'ext_threads',
-        content:     t.text || 'Threads post',
-        title:       t.text ? t.text.slice(0, 80) : 'Threads post',
-        source:      'threads', sourceLabel: 'Threads',
-        sourceUrl:   t.permalink || 'https://www.threads.net/',
-        topic:       null,
-        author:      { name: t.username || 'Threads', title: 'Creator' },
-        likes: [], likesCount: 0, commentsCount: 0,
-        createdAt:   normalizeTimestamp(t.timestamp),
-        isExternal:  true,
-        mediaType:   t.media_type === 'VIDEO' ? 'video' : ['IMAGE', 'CAROUSEL_ALBUM'].includes(t.media_type) ? 'image' : 'text',
-        mediaUrl:    t.media_url || t.thumbnail_url || null,
-        // thumbnail_url is Meta's own static preview frame for a VIDEO post
-        // — kept as a real poster instead of only ever being used as a
-        // media_url fallback (which it never actually reaches, since a
-        // video post always has media_url set).
-        mediaPoster: t.media_type === 'VIDEO' ? (t.thumbnail_url || null) : null,
-        group:       { id: 'ext_threads', name: 'Threads', category: 'Social' },
-      }));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('Threads own posts fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -5659,30 +5581,41 @@ async function fetchBlueskyByKeyword(keyword) {
   return getCached(key) || [];
 }
 
-// Following feed: a connected member's own Bluesky posts (app.bsky.feed.
-// getAuthorFeed against their own PDS), not a keyword search — same
-// distinction fetchDribbbleOwnShots/fetchGitHubFollowingActivity draw for
-// their own platforms. token is the JSON blob saveSocialToken stored at
-// connect time (see the OAuth callback's own comment) — accessToken/did/
-// pdsUrl, not a bare bearer string like every other platform here.
-async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
+// Following feed: the member's real Bluesky following timeline
+// (app.bsky.feed.getTimeline against their own PDS) — a reverse-
+// chronological feed of posts from accounts they actually follow, same
+// concept as GitHub's received_events or a YouTube subscription feed. Used
+// to be getAuthorFeed (the member's OWN posts only), which is exactly the
+// wrong content for a "Following" surface — confirmed live as this
+// member's own posts showing up under Following instead of the people they
+// actually follow. getTimeline needs no actor param (it's always scoped to
+// whoever the session belongs to) and is otherwise called the same way.
+// token is the JSON blob saveSocialToken stored at connect time (see the
+// OAuth callback's own comment) — accessToken/did/pdsUrl, not a bare
+// bearer string like every other platform here.
+async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
   if (!token) return [];
   let session;
   try { session = JSON.parse(token); } catch { return []; }
   if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
 
-  const key = `bluesky_own_${session.did}`;
+  const key = `bluesky_following_${session.did}`;
   const cached = !bust && getCached(key);
   if (cached) return cached;
 
   try {
-    // 3 pages of 100 instead of one — getAuthorFeed's own cursor lets a
-    // real fetch actually reach back into a member's post history instead
-    // of stopping at their 100 most recent.
+    // Up to 8 pages of 100 (vs. the 3 getAuthorFeed used) — a real following
+    // timeline aggregates every account the member follows, so it naturally
+    // needs to page deeper than one person's own post history to actually
+    // reach FOLLOWING_LOOKBACK_DAYS back (see capFollowingPosts, applied
+    // after this returns). Stops early once a page's own oldest post is
+    // already past that window — no reason to keep paging for content that
+    // capFollowingPosts would just discard anyway.
     const feed = [];
     let cursor = null;
-    for (let page = 0; page < 3; page++) {
-      const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+    const lookbackCutoff = Date.now() - FOLLOWING_LOOKBACK_MS;
+    for (let page = 0; page < 8; page++) {
+      const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getTimeline?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const result = await atprotoGet(url, { accessToken: session.accessToken });
       if (result?.status >= 400) {
         if (page === 0) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
@@ -5691,14 +5624,19 @@ async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
       const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
       if (!pageFeed.length) break;
       feed.push(...pageFeed);
+      const oldestOnPage = pageFeed[pageFeed.length - 1];
+      const oldestTime = new Date(oldestOnPage?.post?.record?.createdAt || oldestOnPage?.post?.indexedAt || 0).getTime();
+      if (oldestTime && oldestTime < lookbackCutoff) break;
       cursor = result?.data?.cursor || null;
       if (!cursor) break;
     }
     const posts = feed
-      // Reposts carry someone ELSE's record under this member's feed entry —
-      // keeping them would misattribute another author's post as this
-      // member's own content, the exact thing "own posts" is supposed to mean.
-      .filter(item => !item.reason && item.post?.cid)
+      // A repost by someone the member follows is legitimate following-
+      // timeline content (same as a retweet would be) — item.post is
+      // always the actual post being shown regardless of whether it's a
+      // repost, so author attribution below already stays correct either
+      // way. Only a missing post record itself gets dropped.
+      .filter(item => item.post?.cid)
       .map(({ post: p }) => {
         const text   = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
         const handle = p.author?.handle || p.author?.did || 'unknown';
@@ -5726,35 +5664,7 @@ async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
     setCached(key, posts);
     return posts;
   } catch (e) {
-    console.warn('Bluesky own posts fetch:', e.message);
-    const stale = postCache.get(key)?.v;
-    if (stale) return stale;
-    throw e;
-  }
-}
-
-// Following feed: a connected member's own Medium posts. Medium's public API
-// (basicProfile scope) has no "list my posts" endpoint of its own, but every
-// profile publishes a standard RSS feed at /feed/@username with no auth
-// needed once we know the username — same feed shape fetchMediumByTag
-// already parses for the app-level tag-based source, just scoped to one
-// person's own profile instead of a tag.
-async function fetchMediumOwnPosts(token, { bust = false } = {}) {
-  if (!token) return [];
-  const key = `medium_own_${token.slice(-12)}`;
-  const cached = !bust && getCached(key);
-  if (cached) return cached;
-  try {
-    const me = await fetchJSON('https://api.medium.com/v1/me', { Authorization: `Bearer ${token}` });
-    const username = me?.data?.username;
-    if (!username) throw new Error('Medium profile has no username');
-    const xml = await fetchText(`https://medium.com/feed/@${encodeURIComponent(username)}`);
-    const items = parseRSSItems(xml);
-    const posts = items.slice(0, 50).map(it => rssPost(it, 'medium', 'Medium', 'ext_medium', 'Medium', 'Engineering', null));
-    setCached(key, posts);
-    return posts;
-  } catch (e) {
-    console.warn('Medium own posts fetch:', e.message);
+    console.warn('Bluesky following timeline fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
     throw e;
@@ -8289,28 +8199,44 @@ function buildEqualizedFeedPool(posts, totalLimit) {
 // expects to see their most recent activity from people/pages they follow,
 // not an arbitrary rank position. Two things this does that plain
 // round-robin doesn't:
-//   1. Recency cap — only each source/page's own FOLLOWING_PER_SOURCE_CAP
-//      most recent posts count at all. Without this, one deeply-paginated
-//      source (e.g. GitHub's own ~300-event history) buries every other
-//      followed page's fresh content under its own backlog once merged,
-//      confirmed live as "the following is not showing content it's
-//      supposed to."
+//   1. Lookback window — only each source/page's own posts from the last
+//      FOLLOWING_LOOKBACK_DAYS count at all, a time window rather than a
+//      flat count so a genuinely active followed page contributes a real,
+//      rich pool (not throttled to some arbitrary number) while a quiet one
+//      just honestly contributes less — a flat per-source count cap was
+//      tried first and made the equalized feed feel thin regardless of how
+//      much real activity a page actually had. Still bounded by
+//      FOLLOWING_PER_SOURCE_SAFETY_CAP purely to stop one pathologically
+//      chatty page (an extremely active subreddit-heavy Reddit account)
+//      from blowing up memory — round-robin fairness across sources doesn't
+//      need this, that's already handled by (2) below regardless of how
+//      many posts any one source brings.
 //   2. Time factor — round-robin still guarantees fairness (round N holds
 //      at most one post per source, so no single chatty page can hog every
 //      slot), but *within* each round the picks are sorted newest-first
 //      instead of fixed map-iteration order, so a page that just posted
 //      surfaces ahead of one whose "next" post is a day old even though
 //      both are technically the same round.
-const FOLLOWING_PER_SOURCE_CAP = 10;
+const FOLLOWING_LOOKBACK_DAYS = 10;
+const FOLLOWING_LOOKBACK_MS = FOLLOWING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+const FOLLOWING_PER_SOURCE_SAFETY_CAP = 150;
 // Shared by every place a followed page/source's raw fetch result gets
 // cached or merged (refreshFollowingSourceCaches, getFollowingFeedPosts'
 // own live-fetch fallback, and the per-platform manual-refresh path) so the
-// recency cap is applied once, consistently, at the point content enters
-// the cache — not re-derived differently at each call site.
-function capFollowingPosts(list, limit = FOLLOWING_PER_SOURCE_CAP) {
-  return [...list]
-    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-    .slice(0, limit);
+// lookback window is applied once, consistently, at the point content
+// enters the cache — not re-derived differently at each call site. A post
+// with no resolvable createdAt is kept rather than dropped — several
+// fetchers construct posts from data that doesn't always carry a reliable
+// timestamp, and silently discarding those reads as "following lost
+// content" rather than "we couldn't tell how old this was."
+function capFollowingPosts(list, days = FOLLOWING_LOOKBACK_DAYS) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const sorted = [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  const withinWindow = sorted.filter(p => {
+    const t = new Date(p.createdAt || 0).getTime();
+    return !Number.isFinite(t) || t <= 0 || t >= cutoff;
+  });
+  return withinWindow.slice(0, FOLLOWING_PER_SOURCE_SAFETY_CAP);
 }
 function buildEqualizedFollowingPool(posts) {
   const bySource = new Map();
@@ -8320,11 +8246,7 @@ function buildEqualizedFollowingPool(posts) {
     bySource.get(src).push(p);
   }
   if (!bySource.size) return [];
-  const queues = [...bySource.values()].map(list =>
-    [...list]
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
-      .slice(0, FOLLOWING_PER_SOURCE_CAP)
-  );
+  const queues = [...bySource.values()].map(list => capFollowingPosts(list));
   const result = [];
   for (let round = 0; ; round++) {
     const picks = [];
@@ -10590,10 +10512,13 @@ const PLATFORMS = {
 // Discord's API has no generic "personal feed" concept at all, and Figma's
 // REST API has no "list my files" endpoint without already knowing a
 // team_id — neither could ever pull real content no matter how the OAuth
-// side was wired up. bluesky and medium now have real fetchers
-// (fetchBlueskyOwnPosts/fetchMediumOwnPosts, wired into
-// FOLLOWING_SOURCE_FETCHERS below) so every platform left in this list
-// actually pulls real content once connected.
+// side was wired up. bluesky has a real following-feed fetcher
+// (fetchBlueskyFollowingTimeline, wired into FOLLOWING_SOURCE_FETCHERS
+// below); dribbble and threads stay listed for identity/profile purposes
+// only — see FOLLOWING_SOURCE_FETCHERS' own comment for why neither has a
+// real following-feed fetcher (their APIs genuinely don't expose one, own-
+// content-only); medium still feeds the app-level aggregate feed via its
+// own tag-based fetcher, just not Following specifically, same reason.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook',
   'github', 'gitlab', 'youtube', 'reddit',
@@ -11086,21 +11011,29 @@ const FOLLOWING_SOURCE_FETCHERS = {
   // mastodon: fetchMastodonHomeTimeline,      // TODO: once Mastodon OAuth connect is live
   youtube:  fetchYouTubeSubscriptionFeed,     // recent uploads from channels the member subscribes to — see its own comment
   github:   fetchGitHubFollowingActivity,     // received_events — activity from people the member follows, see its own comment
-  gitlab:   fetchGitLabFollowingActivity,     // GET /events — the member's own GitLab dashboard activity feed
+  gitlab:   fetchGitLabFollowingActivity,     // /users/:id/following + per-followed-user /events — see its own comment
   reddit:   fetchRedditHomeFeed,              // oauth.reddit.com/ — the member's real personalized front page
-  dribbble: fetchDribbbleOwnShots,            // GET /user/shots — the member's own uploaded shots, see its own comment
   twitch:   fetchTwitchFollowedStreams,       // GET /streams/followed — currently-live followed channels, see its own comment
-  threads:  fetchThreadsOwnPosts,             // GET /v1.0/me/threads — the member's own published threads, see its own comment
-  bluesky:  fetchBlueskyOwnPosts,             // app.bsky.feed.getAuthorFeed against the member's own PDS, DPoP-authenticated
-  medium:   fetchMediumOwnPosts,              // /feed/@username RSS, resolved from the member's Medium profile
-  // figma and linkedin deliberately absent — neither has a real content API
-  // reachable with the scopes we can actually get: Figma's REST API has no
-  // "list my files" endpoint without already knowing a team_id (verified
-  // against its OpenAPI spec — every file/project/folder endpoint requires
-  // one), and LinkedIn's openid/profile/email scope only unlocks basic
-  // profile info, not posts — real feed access needs LinkedIn's separate,
-  // heavily-gated Partner Program (see PLATFORMS.linkedin's own note).
-  // Both connect flows still work for identity/profile purposes.
+  bluesky:  fetchBlueskyFollowingTimeline,    // app.bsky.feed.getTimeline — the member's real following timeline
+  // figma, linkedin, dribbble, threads, and medium are deliberately absent —
+  // none of them expose a real "posts from accounts I follow" API to a
+  // third-party app, only an own-content one (verified directly against
+  // each platform's own API docs, not assumed): Dribbble's v2 API dropped
+  // every aggregated-discovery endpoint and never had a following feed
+  // (GET /user/shots is the member's own shots only); the Threads Graph API
+  // supports publishing/insights/own-content only, no home timeline at all;
+  // Medium's official API is archived/publish-only, and its per-author RSS
+  // has no "who I follow" equivalent; Figma's REST API has no "list my
+  // files" endpoint without already knowing a team_id; LinkedIn's openid/
+  // profile/email scope only unlocks basic identity, not posts — real feed
+  // access needs LinkedIn's separate, heavily-gated Partner Program (see
+  // PLATFORMS.linkedin's own note). Surfacing each platform's own content
+  // mislabeled as "Following" used to be the fallback here — confirmed live
+  // as a member's own Dribbble shots/Threads posts/Bluesky posts showing up
+  // under Following instead of people they actually follow, exactly the
+  // thing this list exists to avoid. All five connect flows still work for
+  // identity/profile purposes and (Threads/Medium) the app-level aggregate
+  // feed elsewhere.
 };
 
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
