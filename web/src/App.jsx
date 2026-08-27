@@ -60,6 +60,7 @@ const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
 const Sources        = lazy(() => import('./pages/Sources'));
+const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -144,6 +145,9 @@ export default function App() {
       }/>
       <Route path="/profile" element={
         <RequireAuth><RequireOnboarding><Profile /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/command-center" element={
+        <RequireAuth><RequireOnboarding><CommandCenter /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/connected-accounts" element={
         <RequireAuth><RequireOnboarding><ConnectedAccounts /></RequireOnboarding></RequireAuth>

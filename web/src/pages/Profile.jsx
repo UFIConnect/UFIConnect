@@ -453,6 +453,42 @@ export default function Profile() {
             </div>
           </div>
 
+          {/* Command Center */}
+          <div
+            className="card"
+            style={{
+              background: 'linear-gradient(135deg, #EDE4FF 0%, #E0F2FE 100%)',
+              border: '1px solid #DDD6FE', cursor: 'pointer',
+            }}
+            onClick={() => navigate('/command-center')}
+          >
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+              <div>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
+                  <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'#6D28D9', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>
+                    🧭 Command Center
+                  </h3>
+                  {profile.plan === 'free' && (
+                    <span style={{ fontSize:'.62rem', fontWeight:800, color:'#fff', background:'#7C3AED', padding:'2px 7px', borderRadius:8, letterSpacing:'.4px' }}>
+                      PRO
+                    </span>
+                  )}
+                </div>
+                <p style={{ fontSize:'.78rem', color:'#5B21B6', margin:0, lineHeight:1.5 }}>
+                  Every connected account in one place — organized by source, AI content drafts, and job tracking.
+                </p>
+              </div>
+              <button
+                className="btn btn-sm"
+                type="button"
+                onClick={(e) => { e.stopPropagation(); navigate('/command-center'); }}
+                style={{ flexShrink:0, background:'#7C3AED', color:'#fff', border:'none' }}
+              >
+                Open →
+              </button>
+            </div>
+          </div>
+
           {/* Connected Accounts */}
           <div className="card" id="social">
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>

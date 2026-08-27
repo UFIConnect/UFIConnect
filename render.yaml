@@ -144,6 +144,13 @@ services:
         sync: false
       - key: USAJOBS_USER_AGENT
         sync: false
+      # Command Center's AI Content Hub (POST /command-center/content-draft)
+      # — an Anthropic API key (console.anthropic.com), real per-call cost,
+      # already gated to paid plans server-side regardless of this being
+      # set. Until it's set, the endpoint returns 503 and the Content Hub UI
+      # shows "not configured yet" rather than silently failing.
+      - key: ANTHROPIC_API_KEY
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false

@@ -11863,6 +11863,33 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS push_subscriptions_user_idx ON push_subscriptions(user_id)`);
 
+    // Command Center's job tracker — a member marking a listing saved/
+    // applied/viewed. job_id is the same id /opportunities already returns
+    // per listing (source-prefixed, e.g. "remotive_12345"), not a foreign
+    // key into any table of our own — job listings themselves are live
+    // external API results, never persisted. title/org/source_url/source
+    // are snapshotted at tracking time so a tracked job still displays
+    // correctly even after it's aged out of the live /opportunities result
+    // set. One row per (user, job) — re-tracking the same job updates status
+    // in place rather than creating a duplicate history entry.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS job_tracking (
+        id           TEXT PRIMARY KEY,
+        user_id      TEXT NOT NULL,
+        job_id       TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'saved',
+        title        TEXT,
+        org          TEXT,
+        source       TEXT,
+        source_url   TEXT,
+        match_score  INTEGER,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, job_id)
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS job_tracking_user_idx ON job_tracking(user_id, updated_at DESC)`);
+
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
     // restart/deploy or on a different device.
@@ -20531,6 +20558,150 @@ app.get('/opportunities', authenticate, async (req, res) => {
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle, resumeKeywords) : null,
     availableSources: [...availableSources].sort(),
   });
+});
+
+// ─── Command Center: job tracker ───────────────────────────────────────────
+// A member's own saved/applied/viewed status against live /opportunities
+// listings — deliberately just a status they set themselves, not automated
+// application submission (most job boards' own ToS prohibit that outright,
+// and none of the sources here expose a real "submit application" API
+// anyway). title/org/source/sourceUrl/matchScore are snapshotted at
+// tracking time (from whatever /opportunities already computed — see its
+// own scoring above) so a tracked job still displays correctly even after
+// it's aged out of the live result set.
+app.get('/jobs/tracking', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.json({ jobs: [] });
+  try {
+    const { rows } = await db.query(
+      `SELECT * FROM job_tracking WHERE user_id = $1 ORDER BY updated_at DESC`,
+      [req.user.id]
+    );
+    res.json({
+      jobs: rows.map(r => ({
+        id: r.job_id, status: r.status, title: r.title, org: r.org,
+        source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
+        trackedAt: r.created_at, updatedAt: r.updated_at,
+      })),
+    });
+  } catch (e) {
+    console.error('[/jobs/tracking] error:', e.message);
+    res.status(500).json({ jobs: [] });
+  }
+});
+
+app.post('/jobs/tracking', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ message: 'Job tracking is not available right now.' });
+  const { jobId, status, title, org, source, sourceUrl, matchScore } = req.body || {};
+  if (!jobId || !['saved', 'applied', 'viewed'].includes(status)) {
+    return res.status(400).json({ message: 'jobId and a valid status are required.' });
+  }
+  try {
+    const id = `jt_${req.user.id}_${jobId}`.replace(/[^a-zA-Z0-9_]/g, '_');
+    await db.query(
+      `INSERT INTO job_tracking (id, user_id, job_id, status, title, org, source, source_url, match_score, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+       ON CONFLICT (user_id, job_id) DO UPDATE SET
+         status = EXCLUDED.status, title = EXCLUDED.title, org = EXCLUDED.org,
+         source = EXCLUDED.source, source_url = EXCLUDED.source_url,
+         match_score = EXCLUDED.match_score, updated_at = NOW()`,
+      [id, req.user.id, jobId, status, title || null, org || null, source || null, sourceUrl || null, Number.isFinite(matchScore) ? matchScore : null]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[/jobs/tracking] save error:', e.message);
+    res.status(500).json({ message: 'Could not save.' });
+  }
+});
+
+app.delete('/jobs/tracking/:jobId', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ message: 'Job tracking is not available right now.' });
+  try {
+    await db.query(`DELETE FROM job_tracking WHERE user_id = $1 AND job_id = $2`, [req.user.id, req.params.jobId]);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[/jobs/tracking] delete error:', e.message);
+    res.status(500).json({ message: 'Could not remove.' });
+  }
+});
+
+// ─── Command Center: AI content drafting ───────────────────────────────────
+// Drafts ready-to-post captions for a platform the member has connected —
+// the member still posts it themselves; there is no publishing API wired up
+// here (TikTok/Instagram both require a business/creator-app-review process
+// this app hasn't gone through, see FOLLOWING_SOURCE_FETCHERS' own comment
+// for the same constraint on the read side). Requires ANTHROPIC_API_KEY —
+// no LLM integration existed anywhere in this app before this endpoint, so
+// this is a genuinely new dependency, not a rewire of something existing.
+function callAnthropic(apiKey, prompt) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 700,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const req = https.request('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return reject(new Error(`Anthropic HTTP ${res.statusCode}: ${data.slice(0, 300)}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          resolve(parsed?.content?.[0]?.text || '');
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(20000, function () { this.destroy(); reject(new Error('Anthropic request timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+const CONTENT_DRAFT_PLATFORM_LABELS = {
+  tiktok: 'TikTok', instagram: 'Instagram', linkedin: 'LinkedIn',
+  twitter: 'X/Twitter', threads: 'Threads', general: 'social media',
+};
+app.post('/command-center/content-draft', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  // Cost-bearing (a real per-call LLM API charge) — gated to paid plans
+  // server-side, not just hidden behind a UI badge, since a free user could
+  // otherwise hit this route directly regardless of what the client shows.
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'The AI Content Hub is a Pro feature — upgrade to use it.' });
+  }
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ message: "AI content drafting isn't configured yet." });
+  }
+  const { platform, topic, tone } = req.body || {};
+  if (!topic || typeof topic !== 'string' || !topic.trim()) {
+    return res.status(400).json({ message: 'topic is required.' });
+  }
+  const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[platform] || 'social media';
+  const toneLabel = (tone && typeof tone === 'string' && tone.trim()) ? tone.trim().slice(0, 40) : 'engaging and authentic';
+  const prompt = `Write 3 distinct, ready-to-post ${platformLabel} caption/post drafts about: "${topic.trim().slice(0, 300)}".\nTone: ${toneLabel}.\nKeep each draft platform-appropriate in length and style (short and punchy for TikTok/Instagram, more professional for LinkedIn). Number them 1, 2, 3, each on its own paragraph. No preamble or explanation — just the three drafts.`;
+  try {
+    const text = await callAnthropic(apiKey, prompt);
+    const drafts = text
+      .split(/\n(?=\d\.\s)/)
+      .map(s => s.replace(/^\d\.\s*/, '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    res.json({ drafts: drafts.length ? drafts : [text.trim()].filter(Boolean) });
+  } catch (e) {
+    console.error('[/command-center/content-draft] error:', e.message);
+    res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
+  }
 });
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
