@@ -6,6 +6,7 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { ALL_ROLES, EXTRA_INTERESTS } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
+import PricingModal from '../components/PricingModal';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
@@ -164,8 +165,9 @@ export default function Settings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [upgrading, setUpgrading] = useState(false);
+  const [upgrading, setUpgrading] = useState(null); // null | 'pro' | 'business' — which tier's checkout is in flight
   const [portalLoading, setPortalLoading] = useState(false);
+  const [pricingOpen, setPricingOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -186,22 +188,23 @@ export default function Settings() {
       client.get('/profile')
         .then(({ data }) => {
           updateProfileLocally(data);
-          showToast(data.plan === 'pro' ? "You're on Pro — thanks!" : "Payment received — this can take a few seconds to finish activating.", 'success');
+          const planName = data.plan === 'business' ? 'Business' : data.plan === 'pro' ? 'Pro' : null;
+          showToast(planName ? `You're on ${planName} — thanks!` : 'Payment received — this can take a few seconds to finish activating.', 'success');
         })
-        .catch(() => showToast("Payment received — refresh in a moment if Pro doesn't show up yet.", 'success'));
+        .catch(() => showToast('Payment received — refresh in a moment if it doesn\'t show up yet.', 'success'));
     } else if (upgrade === 'cancelled') {
       showToast('Checkout cancelled — no charge was made.', 'info');
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleUpgrade() {
-    setUpgrading(true);
+  async function handleUpgrade(tier) {
+    setUpgrading(tier);
     try {
-      const { data } = await client.post('/billing/create-checkout-session');
+      const { data } = await client.post('/billing/create-checkout-session', { tier });
       window.location.href = data.url;
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
-      setUpgrading(false);
+      setUpgrading(null);
     }
   }
 
@@ -604,29 +607,36 @@ export default function Settings() {
           <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 18px', flexWrap: 'wrap' }}>
             <div style={{
               width: 44, height: 44, borderRadius: 12, flexShrink: 0,
-              background: profile.plan === 'pro' ? '#EDE4FF' : 'var(--bg-secondary)',
+              background: profile.plan === 'free' ? 'var(--bg-secondary)' : '#EDE4FF',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
-            }}>{profile.plan === 'pro' ? '⭐' : '🆓'}</div>
+            }}>{profile.plan === 'business' ? '🏢' : profile.plan === 'pro' ? '⭐' : '🆓'}</div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {profile.plan === 'pro' ? 'Pro plan' : 'Free plan'}
+                {profile.plan === 'business' ? 'Business plan' : profile.plan === 'pro' ? 'Pro plan' : 'Free plan'}
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
-                {profile.plan === 'pro'
-                  ? 'Thanks for supporting UFconnect — manage your subscription anytime.'
-                  : 'Support UFconnect with a Pro subscription.'}
+                {profile.plan === 'free'
+                  ? 'Support UFconnect with a paid plan.'
+                  : 'Thanks for supporting UFconnect — manage your subscription anytime.'}
               </div>
             </div>
-            {profile.plan === 'pro' ? (
+            {profile.plan !== 'free' ? (
               <button type="button" onClick={handleManageBilling} disabled={portalLoading} className="btn btn-ghost btn-sm">
                 {portalLoading ? 'Opening…' : 'Manage billing'}
               </button>
             ) : (
-              <button type="button" onClick={handleUpgrade} disabled={upgrading} className="btn btn-primary btn-sm">
-                {upgrading ? 'Redirecting…' : 'Upgrade to Pro'}
+              <button type="button" onClick={() => setPricingOpen(true)} disabled={!!upgrading} className="btn btn-primary btn-sm">
+                {upgrading ? 'Redirecting…' : 'Upgrade'}
               </button>
             )}
           </div>
+          {pricingOpen && (
+            <PricingModal
+              loadingTier={upgrading}
+              onClose={() => setPricingOpen(false)}
+              onSelectTier={handleUpgrade}
+            />
+          )}
 
           {/* Role badge */}
           {role && (

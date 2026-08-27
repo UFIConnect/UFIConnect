@@ -107,14 +107,23 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const userId = session.client_reference_id;
+      // Which tier was purchased: set as Checkout Session metadata at
+      // creation time (see /billing/create-checkout-session) and read back
+      // here, rather than expanding line_items — a session only ever has
+      // one line item in this app's checkout, so its own metadata is a
+      // simpler, one-less-API-call way to know which Price was bought.
+      // Falls back to 'pro' for any in-flight session created before this
+      // existed, or a genuinely missing/invalid value — matches this
+      // route's original single-tier behavior rather than leaving plan unset.
+      const tier = ['pro', 'business'].includes(session.metadata?.tier) ? session.metadata.tier : 'pro';
       if (userId && db.isConnected() && isDBId(userId)) {
         await db.query(
-          `UPDATE users SET plan='pro', stripe_customer_id=$1, stripe_subscription_id=$2 WHERE id=$3`,
-          [session.customer, session.subscription, userId]
+          `UPDATE users SET plan=$1, stripe_customer_id=$2, stripe_subscription_id=$3 WHERE id=$4`,
+          [tier, session.customer, session.subscription, userId]
         );
         const mem = users.find(u => u.id === userId);
-        if (mem) { mem.plan = 'pro'; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
-        console.log(`[Stripe webhook] user ${userId} upgraded to pro`);
+        if (mem) { mem.plan = tier; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
+        console.log(`[Stripe webhook] user ${userId} upgraded to ${tier}`);
       }
     } else if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
       const sub = event.data.object;
@@ -11414,7 +11423,12 @@ function fullProfile(user) {
     connectedPlatforms,
     connectedSocial: Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(platform => [platform, connectedPlatforms.includes(platform)])),
     plan: user.plan || 'free',
-    isPro: (user.plan || 'free') === 'pro',
+    // Business is a superset tier, not a separate track — isPro true for
+    // either paid plan so any future Pro-gated feature doesn't also need
+    // its own Business check. isBusiness is the narrower one, for whatever
+    // ends up being Business-only.
+    isPro: ['pro', 'business'].includes(user.plan),
+    isBusiness: user.plan === 'business',
   };
 }
 
@@ -14040,17 +14054,39 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 // POSTed here — no payment involved at all. plan is now only ever set to
 // 'pro' by the webhook above, after Stripe actually confirms a completed
 // checkout, never by a route a client can call directly.
+// Two tiers share this one route via a `tier` body param rather than a
+// separate route each — same Checkout Session shape either way, just a
+// different Price and a metadata tag so the webhook knows which one was
+// bought (see its own comment). STRIPE_PRICE_ID stays the Pro tier's price
+// (unchanged from before this had multiple tiers, so an already-configured
+// value keeps working); STRIPE_PRICE_ID_BUSINESS is the new one.
+const TIER_PRICE_IDS = {
+  pro:      () => process.env.STRIPE_PRICE_ID,
+  business: () => process.env.STRIPE_PRICE_ID_BUSINESS,
+};
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
-  if (!stripe || !process.env.STRIPE_PRICE_ID) {
+  const tier = ['pro', 'business'].includes(req.body?.tier) ? req.body.tier : 'pro';
+  const priceId = TIER_PRICE_IDS[tier]();
+  if (!stripe || !priceId) {
     return res.status(503).json({ message: 'Billing is not configured yet.' });
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  if (user.plan === 'pro') return res.status(400).json({ message: 'Already on the Pro plan.' });
+  // Blocks starting a second checkout on top of an existing paid plan
+  // rather than allowing a tier switch this way — a fresh checkout session
+  // creates a brand new subscription without touching the old one, which
+  // would leave someone paying for both Pro and Business at once instead
+  // of actually switching. Manage billing (the portal) is the correct path
+  // for changing/cancelling an existing subscription; this route is only
+  // for going from free to a first paid tier.
+  if (user.plan === 'pro' || user.plan === 'business') {
+    return res.status(400).json({ message: `Already on the ${user.plan === 'business' ? 'Business' : 'Pro'} plan — use Manage Billing to change plans.` });
+  }
   try {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: { tier },
       // Reuse an existing Stripe customer if this user has one (e.g. a past
       // canceled subscription) instead of creating a duplicate each time.
       customer: user.stripeCustomerId || undefined,

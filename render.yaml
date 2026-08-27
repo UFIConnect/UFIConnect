@@ -102,20 +102,25 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
-      # Stripe billing (Pro plan checkout + customer portal). Secret Key and
-      # Webhook Secret are on the Stripe dashboard (Developers → API keys /
-      # → Webhooks — the webhook secret is per-endpoint, generated when you
-      # add https://<this api URL>/billing/webhook as an endpoint listening
-      # for checkout.session.completed, customer.subscription.updated, and
-      # customer.subscription.deleted). Price ID is the recurring Price
-      # object for the Pro plan (Product catalog → your product → pricing).
-      # Until all three are set, /billing/create-checkout-session and the
-      # webhook both return 503 — no other functionality depends on this.
+      # Stripe billing (Pro + Business plan checkout + customer portal).
+      # Secret Key and Webhook Secret are on the Stripe dashboard
+      # (Developers → API keys / → Webhooks — the webhook secret is per-
+      # endpoint, generated when you add https://<this api URL>/billing/
+      # webhook as an endpoint listening for checkout.session.completed,
+      # customer.subscription.updated, and customer.subscription.deleted).
+      # Each Price ID is the recurring Price object for that tier (Product
+      # catalog → your product → pricing) — two separate Price objects, can
+      # be on the same Product or two different Products. Until Secret Key +
+      # Webhook Secret + at least one Price ID are set, checkout and the
+      # webhook both return 503 for that tier — no other functionality
+      # depends on this.
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_PRICE_ID_BUSINESS
         sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and
       # createNotification/sendPushToUser silently skip the push step — the
