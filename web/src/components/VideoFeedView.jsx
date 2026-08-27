@@ -118,6 +118,21 @@ function resolveVideoSource(post) {
 // by the server's video pool being rebuilt mid-session.
 const VIDEO_DEDUP_WINDOW = 400;
 
+// How many slides on either side of the active one actually mount a real
+// VideoSlide (video/iframe element, engagement tracking, comments wiring,
+// etc.) — every other loaded post still gets a same-height placeholder div
+// so scroll-snap geometry and the IntersectionObserver below stay correct,
+// it just doesn't cost anything until scrolled near. Without this, a long
+// scroll session (pagination keeps appending to videoPosts, uncapped) meant
+// every single video ever scrolled past stayed fully mounted — a real
+// <video>/<img> element each, most of them a 'file'-kind element that's
+// unconditionally mounted regardless of active state (see its own render
+// branch) — competing for decode/paint/memory for the rest of the session
+// and getting slower to scroll the longer it went on. 2 covers a normal
+// swipe-by-one and the occasional hard-flick-skips-two case (see the
+// scrollSnapStop comment below) without a visible gap.
+const VIDEO_MOUNT_RADIUS = 2;
+
 // Shared look for the three floating controls over the video (back, refresh,
 // mute) — previously each had its own one-off style (the back button in
 // particular stood out with a harsh 2px solid white ring at a different size
@@ -533,6 +548,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           ref={fileVideoRef}
           src={src.src}
           poster={src.poster || undefined}
+          // Only the active slide needs to actually buffer video data ahead
+          // of play() — a neighbor within VIDEO_MOUNT_RADIUS (mounted so
+          // it's instant if scrolled to, see the render loop above) only
+          // needs its metadata (dimensions/duration) resolved, not the file
+          // itself downloading in the background before it's ever watched.
+          preload={active ? 'auto' : 'metadata'}
           muted={muted}
           loop
           playsInline
@@ -2290,28 +2311,37 @@ export default function VideoFeedView({ onExit }) {
               // tradeoff TikTok's own web player makes.
               style={{ height: '100%', scrollSnapAlign: 'start' }}
             >
-              <VideoSlide
-                post={post}
-                active={idx === activeIndex}
-                muted={muted}
-                onToggleMute={toggleMuted}
-                isScrolling={isScrolling}
-                onOpenComments={setCommentsPost}
-                // Only the active slide ever reads this — see VideoSlide's
-                // own effectivePaused/effectiveDuration/effectiveCurrentTime,
-                // which fall back to 0/false when it's undefined, correctly
-                // hiding the pause indicator/scrub bar on every inactive
-                // slide exactly like before this refactor.
-                sharedYt={idx === activeIndex ? {
-                  paused: sharedYt.paused,
-                  duration: sharedYt.duration,
-                  currentTime: sharedYt.currentTime,
-                  failed: sharedYt.failed,
-                  togglePlay: sharedYtTogglePlay,
-                  seekTo: sharedYtSeekTo,
-                  seekingRef: sharedYtSeekingRef,
-                } : undefined}
-              />
+              {Math.abs(idx - activeIndex) <= VIDEO_MOUNT_RADIUS ? (
+                <VideoSlide
+                  post={post}
+                  active={idx === activeIndex}
+                  muted={muted}
+                  onToggleMute={toggleMuted}
+                  isScrolling={isScrolling}
+                  onOpenComments={setCommentsPost}
+                  // Only the active slide ever reads this — see VideoSlide's
+                  // own effectivePaused/effectiveDuration/effectiveCurrentTime,
+                  // which fall back to 0/false when it's undefined, correctly
+                  // hiding the pause indicator/scrub bar on every inactive
+                  // slide exactly like before this refactor.
+                  sharedYt={idx === activeIndex ? {
+                    paused: sharedYt.paused,
+                    duration: sharedYt.duration,
+                    currentTime: sharedYt.currentTime,
+                    failed: sharedYt.failed,
+                    togglePlay: sharedYtTogglePlay,
+                    seekTo: sharedYtSeekTo,
+                    seekingRef: sharedYtSeekingRef,
+                  } : undefined}
+                />
+              ) : (
+                // Outside VIDEO_MOUNT_RADIUS — same solid background every
+                // VideoSlide starts from (see its own outer wrapper), so a
+                // fast fling passing through never shows anything visibly
+                // different from a real slide that just hasn't started
+                // playing yet.
+                <div style={{ height: '100%', width: '100%', background: '#000' }} />
+              )}
             </div>
           ))}
         </div>
