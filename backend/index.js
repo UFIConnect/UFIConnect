@@ -12716,6 +12716,8 @@ async function migrateDB() {
         media_poster    TEXT
       )
     `);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
@@ -12754,6 +12756,8 @@ async function migrateDB() {
         archived_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS location TEXT`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
 
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
