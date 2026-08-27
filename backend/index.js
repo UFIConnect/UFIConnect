@@ -15749,6 +15749,49 @@ function isPlayableVideoPost(p) {
 // bounded so an edge case with no playable content left doesn't loop
 // forever; the client's own near-the-end trigger just asks again on the
 // next scroll tick either way.
+// Shared by every Videos-tab handler (handleVideoFeedRequest's search/
+// balanced/two-phase-mix branches below, and handleFollowingVideoFeedRequest)
+// — parses the same ?q=/?topics= convention VideoFeedView.jsx always sends
+// regardless of Feed/Following mode into ready-to-use predicates. Pulled out
+// as its own function specifically because it used to only live inside
+// handleVideoFeedRequest: the client already sent both params to the
+// Following endpoint too (same loadPage code path, mode-agnostic), but
+// nothing there ever read them — Search and Topic looked like they worked
+// in Following mode while silently filtering nothing, confirmed by tracing
+// handleFollowingVideoFeedRequest's own body having no reference to either
+// param at all.
+function parseVideoFilters(req) {
+  const topicsFilter = req.query.topics
+    ? req.query.topics.split(',').map(t => t.trim()).filter(Boolean)
+    : (req.query.topic ? [req.query.topic.trim()] : []); // back-compat: old single ?topic=
+  const topicsFilterLower = topicsFilter.map(t => t.toLowerCase());
+  const searchQuery = (req.query.q || '').trim().toLowerCase();
+  const searchWords = splitSearchWords(searchQuery);
+  const matchesSearch = p => {
+    if (!searchWords.length) return true;
+    const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase();
+    return searchWords.every(w => text.includes(w));
+  };
+  const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
+  return { topicsFilter, topicsFilterLower, searchQuery, searchWords, matchesSearch, matchesTopic };
+}
+
+// Shared final step for every Videos-tab response — each handler still
+// fetches its own candidate pool through a genuinely different mechanism
+// suited to its own scale (DB cursor pagination for the large shared
+// cross-user pool vs. a small live per-user array for Following — forcing
+// those into one fetch function would mean either bolting DB-cursor
+// machinery onto a pool far too small to need it, or loading the shared
+// pool fully into memory the way an earlier real incident already showed
+// doesn't hold up, see getCursorFeedPage's own comment), but what happens
+// once a final page of posts is decided is identical everywhere: mark them
+// seen (context 'videos', kept separate from the main Feed's own seen-
+// tracking) and send a consistently-shaped response.
+function sendVideoPage(req, res, posts, meta) {
+  markPostsSeen(req.user.id, posts, 'videos');
+  res.json({ posts, ...meta });
+}
+
 async function fetchPlayableVideoPage(params, attempts = 4) {
   let cursorMap = params.cursorMap;
   let result = { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: true };
@@ -15812,18 +15855,7 @@ async function handleVideoFeedRequest(req, res) {
     // same as the main Feed's own getPostsFromDB path — matchesSearch here
     // stays in place as the in-memory fallback for whenever that branch
     // doesn't apply (no DB connection, e.g. local dev fallback mode).
-    const topicsFilter = req.query.topics
-      ? req.query.topics.split(',').map(t => t.trim()).filter(Boolean)
-      : (req.query.topic ? [req.query.topic.trim()] : []); // back-compat: old single ?topic=
-    const topicsFilterLower = topicsFilter.map(t => t.toLowerCase());
-    const searchQuery = (req.query.q || '').trim().toLowerCase();
-    const searchWords = splitSearchWords(searchQuery);
-    const matchesSearch = p => {
-      if (!searchWords.length) return true;
-      const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase();
-      return searchWords.every(w => text.includes(w));
-    };
-    const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
+    const { topicsFilter, searchQuery, matchesSearch, matchesTopic } = parseVideoFilters(req);
 
     // ── Full-text search across every cached video post, not just whatever
     // a single getCursorFeedPage page happened to return — the comment
@@ -15856,8 +15888,7 @@ async function handleVideoFeedRequest(req, res) {
       });
       const playable = filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic);
       const pageRows = playable.slice(0, feedLimit);
-      markPostsSeen(req.user.id, pageRows, 'videos');
-      return res.json({ posts: pageRows, hasMore: playable.length > pageRows.length, search: searchQuery });
+      return sendVideoPage(req, res, pageRows, { hasMore: playable.length > pageRows.length, search: searchQuery });
     }
 
     // "Balanced" — an even share per active source (getBalancedFeedPosts'
@@ -15885,8 +15916,7 @@ async function handleVideoFeedRequest(req, res) {
         .filter(matchesTopic).filter(matchesSearch);
       const pageRows = playable.slice(0, feedLimit);
       const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
-      markPostsSeen(req.user.id, pageRows, 'videos');
-      return res.json({ posts: pageRows, page: reqPage, hasMore });
+      return sendVideoPage(req, res, pageRows, { page: reqPage, hasMore });
     }
 
     // Same two-phase shape as the main Feed's buildTwoPhaseMix, only applied
@@ -15899,8 +15929,7 @@ async function handleVideoFeedRequest(req, res) {
         mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
       const filtered = playable.filter(matchesSearch);
-      markPostsSeen(req.user.id, filtered, 'videos');
-      return res.json({ posts: filtered, cursor: nextCursor, hasMore });
+      return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
     }
 
     const user = await getUser(req.user.id);
@@ -15958,8 +15987,7 @@ async function handleVideoFeedRequest(req, res) {
     }
 
     const posts = [...introPosts, ...mixPosts];
-    markPostsSeen(req.user.id, posts, 'videos');
-    res.json({ posts, cursor: nextCursor, hasMore });
+    sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -15986,7 +16014,13 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
     const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1', surface: 'videos' });
-    const videos = all.filter(isPlayableVideoPost);
+    // Same ?q=/?topics= convention handleVideoFeedRequest uses — VideoFeedView's
+    // loadPage always sends both regardless of Feed/Following mode, but
+    // nothing here ever read them until now: Search and Topic silently
+    // filtered nothing while in Following mode even though the controls
+    // looked identical to Feed mode's working ones.
+    const { matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const videos = all.filter(isPlayableVideoPost).filter(matchesSearch).filter(matchesTopic);
     const offset = (reqPage - 1) * feedLimit;
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
@@ -15998,9 +16032,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
-    markPostsSeen(req.user.id, pageRows, 'videos');
-    res.json({
-      posts: pageRows,
+    sendVideoPage(req, res, pageRows, {
       page: reqPage,
       mode: 'following',
       hasMore: rotated.length > 0,
