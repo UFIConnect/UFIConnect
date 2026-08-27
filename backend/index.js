@@ -7745,9 +7745,13 @@ const CRITICAL_REFRESH_MULTIPLIER = envNumber('FEED_CRITICAL_REFRESH_MULTIPLIER'
 const STABILITY_CHECK_MS = envNumber('STABILITY_CHECK_MS', 90 * 1000, 30 * 1000, 15 * 60 * 1000);
 const HEAP_PRESSURE_RATIO = envNumber('HEAP_PRESSURE_RATIO', 0.78, 0.5, 0.95);
 const HEAP_CRITICAL_RATIO = envNumber('HEAP_CRITICAL_RATIO', 0.9, HEAP_PRESSURE_RATIO + 0.01, 0.98);
-// Raised for the 1GB instance (was 512/768, tuned for the old 512MB plan —
-// RSS_CRITICAL_MB above the container's actual physical RAM meant the
-// platform's OOM killer could act before this guard ever got a chance to).
+// These 700/900 defaults assume a "1GB instance" plan upgrade that was never
+// actually made — render.yaml's `plan:` stayed on the real 512MB starter
+// tier the whole time, so on Render these defaults are always overridden by
+// RSS_PRESSURE_MB/RSS_CRITICAL_MB env vars set directly in render.yaml
+// (currently 360/430 — see the comment there for the incident this caused:
+// the mismatch let Render's own OOM killer act before this guard ever got a
+// chance to). Only meaningful as fallbacks off of Render (e.g. local dev).
 const RSS_PRESSURE_MB = envNumber('RSS_PRESSURE_MB', 700, 128, 32768);
 const RSS_CRITICAL_MB = envNumber('RSS_CRITICAL_MB', 900, RSS_PRESSURE_MB, 32768);
 const LAG_PRESSURE_MS = envNumber('LAG_PRESSURE_MS', 1200, 100, 30000);

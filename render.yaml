@@ -20,14 +20,31 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=768 index.js
+    startCommand: node --max-old-space-size=320 index.js
     plan: starter
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      # 320MB (was 768) — `plan: starter` is a real 512MB container, and has
+      # been this whole time. 768 was set assuming a "1GB instance" upgrade
+      # that never actually happened here (render.yaml's plan: never moved
+      # off starter — see git blame on this line vs the commit that raised
+      # this number). That let V8's heap alone approach the container's full
+      # physical RAM before non-heap RSS was even counted, so Render's OOM
+      # killer was killing this process before its own RSS_PRESSURE_MB/
+      # RSS_CRITICAL_MB guard (below) ever got a chance to react — caught
+      # live via uficonnect-pipeline's /health flapping 502/200 while
+      # feed_posts_staging sat empty. 320 leaves ~190MB of the real 512MB
+      # for non-heap RSS + OS. If more headroom is ever genuinely needed,
+      # upgrade `plan:` to standard (2GB) for real and raise these together
+      # — don't raise the number alone again.
       - key: NODE_OPTIONS
-        value: --max-old-space-size=768
+        value: --max-old-space-size=320
+      - key: RSS_PRESSURE_MB
+        value: '360'
+      - key: RSS_CRITICAL_MB
+        value: '430'
       # 'api' (the default if unset) serves real user traffic and never
       # fetches external sources on its own — see the SERVICE_ROLE gates in
       # backend/index.js. uficonnect-pipeline below sets this to 'pipeline'
@@ -249,14 +266,24 @@ services:
     runtime: node
     rootDir: backend
     buildCommand: npm install
-    startCommand: node --max-old-space-size=768 index.js
+    startCommand: node --max-old-space-size=320 index.js
     plan: starter
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
+      # Same 768→320 fix as uficonnect-api above, and more urgent here: this
+      # is the heavier of the two services (~30 concurrent source fetchers),
+      # so it's the one that was actually observed OOM-crash-looping —
+      # /health flapping 502/200 in production while feed_posts_staging
+      # stayed empty, which is why every feed was stale. See uficonnect-api's
+      # own comment on this same line for the full explanation.
       - key: NODE_OPTIONS
-        value: --max-old-space-size=768
+        value: --max-old-space-size=320
+      - key: RSS_PRESSURE_MB
+        value: '360'
+      - key: RSS_CRITICAL_MB
+        value: '430'
       - key: SERVICE_ROLE
         value: pipeline
       - key: JWT_SECRET
