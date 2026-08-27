@@ -98,7 +98,15 @@ function resolveVideoSource(post) {
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaUrl } : null;
   }
   if (isDirectVideoUrl(post.mediaUrl)) {
-    return { kind: 'file', src: post.mediaUrl, poster: null };
+    // mediaPoster is a real static preview frame server-side extracts
+    // alongside the video itself where the source actually has one (Reddit's
+    // own preview image, Mastodon's preview_url, Threads' thumbnail_url, an
+    // RSS article's own image) — see mediaPoster in backend/index.js. Same
+    // style treatment Bluesky gets below (kind:'hls', poster:post.mediaUrl),
+    // just sourced from a dedicated field instead of a URL-pattern rewrite,
+    // since the video and its poster are two genuinely distinct URLs here
+    // rather than one derived from the other.
+    return { kind: 'file', src: post.mediaUrl, poster: post.mediaPoster || null };
   }
   return null;
 }
@@ -515,13 +523,16 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         // edge framing loss." contain guarantees the whole video is always
         // visible, same as every other kind here (hls already uses contain;
         // youtube/vimeo effectively letterbox within their fitted box too).
-        // No poster to build a blurred backdrop from for the resulting gap
-        // (resolveVideoSource sets poster: null for 'file') — falls back to
-        // this wrapper's own plain #000 background instead, a plain letterbox
-        // rather than a broken-looking empty space.
+        // Same style treatment every other kind here already gets: a real
+        // poster (see resolveVideoSource/mediaPoster) means this shows an
+        // actual thumbnail immediately, same as Bluesky/YouTube, instead of
+        // a blank black tile until the first frame decodes — falls back to
+        // this wrapper's own plain #000 background when a source genuinely
+        // has no distinct preview image to offer.
         <video
           ref={fileVideoRef}
           src={src.src}
+          poster={src.poster || undefined}
           muted={muted}
           loop
           playsInline
@@ -655,6 +666,27 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           >
             {captionExpanded ? 'Show less' : 'Read more'}
           </button>
+        )}
+        {/* Routes back to wherever this post actually lives — Reddit,
+            Mastodon, a YouTube watch page, an article, etc. Every source
+            already carries a real sourceUrl (see each fetcher above), this
+            is just the first place in this view that surfaces it as a tap
+            target instead of leaving the original post unreachable from
+            here. */}
+        {post.sourceUrl && (
+          <a
+            href={post.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              display: 'inline-block', marginTop: 6, background: 'rgba(0,0,0,.5)',
+              borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: '.75rem',
+              padding: '4px 9px', textDecoration: 'none', pointerEvents: 'auto', opacity: 0.95,
+            }}
+          >
+            View original post ↗
+          </a>
         )}
       </div>
 

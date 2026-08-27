@@ -2258,7 +2258,7 @@ function extractRedditRSSMedia(rawEntryXml, rawContentHtml) {
     // its poster as a normal image post instead of a false promise.
     const isDirectFile = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(destUrl);
     const isYouTube = /(youtube\.com|youtu\.be)/i.test(destUrl);
-    if (isDirectFile || isYouTube) return { mediaType: 'video', mediaUrl: destUrl };
+    if (isDirectFile || isYouTube) return { mediaType: 'video', mediaUrl: destUrl, mediaPoster: validPoster };
     if (validPoster) return { mediaType: 'image', mediaUrl: validPoster };
     return { mediaType: null, mediaUrl: null };
   }
@@ -2311,6 +2311,7 @@ function parseRedditRSSFeed(xml, topicKeyword) {
       isExternal:  true,
       mediaType:   media.mediaType,
       mediaUrl:    media.mediaUrl,
+      mediaPoster: media.mediaPoster || null,
       group:       matchedGroup
         ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
         : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
@@ -2327,7 +2328,17 @@ function parseRedditRSSFeed(xml, topicKeyword) {
 // own web player without JS.
 function extractRedditMedia(d) {
   if (d.is_video && d.media?.reddit_video?.fallback_url) {
-    return { mediaType: 'video', mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url) };
+    // Reddit still carries a static preview frame alongside the video
+    // itself (same `preview.images[0].source.url` read below for image
+    // posts) — grabbed here too so the Videos tab has a real thumbnail to
+    // show before playback starts, instead of a blank tile (see
+    // resolveVideoSource/mediaPoster client-side).
+    const poster = d.preview?.images?.[0]?.source?.url;
+    return {
+      mediaType: 'video',
+      mediaUrl: decodeHTMLEntities(d.media.reddit_video.fallback_url),
+      mediaPoster: poster ? decodeHTMLEntities(poster) : null,
+    };
   }
   // Gallery posts (common for food/photo/art subs) carry no `preview` field
   // at all — the images live in media_metadata instead, keyed by media id.
@@ -2384,6 +2395,7 @@ function parseRedditJSON(data, topicKeyword) {
         isExternal:  true,
         mediaType:   media.mediaType,
         mediaUrl:    media.mediaUrl,
+        mediaPoster: media.mediaPoster || null,
         group:       matchedGroup
           ? { id: matchedGroup.id, name: matchedGroup.name, category: matchedGroup.category, externalUrl: matchedGroup.externalUrl }
           : { id: `ext_${sub}`, name: `r/${sub}`, category: 'Community' },
@@ -3981,9 +3993,13 @@ function mastodonMedia(media) {
   if (!media) return { mediaType: null, mediaUrl: null };
   if (media.type === 'image') return { mediaType: 'image', mediaUrl: media.preview_url || media.url || null };
   // 'video' and 'gifv' (a looping mp4, not an actual GIF) both resolve to a
-  // directly-playable file URL — no separate poster frame is derivable, same
-  // tradeoff as Reddit's v.redd.it video.
-  if (media.type === 'video' || media.type === 'gifv') return { mediaType: 'video', mediaUrl: media.url || media.preview_url || null };
+  // directly-playable file URL — Mastodon's Attachment object carries a
+  // separate static preview_url alongside the real video url (unlike
+  // Reddit's v.redd.it, which genuinely has no distinct poster field), so
+  // it's captured here instead of being left unused.
+  if (media.type === 'video' || media.type === 'gifv') {
+    return { mediaType: 'video', mediaUrl: media.url || media.preview_url || null, mediaPoster: media.preview_url || null };
+  }
   return { mediaType: null, mediaUrl: null };
 }
 
@@ -4377,6 +4393,10 @@ function rssPost(item, sourceId, sourceLabel, groupId, groupName, category, topi
     // (see extractYouTubeId in videoMedia.jsx).
     mediaType:   item.video ? 'video' : (item.image ? 'image' : null),
     mediaUrl:    item.video || item.image || null,
+    // item.image doesn't disappear just because a video won the mediaUrl
+    // slot above — an article's own preview image makes a real poster for
+    // its embedded video instead of being silently dropped.
+    mediaPoster: item.video ? (item.image || null) : null,
     group:       { id: groupId, name: groupName, category, externalUrl: item.link },
   };
 }
@@ -5163,6 +5183,11 @@ async function fetchThreadsOwnPosts(token, { bust = false } = {}) {
         isExternal:  true,
         mediaType:   t.media_type === 'VIDEO' ? 'video' : ['IMAGE', 'CAROUSEL_ALBUM'].includes(t.media_type) ? 'image' : 'text',
         mediaUrl:    t.media_url || t.thumbnail_url || null,
+        // thumbnail_url is Meta's own static preview frame for a VIDEO post
+        // — kept as a real poster instead of only ever being used as a
+        // media_url fallback (which it never actually reaches, since a
+        // video post always has media_url set).
+        mediaPoster: t.media_type === 'VIDEO' ? (t.thumbnail_url || null) : null,
         group:       { id: 'ext_threads', name: 'Threads', category: 'Social' },
       }));
     setCached(key, posts);
@@ -8257,6 +8282,60 @@ function buildEqualizedFeedPool(posts, totalLimit) {
   return roundRobinMerge([...bySource.values()]).slice(0, totalLimit);
 }
 
+// Following's own equalizer — unlike the aggregate pool above (explicitly
+// non-chronological, see its own comment: each source there is pre-ranked
+// by score, not time), Following content genuinely does have a meaningful
+// "newest" ordering per connected page/source, and a member actually
+// expects to see their most recent activity from people/pages they follow,
+// not an arbitrary rank position. Two things this does that plain
+// round-robin doesn't:
+//   1. Recency cap — only each source/page's own FOLLOWING_PER_SOURCE_CAP
+//      most recent posts count at all. Without this, one deeply-paginated
+//      source (e.g. GitHub's own ~300-event history) buries every other
+//      followed page's fresh content under its own backlog once merged,
+//      confirmed live as "the following is not showing content it's
+//      supposed to."
+//   2. Time factor — round-robin still guarantees fairness (round N holds
+//      at most one post per source, so no single chatty page can hog every
+//      slot), but *within* each round the picks are sorted newest-first
+//      instead of fixed map-iteration order, so a page that just posted
+//      surfaces ahead of one whose "next" post is a day old even though
+//      both are technically the same round.
+const FOLLOWING_PER_SOURCE_CAP = 10;
+// Shared by every place a followed page/source's raw fetch result gets
+// cached or merged (refreshFollowingSourceCaches, getFollowingFeedPosts'
+// own live-fetch fallback, and the per-platform manual-refresh path) so the
+// recency cap is applied once, consistently, at the point content enters
+// the cache — not re-derived differently at each call site.
+function capFollowingPosts(list, limit = FOLLOWING_PER_SOURCE_CAP) {
+  return [...list]
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .slice(0, limit);
+}
+function buildEqualizedFollowingPool(posts) {
+  const bySource = new Map();
+  for (const p of posts) {
+    const src = p?.source || 'unknown';
+    if (!bySource.has(src)) bySource.set(src, []);
+    bySource.get(src).push(p);
+  }
+  if (!bySource.size) return [];
+  const queues = [...bySource.values()].map(list =>
+    [...list]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, FOLLOWING_PER_SOURCE_CAP)
+  );
+  const result = [];
+  for (let round = 0; ; round++) {
+    const picks = [];
+    for (const q of queues) if (q[round]) picks.push(q[round]);
+    if (!picks.length) break;
+    picks.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    result.push(...picks);
+  }
+  return result;
+}
+
 // ─── Resume-matched job substitution for the feed ──────────────────────────
 // The shared feed pool can't know which specific job posts to show — same
 // invariant as everywhere else in this pipeline, it must never bake in one
@@ -11052,7 +11131,7 @@ async function refreshFollowingSourceCaches() {
       try {
         const raw = await fetcher(token, { userId: user.id });
         followingSourceCache.set(`${user.id}::${source}`, {
-          posts: realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })),
+          posts: capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }))),
           fetchedAt: Date.now(),
         });
       } catch (e) {
@@ -11120,10 +11199,22 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   const wantsSource = (src) => !wanted || wanted.has(src);
 
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
+  // Capped per followed author, same FOLLOWING_PER_SOURCE_CAP as every
+  // external page below — an author you follow is this pool's own version
+  // of "a page," so their backlog gets the same recency cap an external
+  // connected account's does, rather than dumping their entire history in.
   const internalPosts = (followingIds.size && wantsSource('uficonnect'))
-    ? posts
-        .filter(p => (p.source || 'uficonnect') === 'uficonnect' && followingIds.has(p.authorId))
-        .map(p => serializeCommunityPost(p, userId))
+    ? (() => {
+        const byAuthor = new Map();
+        for (const p of posts) {
+          if ((p.source || 'uficonnect') !== 'uficonnect' || !followingIds.has(p.authorId)) continue;
+          if (!byAuthor.has(p.authorId)) byAuthor.set(p.authorId, []);
+          byAuthor.get(p.authorId).push(p);
+        }
+        const capped = [];
+        for (const arr of byAuthor.values()) capped.push(...capFollowingPosts(arr));
+        return capped.map(p => serializeCommunityPost(p, userId));
+      })()
     : [];
 
   const externalPosts = [];
@@ -11161,7 +11252,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
       }
       try {
         const raw = await fetcher(token, { bust, userId });
-        const fresh = realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }));
+        const fresh = capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })));
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
       } catch (e) {
@@ -11992,6 +12083,13 @@ async function migrateDB() {
         fetched_at      TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    // A video post's own static preview frame, distinct from media_url (the
+    // playable file/stream itself) — several sources (Reddit, Mastodon,
+    // Threads, RSS-embedded direct-file video) have a real thumbnail
+    // available alongside their video but had nowhere to put it, so every
+    // non-YouTube/Vimeo/Bluesky video rendered as a blank tile until
+    // playback actually started (see resolveVideoSource client-side).
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
@@ -12052,7 +12150,8 @@ async function migrateDB() {
         comments_count  INTEGER DEFAULT 0,
         post_created_at TIMESTAMPTZ,
         fetched_at      TIMESTAMPTZ DEFAULT NOW(),
-        location        TEXT
+        location        TEXT,
+        media_poster    TEXT
       )
     `);
     // fetched_at is what the transfer job's own cursor filters on
@@ -12322,8 +12421,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (id) DO UPDATE SET
            title          = EXCLUDED.title,
            content        = EXCLUDED.content,
@@ -12336,6 +12435,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            comments_count = EXCLUDED.comments_count,
            post_created_at= EXCLUDED.post_created_at,
            location       = EXCLUDED.location,
+           media_poster   = EXCLUDED.media_poster,
            fetched_at     = NOW()`,
         [
           p.id, p.source,
@@ -12350,6 +12450,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.commentsCount || 0,
           p.createdAt,
           p.location ? String(p.location).slice(0, 200) : null,
+          p.mediaPoster || null,
         ]
       );
       saved++;
@@ -12389,6 +12490,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
       comments_count: p.commentsCount || 0,
       post_created_at: clean(p.createdAt),
       location: p.location ? clean(p.location, 200) : null,
+      media_poster: p.mediaPoster ? clean(p.mediaPoster) : null,
     });
   }
   if (!rows.length) return 0;
@@ -12408,12 +12510,13 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
          likes_count INTEGER,
          comments_count INTEGER,
          post_created_at TIMESTAMPTZ,
-         location TEXT
+         location TEXT,
+         media_poster TEXT
        )
      )
      INSERT INTO ${targetTable}
-       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location)
-     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location
+       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster)
+     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        title          = EXCLUDED.title,
@@ -12427,6 +12530,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
        comments_count = EXCLUDED.comments_count,
        post_created_at= EXCLUDED.post_created_at,
        location       = EXCLUDED.location,
+       media_poster   = EXCLUDED.media_poster,
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
@@ -12508,6 +12612,7 @@ function dbRowToFeedPost(r) {
     sourceUrl:   r.source_url,
     mediaUrl:    r.media_url,
     mediaType:   r.media_type,
+    mediaPoster: r.media_poster,
     location:    r.location,
     topic:       r.topic,
     likesCount:  normalizeCount(r.likes_count),
@@ -13014,6 +13119,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       sourceUrl:   r.source_url,
       mediaUrl:    r.media_url,
       mediaType:   r.media_type,
+      mediaPoster: r.media_poster,
       location:    r.location,
       topic:       r.topic,
       likesCount:  normalizeCount(r.likes_count),
@@ -13826,7 +13932,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       followingFetcher(accessToken, { userId: entry.userId })
         .then(raw => {
           followingSourceCache.set(`${entry.userId}::${platform}`, {
-            posts: realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform })),
+            posts: capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform }))),
             fetchedAt: Date.now(),
           });
         })
@@ -14691,19 +14797,19 @@ async function handleFeedRequest(req, res) {
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
     const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
-    // Equalized by source (round-robin — same buildEqualizedFeedPool the
-    // shared aggregate pool uses, see its own comment) so one especially
-    // chatty connected platform (e.g. a big Reddit home feed) doesn't
-    // crowd out a quieter one (e.g. a handful of GitHub events) the way a
-    // flat interleave-by-author order alone doesn't guarantee. Then the
-    // same filterUnseen + sliceCircular wraparound every other feed
+    // Equalized by source with a time factor (see buildEqualizedFollowingPool's
+    // own comment) so one especially chatty connected platform (e.g. a big
+    // Reddit home feed) doesn't crowd out a quieter one (e.g. a handful of
+    // GitHub events) the way a flat interleave-by-author order alone
+    // doesn't guarantee, while still trending newest-first overall. Then
+    // the same filterUnseen + sliceCircular wraparound every other feed
     // surface already uses (seenIds computed once, above), so a genuinely
     // small connected-account pool doesn't hard dead-end scroll the moment
     // it's exhausted — it reshuffles and keeps going instead, same "never
     // truly dead-end" philosophy as the main Feed's own paging. Confirmed
     // live as the Following feed's actual complaint: hasMore going flat
     // false the instant a thin pool ran out, not a genuine content shortage.
-    const equalized = buildEqualizedFeedPool(rawFollowing, rawFollowing.length);
+    const equalized = buildEqualizedFollowingPool(rawFollowing);
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
     markPostsSeen(req.user.id, pageRows);
@@ -15885,10 +15991,10 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
-    // here anyway) — round-robin by source so one connected platform with a
-    // lot of video content doesn't crowd out a thinner one, then wraparound
-    // instead of hard-stopping once a small connected pool runs out.
-    const equalized = buildEqualizedFeedPool(videos, videos.length);
+    // here anyway) — time-aware equalize by source so one connected platform
+    // with a lot of video content doesn't crowd out a thinner one, then
+    // wraparound instead of hard-stopping once a small connected pool runs out.
+    const equalized = buildEqualizedFollowingPool(videos);
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
