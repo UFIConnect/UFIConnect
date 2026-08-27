@@ -137,7 +137,12 @@ export default function Landing() {
         <link rel="canonical" href="https://uficonnect.org" />
       </Helmet>
 
-      <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)', display: 'flex', flexDirection: 'column' }}>
+      {/* var(--bg) — the same base the actual app (Feed, Profile, every
+          authenticated page via Layout) paints behind everything, not a
+          bespoke marketing-page gradient. This page's job is to be the
+          front door to that app, so it should read as the same product
+          from the first pixel, not a separate microsite. */}
+      <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
 
         {/* Header */}
         <header className="landing-header" style={{ padding: '20px 32px', borderBottom: '1px solid rgba(0,0,0,.05)', background: '#fff', boxShadow: 'var(--shadow)' }}>
@@ -371,7 +376,7 @@ export default function Landing() {
           </section>
 
           {/* How it works */}
-          <section style={{ padding: '70px 32px', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)' }}>
+          <section style={{ padding: '70px 32px', background: 'var(--bg)' }}>
             <div style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
               <h2 style={{ fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>Get started in three steps</h2>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '24px', marginBottom: '44px' }}>
