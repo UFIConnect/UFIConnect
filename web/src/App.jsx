@@ -155,9 +155,10 @@ export default function App() {
       <Route path="/post" element={
         <RequireAuth><RequireOnboarding><Post /></RequireOnboarding></RequireAuth>
       }/>
-      <Route path="/p/:id" element={
-        <RequireAuth><RequireOnboarding><PostDetail /></RequireOnboarding></RequireAuth>
-      }/>
+      {/* No RequireAuth — a shared post link needs to actually work for
+          whoever clicks it, logged in or not. PostDetail itself branches on
+          whether a session exists for its own chrome/actions. */}
+      <Route path="/p/:id" element={<PostDetail />}/>
       <Route path="/search" element={
         <RequireAuth><RequireOnboarding><Search /></RequireOnboarding></RequireAuth>
       }/>

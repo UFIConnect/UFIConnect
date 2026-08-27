@@ -6,7 +6,13 @@ function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-export default function FollowListModal({ userId, type, title, onClose }) {
+// fetchUrl lets a caller override the default /users/:id/:type lookup with
+// any other endpoint that returns the same { users: [...] } shape (e.g.
+// PostDetail's "who liked this" list via /posts/:postId/likes) — every row
+// action below (follow toggle, message) already works generically against
+// any user list, not just a follow relationship, so only the fetch itself
+// needed to become swappable.
+export default function FollowListModal({ userId, type, title, onClose, fetchUrl, emptyLabel }) {
   const navigate = useNavigate();
   const [users,      setUsers]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -14,11 +20,11 @@ export default function FollowListModal({ userId, type, title, onClose }) {
 
   useEffect(() => {
     setLoading(true);
-    client.get(`/users/${userId}/${type}`)
+    client.get(fetchUrl || `/users/${userId}/${type}`)
       .then(({ data }) => { setUsers(data.users || []); setRestricted(!!data.restricted); })
       .catch(() => setUsers([]))
       .finally(() => setLoading(false));
-  }, [userId, type]);
+  }, [userId, type, fetchUrl]);
 
   async function toggleFollow(user, e) {
     e.stopPropagation();
@@ -78,7 +84,7 @@ export default function FollowListModal({ userId, type, title, onClose }) {
           )}
           {!loading && !restricted && users.length === 0 && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: '.9rem' }}>
-              Nobody here yet.
+              {emptyLabel || 'Nobody here yet.'}
             </div>
           )}
           {users.map(user => (

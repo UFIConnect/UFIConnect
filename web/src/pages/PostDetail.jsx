@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import FollowListModal from '../components/FollowListModal';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, useGlobalMuted } from '../components/videoMedia';
@@ -26,15 +27,44 @@ function initials(name = '') {
 // land, read the full content, and see/leave comments without ever leaving
 // the app. Handles both external aggregated posts and internal
 // (user-created) community posts — GET /feed/:id resolves either.
+// Minimal top bar for a visitor with no session — the full app Layout
+// (sidebar, nav, profile menu) assumes an authenticated member everywhere
+// else in this app and has never been exercised without one; a shared post
+// link needs to actually render something for a logged-out visitor instead
+// of either crashing or silently redirecting to login before they ever see
+// the post. Sign in / Join are the two real ways back into the rest of the
+// app from here.
+function GuestShell({ children }) {
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg, #F8FAFC)' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
+      }}>
+        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)', fontWeight: 800, fontSize: '1.05rem' }}>
+          🌐 UFconnect
+        </Link>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Link to="/login"><button className="btn btn-ghost btn-sm" type="button">Sign in</button></Link>
+          <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join UFconnect</button></Link>
+        </div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export default function PostDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
+  const { profile, token } = useAuth();
+  const Shell = token ? Layout : GuestShell;
 
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [likeBusy, setLikeBusy] = useState(false);
+  const [likesModalOpen, setLikesModalOpen] = useState(false);
 
   const [comments, setComments] = useState(null);
   const [commentsLoading, setCommentsLoading] = useState(true);
@@ -175,17 +205,17 @@ export default function PostDetail() {
 
   if (loading) {
     return (
-      <Layout>
+      <Shell>
         <div style={{ maxWidth: 640, margin: '40px auto', textAlign: 'center', color: 'var(--muted)' }}>
           <span className="spinner spinner-primary" />
         </div>
-      </Layout>
+      </Shell>
     );
   }
 
   if (notFound || !post) {
     return (
-      <Layout>
+      <Shell>
         <div style={{ maxWidth: 640, margin: '60px auto', textAlign: 'center', padding: 24 }}>
           <div style={{ fontSize: '2rem', marginBottom: 12 }}>🔍</div>
           <h2 style={{ marginBottom: 8 }}>Post not found</h2>
@@ -194,7 +224,7 @@ export default function PostDetail() {
           </p>
           <button className="btn btn-primary" onClick={() => navigate('/')}>Back to Feed</button>
         </div>
-      </Layout>
+      </Shell>
     );
   }
 
@@ -203,10 +233,10 @@ export default function PostDetail() {
   const isImage = post.mediaType === 'image';
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const directVideoUrl = isVideo && !playlistUrl && !youtubeId && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
-  const canComment = !post.isExternal;
+  const canComment = !post.isExternal && !!token;
 
   return (
-    <Layout>
+    <Shell>
       <Helmet>
         <title>{post.title ? `${post.title} | UFconnect` : 'Post | UFconnect'}</title>
       </Helmet>
@@ -289,18 +319,32 @@ export default function PostDetail() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
             {!post.isExternal ? (
-              <button
-                onClick={toggleLike}
-                disabled={likeBusy}
-                className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
-              >
-                {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
-              </button>
+              token ? (
+                <button
+                  onClick={toggleLike}
+                  disabled={likeBusy}
+                  className={post.likedByMe ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+                >
+                  {post.likedByMe ? 'Liked' : 'Like'} {post.likesCount || 0}
+                </button>
+              ) : (
+                <Link to="/login" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+                  Sign in to like {post.likesCount > 0 ? `· ${post.likesCount}` : ''}
+                </Link>
+              )
             ) : (
               // Same GitHub/GitLab star-vs-like distinction as Feed.jsx's
               // stats bar — those two sources' likesCount is really a repo/
               // project star count, not a like on this specific post.
               post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{(post.source === 'github' || post.source === 'gitlab') ? '⭐' : '❤️'} {post.likesCount.toLocaleString()}</span>
+            )}
+            {!post.isExternal && post.likesCount > 0 && token && (
+              <button
+                onClick={() => setLikesModalOpen(true)}
+                style={{ all: 'unset', cursor: 'pointer', fontSize: '.78rem', color: 'var(--muted)', fontWeight: 600 }}
+              >
+                See who liked this
+              </button>
             )}
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
@@ -315,6 +359,13 @@ export default function PostDetail() {
           <div style={{ fontSize: '.82rem', fontWeight: 700, marginBottom: 12 }}>
             Comments {comments?.length > 0 ? `(${comments.length})` : ''}
           </div>
+
+          {!post.isExternal && !token && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 10 }}>
+              <span style={{ fontSize: '.82rem', color: 'var(--muted)' }}>Sign in to join the conversation.</span>
+              <Link to="/login"><button className="btn btn-primary btn-sm" type="button">Sign in</button></Link>
+            </div>
+          )}
 
           {canComment && (
             <form onSubmit={submitComment} style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -377,6 +428,16 @@ export default function PostDetail() {
           )}
         </div>
       </div>
-    </Layout>
+
+      {likesModalOpen && (
+        <FollowListModal
+          userId={post.id}
+          fetchUrl={`/posts/${encodeURIComponent(post.id)}/likes`}
+          title={`Liked by · ${post.likesCount || 0}`}
+          emptyLabel="No likes yet."
+          onClose={() => setLikesModalOpen(false)}
+        />
+      )}
+    </Shell>
   );
 }

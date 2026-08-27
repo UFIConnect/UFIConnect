@@ -13285,6 +13285,35 @@ async function authenticate(req, res, next) {
   }
 }
 
+// Same identity resolution as authenticate above, but never rejects — for
+// routes that need to work for a logged-out visitor (a shared post link
+// clicked by someone with no account) as well as a member, with slightly
+// richer output when a valid session IS present. req.user is simply
+// undefined when there's no token or it doesn't verify, rather than a 401 —
+// every handler using this must treat req.user as optional.
+async function authenticateOptional(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return next();
+  const token = authHeader.split(' ')[1];
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    lastRealUserActivityAt = Date.now();
+    return next();
+  } catch {
+    // Not a local UFconnect JWT; try Auth0 when configured.
+  }
+  try {
+    const payload = await verifyAuth0Token(token);
+    const user = await provisionAuth0User(payload);
+    req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
+    lastRealUserActivityAt = Date.now();
+  } catch {
+    // Invalid/expired token on an optional route — proceed logged-out
+    // rather than reject, same as no token at all.
+  }
+  return next();
+}
+
 // ─── Office admin gate ──────────────────────────────────────────────────────
 // /office/* control-plane routes (agent status, manual refresh triggers, and
 // — critically — the deploy trigger) previously had NO authentication at
@@ -16238,12 +16267,18 @@ app.get('/feed/sources', authenticate, (req, res) => {
 // order, so a /feed/:postId declared earlier would have shadowed all of
 // those, matching e.g. "videos" as a postId instead of hitting their own
 // handlers.
-app.get('/feed/:postId', authenticate, async (req, res) => {
+// authenticateOptional, not authenticate — the "View on UFconnect"/share
+// link off a post needs to actually work for whoever clicks it, logged in
+// or not (confirmed as the actual complaint: a shared link 404-redirected
+// anyone without an account straight to login instead of the post itself).
+// serializeCommunityPost already treats a null viewerId as "not liked by
+// anyone in particular" rather than crashing (see its own likedByMe line).
+app.get('/feed/:postId', authenticateOptional, async (req, res) => {
   const { postId } = req.params;
 
   const communityPost = await getCommunityPostById(postId);
   if (communityPost) {
-    return res.json({ post: serializeCommunityPost(communityPost, req.user.id) });
+    return res.json({ post: serializeCommunityPost(communityPost, req.user?.id) });
   }
 
   const memPost = findPostById(postId);
@@ -16511,7 +16546,9 @@ async function paginateComments(cacheKey, fetchFullList, offset, limit) {
 }
 
 // ─── Unified comments endpoint — live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters ─
-app.get('/feed/:postId/comments', authenticate, async (req, res) => {
+// authenticateOptional — same reasoning as GET /feed/:postId above, comments
+// are read-only viewing and shouldn't require an account either.
+app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
   const { postId } = req.params;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit  = boundedLimit(req.query.limit, 20, 50);
@@ -18564,6 +18601,32 @@ async function toggleCommunityPostLike(req, res) {
 }
 
 app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
+
+// Who liked a native UFconnect post — post.likes is already a plain array
+// of user ids (see toggleCommunityPostLike), this just resolves it to
+// display-ready profiles. Same hidden-profile filter /users/:id/followers
+// already applies, for the same reason: a hidden third party shouldn't
+// show up by name here just because they liked something, regardless of
+// their own profile-visibility setting.
+app.get('/posts/:postId/likes', authenticate, async (req, res) => {
+  try {
+    const post = await getCommunityPostById(req.params.postId);
+    if (!post) return res.status(404).json({ message: 'Post not found.' });
+    const myId = req.user.id;
+    const myFollowingSet = new Set(follows.filter(f => f.followerId === myId).map(f => f.followingId));
+    const likerUsers = (await Promise.all((post.likes || []).map(id => getUser(id))))
+      .filter(Boolean)
+      .filter(u => !isProfileHidden(u) || canViewHiddenProfile(u, myId));
+    res.json({
+      users: likerUsers.map(u => ({
+        id: u.id, name: u.name, title: u.title || '', avatarUrl: u.avatarUrl || '',
+        organization: u.organization || '', role: u.preferences?.role || '',
+        isFollowing: myFollowingSet.has(u.id),
+        isSelf: u.id === myId,
+      })),
+    });
+  } catch (e) { console.error('GET /posts/:postId/likes:', e); res.status(500).json({ error: 'Internal server error' }); }
+});
 
 app.get('/posts/:postId/comments', authenticate, async (req, res) => {
   try {
