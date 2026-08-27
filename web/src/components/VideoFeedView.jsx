@@ -1725,6 +1725,22 @@ export default function VideoFeedView({ onExit }) {
               clearTimeout(readyTimeout);
               sharedYtPlayerRef.current = e.target;
               sharedYtLoadedIdRef.current = videoId;
+              // YT.Player replaces sharedYtMountRef's placeholder div with
+              // its own real <iframe> — none of that placeholder's inline
+              // styles (including pointerEvents:'none', deliberately set so
+              // the wrapping div's own onClick/wheel-forwarding own this
+              // area — see the render below) carry over onto the new
+              // iframe, so it's reapplied directly here. Without this, the
+              // actual live YouTube iframe sits on top with default (auto)
+              // pointer-events — a real cross-origin iframe, so once the
+              // cursor is over its rendered pixels, every wheel/scroll
+              // event is captured entirely inside its own document and
+              // never reaches this page at all. Confirmed live as "can't
+              // scroll while hovering over a video" — tap-to-pause still
+              // looked like it worked, but only because YouTube's own
+              // player has its own internal click handling; this app's
+              // togglePlay was never actually the thing firing.
+              try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
               setSharedYt(s => ({ ...s, duration: e.target.getDuration() || 0 }));
               if (startUnmuted) e.target.unMute();
               e.target.playVideo();
