@@ -114,6 +114,11 @@ function buildHealthPayload() {
     payload.feedStorage = null;
   }
   try {
+    payload.sourceWorkers = buildSourceWorkerHealthSummary();
+  } catch {
+    payload.sourceWorkers = null;
+  }
+  try {
     payload.dbSize = {
       mb: dbSizeState?.mb ?? null,
       status: dbSizeState?.status || 'unknown',
@@ -6818,9 +6823,9 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
         }
 
         try {
+          health.lastAttempt = Date.now();
           const posts = await fetchFn(mappedKey);
           topicFetchedAt.set(mappedKey, Date.now());
-          health.lastAttempt = Date.now();
           health.lastSuccess = Date.now();
           health.lastError = null;
           const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
@@ -7822,6 +7827,22 @@ async function findPostByIdWithDbFallback(postId) {
 
 // Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
+
+function buildSourceWorkerHealthSummary() {
+  const workers = Array.from(workerHealth.values());
+  const lastSuccessMs = Math.max(0, ...workers.map(w => Number(w.lastSuccess || 0)));
+  const lastAttemptMs = Math.max(0, ...workers.map(w => Number(w.lastAttempt || 0)));
+  return {
+    count: workers.length,
+    healthyCount: workers.filter(w => w.lastSuccess && !w.paused && !w.lastError).length,
+    degradedCount: workers.filter(w => w.lastError && !w.paused).length,
+    pausedCount: workers.filter(w => w.paused).length,
+    skippedForInactivity: workers.reduce((sum, w) => sum + (w.skippedForInactivity || 0), 0),
+    skippedForStability: workers.reduce((sum, w) => sum + (w.skippedForStability || 0), 0),
+    lastSuccessAt: lastSuccessMs ? new Date(lastSuccessMs).toISOString() : null,
+    lastAttemptAt: lastAttemptMs ? new Date(lastAttemptMs).toISOString() : null,
+  };
+}
 
 // Agent status tracking and fallback mechanism
 const agentStatusMap = new Map();
