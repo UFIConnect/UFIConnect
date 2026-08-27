@@ -12901,7 +12901,6 @@ async function checkDatabaseSize() {
   }
 }
 setInterval(checkDatabaseSize, DB_SIZE_CHECK_INTERVAL_MS);
-checkDatabaseSize();
 
 // targetTable defaults to the live production table (today's behavior,
 // unchanged for the api role) — SERVICE_ROLE=pipeline callers pass
@@ -22154,6 +22153,7 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    checkDatabaseSize().catch(e => console.warn('[checkDatabaseSize] startup check failed:', e.message));
     const purgedFallbackPosts = await purgeFallbackFeedCache();
     if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);
     await preloadUsersFromDB();
