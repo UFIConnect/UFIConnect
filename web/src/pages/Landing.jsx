@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
 const FEATURES = [
@@ -94,15 +94,20 @@ const SHARE_LINKS = [
 ];
 
 export default function Landing() {
-  const navigate = useNavigate();
   const [shareCopied, setShareCopied] = useState(false);
 
   // Session-only, not persistent — a fresh visit later still lands on
   // Landing rather than permanently treating this browser as guest-mode.
-  // See HomeRoute in App.jsx for where this flag is actually read.
+  // See HomeRoute in App.jsx for where this flag is actually read. A full
+  // window.location assignment, not React Router's navigate('/') — Landing
+  // is already rendered AT path '/' (HomeRoute picks it vs. Feed/GuestFeed
+  // based on auth state), so navigate('/') is a no-op to react-router-dom
+  // (identical path, no location change, nothing re-renders) and the button
+  // silently did nothing. A hard navigation forces the whole app to
+  // actually remount and re-evaluate HomeRoute's logic from scratch.
   function continueAsGuest() {
     sessionStorage.setItem('ufi_guest', '1');
-    navigate('/');
+    window.location.href = '/';
   }
 
   async function handleShare() {
