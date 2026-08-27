@@ -94,23 +94,54 @@ function buildHealthPayload() {
       lastCount: stagingTransferState?.lastCount ?? 0,
       totalTransferred: stagingTransferState?.totalTransferred ?? 0,
       lastError: stagingTransferState?.lastError || null,
+      lastReason: stagingTransferState?.lastReason || null,
       inFlight: !!transferInFlight,
       lockStartedAt: transferStartedAt ? new Date(transferStartedAt).toISOString() : null,
       lockAgeMs: transferStartedAt ? Date.now() - transferStartedAt : 0,
+      oldestFetchedAt: feedStorageFreshnessState?.staging?.oldestFetchedAt || null,
+      newestFetchedAt: feedStorageFreshnessState?.staging?.newestFetchedAt || null,
+      newestPostCreatedAt: feedStorageFreshnessState?.staging?.newestPostCreatedAt || null,
     };
   } catch {
     payload.staging = null;
   }
   try {
+    payload.feedStorage = {
+      cache: feedStorageFreshnessState?.cache || null,
+      staging: feedStorageFreshnessState?.staging || null,
+    };
+  } catch {
+    payload.feedStorage = null;
+  }
+  try {
     payload.dbSize = {
       mb: dbSizeState?.mb ?? null,
       status: dbSizeState?.status || 'unknown',
+      limitMb: DB_SIZE_LIMIT_MB,
+      usedPct: dbSizeState?.usedPct ?? null,
       warnMb: DB_SIZE_WARN_MB,
       criticalMb: DB_SIZE_CRITICAL_MB,
+      renderPlan: DB_RENDER_PLAN,
+      source: 'pg_database_size',
       lastCheckedAt: dbSizeState?.lastCheckedAt || null,
+      lastError: dbSizeState?.lastError || null,
     };
   } catch {
     payload.dbSize = null;
+  }
+  try {
+    const effectiveLast = effectiveLastUserActivityAt();
+    payload.activity = {
+      idle: Date.now() - effectiveLast > USER_INACTIVITY_PAUSE_MS,
+      lastLocalUserActivityAt: lastRealUserActivityAt || null,
+      lastSharedUserActivityAt: lastSharedUserActivityAt || null,
+      effectiveLastUserActivityAt: effectiveLast || null,
+      pauseAfterMs: USER_INACTIVITY_PAUSE_MS,
+      sharedActivityLastCheckedAt,
+      sharedActivityLastError,
+    };
+  } catch {
+    payload.activity = null;
   }
   return payload;
 }
@@ -247,7 +278,30 @@ function rateLimitKey(req) {
   // request-time error) if a custom keyGenerator returns a raw IP without
   // it, since a raw IPv6 address lets one visitor cycle through effectively
   // unlimited distinct addresses within their own subnet to dodge the limit.
-  return ipKeyGenerator(req.headers['cf-connecting-ip'] || req.ip);
+  return ipKeyGenerator(getClientIp(req) || req.ip);
+}
+function firstHeaderValue(value) {
+  return Array.isArray(value) ? value[0] : String(value || '').split(',')[0].trim();
+}
+function normalizeClientIp(ip) {
+  const text = String(ip || '').trim();
+  if (!text) return null;
+  return text.startsWith('::ffff:') ? text.slice(7) : text;
+}
+function getClientIp(req) {
+  return normalizeClientIp(
+    firstHeaderValue(req.headers['cf-connecting-ip']) ||
+    firstHeaderValue(req.headers['x-real-ip']) ||
+    firstHeaderValue(req.headers['x-forwarded-for']) ||
+    req.ip ||
+    req.socket?.remoteAddress
+  );
+}
+function clientIpAnalyticsKey(req) {
+  const ip = getClientIp(req);
+  if (!ip) return null;
+  const salt = process.env.IP_ANALYTICS_SALT || process.env.JWT_SECRET || 'uficonnect-ip-analytics';
+  return crypto.createHmac('sha256', salt).update(ip).digest('hex').slice(0, 40);
 }
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -8044,7 +8098,13 @@ function isStabilityCritical() {
 // deliberately treated as "active" so a fresh deploy fetches normally
 // instead of sitting paused until someone happens by.
 let lastRealUserActivityAt = Date.now();
+let lastSharedUserActivityAt = 0;
+let sharedActivityLastCheckedAt = null;
+let sharedActivityLastError = null;
+let sharedActivityWriteLastAt = 0;
 const USER_INACTIVITY_PAUSE_MS = 30 * 60 * 1000;
+const SHARED_ACTIVITY_WRITE_MIN_MS = 15 * 1000;
+const SHARED_ACTIVITY_REFRESH_MS = 60 * 1000;
 // 0 = not currently flagged idle. Logs exactly once on each transition
 // (idle→active / active→idle) rather than every shard's every poll — dozens
 // of shards call isAppIdle() every few seconds, so without this it would
@@ -8070,8 +8130,44 @@ const CATCH_UP_BURST_DIVISOR = 3;
 function isInCatchUpBurst() {
   return Date.now() < catchUpBurstUntil;
 }
+function effectiveLastUserActivityAt() {
+  return Math.max(lastRealUserActivityAt || 0, lastSharedUserActivityAt || 0);
+}
+function recordRealUserActivity(req = null, source = 'api') {
+  lastRealUserActivityAt = Date.now();
+  if (req && isLikelyBotRequest(req)) return;
+  if (!db.isConnected()) return;
+  const now = Date.now();
+  if (now - sharedActivityWriteLastAt < SHARED_ACTIVITY_WRITE_MIN_MS) return;
+  sharedActivityWriteLastAt = now;
+  const ipKey = req ? clientIpAnalyticsKey(req) : null;
+  db.query(
+    `INSERT INTO site_activity_heartbeat (key, last_seen_at, source, ip_key, updated_at)
+     VALUES ('public', NOW(), $1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET
+       last_seen_at = EXCLUDED.last_seen_at,
+       source       = EXCLUDED.source,
+       ip_key       = EXCLUDED.ip_key,
+       updated_at   = NOW()`,
+    [String(source || 'api').slice(0, 80), ipKey]
+  ).catch(e => {
+    sharedActivityLastError = e.message;
+  });
+}
+async function refreshSharedUserActivity() {
+  if (!db.isConnected()) return;
+  try {
+    const { rows } = await db.query(`SELECT last_seen_at FROM site_activity_heartbeat WHERE key = 'public'`, []);
+    const ts = rows[0]?.last_seen_at ? new Date(rows[0].last_seen_at).getTime() : 0;
+    if (ts > 0) lastSharedUserActivityAt = ts;
+    sharedActivityLastCheckedAt = Date.now();
+    sharedActivityLastError = null;
+  } catch (e) {
+    sharedActivityLastError = e.message;
+  }
+}
 function isAppIdle() {
-  const idle = Date.now() - lastRealUserActivityAt > USER_INACTIVITY_PAUSE_MS;
+  const idle = Date.now() - effectiveLastUserActivityAt() > USER_INACTIVITY_PAUSE_MS;
   if (idle && !appIdleLoggedAt) {
     appIdleLoggedAt = Date.now();
     logAgentAction('feed', '💤', `No active users for ${Math.round(USER_INACTIVITY_PAUSE_MS / 60000)}+ min — pausing source fetching so the DB doesn't keep growing with nobody around to see it`, '#94A3B8');
@@ -8955,12 +9051,43 @@ function getRecentTransferCount() {
 // refreshes on the same cadence as AUTO_TRANSFER_INTERVAL_MS instead (see
 // its own setInterval) and /office/status just reads the cached value.
 let dbFeedPostCount = null;
+const feedStorageFreshnessState = {
+  cache: {
+    count: null,
+    newestFetchedAt: null,
+    newestPostCreatedAt: null,
+    lastCheckedAt: null,
+    lastError: null,
+  },
+  staging: {
+    count: null,
+    oldestFetchedAt: null,
+    newestFetchedAt: null,
+    newestPostCreatedAt: null,
+    lastCheckedAt: null,
+    lastError: null,
+  },
+};
 async function refreshDbFeedPostCount() {
   if (!db.isConnected()) return;
   try {
-    const { rows } = await db.readQuery('SELECT COUNT(*)::int AS n FROM feed_posts_cache', []);
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::int AS n,
+              MAX(fetched_at) AS newest_fetched_at,
+              MAX(post_created_at) AS newest_post_created_at
+       FROM feed_posts_cache`,
+      []
+    );
     dbFeedPostCount = rows[0]?.n ?? dbFeedPostCount;
+    feedStorageFreshnessState.cache = {
+      count: dbFeedPostCount,
+      newestFetchedAt: rows[0]?.newest_fetched_at || null,
+      newestPostCreatedAt: rows[0]?.newest_post_created_at || null,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+    };
   } catch (e) {
+    feedStorageFreshnessState.cache.lastError = e.message;
     console.warn('[refreshDbFeedPostCount] query failed:', e.message);
   }
 }
@@ -9954,6 +10081,13 @@ async function runWebStorageSubAgent() {
     lastError: null,
     batchLimit: WEB_STORAGE_BATCH_LIMIT,
     dbCap: MAX_CACHED_DB_POSTS,
+    dbSize: {
+      mb: dbSizeState.mb,
+      limitMb: DB_SIZE_LIMIT_MB,
+      usedPct: dbSizeState.usedPct,
+      status: dbSizeState.status,
+      renderPlan: DB_RENDER_PLAN,
+    },
   });
   try {
     const sourcePosts = realFeedPosts([...agentSourceCache.values()].flatMap(v => v.posts || []));
@@ -9983,9 +10117,16 @@ async function runWebStorageSubAgent() {
       queuedSources: stale,
       batchLimit: WEB_STORAGE_BATCH_LIMIT,
       dbCap: MAX_CACHED_DB_POSTS,
+      dbSize: {
+        mb: dbSizeState.mb,
+        limitMb: DB_SIZE_LIMIT_MB,
+        usedPct: dbSizeState.usedPct,
+        status: dbSizeState.status,
+        renderPlan: DB_RENDER_PLAN,
+      },
     });
     logAgentAction(id, '💾',
-      `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB cap ${MAX_CACHED_DB_POSTS.toLocaleString()}`,
+      `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB ${dbSizeState.mb ?? '?'}MB/${DB_SIZE_LIMIT_MB}MB`,
       '#FB7185');
   } catch (e) {
     updateWebSubAgent(id, { status: 'degraded', lastError: e.message });
@@ -10397,6 +10538,7 @@ setInterval(runDeployCheckAll,   5 * 60 * 1000); // every 5 min (pings all 3 ser
 setInterval(runWebsiteOptimizerCheck, WEB_OPTIMIZER_INTERVAL_MS);
 setInterval(runWebStorageSubAgent,    WEB_STORAGE_INTERVAL_MS);
 setInterval(runAutofixCheck,          AUTOFIX_CHECK_INTERVAL_MS);
+setInterval(refreshSharedUserActivity, SHARED_ACTIVITY_REFRESH_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
@@ -12577,12 +12719,32 @@ async function migrateDB() {
         path        TEXT NOT NULL,
         referrer    TEXT,
         visitor_id  TEXT,
+        ip_key      TEXT,
+        client_visitor_id TEXT,
         user_id     TEXT,
         created_at  TIMESTAMPTZ DEFAULT NOW()
       )
     `);
+    await db.query(`ALTER TABLE page_views ADD COLUMN IF NOT EXISTS ip_key TEXT`);
+    await db.query(`ALTER TABLE page_views ADD COLUMN IF NOT EXISTS client_visitor_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_created_idx ON page_views(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_path_idx    ON page_views(path)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS pv_ip_created_idx ON page_views(ip_key, created_at DESC)`);
+
+    // Cross-service activity heartbeat. API receives real web traffic, while
+    // the pipeline service is the only process running source fetchers; an
+    // in-memory "someone is here" flag on the API cannot wake the pipeline.
+    // This one-row table gives both roles the same recent-traffic signal
+    // without writing unbounded activity rows beyond the normal page_views log.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS site_activity_heartbeat (
+        key          TEXT PRIMARY KEY,
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        source       TEXT,
+        ip_key       TEXT,
+        updated_at   TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
 
     // ─── Autofix agent tables ──────────────────────────────────────────────
     // Raw client-side error reports (React error boundary + window.onerror/
@@ -12868,8 +13030,10 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
 // scheduled maintenance window.
 const DB_SIZE_WARN_MB     = envNumber('DB_SIZE_WARN_MB', 3200, 100, 1000000);
 const DB_SIZE_CRITICAL_MB = envNumber('DB_SIZE_CRITICAL_MB', 3700, DB_SIZE_WARN_MB, 1000000);
+const DB_SIZE_LIMIT_MB    = envNumber('DB_SIZE_LIMIT_MB', 4096, DB_SIZE_CRITICAL_MB, 1000000);
+const DB_RENDER_PLAN      = process.env.RENDER_DB_PLAN || 'basic-4gb';
 const DB_SIZE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
-const dbSizeState = { mb: null, status: 'unknown', lastCheckedAt: null, lastError: null };
+const dbSizeState = { mb: null, usedPct: null, status: 'unknown', lastCheckedAt: null, lastError: null };
 async function checkDatabaseSize() {
   if (!db.isConnected()) return;
   try {
@@ -12878,8 +13042,10 @@ async function checkDatabaseSize() {
     // whichever one happens to be serving hot reads at the moment.
     const { rows } = await db.query(`SELECT pg_database_size(current_database()) AS bytes`, []);
     const mb = Math.round((Number(rows[0]?.bytes) || 0) / (1024 * 1024));
+    const usedPct = DB_SIZE_LIMIT_MB > 0 ? Math.round((mb / DB_SIZE_LIMIT_MB) * 1000) / 10 : null;
     const prevStatus = dbSizeState.status;
     dbSizeState.mb = mb;
+    dbSizeState.usedPct = usedPct;
     dbSizeState.lastCheckedAt = new Date().toISOString();
     dbSizeState.lastError = null;
     dbSizeState.status = mb >= DB_SIZE_CRITICAL_MB ? 'critical' : mb >= DB_SIZE_WARN_MB ? 'warn' : 'ok';
@@ -13835,7 +14001,7 @@ async function authenticate(req, res, next) {
     // here" — see isAppIdle's own comment. /office/* admin routes go through
     // requireOfficeToken instead of this middleware, so they deliberately
     // never touch this.
-    lastRealUserActivityAt = Date.now();
+    recordRealUserActivity(req, 'auth');
     return next();
   } catch {
     // Not a local UFIconnect JWT; try Auth0 when configured.
@@ -13845,7 +14011,7 @@ async function authenticate(req, res, next) {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
     req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
-    lastRealUserActivityAt = Date.now();
+    recordRealUserActivity(req, 'auth0');
     return next();
   } catch {
     return res.status(401).json({ message: 'Invalid or expired token.' });
@@ -13864,7 +14030,7 @@ async function authenticateOptional(req, res, next) {
   const token = authHeader.split(' ')[1];
   try {
     req.user = jwt.verify(token, JWT_SECRET);
-    lastRealUserActivityAt = Date.now();
+    recordRealUserActivity(req, 'auth-optional');
     return next();
   } catch {
     // Not a local UFIconnect JWT; try Auth0 when configured.
@@ -13873,7 +14039,7 @@ async function authenticateOptional(req, res, next) {
     const payload = await verifyAuth0Token(token);
     const user = await provisionAuth0User(payload);
     req.user = { id: user.id, email: user.email, authProvider: 'auth0', sub: payload.sub };
-    lastRealUserActivityAt = Date.now();
+    recordRealUserActivity(req, 'auth0-optional');
   } catch {
     // Invalid/expired token on an optional route — proceed logged-out
     // rather than reject, same as no token at all.
@@ -13921,20 +14087,23 @@ function isLikelyBotRequest(req) {
 // ─── First-party pageview logging ──────────────────────────────────────────
 // No analytics of any kind was installed — there was no way to tell whether
 // the site was getting traffic separate from search-engine indexing. Public
-// and unauthenticated on purpose (most visitors won't have a session), with
-// no PII collected — just path, referrer, and a client-generated anonymous
-// id so repeat-visit counts are still meaningful.
+// and unauthenticated on purpose (most visitors won't have a session).
+// Distinct visitor counts are IP-derived server-side, not client-generated,
+// because the public "skip sign up" flow means many real visitors never
+// create an account. The IP is stored only as a salted hash key.
 app.post('/analytics/pageview', async (req, res) => {
   try {
     if (isLikelyBotRequest(req)) return res.status(204).end();
     const path      = String(req.body?.path || '').slice(0, 300);
     const referrer  = req.body?.referrer ? String(req.body.referrer).slice(0, 500) : null;
-    const visitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
+    const clientVisitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
+    const ipKey = clientIpAnalyticsKey(req);
     if (!path) return res.status(400).json({ error: 'path required' });
+    recordRealUserActivity(req, 'pageview');
     if (db.isConnected()) {
       await db.query(
-        `INSERT INTO page_views (path, referrer, visitor_id) VALUES ($1,$2,$3)`,
-        [path, referrer, visitorId]
+        `INSERT INTO page_views (path, referrer, visitor_id, ip_key, client_visitor_id) VALUES ($1,$2,$3,$4,$5)`,
+        [path, referrer, ipKey || clientVisitorId, ipKey, clientVisitorId]
       );
     }
     res.status(204).end();
@@ -13984,7 +14153,7 @@ app.patch('/office/reports/:id', requireOfficeToken, async (req, res) => {
 app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
   try {
     if (!db.isConnected()) return res.json({ available: false });
-    // Distinct visitor_id counted alongside raw views for each window, not
+    // Distinct IP-derived visitor key counted alongside raw views for each window, not
     // just the daily breakdown further down — the top-level Today/7d/30d
     // cards only ever showed raw pageview counts, which reads as "N people
     // visited" when it's really just "N page loads," inflated by the same
@@ -13993,18 +14162,18 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     // all). Distinct visitors next to it gives the actually-meaningful
     // number for "how many separate people were here."
     const [today, last7, last30, topPaths, daily] = await Promise.all([
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT visitor_id) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
       db.query(`
-        SELECT path, COUNT(*) AS views
+        SELECT path, COUNT(*) AS views, COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors
         FROM page_views
         WHERE created_at >= NOW() - INTERVAL '30 days'
         GROUP BY path ORDER BY views DESC LIMIT 15
       `),
       db.query(`
         SELECT date_trunc('day', created_at) AS day, COUNT(*) AS views,
-               COUNT(DISTINCT visitor_id) AS visitors
+               COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors
         FROM page_views
         WHERE created_at >= NOW() - INTERVAL '30 days'
         GROUP BY day ORDER BY day ASC
@@ -14018,7 +14187,7 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
       last7Visitors:  Number(last7.rows[0].visitors),
       last30: Number(last30.rows[0].count),
       last30Visitors: Number(last30.rows[0].visitors),
-      topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views) })),
+      topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views), visitors: Number(r.visitors) })),
       daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
     });
   } catch (e) {
@@ -16274,6 +16443,10 @@ app.get('/office/feed', authenticate, handleFeedRequest);
 // acceptable tradeoff a real account doesn't have to make).
 app.get('/feed/guest', async (req, res) => {
   try {
+    recordRealUserActivity(req, 'guest-feed');
+    if (!IS_PIPELINE_ROLE) {
+      transferStagedPosts({ maxBatches: 1, reason: 'guest-feed' }).catch(e => console.warn('[guest-transfer]', e.message));
+    }
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const cursorMap = decodeFeedCursor(req.query.cursor);
     const { posts, nextCursor, hasMore } = await getCursorFeedPage({
@@ -18447,6 +18620,10 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     activity: {
       idle: isAppIdle(),
       lastRealUserActivityAt,
+      lastSharedUserActivityAt,
+      effectiveLastUserActivityAt: effectiveLastUserActivityAt(),
+      sharedActivityLastCheckedAt,
+      sharedActivityLastError,
       pauseAfterMs: USER_INACTIVITY_PAUSE_MS,
     },
     refreshQueue: {
@@ -18470,6 +18647,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // their own they read as the pipeline "resetting to zero" constantly.
       processedLastHour: getRecentTransferCount(),
       dbPostCount: dbFeedPostCount,
+      dbNewestFetchedAt: feedStorageFreshnessState.cache.newestFetchedAt,
+      dbNewestPostCreatedAt: feedStorageFreshnessState.cache.newestPostCreatedAt,
     },
     // Separate from refreshQueue above, and easy to conflate with it —
     // refreshQueue is the pipeline-only *re-fetch* mechanism (nudging a
@@ -18489,17 +18668,30 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastCount: stagingTransferState.lastCount,
       totalTransferred: stagingTransferState.totalTransferred,
       lastError: stagingTransferState.lastError,
+      lastReason: stagingTransferState.lastReason,
       inFlight: !!transferInFlight,
       lockStartedAt: transferStartedAt ? new Date(transferStartedAt).toISOString() : null,
       lockAgeMs: transferStartedAt ? Date.now() - transferStartedAt : 0,
+      oldestFetchedAt: feedStorageFreshnessState.staging.oldestFetchedAt,
+      newestFetchedAt: feedStorageFreshnessState.staging.newestFetchedAt,
+      newestPostCreatedAt: feedStorageFreshnessState.staging.newestPostCreatedAt,
+      lastCheckedAt: feedStorageFreshnessState.staging.lastCheckedAt,
+    },
+    feedStorage: {
+      cache: feedStorageFreshnessState.cache,
+      staging: feedStorageFreshnessState.staging,
     },
     // See "Database size guard" (checkDatabaseSize) — status is 'ok' /
     // 'warn' / 'critical' against DB_SIZE_WARN_MB/DB_SIZE_CRITICAL_MB.
     dbSize: {
       mb: dbSizeState.mb,
       status: dbSizeState.status,
+      limitMb: DB_SIZE_LIMIT_MB,
+      usedPct: dbSizeState.usedPct,
       warnMb: DB_SIZE_WARN_MB,
       criticalMb: DB_SIZE_CRITICAL_MB,
+      renderPlan: DB_RENDER_PLAN,
+      source: 'pg_database_size',
       lastCheckedAt: dbSizeState.lastCheckedAt,
       lastError: dbSizeState.lastError,
     },
@@ -18826,15 +19018,31 @@ app.get('/office/autofix/attempts', requireOfficeToken, async (req, res) => {
 // this stage. Before this, the ONLY mechanism that actually moves fetched
 // content to where real users can see it had zero dashboard visibility.
 const stagingTransferState = {
-  lastRun: null, lastCount: 0, totalTransferred: 0, lastError: null,
+  lastRun: null, lastCount: 0, totalTransferred: 0, lastError: null, lastReason: null,
 };
 let stagingPostCount = null;
 async function refreshStagingPostCount() {
   if (!db.isConnected()) return;
   try {
-    const { rows } = await db.readQuery('SELECT COUNT(*)::int AS n FROM feed_posts_staging', []);
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::int AS n,
+              MIN(fetched_at) AS oldest_fetched_at,
+              MAX(fetched_at) AS newest_fetched_at,
+              MAX(post_created_at) AS newest_post_created_at
+       FROM feed_posts_staging`,
+      []
+    );
     stagingPostCount = rows[0]?.n ?? stagingPostCount;
+    feedStorageFreshnessState.staging = {
+      count: stagingPostCount,
+      oldestFetchedAt: rows[0]?.oldest_fetched_at || null,
+      newestFetchedAt: rows[0]?.newest_fetched_at || null,
+      newestPostCreatedAt: rows[0]?.newest_post_created_at || null,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+    };
   } catch (e) {
+    feedStorageFreshnessState.staging.lastError = e.message;
     console.warn('[refreshStagingPostCount] query failed:', e.message);
   }
 }
@@ -18842,10 +19050,12 @@ async function refreshStagingPostCount() {
 // risk now that the interval below is 1 minute instead of the original 15.
 let transferInFlight = false;
 let transferStartedAt = null;
-async function transferStagedPosts() {
+async function transferStagedPosts({ maxBatches = 20, reason = 'scheduled' } = {}) {
   if (!db.isConnected() || transferInFlight) return;
   transferInFlight = true;
   transferStartedAt = Date.now();
+  stagingTransferState.lastReason = reason;
+  stagingTransferState.lastError = null;
   try {
     // Drains in a tight loop within one invocation, capped at 20 batches
     // (100k rows), instead of one fixed 5000-row batch per tick — after
@@ -18854,7 +19064,7 @@ async function transferStagedPosts() {
     // early once a batch comes back under the LIMIT (caught up); the 20-batch
     // cap just bounds worst-case time on a single tick, not total throughput
     // — an unusually large backlog keeps draining on the next tick.
-    for (let batch = 0; batch < 20; batch++) {
+    for (let batch = 0; batch < maxBatches; batch++) {
       const { rows } = await db.query(
         `SELECT * FROM feed_posts_staging ORDER BY fetched_at ASC, id ASC LIMIT 5000`
       );
@@ -22153,6 +22363,8 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    await refreshSharedUserActivity();
+    await Promise.all([refreshDbFeedPostCount(), refreshStagingPostCount()]);
     checkDatabaseSize().catch(e => console.warn('[checkDatabaseSize] startup check failed:', e.message));
     const purgedFallbackPosts = await purgeFallbackFeedCache();
     if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);

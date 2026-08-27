@@ -1,5 +1,7 @@
 // Two independent, best-effort trackers: a first-party log (own DB, visible
-// in the office dashboard, no external account needed) and GA4. The gtag.js
+// in the office dashboard, no external account needed) and GA4. The backend
+// now derives distinct visitor counts from the request IP hash server-side,
+// so pageview beacons no longer send the localStorage visitor id. The gtag.js
 // snippet itself is embedded directly in index.html (Measurement ID
 // G-43NFBSC7CL), not loaded from here — trackPageview() below just fires the
 // page_view event on every SPA route change, since gtag's own automatic
@@ -26,7 +28,7 @@ export function trackPageview(path) {
   fetch(`${apiBase}/analytics/pageview`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, referrer: document.referrer || null, visitorId: getVisitorId() }),
+    body: JSON.stringify({ path, referrer: document.referrer || null }),
     keepalive: true,
   }).catch(() => {});
 }

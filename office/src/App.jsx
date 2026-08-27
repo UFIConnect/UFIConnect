@@ -76,6 +76,18 @@ function fmtAgo(ts) {
 
 // ─── shared style constants ───────────────────────────────────────────────────
 
+function fmtStorage(dbSize) {
+  if (!dbSize || dbSize.mb == null) return 'storage -';
+  const limit = dbSize.limitMb ? ` / ${dbSize.limitMb.toLocaleString()}MB` : 'MB';
+  const pct = dbSize.usedPct != null ? ` - ${dbSize.usedPct}%` : '';
+  return `${dbSize.mb.toLocaleString()}MB${limit}${pct}`;
+}
+function storageColor(dbSize) {
+  if (dbSize?.status === 'critical') return '#f87171';
+  if (dbSize?.status === 'warn') return '#fbbf24';
+  return '#64748b';
+}
+
 const H1 = { margin: '0 0 6px', fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: '#f1f5f9' };
 const SUBTITLE = { margin: '0 0 28px', color: '#64748b', fontSize: 14, lineHeight: 1.5 };
 const CODE = { background: '#1e293b', padding: '2px 7px', borderRadius: 4, fontFamily: 'monospace', fontSize: '0.88em', color: '#94a3b8' };
@@ -794,7 +806,7 @@ function AnalyticsView() {
   return (
     <>
       <h1 style={H1}>Analytics</h1>
-      <p style={SUBTITLE}>First-party pageview counts, logged straight from the site — no external account required. See also GA4 at analytics.google.com.</p>
+      <p style={SUBTITLE}>First-party pageview counts, grouped by request IP so skip-signup traffic is counted without an account. See also GA4 at analytics.google.com.</p>
 
       {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
 
@@ -883,17 +895,17 @@ function AnalyticsView() {
             <Card style={{ minWidth: 150 }}>
               <Label>Today</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} visitor{data.todayVisitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} unique IP{data.todayVisitors === 1 ? '' : 's'}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 7 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{data.last7}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} visitor{data.last7Visitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} unique IP{data.last7Visitors === 1 ? '' : 's'}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 30 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} visitor{data.last30Visitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} unique IP{data.last30Visitors === 1 ? '' : 's'}</div>
             </Card>
           </div>
 
@@ -906,6 +918,7 @@ function AnalyticsView() {
               <Card key={p.path} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '11px 18px' }}>
                 <div style={{ flex: 1, fontSize: 13, fontFamily: 'monospace', color: '#cbd5e1' }}>{p.path}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#60a5fa' }}>{p.views}</div>
+                <div style={{ fontSize: 12, color: '#64748b', minWidth: 68, textAlign: 'right' }}>{p.visitors ?? 0} IP{(p.visitors ?? 0) === 1 ? '' : 's'}</div>
               </Card>
             ))}
           </div>
@@ -925,7 +938,7 @@ function AnalyticsView() {
                   }} />
                 </div>
                 <div style={{ width: 40, textAlign: 'right', color: '#e2e8f0', fontWeight: 600 }}>{d.views}</div>
-                <div style={{ width: 60, textAlign: 'right' }}>{d.visitors} uniq</div>
+                <div style={{ width: 72, textAlign: 'right' }}>{d.visitors} IP{d.visitors === 1 ? '' : 's'}</div>
               </div>
             ))}
           </div>
@@ -1542,6 +1555,8 @@ function PipelineView({ status, pipelineStatus }) {
   const filterAgent  = pipelineStatus?.filterAgent;
   const sortAgent    = pipelineStatus?.sortAgent;
   const staging      = status?.staging;
+  const dbSize       = status?.dbSize;
+  const cacheFreshness = status?.feedStorage?.cache || {};
   const topicFilterAgent = status?.topicFilterAgent;
   // Computed from globalFeedCache.posts server-side (see its own comment) —
   // only real on the pipeline role, same as composition/sortAgent above,
@@ -1787,7 +1802,10 @@ function PipelineView({ status, pipelineStatus }) {
             <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', lineHeight: 1 }}>
               {pageviews?.available === false ? '—' : (pageviews?.today ?? '—')}
             </div>
-            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>views · last 24h</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>views · last 24h</div>
+            <div style={{ fontSize: 10.5, color: '#475569', marginBottom: 8 }}>
+              {pageviews?.available === false ? '—' : `${pageviews?.todayVisitors ?? '—'} unique IPs`}
+            </div>
             <a href="https://uficonnect.org" target="_blank" rel="noreferrer" style={{ fontSize: 11, color: '#4ade80' }}>
               uficonnect.org ↗
             </a>
@@ -1808,7 +1826,7 @@ function PipelineView({ status, pipelineStatus }) {
         <EqualizerDetailCard equalizer={equalizer} workers={workers} />
         <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
-        <TransferDetailCard q={q} workers={workers} />
+        <TransferDetailCard q={q} workers={workers} dbSize={dbSize} cacheFreshness={cacheFreshness} />
         <StagingTransferDetailCard staging={staging} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <TransferByTopicCard topicComposition={topicComposition} />
@@ -2041,7 +2059,7 @@ function SortRankDetailCard({ sortAgent, distrib, composition }) {
 // Real transfer throughput — while a batch is running this is measured
 // against the actual elapsed time (not an assumption), so it settles once
 // a couple of sources have gone through and gets more accurate as it runs.
-function TransferDetailCard({ q, workers = [] }) {
+function TransferDetailCard({ q, workers = [], dbSize, cacheFreshness = {} }) {
   const running = !!q?.running;
   const elapsedS = running && q.lastStarted ? (Date.now() - new Date(q.lastStarted).getTime()) / 1000 : 0;
   const rate = running && elapsedS > 2 && q.batchDone > 0 ? q.batchDone / elapsedS : null;
@@ -2101,12 +2119,19 @@ function TransferDetailCard({ q, workers = [] }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="sources / last hr" value={(q?.processedLastHour ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="posts in DB" value={q?.dbPostCount != null ? q.dbPostCount.toLocaleString() : '—'} />
+        <DetailStat
+          label={dbSize?.mb != null ? `${dbSize.mb.toLocaleString()}/${(dbSize.limitMb || 4096).toLocaleString()}MB` : 'API storage'}
+          value={dbSize?.usedPct != null ? `${dbSize.usedPct}%` : '—'}
+          color={storageColor(dbSize)}
+        />
+        <DetailStat label="cache write" value={cacheFreshness?.newestFetchedAt ? fmtAgo(cacheFreshness.newestFetchedAt) : '—'} color="#4ade80" />
       </div>
 
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Total transfer runs: <span style={{ color: '#94a3b8' }}>{(q?.totalRuns ?? 0).toLocaleString()}</span></div>
         <div>Last full run took: <span style={{ color: '#94a3b8' }}>{lastFullRunS != null ? `${lastFullRunS}s` : '—'}</span></div>
         <div>Reason: <span style={{ color: '#94a3b8' }}>{q?.lastReason || '—'}</span></div>
+        <div>Newest cached post date: <span style={{ color: '#94a3b8' }}>{cacheFreshness?.newestPostCreatedAt ? fmtAgo(cacheFreshness.newestPostCreatedAt) : '—'}</span></div>
         {q?.lastError && <div style={{ color: '#f87171' }}>⚠ {q.lastError}</div>}
       </div>
     </Card>
@@ -2134,9 +2159,13 @@ function StagingTransferDetailCard({ staging }) {
         <DetailStat label="last run moved" value={(staging?.lastCount ?? 0).toLocaleString()} />
         <DetailStat label="total transferred" value={(staging?.totalTransferred ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="transfer lock" value={staging?.inFlight ? 'active' : 'clear'} color={staging?.inFlight ? '#fbbf24' : '#4ade80'} />
+        <DetailStat label="latest staged write" value={staging?.newestFetchedAt ? fmtAgo(staging.newestFetchedAt) : '—'} color="#38bdf8" />
       </div>
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Last run: <span style={{ color: '#94a3b8' }}>{staging?.lastRun ? fmtAgo(staging.lastRun) : 'not run yet'}</span></div>
+        <div>Last trigger: <span style={{ color: '#94a3b8' }}>{staging?.lastReason || '—'}</span></div>
+        <div>Oldest staged row: <span style={{ color: '#94a3b8' }}>{staging?.oldestFetchedAt ? fmtAgo(staging.oldestFetchedAt) : 'none queued'}</span></div>
+        <div>Newest staged post date: <span style={{ color: '#94a3b8' }}>{staging?.newestPostCreatedAt ? fmtAgo(staging.newestPostCreatedAt) : '—'}</span></div>
         {staging?.inFlight && (
           <div style={{ color: '#fbbf24' }}>
             Transfer lock active for {Math.round((staging.lockAgeMs || 0) / 1000)}s
@@ -2301,14 +2330,14 @@ function ViewedDetailCard({ pageviews }) {
     <Card>
       <Label color="#4ade80">Viewed — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        First-party pageview log, one row per route change on the live site — a rolling window, not calendar days
-        (so "last 24h" won't match a GA-style "today" bucket lined up on midnight).
+        First-party pageview log, one row per route change on the live site. Unique counts are grouped by
+        salted IP key, so guest traffic is counted even when nobody signs up.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
-        <DetailStat label="last 24h" value={pageviews.today.toLocaleString()} color="#4ade80" />
-        <DetailStat label="last 7d" value={pageviews.last7.toLocaleString()} />
-        <DetailStat label="last 30d" value={pageviews.last30.toLocaleString()} />
+        <DetailStat label="last 24h views" value={pageviews.today.toLocaleString()} color="#4ade80" />
+        <DetailStat label="24h unique IPs" value={(pageviews.todayVisitors ?? 0).toLocaleString()} />
+        <DetailStat label="30d unique IPs" value={(pageviews.last30Visitors ?? 0).toLocaleString()} />
       </div>
 
       {daily.length > 0 && (
@@ -2319,7 +2348,7 @@ function ViewedDetailCard({ pageviews }) {
               const h = Math.max(2, Math.round((d.views / maxViews) * 54));
               const isFlat = d.views === 0;
               return (
-                <div key={i} title={`${new Date(d.day).toLocaleDateString()}: ${d.views} views, ${d.visitors} visitors`} style={{
+                <div key={i} title={`${new Date(d.day).toLocaleDateString()}: ${d.views} views, ${d.visitors} unique IPs`} style={{
                   flex: 1, height: h, borderRadius: '2px 2px 0 0',
                   background: isFlat ? 'rgba(239,68,68,.5)' : '#4ade80',
                   opacity: isFlat ? 1 : 0.55 + (0.45 * (d.views / maxViews)),
@@ -2342,7 +2371,7 @@ function ViewedDetailCard({ pageviews }) {
             {topPaths.slice(0, 6).map(p => (
               <div key={p.path} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, gap: 8 }}>
                 <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.path}</span>
-                <span style={{ color: '#e2e8f0', fontWeight: 700, flexShrink: 0 }}>{p.views.toLocaleString()}</span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700, flexShrink: 0 }}>{p.views.toLocaleString()} views · {(p.visitors ?? 0).toLocaleString()} IPs</span>
               </div>
             ))}
           </div>
@@ -2809,6 +2838,11 @@ export default function App() {
                 <div style={{ fontSize: 10.5, color: (status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? '#f87171' : '#64748b' }}>
                   Staging · {status.staging.pendingCount ?? '—'} pending
                   {(status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? ' ⚠' : ''}
+                </div>
+              )}
+              {status?.dbSize && (
+                <div style={{ fontSize: 10.5, color: storageColor(status.dbSize) }}>
+                  API storage · {fmtStorage(status.dbSize)}
                 </div>
               )}
             </div>
