@@ -119,6 +119,11 @@ function buildHealthPayload() {
     payload.sourceWorkers = null;
   }
   try {
+    payload.pipelineState = buildPipelineHealthSummary();
+  } catch {
+    payload.pipelineState = null;
+  }
+  try {
     payload.dbSize = {
       mb: dbSizeState?.mb ?? null,
       status: dbSizeState?.status || 'unknown',
@@ -7841,6 +7846,43 @@ function buildSourceWorkerHealthSummary() {
     skippedForStability: workers.reduce((sum, w) => sum + (w.skippedForStability || 0), 0),
     lastSuccessAt: lastSuccessMs ? new Date(lastSuccessMs).toISOString() : null,
     lastAttemptAt: lastAttemptMs ? new Date(lastAttemptMs).toISOString() : null,
+  };
+}
+
+function buildPipelineHealthSummary() {
+  const sourceCaches = Array.from(agentSourceCache.values());
+  const sourceCachePosts = sourceCaches.reduce((sum, cache) => sum + realFeedPosts(cache.posts || []).length, 0);
+  const latestSourceFetchMs = Math.max(0, ...sourceCaches.map(cache => Number(cache.lastFetch || 0)));
+  const webStorage = websiteOptimizerState.subAgents.web_storage || {};
+  return {
+    memoryFeedPosts: realFeedPosts(globalFeedCache.posts).length,
+    memoryFeedRefreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
+    sourceCacheCount: agentSourceCache.size,
+    sourceCachePosts,
+    latestSourceCacheFetchAt: latestSourceFetchMs ? new Date(latestSourceFetchMs).toISOString() : null,
+    equalizer: {
+      totalBuffered: equalizerState.totalBuffered,
+      totalDrained: equalizerState.totalDrained,
+      lastRun: equalizerState.lastRun ? new Date(equalizerState.lastRun).toISOString() : null,
+      lastDrainedBySource: equalizerState.lastDrainedBySource,
+    },
+    filter: {
+      status: filterAgentState.status,
+      totalInput: filterAgentState.totalInput,
+      totalOutput: filterAgentState.totalOutput,
+      lastInput: filterAgentState.lastInput,
+      lastOutput: filterAgentState.lastOutput,
+      lastDroppedDuplicate: filterAgentState.lastDroppedDuplicate,
+      lastRun: filterAgentState.lastRun ? new Date(filterAgentState.lastRun).toISOString() : null,
+      lastError: filterAgentState.lastError,
+    },
+    webStorage: {
+      status: webStorage.status || 'idle',
+      totalRuns: webStorage.totalRuns || 0,
+      saved: webStorage.saved || 0,
+      lastRun: webStorage.lastRun || null,
+      lastError: webStorage.lastError || null,
+    },
   };
 }
 
