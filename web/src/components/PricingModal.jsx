@@ -2,14 +2,14 @@ const TIERS = [
   {
     tier: 'pro',
     name: 'Pro',
-    price: '20',
+    price: '19.94',
     tagline: 'For individuals',
     icon: '⭐',
   },
   {
     tier: 'business',
     name: 'Business',
-    price: '200',
+    price: '199.94',
     tagline: 'For teams',
     icon: '🏢',
     locked: true,
