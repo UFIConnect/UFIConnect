@@ -41,6 +41,7 @@ const ResetPassword  = lazy(() => import('./pages/ResetPassword'));
 const Landing        = lazy(() => import('./pages/Landing'));
 const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const Feed           = lazy(() => import('./pages/Feed'));
+const GuestFeed       = lazy(() => import('./pages/GuestFeed'));
 const Videos         = lazy(() => import('./pages/Videos'));
 const Groups         = lazy(() => import('./pages/Groups'));
 const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
@@ -83,10 +84,19 @@ function PageviewTracker() {
   return null;
 }
 
+// GUEST_SESSION_KEY set by Landing/Login's own "Continue as guest" — a
+// session (not persistent) flag, so closing the tab and coming back fresh
+// shows Landing again rather than permanently treating this browser as
+// guest-mode. Checked only when there's genuinely no token; an actual
+// signed-in session always wins regardless of what this flag says.
+const GUEST_SESSION_KEY = 'ufi_guest';
 function HomeRoute() {
   const { token, profile, loading } = useAuth();
   if (loading) return <div className="splash">Loading…</div>;
-  if (!token) return <Landing />;
+  if (!token) {
+    if (sessionStorage.getItem(GUEST_SESSION_KEY) === '1') return <GuestFeed />;
+    return <Landing />;
+  }
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   return <Feed />;
 }

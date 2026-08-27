@@ -15680,6 +15680,35 @@ async function handleFeedRequest(req, res) {
 app.get('/feed', authenticate, handleFeedRequest);
 app.get('/office/feed', authenticate, handleFeedRequest);
 
+// ─── Guest feed — a real but deliberately minimal read for a visitor with no
+// account ────────────────────────────────────────────────────────────────
+// handleFeedRequest above is the single most complex, most-trafficked
+// handler in this app — cursor pagination, Ranked/Popular/Balanced/Newest
+// sort, full-text search, topic filters, resume-matched job substitution,
+// connected-social live tabs, Following mode, per-user seen-tracking —
+// full of req.user.id references throughout. Opening it up to logged-out
+// traffic would mean auditing every one of those for a null user on the
+// single endpoint real paying members depend on most; a genuine regression
+// there is a much worse outcome than a guest's feed being simpler. This is
+// a separate, small, no-auth handler instead, reusing the same underlying
+// getCursorFeedPage every other newest-sort surface already reads from —
+// same real content, just without any per-user personalization or
+// seen-tracking (repeats across a short pre-signup browsing session are an
+// acceptable tradeoff a real account doesn't have to make).
+app.get('/feed/guest', async (req, res) => {
+  try {
+    const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
+    const cursorMap = decodeFeedCursor(req.query.cursor);
+    const { posts, nextCursor, hasMore } = await getCursorFeedPage({
+      sources: AGGREGATE_FEED_SOURCES, cursorMap, limit: feedLimit,
+    });
+    res.json({ posts: realFeedPosts(posts), cursor: nextCursor, hasMore, guest: true });
+  } catch (e) {
+    console.error('[/feed/guest] error:', e.message);
+    res.status(500).json({ posts: [], hasMore: false });
+  }
+});
+
 // ─── Video feed (TikTok-style) — true mix of video posts across every platform ──
 // Same date-cursor pagination as the main Feed's newest-sort scroll (see
 // getCursorFeedPage) — replaced the old shared-snapshot-pool-with-

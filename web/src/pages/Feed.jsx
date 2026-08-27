@@ -898,7 +898,7 @@ function commentUrl(post) {
 }
 
 const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
-  const { profile } = useAuth();
+  const { profile, token } = useAuth();
   const { showToast } = useToast();
   const [moreOpen,   setMoreOpen]   = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -974,7 +974,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const hasComments    = COMMENT_SOURCES.has(post.source);
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
-  const canWriteComment = !post.isExternal && (post.source || 'uficonnect') === 'uficonnect';
+  const canWriteComment = !post.isExternal && (post.source || 'uficonnect') === 'uficonnect' && !!token;
 
   async function fetchComments() {
     setCommentsLoading(true);
@@ -1078,7 +1078,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             >
               <button
                 role="menuitem"
-                onClick={() => { setMoreOpen(false); setReportOpen(true); }}
+                onClick={() => { setMoreOpen(false); token ? setReportOpen(true) : showToast('Sign in to report a post.', 'info'); }}
                 style={{
                   all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8,
                   width: '100%', padding: '9px 12px', fontSize: '.82rem', fontWeight: 600,
@@ -1366,6 +1366,13 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             >
               {commentsLoadingMore ? <span className="spinner" style={{ width: 12, height: 12 }} /> : `Load more ${sectionLabel.toLowerCase()}`}
             </button>
+          )}
+
+          {!isExternal && !token && (post.source || 'uficonnect') === 'uficonnect' && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 10 }}>
+              <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Sign in to comment.</span>
+              <Link to="/login"><button type="button" className="btn btn-primary btn-sm">Sign in</button></Link>
+            </div>
           )}
 
           {/* Read-more link — always shown at bottom */}

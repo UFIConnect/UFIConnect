@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
 const FEATURES = [
@@ -94,7 +94,16 @@ const SHARE_LINKS = [
 ];
 
 export default function Landing() {
+  const navigate = useNavigate();
   const [shareCopied, setShareCopied] = useState(false);
+
+  // Session-only, not persistent — a fresh visit later still lands on
+  // Landing rather than permanently treating this browser as guest-mode.
+  // See HomeRoute in App.jsx for where this flag is actually read.
+  function continueAsGuest() {
+    sessionStorage.setItem('ufi_guest', '1');
+    navigate('/');
+  }
 
   async function handleShare() {
     try {
@@ -159,7 +168,7 @@ export default function Landing() {
                 <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '520px' }}>
                   A personalized feed, communities, messaging, and real opportunities — tailored to your role, whatever that is.
                 </p>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '44px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '18px' }}>
                   <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
                     Get Started Free →
                   </Link>
@@ -167,6 +176,16 @@ export default function Landing() {
                     Learn More
                   </a>
                 </div>
+                <button
+                  type="button"
+                  onClick={continueAsGuest}
+                  style={{
+                    all: 'unset', cursor: 'pointer', fontSize: '.85rem', fontWeight: 600,
+                    color: 'var(--muted)', textDecoration: 'underline', marginBottom: '44px', display: 'inline-block',
+                  }}
+                >
+                  Or continue browsing without an account →
+                </button>
 
                 {/* Role pills preview — a deliberately mixed slice (not just
                     the first 8 in ROLE_PREVIEWS, which skews tech/business)

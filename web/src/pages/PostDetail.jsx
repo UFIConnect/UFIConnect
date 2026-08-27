@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import GuestShell from '../components/GuestShell';
 import FollowListModal from '../components/FollowListModal';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
@@ -27,32 +28,6 @@ function initials(name = '') {
 // land, read the full content, and see/leave comments without ever leaving
 // the app. Handles both external aggregated posts and internal
 // (user-created) community posts — GET /feed/:id resolves either.
-// Minimal top bar for a visitor with no session — the full app Layout
-// (sidebar, nav, profile menu) assumes an authenticated member everywhere
-// else in this app and has never been exercised without one; a shared post
-// link needs to actually render something for a logged-out visitor instead
-// of either crashing or silently redirecting to login before they ever see
-// the post. Sign in / Join are the two real ways back into the rest of the
-// app from here.
-function GuestShell({ children }) {
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg, #F8FAFC)' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
-      }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)', fontWeight: 800, fontSize: '1.05rem' }}>
-          🌐 UFconnect
-        </Link>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/login"><button className="btn btn-ghost btn-sm" type="button">Sign in</button></Link>
-          <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join UFconnect</button></Link>
-        </div>
-      </div>
-      {children}
-    </div>
-  );
-}
 
 export default function PostDetail() {
   const { id } = useParams();
