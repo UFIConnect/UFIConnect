@@ -1,15 +1,29 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PricingModal from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
-import { SOURCE_META } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
+
+// Platforms with a real, working "my own posts" fetcher server-side (see
+// OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
+// CONNECTED_SOCIAL_PLATFORMS render as "Coming soon" in Your Feed instead,
+// same honesty convention the rest of this app already uses for platforms
+// pending API/app-review access.
+const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'bluesky'];
+// Platforms with a real, working publish-on-your-behalf API (see
+// REAL_PUBLISH_PLATFORMS server-side) — every other connected platform can
+// still be selected in Cross-Post, it just gets queued instead of posted.
+const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit'];
 
 const SECTIONS = [
-  { key: 'feed',    label: 'Connected Feed', icon: '📡' },
-  { key: 'content', label: 'AI Content Hub', icon: '✨' },
-  { key: 'jobs',    label: 'Job Tracker',    icon: '💼' },
+  { key: 'feed',      label: 'Connected Feed', icon: '📡' },
+  { key: 'content',   label: 'AI Content Hub', icon: '✨' },
+  { key: 'yourfeed',  label: 'Your Feed',      icon: '🗂️' },
+  { key: 'jobs',      label: 'Job Tracker',    icon: '💼' },
+  { key: 'crosspost', label: 'Cross-Post',     icon: '📤' },
 ];
 
 function timeAgo(iso) {
@@ -325,6 +339,142 @@ function ContentHubSection() {
   );
 }
 
+// Content review/download, sectioned by platform — distinct from Connected
+// Feed above (which shows the Following pool, i.e. OTHER people's posts).
+// This is the member's OWN posts on each connected platform, for reviewing
+// or pulling a copy of their own content. Only ever lists platforms the
+// member has actually connected (see ConnectedAccounts.jsx for that flow).
+function YourFeedSection() {
+  const { showToast } = useToast();
+  const [connected, setConnected] = useState(null);
+  const [activePlatform, setActivePlatform] = useState(null);
+  const [posts, setPosts] = useState(null);
+  const [loadingPosts, setLoadingPosts] = useState(false);
+  const [postsError, setPostsError] = useState(false);
+
+  useEffect(() => {
+    client.get('/social/platforms').then(({ data }) => setConnected(data.connected || {})).catch(() => setConnected({}));
+  }, []);
+
+  function openPlatform(platform) {
+    setActivePlatform(platform);
+    setPosts(null);
+    setPostsError(false);
+    setLoadingPosts(true);
+    client.get('/command-center/your-content', { params: { platform } })
+      .then(({ data }) => setPosts(data.posts || []))
+      .catch(() => setPostsError(true))
+      .finally(() => setLoadingPosts(false));
+  }
+
+  async function downloadText(post) {
+    const blob = new Blob([JSON.stringify({ title: post.title, content: post.content, sourceUrl: post.sourceUrl, createdAt: post.createdAt }, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${post.id || 'post'}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadImage(post) {
+    try {
+      const { data } = await client.get('/command-center/your-content/download', {
+        params: { url: post.mediaUrl, platform: activePlatform }, responseType: 'blob',
+      });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${post.id || 'image'}.jpg`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      showToast('Could not download that file.', 'error');
+    }
+  }
+
+  if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
+
+  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+
+  if (!connectedPlatforms.length) {
+    return (
+      <div className="card" style={{ textAlign: 'center', padding: 32 }}>
+        <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔗</div>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>No connected accounts yet</div>
+        <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect a platform to review and download your own posts from it here.</div>
+        <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {connectedPlatforms.map(p => {
+          const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+          const supported = OWN_CONTENT_PLATFORMS.includes(p);
+          const active = activePlatform === p;
+          return (
+            <button
+              key={p} type="button" disabled={!supported}
+              onClick={() => openPlatform(p)}
+              className="btn btn-sm"
+              style={{
+                background: active ? 'var(--primary)' : 'var(--bg-secondary)',
+                color: active ? '#fff' : (supported ? 'var(--text)' : 'var(--muted)'),
+                border: 'none', opacity: supported ? 1 : 0.6,
+              }}
+              title={supported ? undefined : 'Coming soon — pending platform API approval'}
+            >
+              {meta.icon} {meta.label}{!supported && ' · Coming soon'}
+            </button>
+          );
+        })}
+      </div>
+
+      {!activePlatform && (
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>
+          Pick a platform above to see your own posts there.
+        </div>
+      )}
+
+      {activePlatform && loadingPosts && <div className="empty-state"><span className="spinner spinner-primary" /></div>}
+      {activePlatform && !loadingPosts && postsError && (
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)' }}>Couldn't load your {activePlatform} content.</div>
+      )}
+      {activePlatform && !loadingPosts && !postsError && posts && !posts.length && (
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)' }}>Nothing found yet.</div>
+      )}
+      {activePlatform && !loadingPosts && posts && posts.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {posts.map(post => (
+            <div key={post.id} className="card" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              {post.mediaType === 'image' && post.mediaUrl && (
+                <img src={post.mediaUrl} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</div>
+                <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>{timeAgo(post.createdAt)}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>📋 Text</button>
+                {post.mediaType === 'image' && post.mediaUrl && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadImage(post)}>🖼 Image</button>
+                )}
+                {post.mediaType === 'video_thumbnail_only' && post.sourceUrl && (
+                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">▶ View original ↗</a>
+                )}
+                {!post.mediaType && post.sourceUrl && (
+                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View ↗</a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const JOB_STATUSES = ['saved', 'applied', 'viewed'];
 
 // Tracking only — the member sets their own status, nothing here submits an
@@ -336,20 +486,30 @@ function JobTrackerSection() {
   const [tracked, setTracked] = useState({});
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadAll = useCallback(() => {
+  // bust=1 mirrors Opportunities.jsx's own manual-refresh param — without
+  // it this would just re-read the server-side listings cache and never
+  // actually show anything new.
+  const loadAll = useCallback((bust = false) => {
     setError(false);
-    Promise.all([client.get('/opportunities'), client.get('/jobs/tracking')])
+    Promise.all([client.get('/opportunities', { params: bust ? { bust: 1 } : {} }), client.get('/jobs/tracking')])
       .then(([oppRes, trackRes]) => {
         setOpportunities((oppRes.data.opportunities || []).filter(o => o?.id));
         const map = {};
         for (const j of (trackRes.data.jobs || [])) map[j.id] = j;
         setTracked(map);
       })
-      .catch(() => setError(true));
+      .catch(() => setError(true))
+      .finally(() => setRefreshing(false));
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  function handleRefresh() {
+    setRefreshing(true);
+    loadAll(true);
+  }
 
   async function setStatus(job, status) {
     setSavingId(job.id);
@@ -388,10 +548,16 @@ function JobTrackerSection() {
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20, alignItems: 'center' }}>
         <StatChip label="Listings" value={sorted.length} />
         <StatChip label="Saved" value={savedCount} />
         <StatChip label="Applied" value={appliedCount} />
+        <button
+          type="button" onClick={handleRefresh} disabled={refreshing}
+          className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}
+        >
+          {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🔄 Refresh'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -444,6 +610,146 @@ function JobTrackerSection() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const PLATFORM_RESULT_META = {
+  posted: { icon: '✅', label: 'Posted' },
+  queued: { icon: '🕒', label: 'Queued — pending platform approval' },
+  failed: { icon: '❌', label: 'Failed' },
+};
+
+// Real publishing only for Bluesky/Reddit (see REAL_PUBLISH_PLATFORMS both
+// here and server-side) — every other selected platform comes back
+// 'queued', never silently marked as posted. connectedPlatforms comes from
+// the same /social/platforms the other sections already call.
+function CrossPostSection() {
+  const { showToast } = useToast();
+  const [connected, setConnected] = useState(null);
+  const [content, setContent] = useState('');
+  const [selected, setSelected] = useState(new Set());
+  const [posting, setPosting] = useState(false);
+  const [lastResult, setLastResult] = useState(null);
+  const [history, setHistory] = useState(null);
+
+  useEffect(() => {
+    client.get('/social/platforms').then(({ data }) => setConnected(data.connected || {})).catch(() => setConnected({}));
+    client.get('/command-center/cross-post/history').then(({ data }) => setHistory(data.posts || [])).catch(() => setHistory([]));
+  }, []);
+
+  function toggle(platform) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(platform)) next.delete(platform); else next.add(platform);
+      return next;
+    });
+  }
+
+  async function handlePost(e) {
+    e.preventDefault();
+    if (!content.trim() || !selected.size || posting) return;
+    setPosting(true);
+    setLastResult(null);
+    try {
+      const { data } = await client.post('/command-center/cross-post', { content: content.trim(), platforms: [...selected] });
+      setLastResult(data.targets || []);
+      setHistory(prev => [{ id: data.id, content: content.trim(), targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
+      setContent('');
+      setSelected(new Set());
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not send your post. Please try again.', 'error');
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
+  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="card">
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>📤 Post to multiple platforms</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
+          Bluesky and Reddit post for real. Every other platform saves your post as queued until its publishing API is available.
+        </p>
+        {!connectedPlatforms.length ? (
+          <div style={{ marginTop: 16 }}>
+            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+          </div>
+        ) : (
+          <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
+            <textarea
+              value={content} onChange={e => setContent(e.target.value)} rows={4}
+              placeholder="What do you want to share?"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+            />
+            <div>
+              <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Send to</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {connectedPlatforms.map(p => {
+                  const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+                  const active = selected.has(p);
+                  const real = REAL_PUBLISH_PLATFORMS.includes(p);
+                  return (
+                    <button
+                      key={p} type="button" onClick={() => toggle(p)}
+                      className="btn btn-sm"
+                      style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
+                    >
+                      {meta.icon} {meta.label}{!real && ' · queued'}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={posting || !content.trim() || !selected.size} style={{ alignSelf: 'flex-start' }}>
+              {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
+            </button>
+          </form>
+        )}
+      </div>
+
+      {lastResult && (
+        <div className="card">
+          <h3 style={{ margin: '0 0 10px', fontSize: '.85rem' }}>Result</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {lastResult.map(t => {
+              const meta = SOURCE_META[t.platform] || SOURCE_META.uficonnect;
+              const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
+              return (
+                <div key={t.platform} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.85rem' }}>
+                  <span>{resultMeta.icon}</span>
+                  <span style={{ fontWeight: 600 }}>{meta.icon} {meta.label}</span>
+                  <span style={{ color: 'var(--muted)' }}>
+                    {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post ↗</a> : (t.error || resultMeta.label)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {history && history.length > 0 && (
+        <div>
+          <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>History</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {history.map(h => (
+              <div key={h.id} className="card">
+                <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}>{h.content}</p>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
+                  {(h.targets || []).map(t => (
+                    <span key={t.platform}>{(PLATFORM_RESULT_META[t.status] || {}).icon} {(SOURCE_META[t.platform] || {}).label || t.platform}</span>
+                  ))}
+                  <span>· {timeAgo(h.createdAt)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -509,7 +815,9 @@ export default function CommandCenter() {
 
           {section === 'feed' && <ConnectedFeedSection />}
           {section === 'content' && <ContentHubSection />}
+          {section === 'yourfeed' && <YourFeedSection />}
           {section === 'jobs' && <JobTrackerSection />}
+          {section === 'crosspost' && <CrossPostSection />}
         </>
       )}
 

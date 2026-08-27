@@ -1,6 +1,35 @@
 ﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { TIERS } from '../components/PricingModal';
+
+// Resume Builder is a standalone $5/mo add-on (not a plan tier — see
+// ResumeBuilder.jsx/backend resume_builder_addon), so it's kept separate
+// from PricingModal's TIERS rather than folded into that plan-upgrade list.
+const RESUME_BUILDER_ADDON = { name: 'Resume Builder', price: '5', icon: '📄', tagline: 'Add-on for any plan' };
+
+const FAQS = [
+  {
+    q: 'Is UFIconnect free?',
+    a: 'Yes — creating an account, building your feed, joining communities, and messaging are all free. Pro and Business add extra tools on top; a couple of individual tools (like Resume Builder) are optional paid add-ons.',
+  },
+  {
+    q: 'Where does the feed content come from?',
+    a: 'Real posts pulled directly from the platforms shown above (GitHub, Reddit, YouTube, and more), plus original posts from other UFIconnect members — balanced so no single source dominates your feed.',
+  },
+  {
+    q: 'Do I have to pick a tech role?',
+    a: 'No. UFIconnect supports 16+ paths across tech, creative, business, healthcare, and more — your feed, communities, and opportunities adjust to whatever you pick.',
+  },
+  {
+    q: 'Can I use UFIconnect without creating an account?',
+    a: 'Yes — use "Skip sign up" above to browse the Global Feed as a guest. Creating a free account unlocks personalization, messaging, and posting.',
+  },
+  {
+    q: 'What happens to my data?',
+    a: 'See our Privacy Policy for the full details on what’s collected and how it’s used — linked in the footer below.',
+  },
+];
 
 const FEATURES = [
   {
@@ -96,10 +125,6 @@ const SHARE_LINKS = [
 export default function Landing() {
   const [shareCopied, setShareCopied] = useState(false);
 
-  function continueAsGuest() {
-    window.location.href = '/global';
-  }
-
   async function handleShare() {
     try {
       if (navigator.share) {
@@ -163,7 +188,7 @@ export default function Landing() {
                 <p style={{ fontSize: '1.1rem', color: 'var(--muted)', marginBottom: '36px', lineHeight: '1.7', maxWidth: '520px' }}>
                   A personalized feed, communities, messaging, and real opportunities — tailored to your role, whatever that is.
                 </p>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '40px' }}>
                   <Link to="/register" className="btn btn-primary btn-lg" style={{ padding: '13px 36px', fontWeight: 700 }}>
                     Get Started Free →
                   </Link>
@@ -171,16 +196,6 @@ export default function Landing() {
                     Skip sign up - Global Feed →
                   </Link>
                 </div>
-                <button
-                  type="button"
-                  onClick={continueAsGuest}
-                  style={{
-                    all: 'unset', cursor: 'pointer', fontSize: '.85rem', fontWeight: 600,
-                    color: 'var(--muted)', textDecoration: 'underline', marginBottom: '44px', display: 'inline-block',
-                  }}
-                >
-                  Skip sign up and open Global Feed →
-                </button>
 
                 {/* Role pills preview — a deliberately mixed slice (not just
                     the first 8 in ROLE_PREVIEWS, which skews tech/business)
@@ -381,6 +396,62 @@ export default function Landing() {
             </div>
           </section>
 
+          {/* Pricing */}
+          <section id="pricing" style={{ background: '#fff', padding: '70px 32px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '10px' }}>
+                Pricing
+              </h2>
+              <p style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.95rem', marginBottom: '44px', maxWidth: 600, margin: '0 auto 44px' }}>
+                The core platform is free. Upgrade for extra tools, or add just what you need.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px' }}>
+                <div style={{ padding: '28px 24px', borderRadius: 'var(--radius)', border: '1.5px solid var(--border)' }}>
+                  <div style={{ fontSize: '1.8rem', marginBottom: 10 }}>🆓</div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: 6 }}>Free</h3>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 900, marginBottom: 10 }}>$0</div>
+                  <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
+                    Personalized feed, communities, messaging, and opportunities — no cost, ever.
+                  </p>
+                </div>
+                {TIERS.map(t => (
+                  <div key={t.tier} style={{ padding: '28px 24px', borderRadius: 'var(--radius)', border: '1.5px solid var(--border)', opacity: t.locked ? 0.65 : 1, position: 'relative' }}>
+                    {t.locked && (
+                      <span style={{ position: 'absolute', top: 20, right: 20, fontSize: '.65rem', fontWeight: 700, color: 'var(--muted)', background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 6px' }}>COMING SOON</span>
+                    )}
+                    <div style={{ fontSize: '1.8rem', marginBottom: 10 }}>{t.icon}</div>
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: 6 }}>{t.name}</h3>
+                    <div style={{ fontSize: '1.6rem', fontWeight: 900, marginBottom: 10 }}>${t.price}<span style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>/mo</span></div>
+                    <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>{t.tagline}</p>
+                  </div>
+                ))}
+                <div style={{ padding: '28px 24px', borderRadius: 'var(--radius)', border: '1.5px solid var(--border)' }}>
+                  <div style={{ fontSize: '1.8rem', marginBottom: 10 }}>{RESUME_BUILDER_ADDON.icon}</div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 800, marginBottom: 6 }}>{RESUME_BUILDER_ADDON.name}</h3>
+                  <div style={{ fontSize: '1.6rem', fontWeight: 900, marginBottom: 10 }}>${RESUME_BUILDER_ADDON.price}<span style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>/mo</span></div>
+                  <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>{RESUME_BUILDER_ADDON.tagline} — build and export an ATS-friendly resume from Opportunities.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* FAQ */}
+          <section id="faq" style={{ padding: '70px 32px', background: 'linear-gradient(135deg, #EFF6FF 0%, #F3EEFF 100%)' }}>
+            <div style={{ maxWidth: '760px', margin: '0 auto' }}>
+              <h2 style={{ textAlign: 'center', fontSize: '1.5rem', fontWeight: '800', marginBottom: '44px' }}>
+                Frequently asked questions
+              </h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {FAQS.map(({ q, a }) => (
+                  <div key={q} style={{ background: '#fff', padding: '20px 22px', borderRadius: 'var(--radius)', boxShadow: 'var(--shadow)', border: '1px solid var(--border)' }}>
+                    <h3 style={{ fontSize: '.95rem', fontWeight: 700, marginBottom: 8 }}>{q}</h3>
+                    <p style={{ fontSize: '.85rem', color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>{a}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
           {/* Bottom CTA */}
           <section style={{ background: '#fff', padding: '60px 32px', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
             <div style={{ maxWidth: '600px', margin: '0 auto' }}>
@@ -399,6 +470,8 @@ export default function Landing() {
         <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(0,0,0,.05)', background: '#fff', textAlign: 'center', fontSize: '.8rem', color: 'var(--muted)' }}>
           <p style={{ marginBottom: 8 }}>© {new Date().getFullYear()} UFIconnect</p>
           <p>
+            <Link to="/terms" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Terms of Service</Link>
+            {' · '}
             <Link to="/privacy" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' · '}
             <Link to="/child-safety" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>Child Safety Standards</Link>

@@ -139,6 +139,12 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID_BUSINESS
         sync: false
+      # Resume Builder — a separate $5/mo recurring Price object, independent
+      # of the Pro/Business Prices above (see resume_builder_addon in
+      # backend/index.js). Until this is set, /billing/create-checkout-session
+      # returns 503 for tier:'resume_builder' same as the other two do.
+      - key: STRIPE_PRICE_ID_RESUME_BUILDER
+        sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and
       # createNotification/sendPushToUser silently skip the push step — the
       # in-app notification itself still gets created either way. Generate

@@ -20,6 +20,7 @@
     "multer": "^2.2.0",
     "nodemailer": "^9.0.5",
     "pdf-parse": "^2.4.5",
+    "pdfkit": "^0.20.1",
     "pg": "^8.21.0",
     "stripe": "^22.5.0",
     "web-push": "^3.6.7"

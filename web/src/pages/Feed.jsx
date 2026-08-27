@@ -1531,7 +1531,13 @@ function writeFeedCache(posts) {
   } catch {}
 }
 
-export default function Feed() {
+// forcedMode: set by the /you route (see App.jsx) to lock this page into
+// Following mode — the "You" nav tab's full equalizer feed of the member's
+// connected-platform activity. Reuses every bit of Following mode's
+// existing machinery (cursor pagination, equalizer, infinite scroll) rather
+// than a second feed engine; the toggle pill below is just hidden so /you
+// can't be switched away from it mid-visit.
+export default function Feed({ forcedMode } = {}) {
   const { profile } = useAuth();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
@@ -1562,7 +1568,7 @@ export default function Feed() {
   const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
-  const [viewMode,      setViewMode]      = useState(_saved?.viewMode || 'feed');
+  const [viewMode,      setViewMode]      = useState(forcedMode || _saved?.viewMode || 'feed');
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -1592,7 +1598,7 @@ export default function Feed() {
   const loadingMoreRef = useRef(false);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
-  const viewModeRef   = useRef(_saved?.viewMode || 'feed');
+  const viewModeRef   = useRef(forcedMode || _saved?.viewMode || 'feed');
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -2262,14 +2268,14 @@ export default function Feed() {
   return (
     <Layout>
       <Helmet>
-        <title>Professional News Feed | News & Updates for Your Career | UFIconnect</title>
+        <title>{forcedMode ? 'You | UFIconnect' : 'Professional News Feed | News & Updates for Your Career | UFIconnect'}</title>
         <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
-        <link rel="canonical" href="https://uficonnect.org/feed" />
+        {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className="page-header">
         <h1 className="page-title">
-          {firstName ? `Welcome back, ${firstName}` : 'Your Feed'}
+          {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Your Feed')}
           <span style={{
             marginLeft: 10, display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: '.65rem', fontWeight: 700, padding: '3px 9px', borderRadius: 20,
@@ -2375,30 +2381,35 @@ export default function Feed() {
       {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
           stable, server-sorted view) and Following (posts from people you
           follow on UFIconnect). Videos lives as its own top-level nav item
-          (see Layout.jsx / pages/Videos.jsx) rather than nested in here. */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        {[
-          { key: 'feed',      label: 'Feed' },
-          { key: 'following', label: 'Following' },
-        ].map(({ key, label }) => {
-          const active = viewMode === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => switchViewMode(key)}
-              style={{
-                padding: '7px 14px', borderRadius: 20, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer',
-                border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-                background: active ? 'var(--primary)' : 'var(--surface)',
-                color: active ? '#fff' : 'var(--text)',
-              }}
-            >
-              {label}
-            </button>
-          );
-        })}
-      </div>
+          (see Layout.jsx / pages/Videos.jsx) rather than nested in here.
+          Hidden entirely under forcedMode (the /you route) — that page IS
+          Following mode as its own dedicated tab, so switching away from it
+          in place would leave the URL and the content mismatched. */}
+      {!forcedMode && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          {[
+            { key: 'feed',      label: 'Feed' },
+            { key: 'following', label: 'Following' },
+          ].map(({ key, label }) => {
+            const active = viewMode === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => switchViewMode(key)}
+                style={{
+                  padding: '7px 14px', borderRadius: 20, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer',
+                  border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
+                  background: active ? 'var(--primary)' : 'var(--surface)',
+                  color: active ? '#fff' : 'var(--text)',
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Source tabs — Feed and Following each filter over their own
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
@@ -2686,7 +2697,15 @@ export default function Feed() {
                 <p style={{ marginBottom: 12 }}>Follow people on UFIconnect to see their posts here.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <Link to="/search" className="btn btn-primary btn-sm">Find people</Link>
-                  <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Feed</button>
+                  {/* forcedMode (the /you route) is Following as its own
+                      dedicated page — switching viewMode in place here would
+                      leave the URL saying /you while showing Feed content,
+                      so this navigates to the real Feed page instead. */}
+                  {forcedMode ? (
+                    <Link to="/" className="btn btn-ghost btn-sm">Back to Feed</Link>
+                  ) : (
+                    <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Feed</button>
+                  )}
                 </div>
               </>
             ) : (

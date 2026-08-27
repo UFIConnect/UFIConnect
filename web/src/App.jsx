@@ -62,6 +62,7 @@ const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
 const Sources        = lazy(() => import('./pages/Sources'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
+const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
@@ -130,6 +131,12 @@ export default function App() {
       <Route path="/videos" element={
         <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
       }/>
+      {/* "You" — a full equalizer feed of the member's connected-platform
+          activity. Reuses Feed.jsx's existing Following-mode machinery
+          (see forcedMode) rather than a second feed engine. */}
+      <Route path="/you" element={
+        <RequireAuth><RequireOnboarding><Feed forcedMode="following" /></RequireOnboarding></RequireAuth>
+      }/>
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
       }/>
@@ -138,6 +145,9 @@ export default function App() {
       }/>
       <Route path="/opportunities" element={
         <RequireAuth><RequireOnboarding><Opportunities /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/resume-builder" element={
+        <RequireAuth><RequireOnboarding><ResumeBuilder /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/messages" element={
         <RequireAuth><RequireOnboarding><Messages /></RequireOnboarding></RequireAuth>

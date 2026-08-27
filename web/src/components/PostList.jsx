@@ -1,4 +1,4 @@
-﻿import { useEffect, useState, useMemo } from 'react';
+﻿import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
@@ -59,10 +59,29 @@ export default function PostList({
   const [deleteBusy, setDeleteBusy] = useState({});
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [expandedPosts, setExpandedPosts] = useState({});
+  const sentinelRef = useRef(null);
 
   useEffect(() => {
     setLocalPosts(posts);
   }, [posts]);
+
+  // onNearEnd used to only fire from inside the fullscreen media lightbox's
+  // own next/prev paging — scrolling the plain list on Profile/GroupDetail/
+  // PublicProfile itself never loaded a second page no matter how far down
+  // you scrolled. Every caller's own onNearEnd handler already no-ops when
+  // there's nothing more to load or a fetch is already in flight (see e.g.
+  // Profile.jsx's loadMorePosts), so calling it liberally here is safe.
+  const handleNearEnd = useCallback(() => { onNearEnd?.(); }, [onNearEnd]);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !onNearEnd) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) handleNearEnd(); },
+      { rootMargin: '400px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [handleNearEnd, onNearEnd, localPosts.length]);
 
   // Photos and videos share one scrollable viewer (see ImageLightbox) —
   // videos here used to just be plain inline <video controls> with no way
@@ -414,6 +433,8 @@ export default function PostList({
           </div>
         );
       })}
+
+      {onNearEnd && <div ref={sentinelRef} style={{ height: 1 }} />}
 
       {mediaLightboxIndex !== -1 && (
         <ImageLightbox

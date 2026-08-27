@@ -1,4 +1,6 @@
-﻿const TIERS = [
+﻿// Exported so other pages (e.g. Landing's pricing section) can render the
+// same names/prices without retyping them somewhere they'd drift out of sync.
+export const TIERS = [
   {
     tier: 'pro',
     name: 'Pro',

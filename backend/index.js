@@ -15,6 +15,7 @@ const { execFile, fork } = require('child_process');
 const nodemailer = require('nodemailer');
 const webpush = require('web-push');
 const multer = require('multer');
+const PDFDocument = require('pdfkit');
 const v8 = require('v8');
 const db        = require('./db');
 const filestore  = require('./filestore');
@@ -132,15 +133,29 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
       // Falls back to 'pro' for any in-flight session created before this
       // existed, or a genuinely missing/invalid value — matches this
       // route's original single-tier behavior rather than leaving plan unset.
-      const tier = ['pro', 'business'].includes(session.metadata?.tier) ? session.metadata.tier : 'pro';
+      // resume_builder is a separate add-on subscription, not a plan tier —
+      // deliberately kept off `plan`/`stripe_subscription_id` (a user can
+      // hold Pro AND the addon at once) and given its own pair of columns
+      // instead (see resume_builder_addon/resume_builder_subscription_id).
+      const tier = ['pro', 'business', 'resume_builder'].includes(session.metadata?.tier) ? session.metadata.tier : 'pro';
       if (userId && db.isConnected() && isDBId(userId)) {
-        await db.query(
-          `UPDATE users SET plan=$1, stripe_customer_id=$2, stripe_subscription_id=$3 WHERE id=$4`,
-          [tier, session.customer, session.subscription, userId]
-        );
-        const mem = users.find(u => u.id === userId);
-        if (mem) { mem.plan = tier; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
-        console.log(`[Stripe webhook] user ${userId} upgraded to ${tier}`);
+        if (tier === 'resume_builder') {
+          await db.query(
+            `UPDATE users SET resume_builder_addon=true, resume_builder_subscription_id=$1, stripe_customer_id=$2 WHERE id=$3`,
+            [session.subscription, session.customer, userId]
+          );
+          const mem = users.find(u => u.id === userId);
+          if (mem) { mem.resumeBuilderAddon = true; mem.resumeBuilderSubscriptionId = session.subscription; mem.stripeCustomerId = session.customer; }
+          console.log(`[Stripe webhook] user ${userId} unlocked resume_builder`);
+        } else {
+          await db.query(
+            `UPDATE users SET plan=$1, stripe_customer_id=$2, stripe_subscription_id=$3 WHERE id=$4`,
+            [tier, session.customer, session.subscription, userId]
+          );
+          const mem = users.find(u => u.id === userId);
+          if (mem) { mem.plan = tier; mem.stripeCustomerId = session.customer; mem.stripeSubscriptionId = session.subscription; }
+          console.log(`[Stripe webhook] user ${userId} upgraded to ${tier}`);
+        }
       }
     } else if (event.type === 'customer.subscription.deleted' || event.type === 'customer.subscription.updated') {
       const sub = event.data.object;
@@ -153,12 +168,23 @@ app.post('/billing/webhook', express.raw({ type: 'application/json' }), async (r
         return res.json({ received: true });
       }
       if (db.isConnected()) {
+        // Two independent subscriptions can point at the same customer, so
+        // this cancellation might be the plan OR the resume_builder addon —
+        // check both id columns and only clear whichever one actually matches.
         const { rows } = await db.query(`SELECT id FROM users WHERE stripe_subscription_id = $1`, [sub.id]);
         if (rows[0]) {
           await db.query(`UPDATE users SET plan='free', stripe_subscription_id=NULL WHERE id=$1`, [rows[0].id]);
           const mem = users.find(u => u.id === rows[0].id);
           if (mem) { mem.plan = 'free'; mem.stripeSubscriptionId = null; }
           console.log(`[Stripe webhook] user ${rows[0].id} downgraded to free (${sub.status})`);
+        } else {
+          const { rows: addonRows } = await db.query(`SELECT id FROM users WHERE resume_builder_subscription_id = $1`, [sub.id]);
+          if (addonRows[0]) {
+            await db.query(`UPDATE users SET resume_builder_addon=false, resume_builder_subscription_id=NULL WHERE id=$1`, [addonRows[0].id]);
+            const mem = users.find(u => u.id === addonRows[0].id);
+            if (mem) { mem.resumeBuilderAddon = false; mem.resumeBuilderSubscriptionId = null; }
+            console.log(`[Stripe webhook] user ${addonRows[0].id} lost resume_builder (${sub.status})`);
+          }
         }
       }
     }
@@ -1053,6 +1079,57 @@ async function atprotoPost(url, formParams, { accessToken } = {}) {
     const headers = { DPoP: proof };
     if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
     const result = await postFormWithMeta(url, formParams, headers);
+    const nextNonce = result.headers['dpop-nonce'];
+    if (nextNonce) nonce = nextNonce;
+    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    return result;
+  }
+}
+
+// JSON-body counterpart of postFormWithMeta — every OAuth/PAR/token
+// exchange above is form-urlencoded per spec, but AT Proto's actual data
+// XRPC procedures (com.atproto.repo.createRecord, used by publishToBluesky)
+// take a JSON body instead, so this can't reuse postFormWithMeta directly.
+function postJSONWithMeta(url, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const json = JSON.stringify(body);
+    const u = new URL(url);
+    const opts = {
+      hostname: u.hostname, port: u.port || 443,
+      path: u.pathname + u.search, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(json),
+        'Accept': 'application/json',
+        ...headers,
+      },
+    };
+    const req = https.request(opts, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        let parsed = null;
+        try { parsed = JSON.parse(data); } catch {}
+        resolve({ data: parsed, headers: res.headers, status: res.statusCode });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => req.destroy(new Error('postJSONWithMeta timeout')));
+    req.write(json);
+    req.end();
+  });
+}
+
+// JSON-body counterpart of atprotoPost — same DPoP-nonce-retry dance, for
+// XRPC procedures that take a JSON body (e.g. createRecord) rather than a
+// form-urlencoded one (the OAuth/PAR/token exchanges atprotoPost handles).
+async function atprotoPostJSON(url, body, { accessToken } = {}) {
+  let nonce;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const proof = createDPoPProof('POST', url, { nonce, accessToken });
+    const headers = { DPoP: proof };
+    if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
+    const result = await postJSONWithMeta(url, body, headers);
     const nextNonce = result.headers['dpop-nonce'];
     if (nextNonce) nonce = nextNonce;
     if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
@@ -11006,6 +11083,289 @@ const FOLLOWING_SOURCE_FETCHERS = {
   // feed elsewhere.
 };
 
+// ─── Own-content fetchers (Command Center "Your Feed") ─────────────────────
+// Deliberately the mirror image of FOLLOWING_SOURCE_FETCHERS above: this
+// member's OWN posts/activity, not who they follow. Scoped to the same six
+// platforms that already have a real per-user OAuth token AND a documented
+// own-content endpoint this app can call today — Dribbble/Threads/Medium's
+// own-content APIs exist too (see the comment block above) but aren't wired
+// up yet, pending verifying their exact response shapes against a real
+// connected account; they render "Coming soon" in Your Feed for now rather
+// than shipping an unverified integration.
+async function fetchGitHubOwnActivity(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `github_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  if (githubBlocked()) { const stale = postCache.get(key)?.v; return stale || []; }
+  try {
+    const auth = { Authorization: `token ${token}` };
+    const { data: me, headers: meHeaders } = await fetchJSONWithHeaders('https://api.github.com/user', auth);
+    recordGitHubRateLimitHeaders(meHeaders);
+    if (!me?.login) return [];
+    // /users/:login/events (no "received_") — this member's OWN public
+    // activity, the same endpoint the removed comment above confirms is
+    // "the AUTHENTICATED member's own personal activity feed" for GitLab;
+    // GitHub's equivalent own-activity endpoint is this one.
+    const { data: events, headers: evHeaders } = await fetchJSONWithHeaders(
+      `https://api.github.com/users/${encodeURIComponent(me.login)}/events?per_page=100`,
+      auth
+    );
+    recordGitHubRateLimitHeaders(evHeaders);
+    const posts = (Array.isArray(events) ? events : [])
+      .filter(e => ['PushEvent', 'CreateEvent', 'PullRequestEvent', 'IssuesEvent'].includes(e.type))
+      .map(e => {
+        const repoName = e.repo?.name || 'unknown/unknown';
+        let title, content, url = `https://github.com/${repoName}`;
+        switch (e.type) {
+          case 'PushEvent': {
+            const commits = e.payload?.commits || [];
+            title = `Pushed to ${repoName}`;
+            content = commits.map(c => c.message?.split('\n')[0]).filter(Boolean).slice(0, 3).join(' · ') || `${commits.length} commit(s)`;
+            break;
+          }
+          case 'CreateEvent':
+            title = `Created ${e.payload?.ref_type || 'a repository'}${e.payload?.ref ? ` "${e.payload.ref}"` : ''} in ${repoName}`;
+            content = repoName;
+            break;
+          case 'PullRequestEvent':
+            title = `${e.payload?.action || 'Updated'} a pull request in ${repoName}`;
+            content = e.payload?.pull_request?.title || repoName;
+            url = e.payload?.pull_request?.html_url || url;
+            break;
+          case 'IssuesEvent':
+            title = `${e.payload?.action || 'Updated'} an issue in ${repoName}`;
+            content = e.payload?.issue?.title || repoName;
+            url = e.payload?.issue?.html_url || url;
+            break;
+        }
+        return {
+          id: `github_own_${e.id}`, source: 'github', sourceLabel: 'GitHub',
+          title: title || repoName, content: content || '', sourceUrl: url,
+          mediaUrl: null, mediaType: null,
+          createdAt: normalizeTimestamp(e.created_at),
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('GitHub own activity fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchGitLabOwnActivity(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `gitlab_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const auth = { Authorization: `Bearer ${token}` };
+    // GET /events with no :id is this member's OWN activity feed (see
+    // fetchGitLabFollowingActivity's own comment, which confirmed this
+    // directly against GitLab's docs) — no separate "who am I" call needed.
+    const events = await fetchJSON('https://gitlab.com/api/v4/events?per_page=50', auth);
+    const posts = (Array.isArray(events) ? events : [])
+      .filter(e => e?.id && e?.action_name)
+      .map(e => {
+        const target = e.target_title ? ` "${e.target_title}"` : '';
+        const targetType = e.target_type ? e.target_type.toLowerCase() : 'project';
+        return {
+          id: `gitlab_own_${e.id}`, source: 'gitlab', sourceLabel: 'GitLab',
+          title: `${e.action_name}${target || ` a ${targetType}`}`,
+          content: `${e.action_name} ${targetType}${target}`.trim(),
+          sourceUrl: 'https://gitlab.com/dashboard',
+          mediaUrl: null, mediaType: null,
+          createdAt: normalizeTimestamp(e.created_at),
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('GitLab own activity fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchYouTubeOwnUploads(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `youtube_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const auth = { Authorization: `Bearer ${token}` };
+    // mine=true instead of resolving subscribed channels — this member's OWN
+    // channel/uploads playlist (see fetchYouTubeSubscriptionFeed's comment
+    // for why list endpoints are used over search.list — same quota logic).
+    const channels = await fetchJSON('https://www.googleapis.com/youtube/v3/channels?part=contentDetails,snippet&mine=true', auth);
+    const own = channels?.items?.[0];
+    const playlistId = own?.contentDetails?.relatedPlaylists?.uploads;
+    if (!playlistId) { setCached(key, []); return []; }
+    const channelTitle = own?.snippet?.title || 'YouTube';
+    const items = await fetchJSON(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=25`, auth);
+    const posts = (items?.items || [])
+      .filter(item => item.snippet?.resourceId?.videoId)
+      .map(item => {
+        const videoId = item.snippet.resourceId.videoId;
+        return {
+          id: `youtube_own_${videoId}`, source: 'youtube', sourceLabel: channelTitle,
+          title: item.snippet.title || 'YouTube video', content: item.snippet.description || '',
+          sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+          // Video files themselves are never downloadable here (YouTube's ToS
+          // prohibits third-party video downloading) — only the thumbnail
+          // image and a "view on YouTube" link are ever offered client-side.
+          mediaUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
+          mediaType: 'video_thumbnail_only',
+          createdAt: normalizeTimestamp(item.snippet.publishedAt),
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('YouTube own uploads fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchRedditOwnPosts(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `reddit_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const auth = { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' };
+    const me = await fetchJSON('https://oauth.reddit.com/api/v1/me', auth);
+    if (!me?.name) return [];
+    const data = await fetchJSON(`https://oauth.reddit.com/user/${encodeURIComponent(me.name)}/submitted?limit=100&raw_json=1`, auth);
+    // Same Listing shape fetchRedditHomeFeed already parses — reused as-is.
+    const posts = parseRedditJSON(data, null).map(p => ({
+      id: `reddit_own_${p.id}`, source: 'reddit', sourceLabel: 'Reddit',
+      title: p.title, content: p.content, sourceUrl: p.sourceUrl,
+      mediaUrl: p.mediaUrl || null, mediaType: p.mediaType || null,
+      createdAt: p.createdAt,
+    }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Reddit own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchTwitchOwnVideos(token, { bust = false } = {}) {
+  if (!token) return [];
+  const key = `twitch_own_${token.slice(-12)}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  const headers = { Authorization: `Bearer ${token}`, 'Client-Id': SOCIAL_CFG.twitch.clientId() };
+  try {
+    const me = await fetchJSON('https://api.twitch.tv/helix/users', headers);
+    const userId = me?.data?.[0]?.id;
+    const userLogin = me?.data?.[0]?.login;
+    if (!userId) return [];
+    // This member's own past broadcasts/highlights — the closest Twitch
+    // equivalent of "my own posts" (Twitch has no generic text-post concept).
+    const data = await fetchJSON(`https://api.twitch.tv/helix/videos?user_id=${userId}&first=20`, headers);
+    const posts = (Array.isArray(data?.data) ? data.data : []).map(v => ({
+      id: `twitch_own_${v.id}`, source: 'twitch', sourceLabel: 'Twitch',
+      title: v.title || 'Twitch video', content: v.description || v.title || '',
+      sourceUrl: v.url || `https://www.twitch.tv/${userLogin}/videos`,
+      // Same ToS guardrail as YouTube — thumbnail + link out, never the video file.
+      mediaUrl: (v.thumbnail_url || '').replace('%{width}', '440').replace('%{height}', '248') || null,
+      mediaType: 'video_thumbnail_only',
+      createdAt: normalizeTimestamp(v.created_at),
+    }));
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Twitch own videos fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
+  if (!token) return [];
+  let session;
+  try { session = JSON.parse(token); } catch { return []; }
+  if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
+  const key = `bluesky_own_${session.did}`;
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    // getAuthorFeed for the member's own DID — their own posts, same call
+    // fetchBlueskyFollowingTimeline's own comment says this app used to
+    // (incorrectly) use for "Following" before switching to getTimeline.
+    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=50`;
+    const result = await atprotoGet(url, { accessToken: session.accessToken });
+    if (result?.status >= 400) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+    const feed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+    const posts = feed
+      .filter(item => item.post?.cid)
+      .map(({ post: p }) => {
+        const text = truncateWithEllipsis(p.record?.text || '', POST_CONTENT_MAX_CHARS);
+        const handle = p.author?.handle || p.author?.did || 'unknown';
+        const isVideo = p.embed?.$type === 'app.bsky.embed.video#view' && p.embed?.thumbnail;
+        const isImage = p.embed?.$type === 'app.bsky.embed.images#view' && p.embed?.images?.length;
+        return {
+          id: `bluesky_own_${(p.cid || p.uri || Date.now().toString(36)).replace(/[^a-z0-9]/gi, '').slice(-16)}`,
+          source: 'bluesky', sourceLabel: `@${handle}`,
+          title: text.slice(0, 120), content: text,
+          sourceUrl: `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
+          mediaUrl: isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].fullsize : null),
+          mediaType: isVideo ? 'video_thumbnail_only' : (isImage ? 'image' : null),
+          createdAt: normalizeTimestamp(p.record?.createdAt || p.indexedAt),
+        };
+      });
+    setCached(key, posts);
+    return posts;
+  } catch (e) {
+    console.warn('Bluesky own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+const OWN_CONTENT_FETCHERS = {
+  github: fetchGitHubOwnActivity,
+  gitlab: fetchGitLabOwnActivity,
+  youtube: fetchYouTubeOwnUploads,
+  reddit: fetchRedditOwnPosts,
+  twitch: fetchTwitchOwnVideos,
+  bluesky: fetchBlueskyOwnPosts,
+  // dribbble/threads/medium: real own-content APIs exist (see the comment
+  // above FOLLOWING_SOURCE_FETCHERS) but aren't wired up yet — "Coming
+  // soon" in Your Feed rather than an unverified integration.
+};
+
+// Media URLs this app will actually proxy-download through
+// /command-center/your-content/download — each platform's own API-returned
+// CDN host only, never an arbitrary URL (SSRF guard) and never a video file
+// host (ToS/copyright guard — YouTube/Twitch videos are link-out only, see
+// mediaType 'video_thumbnail_only' above).
+const CONTENT_DOWNLOAD_HOST_ALLOWLIST = [
+  'i.redd.it', 'preview.redd.it', 'external-preview.redd.it',
+  'cdn.bsky.app',
+  'i.ytimg.com',
+  'static-cdn.jtvnw.net',
+];
+function isAllowedDownloadUrl(url) {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' && CONTENT_DOWNLOAD_HOST_ALLOWLIST.includes(hostname);
+  } catch { return false; }
+}
+
 // Background refresh for FOLLOWING_SOURCE_FETCHERS, on the same 5-minute
 // rate SOURCE_CONFIG uses for the app-level continuous workers. There's no
 // app-level equivalent for these — every fetcher here is scoped to
@@ -11423,6 +11783,8 @@ function fullProfile(user) {
     // ends up being Business-only.
     isPro: ['pro', 'business'].includes(user.plan),
     isBusiness: user.plan === 'business',
+    // Independent $5/mo add-on — see checkout-session/webhook comments.
+    resumeBuilderAddon: !!user.resumeBuilderAddon,
   };
 }
 
@@ -11460,6 +11822,10 @@ function dbRowToMemUser(row) {
     plan: row.plan || 'free',
     stripeCustomerId: row.stripe_customer_id || null,
     stripeSubscriptionId: row.stripe_subscription_id || null,
+    // Independent of plan — see the checkout-session/webhook comments on
+    // resume_builder_addon for why this isn't folded into `plan`.
+    resumeBuilderAddon: !!row.resume_builder_addon,
+    resumeBuilderSubscriptionId: row.resume_builder_subscription_id || null,
     createdAt: row.created_at || null,
   };
 }
@@ -11664,6 +12030,14 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_stripe_customer_idx ON users(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_auth_subject_idx ON users(auth_provider, auth_subject) WHERE auth_subject IS NOT NULL`);
+    // Resume Builder — an independent $5/mo add-on subscription, not a plan
+    // tier (see /billing/create-checkout-session + the webhook's own
+    // comments): a free or paid-plan user can hold this at the same time as
+    // whatever `plan` they're already on, so it gets its own subscription id
+    // column rather than overloading stripe_subscription_id.
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_addon BOOLEAN NOT NULL DEFAULT false`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS resume_builder_subscription_id TEXT`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_resume_builder_sub_idx ON users(resume_builder_subscription_id) WHERE resume_builder_subscription_id IS NOT NULL`);
 
     // Groups table — persists across deploys
     await db.query(`
@@ -11859,6 +12233,45 @@ async function migrateDB() {
       )
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS job_tracking_user_idx ON job_tracking(user_id, updated_at DESC)`);
+
+    // Resume Builder's editable draft — one row per user (upsert, like
+    // job_tracking above), so the form persists between visits before the
+    // member exports it. `data` holds the structured sections (contact,
+    // summary, experience[], education[], skills[]); `template` is which of
+    // the built-in (original, non-resume.io) layouts to render with. The
+    // exported PDF itself is never stored here — /resume-builder/export
+    // writes it straight into the existing `attachments` table instead, so
+    // it goes through the exact same ATS-scoring/selection/download path a
+    // manually-uploaded resume already does (see POST /profile/attachments).
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS resume_drafts (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL UNIQUE,
+        template   TEXT NOT NULL DEFAULT 'modern',
+        data       JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    // Command Center's cross-post tab — one row per compose-and-send attempt.
+    // `targets` is a JSONB array of {platform, status, postedUrl, error} —
+    // status is 'posted' only for platforms with a real, self-serve publish
+    // API this app can call today (Bluesky, Reddit — see publishToBluesky/
+    // publishToReddit); every other platform is recorded 'queued' and never
+    // marked posted, since there's no real publish-on-behalf-of-the-member
+    // API this app has access to for them yet (same reasoning as the AI
+    // Content Hub's drafts-only design above).
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS cross_posts (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        media_url  TEXT,
+        targets    JSONB NOT NULL DEFAULT '[]',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS cross_posts_user_idx ON cross_posts(user_id, created_at DESC)`);
 
     // Per-user "already shown" post tracking — see getUserSeenSet/markPostsSeen.
     // Persisted (not just in-memory) so a user doesn't see repeats after a
@@ -14196,11 +14609,13 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 // (unchanged from before this had multiple tiers, so an already-configured
 // value keeps working); STRIPE_PRICE_ID_BUSINESS is the new one.
 const TIER_PRICE_IDS = {
-  pro:      () => process.env.STRIPE_PRICE_ID,
-  business: () => process.env.STRIPE_PRICE_ID_BUSINESS,
+  pro:            () => process.env.STRIPE_PRICE_ID,
+  business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
+  // Independent $5/mo add-on, not a plan — see resume_builder_addon.
+  resume_builder: () => process.env.STRIPE_PRICE_ID_RESUME_BUILDER,
 };
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
-  const tier = ['pro', 'business'].includes(req.body?.tier) ? req.body.tier : 'pro';
+  const tier = ['pro', 'business', 'resume_builder'].includes(req.body?.tier) ? req.body.tier : 'pro';
   // Business is locked in the UI (not yet ready to sell) — reject it
   // server-side too so it can't be reached by POSTing directly.
   if (tier === 'business') {
@@ -14212,14 +14627,20 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  // Blocks starting a second checkout on top of an existing paid plan
-  // rather than allowing a tier switch this way — a fresh checkout session
-  // creates a brand new subscription without touching the old one, which
-  // would leave someone paying for both Pro and Business at once instead
-  // of actually switching. Manage billing (the portal) is the correct path
-  // for changing/cancelling an existing subscription; this route is only
-  // for going from free to a first paid tier.
-  if (user.plan === 'pro' || user.plan === 'business') {
+  if (tier === 'resume_builder') {
+    // Its own independent subscription — a free or paid-plan user alike can
+    // buy it, so this only guards against double-buying the addon itself.
+    if (user.resumeBuilderAddon) {
+      return res.status(400).json({ message: 'Resume Builder is already unlocked on your account.' });
+    }
+  } else if (user.plan === 'pro' || user.plan === 'business') {
+    // Blocks starting a second checkout on top of an existing paid plan
+    // rather than allowing a tier switch this way — a fresh checkout session
+    // creates a brand new subscription without touching the old one, which
+    // would leave someone paying for both Pro and Business at once instead
+    // of actually switching. Manage billing (the portal) is the correct path
+    // for changing/cancelling an existing subscription; this route is only
+    // for going from free to a first paid tier.
     return res.status(400).json({ message: `Already on the ${user.plan === 'business' ? 'Business' : 'Pro'} plan — use Manage Billing to change plans.` });
   }
   try {
@@ -14228,7 +14649,9 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
       line_items: [{ price: priceId, quantity: 1 }],
       metadata: { tier },
       // Reuse an existing Stripe customer if this user has one (e.g. a past
-      // canceled subscription) instead of creating a duplicate each time.
+      // canceled subscription, or an already-active plan/addon) instead of
+      // creating a duplicate — this is also what lets one Manage Billing
+      // portal session show both a plan and the resume_builder addon.
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email,
       client_reference_id: user.id,
@@ -20718,8 +21141,23 @@ app.get('/opportunities', authenticate, async (req, res) => {
     results = diversifyBySource(results, results.length, 2, 0.4, false);
   }
 
+  // Server-side page slice — added so the Opportunities page can scroll-load
+  // more instead of fetching this entire (already fully scored/sorted/
+  // equalized) array in one shot and paginating it client-side. Slicing
+  // happens last, after every reorder/equalize step above, so page N is
+  // always a stable continuation of page N-1 rather than re-sorting a
+  // partial set. Omitting offset/limit (or passing limit=0) preserves the
+  // old "everything in one response" behavior for any caller that still
+  // wants that.
+  const totalCount = results.length;
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const limit = req.query.limit != null ? Math.max(0, parseInt(req.query.limit, 10) || 0) : 0;
+  const page = limit > 0 ? results.slice(offset, offset + limit) : results;
+
   res.json({
-    opportunities: results,
+    opportunities: page,
+    totalCount,
+    hasMore: limit > 0 ? (offset + limit) < totalCount : false,
     meta: OP_TYPE_META,
     liveCount: liveJobs.length,
     userRole: role,
@@ -20871,6 +21309,394 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   } catch (e) {
     console.error('[/command-center/content-draft] error:', e.message);
     res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
+  }
+});
+
+// ─── Resume Builder ($5/mo add-on) ─────────────────────────────────────────
+// Gate is resume_builder_addon, NOT plan — this is an independent
+// subscription a free or Pro/Business member can equally buy (see
+// /billing/create-checkout-session's own comment). Feeds directly into the
+// existing attachments/ATS pipeline (see POST /profile/attachments) rather
+// than building a second resume system: /resume-builder/export renders the
+// draft to a PDF and inserts it as a normal attachment row.
+const RESUME_TEMPLATES = new Set(['modern', 'minimal']);
+
+function emptyResumeDraft() {
+  return {
+    contact: { name: '', title: '', email: '', phone: '', location: '', links: [] },
+    summary: '',
+    experience: [],
+    education: [],
+    skills: [],
+  };
+}
+
+// Plain-text rendering of the draft — the single source of truth for both
+// what computeATSScore analyzes and what gets laid out in the PDF, so the
+// score a member sees always matches the words actually in their export.
+function resumeDraftToText(data) {
+  const lines = [];
+  const c = data.contact || {};
+  if (c.name) lines.push(c.name);
+  if (c.title) lines.push(c.title);
+  const contactBits = [c.email, c.phone, c.location].filter(Boolean);
+  if (contactBits.length) lines.push(contactBits.join(' | '));
+  if (data.summary) { lines.push('', 'Summary', data.summary); }
+  if (Array.isArray(data.experience) && data.experience.length) {
+    lines.push('', 'Experience');
+    for (const job of data.experience) {
+      lines.push(`${job.role || ''} — ${job.company || ''}`.trim());
+      const dates = [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ');
+      if (dates) lines.push(dates);
+      for (const b of (job.bullets || [])) if (b?.trim()) lines.push(`• ${b.trim()}`);
+    }
+  }
+  if (Array.isArray(data.education) && data.education.length) {
+    lines.push('', 'Education');
+    for (const ed of data.education) {
+      lines.push([ed.degree, ed.field].filter(Boolean).join(', '));
+      lines.push([ed.school, [ed.startDate, ed.endDate].filter(Boolean).join(' – ')].filter(Boolean).join(' — '));
+    }
+  }
+  if (Array.isArray(data.skills) && data.skills.length) {
+    lines.push('', 'Skills', data.skills.join(', '));
+  }
+  return lines.join('\n');
+}
+
+// Two original layouts (own colors/typography/spacing, built-in Helvetica —
+// no third-party template design or font licensing involved anywhere here,
+// per the "no copyright" requirement). 'modern' gets a colored header band;
+// 'minimal' is plain black-on-white — both entirely original arrangements,
+// not a copy of any specific product's resume template.
+function renderResumePDF(data, template) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const c = data.contact || {};
+    const accent = template === 'minimal' ? '#111111' : '#2563EB';
+
+    if (template === 'modern') {
+      doc.rect(0, 0, doc.page.width, 92).fill(accent);
+      doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text(c.name || 'Your Name', 50, 28);
+      doc.fontSize(11).font('Helvetica').text(c.title || '', 50, 56);
+      doc.fillColor('#000');
+      doc.y = 112;
+    } else {
+      doc.fontSize(22).font('Helvetica-Bold').fillColor('#000').text(c.name || 'Your Name');
+      doc.fontSize(11).font('Helvetica').fillColor('#333').text(c.title || '');
+      doc.moveDown(0.3);
+    }
+
+    const contactBits = [c.email, c.phone, c.location].filter(Boolean).join('   |   ');
+    if (contactBits) {
+      doc.fontSize(9.5).font('Helvetica').fillColor('#555').text(contactBits);
+    }
+    if (Array.isArray(c.links) && c.links.length) {
+      doc.fontSize(9.5).fillColor(accent).text(c.links.map(l => l.url || l.label).filter(Boolean).join('   |   '));
+    }
+    doc.moveDown(1);
+
+    function sectionHeading(label) {
+      doc.moveDown(0.6);
+      doc.fontSize(12).font('Helvetica-Bold').fillColor(accent).text(label.toUpperCase(), { characterSpacing: 0.5 });
+      doc.moveTo(doc.x, doc.y + 2).lineTo(doc.page.width - doc.page.margins.right, doc.y + 2).strokeColor(accent).lineWidth(1).stroke();
+      doc.moveDown(0.4);
+      doc.fillColor('#000');
+    }
+
+    if (data.summary) {
+      sectionHeading('Summary');
+      doc.fontSize(10).font('Helvetica').fillColor('#222').text(data.summary, { lineGap: 2 });
+    }
+
+    if (Array.isArray(data.experience) && data.experience.length) {
+      sectionHeading('Experience');
+      for (const job of data.experience) {
+        doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#000').text(`${job.role || 'Role'} — ${job.company || 'Company'}`);
+        const dates = [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ');
+        if (dates || job.location) {
+          doc.fontSize(9).font('Helvetica').fillColor('#666').text([dates, job.location].filter(Boolean).join('   ·   '));
+        }
+        doc.fontSize(10).font('Helvetica').fillColor('#222');
+        for (const b of (job.bullets || [])) {
+          if (b?.trim()) doc.text(`•  ${b.trim()}`, { indent: 10, lineGap: 1.5 });
+        }
+        doc.moveDown(0.5);
+      }
+    }
+
+    if (Array.isArray(data.education) && data.education.length) {
+      sectionHeading('Education');
+      for (const ed of data.education) {
+        doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#000').text([ed.degree, ed.field].filter(Boolean).join(', ') || 'Degree');
+        const dates = [ed.startDate, ed.endDate].filter(Boolean).join(' – ');
+        doc.fontSize(9.5).font('Helvetica').fillColor('#444').text([ed.school, dates].filter(Boolean).join('   ·   '));
+        doc.moveDown(0.4);
+      }
+    }
+
+    if (Array.isArray(data.skills) && data.skills.length) {
+      sectionHeading('Skills');
+      doc.fontSize(10).font('Helvetica').fillColor('#222').text(data.skills.join('   ·   '), { lineGap: 2 });
+    }
+
+    doc.end();
+  });
+}
+
+app.get('/resume-builder/draft', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
+  if (!db.isConnected()) return res.json({ template: 'modern', data: emptyResumeDraft() });
+  try {
+    const { rows } = await db.query(`SELECT template, data FROM resume_drafts WHERE user_id=$1`, [req.user.id]);
+    if (!rows[0]) return res.json({ template: 'modern', data: emptyResumeDraft() });
+    res.json({ template: rows[0].template, data: { ...emptyResumeDraft(), ...rows[0].data } });
+  } catch (e) {
+    console.error('[GET /resume-builder/draft]', e.message);
+    res.status(500).json({ message: 'Could not load your draft.' });
+  }
+});
+
+app.put('/resume-builder/draft', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
+  const template = RESUME_TEMPLATES.has(req.body?.template) ? req.body.template : 'modern';
+  const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : emptyResumeDraft();
+  if (!db.isConnected()) return res.status(503).json({ message: 'Saving is not available right now.' });
+  try {
+    const id = `rd_${req.user.id}`;
+    await db.query(
+      `INSERT INTO resume_drafts (id, user_id, template, data, updated_at) VALUES ($1,$2,$3,$4,NOW())
+       ON CONFLICT (user_id) DO UPDATE SET template=EXCLUDED.template, data=EXCLUDED.data, updated_at=NOW()`,
+      [id, req.user.id, template, JSON.stringify(data)]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[PUT /resume-builder/draft]', e.message);
+    res.status(500).json({ message: 'Could not save your draft.' });
+  }
+});
+
+const RESUME_AI_FIELDS = new Set(['summary', 'bullets']);
+app.post('/resume-builder/ai-assist', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ message: "AI assist isn't configured yet." });
+  const { field, context } = req.body || {};
+  if (!RESUME_AI_FIELDS.has(field)) return res.status(400).json({ message: 'Unsupported field.' });
+  if (!context || typeof context !== 'string' || !context.trim()) {
+    return res.status(400).json({ message: 'context is required.' });
+  }
+  const prompt = field === 'summary'
+    ? `Write one concise, original, ATS-friendly professional resume summary (2-3 sentences, no fabricated facts beyond what's given) based on this background: "${context.trim().slice(0, 600)}". Return only the summary text, no preamble or quotes.`
+    : `Rewrite this resume bullet point to be a single concise, original, ATS-friendly achievement statement starting with a strong action verb, quantified if the input implies a number — do not invent facts or numbers that aren't implied: "${context.trim().slice(0, 400)}". Return only the rewritten bullet, no preamble, no leading bullet character or quotes.`;
+  try {
+    const text = await callAnthropic(apiKey, prompt);
+    res.json({ suggestion: text.trim() });
+  } catch (e) {
+    console.error('[/resume-builder/ai-assist] error:', e.message);
+    res.status(502).json({ message: 'Could not generate a suggestion right now. Please try again.' });
+  }
+});
+
+app.post('/resume-builder/export', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
+  if (!db.isConnected()) return res.status(503).json({ message: 'Exporting is not available right now.' });
+  const template = RESUME_TEMPLATES.has(req.body?.template) ? req.body.template : 'modern';
+  const data = req.body?.data && typeof req.body.data === 'object' ? req.body.data : null;
+  if (!data || !data.contact?.name) {
+    return res.status(400).json({ message: 'Add at least your name before exporting.' });
+  }
+  try {
+    const text = resumeDraftToText(data);
+    // Same scorer /profile/attachments uses on an upload — run directly on
+    // the draft's own known text instead of re-extracting it from the PDF
+    // we're about to generate, since we already have it verbatim.
+    const { score, checks, keywords } = computeATSScore(text);
+    const pdfBuffer = await renderResumePDF(data, template);
+    const filename = `${(data.contact.name || 'Resume').replace(/[^a-z0-9]+/gi, '_')}.pdf`;
+    const id = `att_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const createdAt = new Date().toISOString();
+
+    await db.query(`UPDATE attachments SET is_primary=false WHERE user_id=$1`, [req.user.id]);
+    await db.query(
+      `INSERT INTO attachments (id, user_id, filename, mime_type, file_size, file_data, extracted_text, ats_score, ats_feedback, keywords, created_at, is_primary)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true)`,
+      [id, req.user.id, filename, 'application/pdf', pdfBuffer.length, pdfBuffer, text.slice(0, 20000), score, JSON.stringify(checks), JSON.stringify(keywords), createdAt]
+    );
+
+    res.status(201).json({
+      id, filename, mimeType: 'application/pdf', fileSize: pdfBuffer.length,
+      atsScore: score, atsChecks: checks, keywords, createdAt, isPrimary: true,
+    });
+  } catch (e) {
+    console.error('[/resume-builder/export] error:', e.message);
+    res.status(500).json({ message: 'Could not export your resume. Please try again.' });
+  }
+});
+
+// ─── Command Center: "Your Feed" (own-content review/download) ────────────
+// Distinct from Connected Feed above — this lists the member's OWN posts
+// per connected platform (via OWN_CONTENT_FETCHERS) for review/download,
+// not a scrolling feed of other people's content.
+app.get('/command-center/your-content', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Your Feed is a Pro feature — upgrade to use it.' });
+  }
+  const platform = String(req.query.platform || '');
+  const fetcher = OWN_CONTENT_FETCHERS[platform];
+  if (!fetcher) return res.status(400).json({ message: 'Unsupported or not-yet-available platform.' });
+  const token = user.socialTokens?.[platform];
+  if (!token) return res.status(400).json({ message: `Connect ${platform} first.` });
+  try {
+    const posts = await fetcher(token, { bust: req.query.bust === '1' });
+    res.json({ posts });
+  } catch (e) {
+    console.error(`[/command-center/your-content] ${platform}:`, e.message);
+    res.status(502).json({ message: `Could not load your ${platform} content right now.` });
+  }
+});
+
+// Streams a platform-hosted image back with an attachment disposition so
+// the browser downloads rather than navigates — url must be on the fixed
+// per-platform CDN allowlist (see isAllowedDownloadUrl) to block SSRF via
+// an arbitrary user-supplied url, and video-hosting domains are never on
+// that allowlist at all (see mediaType 'video_thumbnail_only' upstream —
+// YouTube/Twitch video files are never proxied, ToS/copyright guardrail).
+app.get('/command-center/your-content/download', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Your Feed is a Pro feature — upgrade to use it.' });
+  }
+  const url = String(req.query.url || '');
+  if (!isAllowedDownloadUrl(url)) return res.status(400).json({ message: 'That URL cannot be downloaded.' });
+  https.get(url, (upstream) => {
+    if (upstream.statusCode >= 400) { res.status(502).json({ message: 'Could not fetch that file.' }); return; }
+    const ext = (upstream.headers['content-type'] || '').includes('png') ? 'png' : 'jpg';
+    res.setHeader('Content-Type', upstream.headers['content-type'] || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="content.${ext}"`);
+    upstream.pipe(res);
+  }).on('error', () => res.status(502).json({ message: 'Could not fetch that file.' }));
+});
+
+// ─── Command Center: cross-post ────────────────────────────────────────────
+// Only Bluesky and Reddit actually publish — both have a real, self-serve
+// public API this app can call today with what's already configured (no
+// app review/elevated-access tier needed, unlike LinkedIn/Twitter/Facebook —
+// see FOLLOWING_SOURCE_FETCHERS' own comment for the same constraint on the
+// read side). Every other requested platform is recorded 'queued' and never
+// marked posted — this must never silently pretend to have posted somewhere
+// it didn't.
+const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit']);
+
+async function publishToBluesky(token, { text }) {
+  let session;
+  try { session = JSON.parse(token); } catch { throw new Error('Bluesky session invalid — reconnect the account.'); }
+  if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw new Error('Bluesky session invalid — reconnect the account.');
+  const url = `${session.pdsUrl}/xrpc/com.atproto.repo.createRecord`;
+  const result = await atprotoPostJSON(url, {
+    repo: session.did,
+    collection: 'app.bsky.feed.post',
+    record: { text: text.slice(0, 300), createdAt: new Date().toISOString(), $type: 'app.bsky.feed.post' },
+  }, { accessToken: session.accessToken });
+  if (result?.status >= 400) throw new Error(`Bluesky HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+  const rkey = (result?.data?.uri || '').split('/').pop();
+  return `https://bsky.app/profile/${session.did}/post/${rkey}`;
+}
+
+async function publishToReddit(token, { text }) {
+  const auth = { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' };
+  const me = await fetchJSON('https://oauth.reddit.com/api/v1/me', auth);
+  if (!me?.name) throw new Error('Reddit session invalid — reconnect the account.');
+  // Posts to the member's own profile (r/u_<username>) rather than an
+  // arbitrary community — every Reddit account can post here with no
+  // subreddit-specific rules/approval to navigate, and it avoids needing a
+  // subreddit picker in the UI.
+  const body = new URLSearchParams({
+    sr: `u_${me.name}`, kind: 'self', title: text.slice(0, 300) || 'Untitled', text: text.slice(0, 4000), api_type: 'json',
+  });
+  const data = await new Promise((resolve, reject) => {
+    const req = https.request('https://oauth.reddit.com/api/submit', {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body.toString()) },
+    }, (r) => {
+      let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, function () { this.destroy(); reject(new Error('Reddit submit timeout')); });
+    req.write(body.toString());
+    req.end();
+  });
+  const errors = data?.json?.errors;
+  if (Array.isArray(errors) && errors.length) throw new Error(errors.map(e => e.join(' ')).join('; '));
+  const jsonUrl = data?.json?.data?.url;
+  if (!jsonUrl) throw new Error('Reddit did not return a post URL.');
+  return jsonUrl;
+}
+
+app.post('/command-center/cross-post', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
+  }
+  const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+  const platforms = Array.isArray(req.body?.platforms) ? req.body.platforms.filter(p => CONNECTED_SOCIAL_PLATFORMS.includes(p)) : [];
+  if (!content) return res.status(400).json({ message: 'content is required.' });
+  if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
+
+  const targets = [];
+  for (const platform of platforms) {
+    const token = user.socialTokens?.[platform];
+    if (!token) { targets.push({ platform, status: 'failed', error: 'Not connected.' }); continue; }
+    if (!REAL_PUBLISH_PLATFORMS.has(platform)) {
+      targets.push({ platform, status: 'queued', error: 'Publishing API pending platform approval — saved, not yet posted.' });
+      continue;
+    }
+    try {
+      const postedUrl = platform === 'bluesky'
+        ? await publishToBluesky(token, { text: content })
+        : await publishToReddit(token, { text: content });
+      targets.push({ platform, status: 'posted', postedUrl });
+    } catch (e) {
+      console.error(`[/command-center/cross-post] ${platform}:`, e.message);
+      targets.push({ platform, status: 'failed', error: e.message.slice(0, 200) });
+    }
+  }
+
+  const id = `xp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  if (db.isConnected()) {
+    await db.query(
+      `INSERT INTO cross_posts (id, user_id, content, targets, created_at) VALUES ($1,$2,$3,$4,NOW())`,
+      [id, req.user.id, content, JSON.stringify(targets)]
+    ).catch(e => console.error('[cross_posts insert]', e.message));
+  }
+  res.json({ id, targets });
+});
+
+app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
+  }
+  if (!db.isConnected()) return res.json({ posts: [] });
+  try {
+    const { rows } = await db.query(
+      `SELECT id, content, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      [req.user.id]
+    );
+    res.json({ posts: rows.map(r => ({ id: r.id, content: r.content, targets: r.targets, createdAt: r.created_at })) });
+  } catch (e) {
+    console.error('[/command-center/cross-post/history]', e.message);
+    res.status(500).json({ message: 'Could not load history.' });
   }
 });
 

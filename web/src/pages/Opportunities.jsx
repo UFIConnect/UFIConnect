@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -126,10 +127,14 @@ export default function Opportunities() {
   const [searchInput, setSearchInput] = useState('');
   const [search,    setSearch]    = useState('');
   const [loading,   setLoading]   = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error,     setError]     = useState(false);
-  const [page,      setPage]      = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore,   setHasMore]   = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const silentRefreshRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const sentinelRef = useRef(null);
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
   // "All") — the fetch effect below reads and clears it. Live sources
   // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
@@ -147,7 +152,6 @@ export default function Opportunities() {
     () => debounce((query) => {
       searchRef.current = query.trim();
       setSearch(query.trim());
-      setPage(1);
     }, 400),
     []
   );
@@ -158,9 +162,14 @@ export default function Opportunities() {
   // silently keep filtering once you switch to Grants.
   useEffect(() => { setSourceFilter([]); }, [filter]);
 
-  // Fetch opportunities with current filters
+  // Fetch the first page whenever a real filter/search/sort change happens
+  // — /opportunities now supports real server-side offset/limit (added
+  // alongside this) instead of this page fetching everything in one shot
+  // and slicing it client-side, so scrolling to the bottom can actually ask
+  // the server for more instead of just revealing more of what's already
+  // in memory.
   useEffect(() => {
-    const params = { sort };
+    const params = { sort, limit: PAGE_SIZE, offset: 0 };
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
@@ -178,6 +187,8 @@ export default function Opportunities() {
         let list = data.opportunities || [];
         if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
         setAllOpps(list);
+        setTotalCount(data.totalCount || list.length);
+        setHasMore(!!data.hasMore);
         setLiveCount(data.liveCount || 0);
         setPlatformSearchUrls(data.platformSearchUrls || null);
         setAvailableSources(data.availableSources || []);
@@ -186,9 +197,45 @@ export default function Opportunities() {
         console.error('Failed to load opportunities:', err);
         setError(true);
         setAllOpps([]);
+        setHasMore(false);
       })
       .finally(() => setLoading(false));
   }, [filter, sort, remote, liveOnly, search, sourceFilter, refreshTick]);
+
+  const loadMore = useCallback(() => {
+    if (loadingMoreRef.current || loading || !hasMore) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const params = { sort, limit: PAGE_SIZE, offset: allOpps.length };
+    if (filter !== 'all') params.type = filter;
+    if (search) params.search = search;
+    if (remote) params.remote = true;
+    if (sourceFilter.length) params.sources = sourceFilter.join(',');
+    client.get('/opportunities', { params })
+      .then(({ data }) => {
+        let list = data.opportunities || [];
+        if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
+        setAllOpps(prev => [...prev, ...list]);
+        setTotalCount(data.totalCount || 0);
+        setHasMore(!!data.hasMore);
+      })
+      .catch(err => console.error('Failed to load more opportunities:', err))
+      .finally(() => { loadingMoreRef.current = false; setLoadingMore(false); });
+  }, [loading, hasMore, allOpps.length, sort, filter, search, remote, sourceFilter, liveOnly]);
+
+  // Same sentinel + IntersectionObserver pattern as the main Feed page
+  // (400px rootMargin fires the fetch just before the sentinel is actually
+  // on screen, so more content is ready by the time someone scrolls to it).
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMore(); },
+      { rootMargin: '400px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [loadMore]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
@@ -197,9 +244,7 @@ export default function Opportunities() {
     setRefreshTick(t => t + 1);
   }, { enabled: !loading });
 
-  // Paginated display
-  const displayed = allOpps.slice(0, page * PAGE_SIZE);
-  const hasMore = page * PAGE_SIZE < allOpps.length;
+  const displayed = allOpps;
 
   return (
     <>
@@ -210,7 +255,7 @@ export default function Opportunities() {
         <link rel="canonical" href="https://uficonnect.org/opportunities" />
       </Helmet>
       <Layout>
-        <div className="page-header">
+        <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <h1 className="page-title">
             All Opportunities
             {liveCount > 0 && (
@@ -222,6 +267,7 @@ export default function Opportunities() {
               </span>
             )}
           </h1>
+          <Link to="/resume-builder" className="btn btn-primary btn-sm">✨ Resume Builder</Link>
         </div>
 
         {/* Search bar */}
@@ -246,7 +292,6 @@ export default function Opportunities() {
                   setSearchInput('');
                   searchRef.current = '';
                   setSearch('');
-                  setPage(1);
                 }}
                 style={{
                   position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
@@ -267,7 +312,6 @@ export default function Opportunities() {
               key={value}
               onClick={() => {
                 bustOnNextFetchRef.current = true;
-                setPage(1);
                 if (value === filter) {
                   // Already active — setFilter(value) alone wouldn't
                   // actually change state (same value in, same value out),
@@ -295,7 +339,7 @@ export default function Opportunities() {
             </button>
           ))}
           <button
-            onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); setPage(1); }}
+            onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
               padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -308,7 +352,7 @@ export default function Opportunities() {
             🌍 Remote
           </button>
           <button
-            onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); setPage(1); }}
+            onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
               padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
@@ -339,7 +383,6 @@ export default function Opportunities() {
                   key={src}
                   onClick={() => {
                     setSourceFilter(cur => cur.includes(src) ? cur.filter(s => s !== src) : [...cur, src]);
-                    setPage(1);
                   }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
@@ -356,7 +399,7 @@ export default function Opportunities() {
             })}
             {sourceFilter.length > 0 && (
               <button
-                onClick={() => { setSourceFilter([]); setPage(1); }}
+                onClick={() => setSourceFilter([])}
                 style={{
                   flexShrink: 0, padding: '6px 10px', border: 'none', background: 'none',
                   color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline',
@@ -376,7 +419,7 @@ export default function Opportunities() {
           <select
             id="opp-sort"
             value={sort}
-            onChange={e => { setSort(e.target.value); setPage(1); }}
+            onChange={e => setSort(e.target.value)}
             className="form-input"
             style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
           >
@@ -465,7 +508,6 @@ export default function Opportunities() {
                   setSearchInput('');
                   searchRef.current = '';
                   setSearch('');
-                  setPage(1);
                 }}>Clear search</button>
               ) : (
                 <>Try adjusting your filters or check back soon for new opportunities.</>
@@ -478,10 +520,10 @@ export default function Opportunities() {
         {!loading && !error && displayed.length > 0 && (
           <div>
             <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 16, fontWeight: 500 }}>
-              {displayed.length === allOpps.length ? (
-                `${allOpps.length} opportunit${allOpps.length !== 1 ? 'ies' : 'y'}`
+              {displayed.length >= totalCount ? (
+                `${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
               ) : (
-                `Showing ${displayed.length} of ${allOpps.length} opportunit${allOpps.length !== 1 ? 'ies' : 'y'}`
+                `Showing ${displayed.length} of ${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
               )}
             </div>
 
@@ -603,23 +645,19 @@ export default function Opportunities() {
               );
             })}
 
-            {/* Load more button */}
+            {/* Infinite scroll sentinel — same IntersectionObserver pattern
+                as the main Feed page. Kept invisible when nothing more to
+                load so it never leaves stray blank space at the bottom. */}
             {hasMore && (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <button
-                  className="btn btn-ghost"
-                  onClick={() => setPage(p => p + 1)}
-                  style={{ fontSize: '.9rem' }}
-                >
-                  Load more ({allOpps.length - displayed.length} remaining)
-                </button>
+              <div ref={sentinelRef} style={{ textAlign: 'center', padding: '24px 0' }}>
+                {loadingMore && <span className="spinner spinner-primary" />}
               </div>
             )}
 
             {/* End message */}
             {!hasMore && displayed.length > 0 && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '20px 0' }}>
-                All {allOpps.length} opportunit{allOpps.length !== 1 ? 'ies' : 'y'} shown
+                All {totalCount} opportunit{totalCount !== 1 ? 'ies' : 'y'} shown
               </div>
             )}
           </div>
