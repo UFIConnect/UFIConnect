@@ -9,13 +9,13 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 const PAGE_SIZE = 20;
 
 const TYPE_META = {
-  job:        { label: 'Job',         emoji: '💼', color: '#2563EB', bg: '#EFF6FF' },
-  gig:        { label: 'Gig',         emoji: '⚡', color: '#7C3AED', bg: '#F3EEFF' },
-  grant:      { label: 'Grant',       emoji: '🏦', color: '#059669', bg: '#ECFDF5' },
-  event:      { label: 'Event',       emoji: '📅', color: '#D97706', bg: '#FFFBEB' },
-  hackathon:  { label: 'Hackathon',   emoji: '🏆', color: '#DB2777', bg: '#FDF2F8' },
-  opensource: { label: 'Open Source', emoji: '🌐', color: '#EA580C', bg: '#FFF7ED' },
-  learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
+  job:        { label: 'Job',         emoji: 'Job', color: '#2563EB', bg: '#EFF6FF' },
+  gig:        { label: 'Gig',         emoji: 'Gig', color: '#7C3AED', bg: '#F3EEFF' },
+  grant:      { label: 'Grant',       emoji: 'Grant', color: '#059669', bg: '#ECFDF5' },
+  event:      { label: 'Event',       emoji: 'Event', color: '#D97706', bg: '#FFFBEB' },
+  hackathon:  { label: 'Hackathon',   emoji: 'Hack', color: '#DB2777', bg: '#FDF2F8' },
+  opensource: { label: 'Open Source', emoji: 'OSS', color: '#EA580C', bg: '#FFF7ED' },
+  learning:   { label: 'Learning',    emoji: 'Learn', color: '#0284C7', bg: '#F0F9FF' },
 };
 
 // None of these five has a public jobs-listing API (see the backend's
@@ -41,16 +41,16 @@ const TYPE_META = {
 // something incomplete (the OAuth connection only imports a profile, not
 // posts) rather than something that already works.
 const PLATFORM_META = {
-  linkedin:  { label: 'LinkedIn',  icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
-  glassdoor: { label: 'Glassdoor', icon: '🟢', color: '#0CAA41', bg: '#E6F9EE', loginRequired: true },
-  handshake: { label: 'Handshake', icon: '🤝', color: '#F97316', bg: '#FFF3E8', loginRequired: true },
-  wellfound: { label: 'Wellfound', icon: '🚀', color: '#111827', bg: '#F3F4F6', loginRequired: true },
-  google:    { label: 'Google',    icon: '🔎', color: '#EA4335', bg: '#FEE8E6' },
+  linkedin:  { label: 'LinkedIn',  icon: 'in', color: '#0A66C2', bg: '#E8F0FB' },
+  glassdoor: { label: 'Glassdoor', icon: 'GD', color: '#0CAA41', bg: '#E6F9EE', loginRequired: true },
+  handshake: { label: 'Handshake', icon: 'HS', color: '#F97316', bg: '#FFF3E8', loginRequired: true },
+  wellfound: { label: 'Wellfound', icon: 'WF', color: '#111827', bg: '#F3F4F6', loginRequired: true },
+  google:    { label: 'Google',    icon: 'G', color: '#EA4335', bg: '#FEE8E6' },
 };
 
 const FILTERS = [
   { value: 'all', label: 'All' },
-  ...Object.entries(TYPE_META).map(([value, { label, emoji }]) => ({ value, label: `${emoji} ${label}` })),
+  ...Object.entries(TYPE_META).map(([value, { label }]) => ({ value, label })),
 ];
 
 function debounce(fn, delay) {
@@ -86,12 +86,12 @@ function OpportunitySkeleton() {
 
 function SourceBadge({ opp }) {
   const badges = {
-    'LinkedIn':  { icon: '🔷', color: '#0A66C2', bg: '#E8F0FB' },
-    'Remotive':  { icon: '🔴', label: 'Live · Remotive', color: '#2563EB', bg: '#EFF6FF' },
-    'The Muse':  { icon: '✦', label: 'Live · The Muse', color: '#7C3AED', bg: '#F3EEFF' },
-    'Remote OK': { icon: '🔴', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
-    'USAJobs':   { icon: '🔴', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
-    'Indeed':    { icon: '🔴', label: 'Live · Indeed',    color: '#2557A7', bg: '#EEF2FB' },
+    'LinkedIn':  { icon: 'in', color: '#0A66C2', bg: '#E8F0FB' },
+    'Remotive':  { icon: 'RM', label: 'Live · Remotive', color: '#2563EB', bg: '#EFF6FF' },
+    'The Muse':  { icon: 'MU', label: 'Live · The Muse', color: '#7C3AED', bg: '#F3EEFF' },
+    'Remote OK': { icon: 'RO', label: 'Live · Remote OK', color: '#10B981', bg: '#ECFDF5' },
+    'USAJobs':   { icon: 'US', label: 'Live · USAJobs',   color: '#005EA8', bg: '#E8F1FA' },
+    'Indeed':    { icon: 'IN', label: 'Live · Indeed',    color: '#2557A7', bg: '#EEF2FB' },
   };
   const badge = badges[opp.source];
   return (
@@ -102,7 +102,7 @@ function SourceBadge({ opp }) {
       padding: badge ? '3px 8px' : 0,
       borderRadius: 4,
     }}>
-      {badge?.label || `${badge?.icon || '•'} ${opp.source}`}
+      {badge?.label || `${badge?.icon || ''} ${opp.source}`.trim()}
     </span>
   );
 }
@@ -263,20 +263,20 @@ export default function Opportunities() {
                 marginLeft: 10, fontSize: '.7rem', fontWeight: 700, color: '#059669',
                 background: '#DCFCE7', padding: '3px 10px', borderRadius: 20, display: 'inline-block',
               }}>
-                🔴 {liveCount} live
+                {liveCount} live
               </span>
             )}
           </h1>
-          <Link to="/resume-builder" className="btn btn-primary btn-sm">✨ Resume Builder</Link>
+          <Link to="/resume-builder" className="btn btn-primary btn-sm">Resume Builder</Link>
         </div>
 
         {/* Search bar */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
           <div style={{ flex: 1, position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.9rem', pointerEvents: 'none' }}>🔍</span>
+            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.75rem', fontWeight: 800, pointerEvents: 'none' }}>Q</span>
             <input
               className="form-input"
-              placeholder="Search by title, company, or tag…"
+              placeholder="Search by title, company, or tag..."
               value={searchInput}
               onChange={e => {
                 setSearchInput(e.target.value);
@@ -349,7 +349,7 @@ export default function Opportunities() {
               fontWeight: remote ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
             }}
           >
-            🌍 Remote
+            Remote
           </button>
           <button
             onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
@@ -362,7 +362,7 @@ export default function Opportunities() {
               fontWeight: liveOnly ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
             }}
           >
-            🔴 Live only
+            Live only
           </button>
         </div>
 
@@ -423,8 +423,8 @@ export default function Opportunities() {
             className="form-input"
             style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
           >
-            <option value="newest">🕐 Newest</option>
-            <option value="match">⭐ Best match</option>
+            <option value="newest">Newest</option>
+            <option value="match">Best match</option>
           </select>
         </div>
 
@@ -463,7 +463,7 @@ export default function Opportunities() {
                       border: `1.5px solid ${meta.color}55`,
                     }}
                   >
-                    {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''} ↗
+                    {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''}
                   </a>
                 )
               ))}
@@ -478,7 +478,7 @@ export default function Opportunities() {
             background: '#FEE2E2', color: '#991B1B', fontSize: '.85rem',
             display: 'flex', alignItems: 'center', gap: 8,
           }}>
-            <span>⚠️</span>
+            <span>!</span>
             <span>Failed to load opportunities. <button onClick={() => window.location.reload()} style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}>Retry</button></span>
           </div>
         )}
@@ -487,7 +487,7 @@ export default function Opportunities() {
         {loading && (
           <div>
             <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 600 }}>
-              Finding opportunities…
+              Finding opportunities...
             </div>
             <OpportunitySkeleton />
             <OpportunitySkeleton />
@@ -498,7 +498,7 @@ export default function Opportunities() {
         {/* Empty state */}
         {!loading && !error && displayed.length === 0 && (
           <div className="empty-state">
-            <div className="empty-icon">🔭</div>
+            <div className="empty-icon">Jobs</div>
             <div className="empty-title">
               {searchInput ? 'No opportunities found' : 'No matching opportunities'}
             </div>
@@ -537,7 +537,7 @@ export default function Opportunities() {
                       fontSize: '.72rem', fontWeight: 700, color: meta.color,
                       background: meta.bg, padding: '4px 10px', borderRadius: 6,
                     }}>
-                      {meta.emoji} {meta.label}
+                      {meta.label}
                     </span>
                     {opp.isLive && (
                       <span style={{
@@ -552,7 +552,7 @@ export default function Opportunities() {
                         fontSize: '.68rem', fontWeight: 700, color: '#0284C7',
                         background: '#F0F9FF', padding: '2px 8px', borderRadius: 4,
                       }}>
-                        🌍 Remote
+                        Remote
                       </span>
                     )}
                     {opp.matchScore > 6 && (
@@ -560,7 +560,7 @@ export default function Opportunities() {
                         fontSize: '.68rem', fontWeight: 700, color: '#7C3AED',
                         background: '#F3EEFF', padding: '2px 8px', borderRadius: 4,
                       }}>
-                        ⭐ Top match
+                        Top match
                       </span>
                     )}
                   </div>
@@ -590,9 +590,9 @@ export default function Opportunities() {
 
                   {/* Meta: location, pay, posted */}
                   <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: '.8rem', color: 'var(--muted)', flexWrap: 'wrap' }}>
-                    <span>📍 {opp.location}</span>
-                    {opp.pay && <span>💵 {opp.pay}</span>}
-                    <span>🕐 {timeAgo(opp.posted)}</span>
+                    <span>{opp.location}</span>
+                    {opp.pay && <span>{opp.pay}</span>}
+                    <span>{timeAgo(opp.posted)}</span>
                   </div>
 
                   {/* Tags */}
@@ -628,7 +628,7 @@ export default function Opportunities() {
                             background: '#ECFDF5', padding: '2px 8px', borderRadius: 8,
                           }}
                         >
-                          ✦ {r}
+                          Match: {r}
                         </span>
                       ))}
                     </div>
@@ -638,7 +638,7 @@ export default function Opportunities() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                     <SourceBadge opp={opp} />
                     <a href={opp.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ marginLeft: 'auto', textDecoration: 'none' }}>
-                      <button className="btn btn-primary btn-sm">View →</button>
+                      <button className="btn btn-primary btn-sm">View</button>
                     </a>
                   </div>
                 </div>

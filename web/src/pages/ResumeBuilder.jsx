@@ -23,20 +23,19 @@ function emptyDraft() {
 function LockedState({ onUnlock, unlocking }) {
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
-      <div style={{ fontSize: '2.4rem', marginBottom: 12 }}>✨</div>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         Build an ATS-friendly resume from scratch with original templates, AI-assisted writing help,
         and a one-click PDF export that's automatically scored and saved to your profile.
       </p>
       <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking}>
-        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : '$5/mo — Unlock Resume Builder'}
+        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Unlock Resume Builder'}
       </button>
     </div>
   );
 }
 
-function AIAssistButton({ onResult, field, context, label = 'AI Assist ✨' }) {
+function AIAssistButton({ onResult, field, context, label = 'AI Assist' }) {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
 
@@ -169,7 +168,7 @@ export default function ResumeBuilder() {
       <Layout>
         <div style={{ marginBottom: 20 }}>
           <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            ✨ Resume Builder
+            Resume Builder
           </h1>
           <p style={{ color: 'var(--muted)', fontSize: '.85rem', margin: '4px 0 0' }}>
             Original templates. AI-assisted writing. Exports straight into your Attachments with an ATS score.
@@ -224,7 +223,7 @@ export default function ResumeBuilder() {
               </div>
               <textarea
                 value={data.summary} onChange={e => setData(prev => ({ ...prev, summary: e.target.value }))}
-                rows={3} placeholder="2-3 sentence professional summary…"
+                rows={3} placeholder="2-3 sentence professional summary..."
                 style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
               />
             </div>
@@ -257,8 +256,8 @@ export default function ResumeBuilder() {
                         value={b} onChange={e => updateBullet(i, bi, e.target.value)}
                         placeholder="e.g. led a redesign that increased signups 18%"
                       />
-                      <AIAssistButton field="bullets" context={b} label="✨" onResult={s => updateBullet(i, bi, s)} />
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeBullet(i, bi)}>✕</button>
+                      <AIAssistButton field="bullets" context={b} label="AI" onResult={s => updateBullet(i, bi, s)} />
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeBullet(i, bi)}>Remove</button>
                     </div>
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
@@ -314,9 +313,9 @@ export default function ResumeBuilder() {
 
             {exportResult && (
               <div className="card" style={{ background: 'var(--primary-light)', border: '1px solid var(--primary)' }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Exported — ATS score {exportResult.atsScore}/100</div>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Exported - ATS score {exportResult.atsScore}/100</div>
                 <p style={{ margin: 0, fontSize: '.82rem', color: 'var(--muted)' }}>
-                  Saved to your Attachments as your primary resume. Visit Profile → Attachments to review, re-select, or download it.
+                    Saved to your Attachments as your primary resume. Visit Profile attachments to review, re-select, or download it.
                 </p>
               </div>
             )}

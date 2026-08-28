@@ -5,112 +5,112 @@ import { useAuth } from '../contexts/AuthContext';
 
 const ROLE_MACROS = [
   {
-    role: 'Engineer / Developer', icon: '💻', label: 'Developer', color: '#2563EB', bg: '#EFF6FF',
+    role: 'Engineer / Developer', icon: 'ED', label: 'Developer', color: '#2563EB', bg: '#EFF6FF',
     desc: 'Build products and ship code',
     titles: ['Software Engineer', 'Full-Stack Developer', 'Backend Engineer', 'Frontend Developer', 'ML Engineer', 'DevOps Engineer'],
     bioTemplate: "Software engineer who loves building scalable systems and shipping products that make a real difference.",
     related: ['AI & Machine Learning', 'Open Source', 'Cloud & DevOps', 'Backend Dev', 'Frontend Dev'],
   },
   {
-    role: 'Designer / Creative', icon: '🎨', label: 'Designer', color: '#7C3AED', bg: '#F3EEFF',
+    role: 'Designer / Creative', icon: 'DC', label: 'Designer', color: '#7C3AED', bg: '#F3EEFF',
     desc: 'Create beautiful experiences',
     titles: ['UX/UI Designer', 'Product Designer', 'Brand Designer', 'Visual Designer', 'Creative Director', 'Motion Designer'],
     bioTemplate: "Designer passionate about crafting intuitive, beautiful experiences that connect people with ideas.",
     related: ['UI/UX Design', 'Design Systems', 'Brand Identity', 'Motion Design', 'Photography'],
   },
   {
-    role: 'Founder / Entrepreneur', icon: '🚀', label: 'Founder', color: '#D97706', bg: '#FFFBEB',
+    role: 'Founder / Entrepreneur', icon: 'FE', label: 'Founder', color: '#D97706', bg: '#FFFBEB',
     desc: 'Building something new',
     titles: ['Founder & CEO', 'Co-Founder', 'Startup Founder', 'Indie Hacker', 'Builder', 'Entrepreneur'],
     bioTemplate: "Founder building in public. I love turning ideas into products and finding early adopters who believe in the vision.",
     related: ['SaaS', 'Bootstrapping', 'Fundraising', 'Growth Marketing', 'Side Projects'],
   },
   {
-    role: 'Marketer / Growth', icon: '📈', label: 'Marketer', color: '#059669', bg: '#ECFDF5',
+    role: 'Marketer / Growth', icon: 'MG', label: 'Marketer', color: '#059669', bg: '#ECFDF5',
     desc: 'Drive acquisition and growth',
     titles: ['Growth Marketing Lead', 'Head of Marketing', 'Digital Marketing Manager', 'Content Strategist', 'SEO Specialist', 'Brand Manager'],
     bioTemplate: "Growth marketer obsessed with finding channels that convert and stories that stick.",
     related: ['Growth Marketing', 'SEO & Content', 'Creator Economy', 'Social Media', 'Brand Identity'],
   },
   {
-    role: 'Product Manager', icon: '📋', label: 'Product', color: '#0284C7', bg: '#F0F9FF',
+    role: 'Product Manager', icon: 'PM', label: 'Product', color: '#0284C7', bg: '#F0F9FF',
     desc: 'Strategy, roadmaps, outcomes',
     titles: ['Senior Product Manager', 'Product Lead', 'Head of Product', 'Associate PM', 'Group PM', 'VP of Product'],
     bioTemplate: "Product manager who thrives at the intersection of user needs, business goals, and engineering constraints.",
     related: ['SaaS', 'AI & Machine Learning', 'Product-Led Growth', 'B2B / Enterprise', 'Growth Marketing'],
   },
   {
-    role: 'Investor / VC', icon: '💰', label: 'Investor', color: '#DB2777', bg: '#FDF2F8',
+    role: 'Investor / VC', icon: 'VC', label: 'Investor', color: '#DB2777', bg: '#FDF2F8',
     desc: 'Back great founders and ideas',
     titles: ['Angel Investor', 'Venture Partner', 'VC Analyst', 'Investment Manager', 'Fund Manager', 'Limited Partner'],
     bioTemplate: "Investor backing ambitious founders at the intersection of technology and human impact.",
     related: ['Venture Capital', 'Angel Investing', 'FinTech', 'SaaS', 'Health Tech'],
   },
   {
-    role: 'Content Creator', icon: '🎬', label: 'Creator', color: '#EA580C', bg: '#FFF7ED',
+    role: 'Content Creator', icon: 'CC', label: 'Creator', color: '#EA580C', bg: '#FFF7ED',
     desc: 'Video, writing, and podcasts',
     titles: ['Content Creator', 'YouTuber', 'Podcast Host', 'Newsletter Writer', 'Social Media Creator', 'Blogger'],
     bioTemplate: "Content creator making videos, writing, and building an audience around things I genuinely care about.",
     related: ['Creator Economy', 'YouTube & Video', 'Podcasting', 'Newsletter & Writing', 'Social Media'],
   },
   {
-    role: 'Data / Analytics', icon: '📊', label: 'Data', color: '#7C3AED', bg: '#F3EEFF',
+    role: 'Data / Analytics', icon: 'DA', label: 'Data', color: '#7C3AED', bg: '#F3EEFF',
     desc: 'Turn data into decisions',
     titles: ['Data Scientist', 'Data Analyst', 'ML Engineer', 'BI Lead', 'Analytics Engineer', 'Quant Researcher'],
     bioTemplate: "Data scientist who finds signal in noise and translates complex analytics into clear business decisions.",
     related: ['Data Science', 'AI & Machine Learning', 'Cloud & DevOps', 'Open Source', 'Business Strategy'],
   },
   {
-    role: 'Student / Learner', icon: '🎓', label: 'Student', color: '#6D28D9', bg: '#F5F3FF',
+    role: 'Student / Learner', icon: 'SL', label: 'Student', color: '#6D28D9', bg: '#F5F3FF',
     desc: 'Growing and exploring',
     titles: ['Student', 'Junior Developer', 'Bootcamp Graduate', 'Recent Graduate', 'Aspiring Engineer', 'Career Switcher'],
     bioTemplate: "Student and lifelong learner exploring new technologies and building projects to sharpen my skills.",
     related: ['Career Growth', 'AI & Machine Learning', 'Open Source', 'Side Projects', 'Developer Tools'],
   },
   {
-    role: 'Operations / Finance', icon: '⚙️', label: 'Operations', color: '#059669', bg: '#ECFDF5',
+    role: 'Operations / Finance', icon: 'OF', label: 'Operations', color: '#059669', bg: '#ECFDF5',
     desc: 'Process, logistics, business',
     titles: ['Operations Manager', 'COO', 'Finance Manager', 'Business Analyst', 'Strategy Lead', 'Chief of Staff'],
     bioTemplate: "Operations and finance professional focused on building systems that scale and businesses that last.",
     related: ['Business Strategy', 'FinTech', 'Operations Excellence', 'Corporate Finance', 'Leadership'],
   },
   {
-    role: 'Community Manager', icon: '🌐', label: 'Community', color: '#0284C7', bg: '#F0F9FF',
+    role: 'Community Manager', icon: 'CM', label: 'Community', color: '#0284C7', bg: '#F0F9FF',
     desc: 'Grow and engage communities',
     titles: ['Community Manager', 'Head of Community', 'Developer Relations', 'Community Lead', 'Partnership Manager'],
     bioTemplate: "Community builder who thrives on creating genuine connections and spaces where people grow together.",
     related: ['Creator Economy', 'Social Media', 'Diversity & Inclusion', 'Leadership', 'EdTech'],
   },
   {
-    role: 'Healthcare Professional', icon: '🩺', label: 'Healthcare', color: '#DC2626', bg: '#FEF2F2',
+    role: 'Healthcare Professional', icon: 'HC', label: 'Healthcare', color: '#DC2626', bg: '#FEF2F2',
     desc: 'Wellness, care, and impact',
     titles: ['Healthcare Professional', 'Nurse Practitioner', 'Physician', 'Healthcare Manager', 'Medical Researcher'],
     bioTemplate: "Healthcare professional committed to improving patient outcomes and advancing evidence-based care.",
     related: ['Health Tech', 'BioTech', 'Mental Health & Wellness', 'AI & Machine Learning', 'Data Science'],
   },
   {
-    role: 'Athlete / Coach', icon: '🏆', label: 'Athlete', color: '#B45309', bg: '#FEF3C7',
+    role: 'Athlete / Coach', icon: 'AC', label: 'Athlete', color: '#B45309', bg: '#FEF3C7',
     desc: 'Sports, performance, coaching',
     titles: ['Personal Trainer', 'Sports Coach', 'Athletic Director', 'Performance Coach', 'Fitness Instructor'],
     bioTemplate: "Athlete and coach dedicated to unlocking human performance and helping people reach their physical best.",
     related: ['Sports & Athletics', 'Fitness & Gym', 'Running & Cycling', 'Nutrition & Diet', 'Leadership'],
   },
   {
-    role: 'Musician / Artist', icon: '🎵', label: 'Musician', color: '#0891B2', bg: '#ECFEFF',
+    role: 'Musician / Artist', icon: 'MA', label: 'Musician', color: '#0891B2', bg: '#ECFEFF',
     desc: 'Music, art, and creativity',
     titles: ['Musician', 'Music Producer', 'Artist', 'Songwriter', 'DJ', 'Performer'],
     bioTemplate: "Musician and artist exploring sound, expression, and the spaces where creativity meets culture.",
     related: ['Music Discovery', 'Music Production', 'Songwriting', 'Creator Economy', 'Live Events & Concerts'],
   },
   {
-    role: 'Chef / Food Creator', icon: '👨‍🍳', label: 'Chef', color: '#D97706', bg: '#FFFBEB',
+    role: 'Chef / Food Creator', icon: 'CF', label: 'Chef', color: '#D97706', bg: '#FFFBEB',
     desc: 'Culinary arts and food content',
     titles: ['Executive Chef', 'Food Creator', 'Chef', 'Culinary Director', 'Recipe Developer', 'Food Blogger'],
     bioTemplate: "Chef and food creator passionate about ingredients, technique, and sharing stories through food.",
     related: ['Cooking & Recipes', 'Restaurant Culture', 'Baking & Pastry', 'FoodTech', 'Creator Economy'],
   },
   {
-    role: 'Real Estate Pro', icon: '🏠', label: 'Real Estate', color: '#065F46', bg: '#ECFDF5',
+    role: 'Real Estate Pro', icon: 'RE', label: 'Real Estate', color: '#065F46', bg: '#ECFDF5',
     desc: 'Property, investment, development',
     titles: ['Real Estate Agent', 'Property Developer', 'Real Estate Investor', 'Mortgage Broker', 'Property Manager'],
     bioTemplate: "Real estate professional helping people find homes, build wealth, and navigate property markets.",
@@ -458,11 +458,11 @@ function getAllTitlesForCategory(categoryRole) {
 }
 
 const EXPERIENCE_LEVELS = [
-  { value: 'student', icon: '🌱', label: 'Early',    desc: '0–2 yrs' },
-  { value: 'junior',  icon: '📗', label: 'Junior',    desc: '2–4 yrs' },
-  { value: 'mid',     icon: '📘', label: 'Mid',       desc: '4–7 yrs' },
-  { value: 'senior',  icon: '📙', label: 'Senior',    desc: '7–12 yrs' },
-  { value: 'exec',    icon: '🏆', label: 'Executive', desc: 'C-suite / Founder' },
+  { value: 'student', icon: 'E', label: 'Early',    desc: '0-2 yrs' },
+  { value: 'junior',  icon: 'J', label: 'Junior',    desc: '2-4 yrs' },
+  { value: 'mid',     icon: 'M', label: 'Mid',       desc: '4-7 yrs' },
+  { value: 'senior',  icon: 'S', label: 'Senior',    desc: '7-12 yrs' },
+  { value: 'exec',    icon: 'X', label: 'Executive', desc: 'C-suite / Founder' },
 ];
 
 export default function Register() {
@@ -586,7 +586,7 @@ export default function Register() {
                   background: step === s ? 'var(--primary)' : step > s ? 'var(--primary)' : 'var(--border)',
                   color: step >= s ? '#fff' : 'var(--muted)',
                 }}>
-                  {step > s ? '✓' : s + 1}
+                  {step > s ? 'OK' : s + 1}
                 </div>
                 {s === 0 && <div style={{ width: 32, height: 2, background: step >= 1 ? 'var(--primary)' : 'var(--border)', borderRadius: 1 }} />}
               </div>
@@ -694,7 +694,7 @@ export default function Register() {
                       <div style={{ fontSize: '.63rem', color: 'var(--muted)', marginTop: 1, lineHeight: 1.3 }}>
                         {macro.desc}
                       </div>
-                      {isSel && <div style={{ marginTop: 4, fontSize: '.62rem', fontWeight: 700, color: macro.color }}>✓ selected</div>}
+                      {isSel && <div style={{ marginTop: 4, fontSize: '.62rem', fontWeight: 700, color: macro.color }}>Selected</div>}
                     </button>
                   );
                 })}

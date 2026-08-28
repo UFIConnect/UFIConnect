@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -22,7 +22,7 @@ const filestore  = require('./filestore');
 
 dotenv.config();
 
-// ─── Pipeline/api role split ────────────────────────────────────────────────
+// --- Pipeline/api role split ------------------------------------------------
 // Same codebase runs as two separate Render services now: 'pipeline' does
 // all real external-source fetching (the ~30 continuous workers, plus
 // anything else that talks to an external API — see every
@@ -62,7 +62,7 @@ const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STR
 
 // Prevent crashes from unhandled exceptions
 process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err.message);
+  console.error('[Uncaught Exception]', err.message);
   // recordServerError is a hoisted function declaration defined later in
   // this file — safe to call here since nothing above actually invokes it
   // before the module finishes loading (same forward-reference pattern
@@ -72,7 +72,7 @@ process.on('uncaughtException', (err) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('[Unhandled Rejection]', promise, 'reason:', reason);
   recordServerError(reason instanceof Error ? reason : new Error(String(reason)), { route: null });
   // Don't exit - try to keep running
 });
@@ -93,6 +93,13 @@ function buildHealthPayload() {
       lastRun: stagingTransferState?.lastRun || null,
       lastCount: stagingTransferState?.lastCount ?? 0,
       totalTransferred: stagingTransferState?.totalTransferred ?? 0,
+      lastSavedCount: stagingTransferState?.lastSavedCount ?? 0,
+      lastDeletedCount: stagingTransferState?.lastDeletedCount ?? 0,
+      lastDurationMs: stagingTransferState?.lastDurationMs ?? null,
+      lastSourceCounts: stagingTransferState?.lastSourceCounts || {},
+      currentBatch: stagingTransferState?.currentBatch || 0,
+      currentBatchSize: stagingTransferState?.currentBatchSize || 0,
+      recentRuns: stagingTransferState?.recentRuns || [],
       lastError: stagingTransferState?.lastError || null,
       lastReason: stagingTransferState?.lastReason || null,
       inFlight: !!transferInFlight,
@@ -101,6 +108,8 @@ function buildHealthPayload() {
       oldestFetchedAt: feedStorageFreshnessState?.staging?.oldestFetchedAt || null,
       newestFetchedAt: feedStorageFreshnessState?.staging?.newestFetchedAt || null,
       newestPostCreatedAt: feedStorageFreshnessState?.staging?.newestPostCreatedAt || null,
+      bySource: feedStorageFreshnessState?.staging?.bySource || {},
+      liveCachePostCount: dbFeedPostCount ?? null,
     };
   } catch {
     payload.staging = null;
@@ -410,7 +419,7 @@ const joseModulePromise = import('jose');
 // can't crash .map/.filter calls downstream.
 const asArray = (v) => Array.isArray(v) ? v : [];
 
-// ─── Time helpers ─────────────────────────────────────────────────────────────
+// --- Time helpers -------------------------------------------------------------
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
 const H = 3600000;
 const D = 86400000;
@@ -476,7 +485,7 @@ function scheduleRecurring(fn, intervalMs) {
   return null;
 }
 
-// ─── Role → category mapping ─────────────────────────────────────────────────
+// --- Role ? category mapping -------------------------------------------------
 const ROLE_CATEGORIES = {
   'Engineer / Developer':       ['Engineering', 'AI & ML'],
   'Designer / Creative':        ['Design', 'Marketing'],
@@ -500,7 +509,7 @@ const ROLE_CATEGORIES = {
   'Real Estate Pro':            ['Finance', 'Startups'],
 };
 
-// ─── Interest → category mapping ─────────────────────────────────────────────
+// --- Interest ? category mapping ---------------------------------------------
 // Maps fine-grained onboarding interests to group categories
 const INTEREST_TO_CATEGORY = {
   // AI & ML
@@ -549,7 +558,7 @@ const INTEREST_TO_CATEGORY = {
   'Shopify': 'Startups', 'D2C Brands': 'Startups',
 };
 
-// ─── Interest → subreddit mapping ────────────────────────────────────────────
+// --- Interest ? subreddit mapping --------------------------------------------
 // Keys match EXACTLY the INTERESTS[] array in Onboarding.jsx
 const INTEREST_TO_SUBREDDIT = {
   // AI & Tech
@@ -714,7 +723,7 @@ const INTEREST_TO_SUBREDDIT = {
   'Zero Waste Living':        ['ZeroWaste','sustainability'],
 };
 
-// Role → subreddits
+// Role ? subreddits
 const ROLE_TO_SUBREDDITS = {
   'Engineer / Developer':     ['programming','webdev','devops'],
   'Designer / Creative':      ['UXDesign','graphic_design','userexperience'],
@@ -732,8 +741,8 @@ const ROLE_TO_SUBREDDITS = {
   'HR / People Ops':          ['humanresources','cscareerquestions','startups'],
 };
 
-// ─── Reddit live post fetching ────────────────────────────────────────────────
-const redditCache = new Map(); // subreddit → { posts, fetchedAt }
+// --- Reddit live post fetching ------------------------------------------------
+const redditCache = new Map(); // subreddit ? { posts, fetchedAt }
 const REDDIT_TTL  = 30 * 60 * 1000; // 30 minutes
 
 function fetchJSON(url, extraHeaders = {}) {
@@ -821,7 +830,7 @@ function fetchJSONWithHeaders(url, extraHeaders = {}) {
   });
 }
 
-// ─── Social OAuth config ─────────────────────────────────────────────────────
+// --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
 
@@ -1021,7 +1030,7 @@ function verifyOAuthState(state, platform) {
 }
 function pkceChallenge(v) { return crypto.createHash('sha256').update(v).digest('base64url'); }
 
-// ─── Bluesky (AT Protocol) OAuth ───────────────────────────────────────────────
+// --- Bluesky (AT Protocol) OAuth -----------------------------------------------
 // AT Protocol OAuth doesn't fit the client_id/secret shape every other
 // platform above uses at all — see https://atproto.com/specs/oauth:
 //   - No developer dashboard issues credentials. client_id is a URL
@@ -1431,7 +1440,7 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
       result.data.refresh_token
     );
 
-    logAgentAction('cache_helper', '🔗', 'User connected bluesky — social feed now active', '#6366F1');
+    logAgentAction('cache_helper', '??', 'User connected bluesky - social feed now active', '#6366F1');
     res.redirect(`${frontendProfile}?social_connected=bluesky`);
   } catch (e) {
     console.error('[Bluesky] callback error:', e.message);
@@ -1439,7 +1448,7 @@ app.get('/auth/social/bluesky/callback', async (req, res) => {
   }
 });
 
-// ─── Password reset ───────────────────────────────────────────────────────────
+// --- Password reset -----------------------------------------------------------
 function createPasswordResetToken(userId) {
   return jwt.sign({ id: userId, purpose: 'password-reset' }, JWT_SECRET, { expiresIn: '30m' });
 }
@@ -1452,7 +1461,7 @@ function verifyPasswordResetToken(token) {
   }
 }
 
-// ─── Outbound email (password reset, etc.) ────────────────────────────────────
+// --- Outbound email (password reset, etc.) ------------------------------------
 // Requires SMTP_HOST/SMTP_USER/SMTP_PASS to be set — any SMTP provider works
 // (Gmail with an app password, SendGrid/Mailgun/etc. SMTP relay, ...). Without
 // them, reset links are logged server-side instead of emailed, same
@@ -1490,7 +1499,7 @@ async function sendPasswordResetEmail(toEmail, resetUrl) {
   });
 }
 
-// ─── Web Push ───────────────────────────────────────────────────────────────
+// --- Web Push ---------------------------------------------------------------
 // Same unconfigured-but-not-broken pattern as email/every OAuth platform —
 // until both VAPID keys are set, push is a silent no-op (createNotification
 // still persists the in-app row either way) rather than an error anywhere.
@@ -1609,7 +1618,7 @@ function postForm(url, params, headers = {}) {
   });
 }
 
-// ─── Search keyword per interest (used by Reddit, News, DEV Community) ─────────────
+// --- Search keyword per interest (used by Reddit, News, DEV Community) -------------
 // Keys match EXACTLY the Onboarding.jsx INTERESTS[] array
 const INTEREST_TO_KEYWORDS = {
   'AI & Machine Learning':    'machine learning AI',
@@ -1865,7 +1874,7 @@ const ROLE_TO_KEYWORDS = {
   'HR / People Ops':        'HR recruiting people operations',
 };
 
-// Goal value → search keyword (goal values come from Onboarding.jsx GOALS[].value)
+// Goal value ? search keyword (goal values come from Onboarding.jsx GOALS[].value)
 const GOAL_TO_KEYWORDS = {
   'networking':  'professional networking community career',
   'jobs':        'job search hiring remote career opportunities',
@@ -1917,7 +1926,7 @@ const INTEREST_EXTRA_KEYWORDS = {
   'Content Creator':          ['YouTube algorithm thumbnail SEO', 'newsletter subscriber monetization'],
 };
 
-// Skill → Stack Overflow tag
+// Skill ? Stack Overflow tag
 function interestKeyword(interest) {
   return INTEREST_TO_KEYWORDS[interest] || (typeof interest === 'string' ? interest.trim() : '');
 }
@@ -1937,7 +1946,7 @@ const SKILL_TO_SO_TAG = {
   'data science': 'data-science', 'pandas': 'pandas', 'r': 'r',
 };
 
-// Common skill strings → DEV Community tag (lowercase, no spaces)
+// Common skill strings ? DEV Community tag (lowercase, no spaces)
 const SKILL_TO_DEVTO_TAG = {
   'javascript': 'javascript', 'typescript': 'typescript', 'react': 'react',
   'vue': 'vue', 'angular': 'angular', 'node': 'node', 'nodejs': 'node',
@@ -1958,7 +1967,7 @@ const SKILL_TO_DEVTO_TAG = {
   'seo': 'seo', 'copywriting': 'writing', 'content marketing': 'marketing',
 };
 
-// ─── Post fetch cache ─────────────────────────────────────────────────────────
+// --- Post fetch cache ---------------------------------------------------------
 const postCache = new Map();
 const CACHE_TTL     = 30 * 60 * 1000; // default 30 min
 const POST_CACHE_MAX = 300;            // hard cap on entries — evict oldest when exceeded
@@ -1977,7 +1986,7 @@ setInterval(() => {
   for (const [k, c] of postCache) if (now - c.t > (c.ttl ?? CACHE_TTL)) postCache.delete(k);
 }, 5 * 60 * 1000);
 
-// ─── Per-source freshness config ──────────────────────────────────────────────
+// --- Per-source freshness config ----------------------------------------------
 // TTL:    real freshness window — worker busts cache and re-fetches from API after this time
 // DELAY:  ms between fetching successive topics in the continuous cycler, within one shard
 // SHARDS: parallel topic-shard workers per source — with N shards the 69-topic list is split
@@ -1989,11 +1998,11 @@ setInterval(() => {
 //
 // Every source is rated into one of 5 cadence tiers by the NATURE of its content, not tuned
 // per-platform:
-//   [BREAKING]  breaking/trending topics       → every  15–30 sec
-//   [HIGH-VOL]  high-volume accounts/pages     → every   1–2 min
-//   [ACTIVE]    normal active accounts/pages   → every       3 min
-//   [LOW-ACT]   low-activity sources           → every       4 min
-//   [ARCHIVAL]  inactive/archival sources      → every       5 min   (system-wide ceiling)
+//   [BREAKING]  breaking/trending topics       ? every  15-30 sec
+//   [HIGH-VOL]  high-volume accounts/pages     ? every   1-2 min
+//   [ACTIVE]    normal active accounts/pages   ? every       3 min
+//   [LOW-ACT]   low-activity sources           ? every       4 min
+//   [ARCHIVAL]  inactive/archival sources      ? every       5 min   (system-wide ceiling)
 // Shard counts below were raised from their original values (kept as
 // comments alongside the new ones) to shrink full-topic-cycle time — how
 // long a source's own shard loop takes to work through all of FEED_TOPICS
@@ -2012,7 +2021,7 @@ setInterval(() => {
 // shards is how many independent, permanently-running async loops
 // makeTopicCycler spins up for that one source (see its own definition) —
 // NOT a free lever. A previous pass in this file's history pushed every
-// tier's shard count up 4-16x to force a uniform ≤5min cycle through all of
+// tier's shard count up 4-16x to force a uniform =5min cycle through all of
 // FEED_TOPICS (203 entries), which looked reasonable per-source in
 // isolation but summed to ~2,100 concurrent shard loops across the whole
 // app (was ~220) — confirmed live as the actual cause of both external
@@ -2030,7 +2039,7 @@ setInterval(() => {
 // pacing between successive requests within one shard) stays untouched.
 const SOURCE_CONFIG = {
   //               TTL (ms)           DELAY/topic     shards
-  // ── [BREAKING] 15–30s — live social/news firehose ───────────────────────────
+  // -- [BREAKING] 15-30s - live social/news firehose ---------------------------
   reddit:        { ttl:  8*60000, delay: 15000, shards: 8 },  // r/new firehose, many subreddits — was 4
   hn:            { ttl:  8*60000, delay: 20000, shards: 10 },  // Algolia — front page churns constantly — was 5
   mastodon:      { ttl:  8*60000, delay: 20000, shards: 10 },  // public federated timelines, live chatter — was 5
@@ -2042,12 +2051,12 @@ const SOURCE_CONFIG = {
   // so it's rated with its breaking-news peers, just at the slow end of the tier.
   bluesky:       { ttl: 10*60000, delay: 30000, shards: 12 },  // public ATP API, live social posts — was 6
 
-  // ── [HIGH-VOL] 60s — high-frequency, freshness-sensitive ────────────────────
+  // -- [HIGH-VOL] 60s - high-frequency, freshness-sensitive --------------------
   devto:         { ttl: 20*60000, delay: 60000,  shards: 12 },  // dev blogging platform, constant new posts — was 6
   indeed:        { ttl: 20*60000, delay: 60000,  shards: 12 },  // job RSS feeds, new listings continuously — was 6
   techcrunch:    { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
   theverge:      { ttl: 20*60000, delay: 60000,  shards: 12 },  // tech news RSS, several stories/day — was 6
-  // ── [HIGH-VOL] 90s ───────────────────────────────────────────────────────────
+  // -- [HIGH-VOL] 90s -----------------------------------------------------------
   medium:        { ttl: 25*60000, delay: 90000,  shards: 14 },  // CDN RSS, huge publishing platform — was 7
   youtube:       { ttl: 25*60000, delay: 90000,  shards: 14 },  // channel RSS across many creators — was 7
   hashnode:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // freeCodeCamp RSS — was 7
@@ -2056,12 +2065,12 @@ const SOURCE_CONFIG = {
   wired:         { ttl: 25*60000, delay: 90000,  shards: 14 },  // tech/culture news RSS — was 7
   venturebeat:   { ttl: 25*60000, delay: 90000,  shards: 14 },  // AI/startup news RSS — was 7
   phoronix:      { ttl: 25*60000, delay: 90000,  shards: 14 },  // Linux/hardware news, multiple posts/day — was 7
-  // ── [HIGH-VOL] 120s ──────────────────────────────────────────────────────────
+  // -- [HIGH-VOL] 120s ----------------------------------------------------------
   theregister:   { ttl: 30*60000, delay: 120000, shards: 18 },  // enterprise IT/security RSS — was 9
   remoteok:      { ttl: 30*60000, delay: 120000, shards: 18 },  // remote jobs API — was 9
   behance:       { ttl: 30*60000, delay: 120000, shards: 18 },  // creative portfolios RSS — was 9
 
-  // ── [ACTIVE] flat 3min — steady content, not minute-by-minute ──────────────
+  // -- [ACTIVE] flat 3min - steady content, not minute-by-minute --------------
   indiehackers:  { ttl: 45*60000, delay: 180000, shards: 20 }, // community posts — was 10
   smashing:      { ttl: 45*60000, delay: 180000, shards: 20 }, // web dev/design RSS, long-form articles — was 10
   infoq:         { ttl: 45*60000, delay: 180000, shards: 20 }, // enterprise/cloud RSS, moderate cadence — was 10
@@ -2071,11 +2080,11 @@ const SOURCE_CONFIG = {
   crunchbase:    { ttl: 45*60000, delay: 180000, shards: 20 }, // business/funding RSS — deals aren't continuous — was 10
   designweb:     { ttl: 45*60000, delay: 180000, shards: 20 }, // design/web industry RSS aggregator — was 10
 
-  // ── [LOW-ACT] no hard external limit, but a small/low-traffic site — still
+  // -- [LOW-ACT] no hard external limit, but a small/low-traffic site - still
   // only a modest step up, same reasoning as the rest of this pass.
   lobsters:      { ttl: 20*60000, delay: 240000,  shards: 16 },  // small, low-traffic site — genuinely low activity, but no rate ceiling to respect either — was 8
 
-  // ── [LOW-ACT] flat 4min, 1 shard — real external ceiling, left as-is ───────
+  // -- [LOW-ACT] flat 4min, 1 shard - real external ceiling, left as-is -------
   // These four keep both their original 1-shard cadence AND get capped in
   // RATE_LIMITED_MANUAL_SWEEP — see that constant's comment. Reverted back
   // to the original delay values along with the shard-count revert above —
@@ -2085,7 +2094,7 @@ const SOURCE_CONFIG = {
   // single-shard, so don't add to the concurrent-loop count that was the
   // main problem) that weren't confirmed to be part of the actual cause.
   github:        { ttl: 20*60000, delay: 240000,  shards: 1 },  // 60 req/hr unauthed — 15 fetch/hr worst case, still under the cap
-  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires ≥20s between requests — 4min is a wide courtesy margin
+  arxiv:         { ttl: 40*60000, delay: 240000,  shards: 1 },  // OAI-PMH requires =20s between requests - 4min is a wide courtesy margin
   usajobs:       { ttl: 40*60000, delay: 240000,  shards: 1 },  // federal Search API — free self-serve key, stay conservative as a courtesy
   // 48 mapped topics × 1 fetch/full-cycle would land ~250/day at the same
   // 4min the rest of this tier uses — too close to the Stack Exchange
@@ -2093,7 +2102,7 @@ const SOURCE_CONFIG = {
   // which keeps it ~200/day with real headroom.
   stackoverflow: { ttl: 40*60000, delay: 300000,  shards: 1 },  // 300/day API budget — kept at the archival ceiling for quota headroom
 
-  // ── [ARCHIVAL] flat 5min, 1 shard — system-wide ceiling ─────────────────────
+  // -- [ARCHIVAL] flat 5min, 1 shard - system-wide ceiling ---------------------
   // No free public API — requires a genuine app-level public token
   // (TWITTER_BEARER_TOKEN / LINKEDIN_TOKEN / INSTAGRAM_TOKEN / FACEBOOK_TOKEN
   // env vars), never a member's personal connected-account token. Idles at
@@ -2145,8 +2154,8 @@ const CACHE_KEY_PREFIX = {
   facebook:      'facebook_kw_',
 };
 
-// ─── Reddit: subreddit RSS feeds (no API key, no auth, always works) ──────────
-// Topic → subreddits. We fetch new.rss from each and merge by date.
+// --- Reddit: subreddit RSS feeds (no API key, no auth, always works) ----------
+// Topic ? subreddits. We fetch new.rss from each and merge by date.
 const TOPIC_SUBREDDITS = {
   'AI & Machine Learning':  ['MachineLearning', 'artificial', 'deeplearning', 'learnmachinelearning'],
   'Machine Learning':       ['MachineLearning', 'learnmachinelearning', 'deeplearning', 'MLQuestions'],
@@ -2249,7 +2258,7 @@ const TOPIC_SUBREDDITS = {
   'Movies & Shows':         ['movies', 'television', 'Filmmakers'],
   'Books':                  ['books', 'suggestmeabook', 'literature'],
 
-  // ── Everything below backs the FEED_TOPICS expansion above — real subreddits
+  // -- Everything below backs the FEED_TOPICS expansion above - real subreddits
   // for each topic that was already selectable at signup but had no fetch
   // behind it. Hand-picked from real subreddit knowledge, not exhaustively
   // live-verified (Reddit's anonymous endpoints rate-limit scripted checks
@@ -2638,7 +2647,7 @@ async function fetchRedditByKeyword(keyword) {
   const key = `reddit_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) {
-    console.log(`[Reddit] Cache hit for "${keyword}" → ${cached.length} posts`);
+    console.log(`[Reddit] Cache hit for "${keyword}" ? ${cached.length} posts`);
     return cached;
   }
 
@@ -2707,7 +2716,7 @@ async function fetchRedditByKeyword(keyword) {
   return fallback;
 }
 
-// ─── Reddit: a connected member's own home feed (subscribed subreddits) ──────
+// --- Reddit: a connected member's own home feed (subscribed subreddits) ------
 // oauth.reddit.com/ with the member's own Bearer token returns their real
 // personalized front page — same response shape as a subreddit listing
 // (parseRedditJSON already handles it, just fed a null topicKeyword since
@@ -2754,7 +2763,7 @@ async function fetchRedditHomeFeed(token, { bust = false } = {}) {
   }
 }
 
-// ─── News: search by keyword via Algolia ───────────────────────────────────
+// --- News: search by keyword via Algolia -----------------------------------
 async function fetchHNByKeyword(keyword) {
   const key = `hn_kw_${keyword}`;
   const cached = getCached(key);
@@ -2807,7 +2816,7 @@ async function fetchHNByKeyword(keyword) {
   }
 }
 
-// ─── DEV Community: search by tag ─────────────────────────────────────────────
+// --- DEV Community: search by tag ---------------------------------------------
 async function fetchDevToByTag(tag) {
   const key = `devto_tag_${tag}`;
   const cached = getCached(key);
@@ -2903,7 +2912,7 @@ async function fetchDevToByTag(tag) {
   }
 }
 
-// ─── GitHub: search repositories by keyword ──────────────────────────────────
+// --- GitHub: search repositories by keyword ----------------------------------
 // GitHub's unauthenticated search API caps out at 60 requests/hour, enforced
 // against this app's IP regardless of which/how-many users trigger a given
 // fetch — same "external quota is shared no matter what" situation as
@@ -2954,7 +2963,7 @@ async function fetchGitHubByKeyword(keyword) {
         content:     r.description,
         title:       r.full_name,
         source:      'github',
-        sourceLabel: `⭐ ${r.stargazers_count?.toLocaleString()} · ${r.language || 'GitHub'}`,
+        sourceLabel: `${r.stargazers_count?.toLocaleString() || 0} stars - ${r.language || 'GitHub'}`,
         sourceUrl:   r.html_url,
         topic:       keyword,
         author:      { id: `github_${r.owner?.login}`, name: r.owner?.login, title: r.language || 'GitHub', organization: 'GitHub' },
@@ -2986,7 +2995,7 @@ async function fetchGitHubByKeyword(keyword) {
   }
 }
 
-// ─── GitHub: a connected member's own following activity ─────────────────────
+// --- GitHub: a connected member's own following activity ---------------------
 // GitHub's received_events API ("activity from people you follow" — exactly
 // the feed a member sees on github.com's own dashboard) is real, documented,
 // and works off nothing more than the read:user scope this app already
@@ -3095,7 +3104,7 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
 }
 
 // Marks genuinely-cut content with a trailing ellipsis so the client can
-// detect truncation (see Feed.jsx's isTruncated → "Read full post ↗").
+// detect truncation (see Feed.jsx's isTruncated ? "Read full post ?").
 // Every per-source fetcher below caps its own content length before it ever
 // reaches the shared 600-char trimPostContent gate, so without this, that
 // gate's own ellipsis only ever fired for the generic RSS pool (the one
@@ -3124,7 +3133,7 @@ function truncateWithEllipsis(text, maxLen) {
 // their own shorter, unrelated caps.
 const POST_CONTENT_MAX_CHARS = 2000;
 
-// ─── Medium: fetch articles by tag via RSS feed ───────────────────────────────
+// --- Medium: fetch articles by tag via RSS feed -------------------------------
 function decodeHTMLEntities(str) {
   return str
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
@@ -3153,7 +3162,7 @@ function decodeHTMLEntities(str) {
 // real one to find).
 // Block-level boundaries (paragraph/line/list/row breaks) need an explicit
 // space once the tag itself is gone, or two adjacent blocks run together as
-// one word ("</p><p>" → nothing between them otherwise). Everything else —
+// one word ("</p><p>" ? nothing between them otherwise). Everything else -
 // inline tags like <a>/<span>/<strong>/<em> — should NOT inject a space:
 // they routinely sit hard against adjacent content with no space in the
 // original. Confirmed live: Mastodon's own hashtag markup is
@@ -3204,7 +3213,7 @@ function decodeAndStripHTML(escapedHtml) {
   // numeric entities (apostrophes as &#39;, etc.), and that whole rendered
   // HTML is then escaped *again* as the XML text content of <content>.
   // A single decodeHTMLEntities pass only unwraps the outer XML layer
-  // (&amp;#39; → &#39;) — its own numeric-entity replace already ran
+  // (&amp;#39; ? &#39;) - its own numeric-entity replace already ran
   // earlier in that same pass and doesn't re-scan its own output —
   // confirmed live as literal "&#39;"/"&gt;" text showing up in rendered
   // Reddit post content instead of real apostrophes/angle brackets.
@@ -3376,7 +3385,7 @@ async function fetchMediumByTag(tag) {
   }
 }
 
-// ─── YouTube: official API when key is set, Invidious proxy otherwise ────────
+// --- YouTube: official API when key is set, Invidious proxy otherwise --------
 // Confirmed live (2026-08-19) against api.invidious.io's own health tracker:
 // of the previous 8 entries, 6 were completely unreachable (dead instances —
 // public Invidious instances churn constantly under sustained pressure from
@@ -3404,7 +3413,7 @@ let youtubeInvidiousConsecutiveFullMisses = 0;
 const YOUTUBE_INVIDIOUS_OUTAGE_MISS_THRESHOLD = 3;
 const YOUTUBE_INVIDIOUS_OUTAGE_COOLDOWN_MS = 20 * 60 * 1000;
 
-// ─── YouTube: channel RSS feeds (no API key needed, served by YouTube directly) ─
+// --- YouTube: channel RSS feeds (no API key needed, served by YouTube directly) -
 // Organized by topic so each keyword query hits the right channels.
 const TOPIC_YT_CHANNELS = {
   'AI & Machine Learning':  [
@@ -3813,7 +3822,7 @@ async function fetchYouTubeByKeyword(keyword) {
     // search and the shorts supplement, against a 10,000/day free default,
     // so the budget covers well under one full pass over FEED_TOPICS) falls
     // through to the RSS tier below instead of skipping it entirely, same
-    // cascading-fallback shape as fetchRedditSub's OAuth→anon→RSS chain.
+    // cascading-fallback shape as fetchRedditSub's OAuth?anon?RSS chain.
     const apiKey = process.env.YOUTUBE_API_KEY;
     if (apiKey && !youtubeApiBlocked()) {
       youtubeApiLastCallAt = Date.now();
@@ -3944,7 +3953,7 @@ async function fetchYouTubeByKeyword(keyword) {
   }
 }
 
-// ─── Stack Overflow: questions by tag ────────────────────────────────────────
+// --- Stack Overflow: questions by tag ----------------------------------------
 const INTEREST_TO_SO_TAG = {
   'AI & Machine Learning': 'machine-learning', 'Data Science': 'pandas',
   'Computer Vision': 'computer-vision', 'LLMs & Chatbots': 'llm',
@@ -4098,7 +4107,7 @@ async function fetchStackOverflowByTag(tag) {
   }
 }
 
-// ─── Mastodon: public hashtag timeline ───────────────────────────────────────
+// --- Mastodon: public hashtag timeline ---------------------------------------
 const INTEREST_TO_MASTODON_TAG = {
   'AI & Machine Learning': 'AI',        'Generative AI': 'GenAI',
   'LLMs & Chatbots': 'LLM',             'Computer Vision': 'ComputerVision',
@@ -4212,7 +4221,7 @@ async function fetchMastodonByTag(tag) {
   return getCached(key) || [];
 }
 
-// ─── Lobsters: tech link aggregator ──────────────────────────────────────────
+// --- Lobsters: tech link aggregator ------------------------------------------
 // Every value here is a real lobste.rs tag (verified against https://lobste.rs/tags
 // and by fetching https://lobste.rs/t/<tag>.json directly) — 9 of the previous
 // mappings (datascience, frontend, backend, tools ×2, crypto ×2, gamedev, db,
@@ -4297,7 +4306,7 @@ async function fetchLobstersByTag(tag) {
   }
 }
 
-// ─── arXiv: academic papers (AI, ML, Data Science, etc.) ─────────────────────
+// --- arXiv: academic papers (AI, ML, Data Science, etc.) ---------------------
 const INTEREST_TO_ARXIV = {
   'AI & Machine Learning': 'machine learning',   'Computer Vision': 'computer vision',
   'Data Science': 'data science',                 'LLMs & Chatbots': 'large language models',
@@ -4362,7 +4371,7 @@ async function fetchArxivByKeyword(keyword) {
       content:     e.summary,
       title:       e.title,
       source:      'arxiv',
-      sourceLabel: `📄 ${e.authors || 'arXiv'}`,
+      sourceLabel: e.authors || 'arXiv',
       sourceUrl:   e.link,
       topic:       keyword,
       author:      { id: `arxiv_${e.id}`, name: e.authors, title: 'Research Paper', organization: 'arXiv' },
@@ -4393,7 +4402,7 @@ async function fetchArxivByKeyword(keyword) {
   }
 }
 
-// ─── Generic RSS parser + helpers (shared by all RSS-based source agents) ────
+// --- Generic RSS parser + helpers (shared by all RSS-based source agents) ----
 function parseRSSItems(xml) {
   const items = [];
   // Handle both RSS <item> and Atom <entry>
@@ -4587,7 +4596,7 @@ function filterAndSlice(items, keyword, max = 1000) {
   return (matched.length > 0 ? matched : items).slice(0, max);
 }
 
-// ─── Indeed: job listings by keyword ─────────────────────────────────────────
+// --- Indeed: job listings by keyword -----------------------------------------
 async function fetchIndeedJobs(keyword) {
   const key = `indeed_kw_${keyword}`;
   const cached = getCached(key);
@@ -4652,7 +4661,7 @@ async function fetchIndeedJobs(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Product Hunt: latest launches, filtered by keyword ──────────────────────
+// --- Product Hunt: latest launches, filtered by keyword ----------------------
 async function fetchProductHunt(keyword) {
   const key = `ph_kw_${keyword}`;
   const cached = getCached(key);
@@ -4683,7 +4692,7 @@ async function fetchProductHunt(keyword) {
   }
 }
 
-// ─── TechCrunch: tech news filtered by keyword ───────────────────────────────
+// --- TechCrunch: tech news filtered by keyword -------------------------------
 async function fetchTechCrunch(keyword) {
   const key = `tc_kw_${keyword}`;
   const cached = getCached(key);
@@ -4714,7 +4723,7 @@ async function fetchTechCrunch(keyword) {
   }
 }
 
-// ─── The Verge: tech & culture news filtered by keyword ──────────────────────
+// --- The Verge: tech & culture news filtered by keyword ----------------------
 async function fetchTheVerge(keyword) {
   const key = `verge_kw_${keyword}`;
   const cached = getCached(key);
@@ -4745,7 +4754,7 @@ async function fetchTheVerge(keyword) {
   }
 }
 
-// ─── Indie Hackers: entrepreneur stories filtered by keyword ──────────────────
+// --- Indie Hackers: entrepreneur stories filtered by keyword ------------------
 async function fetchIndieHackers(keyword) {
   const key = `ih_kw_${keyword}`;
   const cached = getCached(key);
@@ -4796,7 +4805,7 @@ async function fetchIndieHackers(keyword) {
   return getCached(key) || [];
 }
 
-// ─── freeCodeCamp News: replaces Hashnode (Hashnode API fully shut down) ────────
+// --- freeCodeCamp News: replaces Hashnode (Hashnode API fully shut down) --------
 // Source key kept as "hashnode" so existing UI/workers need no changes.
 async function fetchHashnode(keyword) {
   const key = `hashnode_kw_${keyword}`;
@@ -4844,7 +4853,7 @@ async function fetchHashnode(keyword) {
   return getCached(key) || [];
 }
 
-// ─── The Register: enterprise IT, security, open-source news ─────────────────
+// --- The Register: enterprise IT, security, open-source news -----------------
 async function fetchTheRegister(keyword) {
   const key = `reg_kw_${keyword}`;
   const cached = getCached(key);
@@ -4878,7 +4887,7 @@ async function fetchTheRegister(keyword) {
   }
 }
 
-// ─── VentureBeat: AI, enterprise tech, startup funding news ──────────────────
+// --- VentureBeat: AI, enterprise tech, startup funding news ------------------
 async function fetchVentureBeat(keyword) {
   const key = `vb_kw_${keyword}`;
   const cached = getCached(key);
@@ -4912,7 +4921,7 @@ async function fetchVentureBeat(keyword) {
   }
 }
 
-// ─── Smashing Magazine: web dev, design, UX articles ─────────────────────────
+// --- Smashing Magazine: web dev, design, UX articles -------------------------
 async function fetchSmashingMagazine(keyword) {
   const key = `smash_kw_${keyword}`;
   const cached = getCached(key);
@@ -4943,7 +4952,7 @@ async function fetchSmashingMagazine(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Phoronix: Linux, open-source hardware, benchmarks ───────────────────────
+// --- Phoronix: Linux, open-source hardware, benchmarks -----------------------
 async function fetchPhoronix(keyword) {
   const key = `phor_kw_${keyword}`;
   const cached = getCached(key);
@@ -4977,7 +4986,7 @@ async function fetchPhoronix(keyword) {
   }
 }
 
-// ─── InfoQ: enterprise software architecture, cloud, DevOps ──────────────────
+// --- InfoQ: enterprise software architecture, cloud, DevOps ------------------
 async function fetchInfoQ(keyword) {
   const key = `infoq_kw_${keyword}`;
   const cached = getCached(key);
@@ -5008,7 +5017,7 @@ async function fetchInfoQ(keyword) {
   return getCached(key) || [];
 }
 
-// ─── MIT Technology Review: deep tech, AI policy, science ────────────────────
+// --- MIT Technology Review: deep tech, AI policy, science --------------------
 async function fetchMITTechReview(keyword) {
   const key = `mittr_kw_${keyword}`;
   const cached = getCached(key);
@@ -5042,7 +5051,7 @@ async function fetchMITTechReview(keyword) {
   }
 }
 
-// ─── Ars Technica: tech/science news filtered by keyword ─────────────────────
+// --- Ars Technica: tech/science news filtered by keyword ---------------------
 async function fetchArsTechnica(keyword) {
   const key = `ars_kw_${keyword}`;
   const cached = getCached(key);
@@ -5074,7 +5083,7 @@ async function fetchArsTechnica(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Wired: tech and culture news filtered by keyword ────────────────────────
+// --- Wired: tech and culture news filtered by keyword ------------------------
 async function fetchWired(keyword) {
   const key = `wired_kw_${keyword}`;
   const cached = getCached(key);
@@ -5163,7 +5172,7 @@ async function fetchGitLabByKeyword(keyword) {
   }
 }
 
-// ─── GitLab: activity from people the member actually follows ─────────────────
+// --- GitLab: activity from people the member actually follows -----------------
 // GitLab has no single "aggregated events from everyone I follow" call the
 // way GitHub's received_events is — GET /events with no :id (what this
 // fetcher used to call) is the AUTHENTICATED member's own personal activity
@@ -5364,7 +5373,7 @@ async function fetchRemoteOKJobs(keyword) {
   }
 }
 
-// ─── USAJobs: official U.S. federal government job openings ─────────────────
+// --- USAJobs: official U.S. federal government job openings -----------------
 // Unlike Twitter/LinkedIn/Instagram/Facebook/TikTok (paid tier or a reviewed
 // developer app — see the fetchTwitter/fetchLinkedIn/fetchInstagram/
 // fetchFacebook comments, and startContinuousWorkers for TikTok), USAJobs's
@@ -5563,12 +5572,12 @@ async function fetchDesignWeb(keyword) {
   return getCached(key) || [];
 }
 
-// ─── Bluesky: AT Protocol search, authenticated when possible ────────────────
+// --- Bluesky: AT Protocol search, authenticated when possible ----------------
 // Anonymous access to api.bsky.app is blocked wholesale from Render's IP —
 // confirmed live, 100% failure rate across every keyword, not a transient
 // rate-limit blip (same class of issue Reddit hit before switching to
 // OAuth). AT Protocol's equivalent for a script/app authenticating as its
-// own account is an App Password (bsky.app → Settings → App Passwords),
+// own account is an App Password (bsky.app ? Settings ? App Passwords),
 // exchanged for a session via com.atproto.server.createSession —
 // officially supported for exactly this, not a workaround. Authenticated
 // requests get a much higher rate-limit ceiling and aren't subject to the
@@ -5843,7 +5852,7 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
   }
 }
 
-// ─── LinkedIn: uses env token (app-level) or per-user OAuth token ─────────────
+// --- LinkedIn: uses env token (app-level) or per-user OAuth token -------------
 async function fetchLinkedIn(keyword, userToken = null) {
   const token = userToken || process.env.LINKEDIN_TOKEN;
   if (!token) return [];
@@ -5896,7 +5905,7 @@ async function fetchLinkedIn(keyword, userToken = null) {
   }
 }
 
-// ─── Twitter/X: requires TWITTER_BEARER_TOKEN env var ────────────────────────
+// --- Twitter/X: requires TWITTER_BEARER_TOKEN env var ------------------------
 async function fetchTwitter(keyword, userToken = null) {
   const token = userToken || process.env.TWITTER_BEARER_TOKEN;
   if (!token) return [];
@@ -5949,7 +5958,7 @@ async function fetchTwitter(keyword, userToken = null) {
   }
 }
 
-// ─── Instagram: requires INSTAGRAM_TOKEN env var (Graph API access token) ─────
+// --- Instagram: requires INSTAGRAM_TOKEN env var (Graph API access token) -----
 async function fetchInstagram(keyword, userToken = null) {
   const token = userToken || process.env.INSTAGRAM_TOKEN;
   if (!token) return [];
@@ -6001,7 +6010,7 @@ async function fetchInstagram(keyword, userToken = null) {
   }
 }
 
-// ─── Facebook: requires FACEBOOK_TOKEN env var (Graph API access token) ──────
+// --- Facebook: requires FACEBOOK_TOKEN env var (Graph API access token) ------
 async function fetchFacebook(keyword, userToken = null) {
   const token = userToken || process.env.FACEBOOK_TOKEN;
   if (!token) return [];
@@ -6053,7 +6062,7 @@ async function fetchFacebook(keyword, userToken = null) {
   }
 }
 
-// ─── YouTube: a connected member's subscription feed ─────────────────────────
+// --- YouTube: a connected member's subscription feed -------------------------
 // A subscription feed is the one piece of "my own YouTube data" that
 // actually earns its place in Following: recent uploads from channels this
 // member already follows, the closest real equivalent Following mode has for
@@ -6235,27 +6244,27 @@ async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword); }
 async function fetchInstagramShared(keyword) { return fetchInstagram(keyword); }
 async function fetchFacebookShared(keyword)  { return fetchFacebook(keyword); }
 
-// ─── Social search cards (LinkedIn, Twitter, Facebook — real search links) ───
+// --- Social search cards (LinkedIn, Twitter, Facebook - real search links) ---
 // These platforms have no free public post APIs; we generate deep-link search
 // cards that open the platform's own search results for the user's topics.
 function generateSocialSearchCards(interests = []) {
   // All supported platforms + their public search URLs
   const SOCIAL_SEARCH = {
-    linkedin:  { label: 'LinkedIn',      icon: '💼', color: '#0A66C2',
+    linkedin:  { label: 'LinkedIn',      icon: 'in', color: '#0A66C2',
       url: (q) => `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(q)}` },
-    twitter:   { label: 'X (Twitter)',   icon: '𝕏', color: '#000000',
+    twitter:   { label: 'X (Twitter)',   icon: 'X', color: '#000000',
       url: (q) => `https://twitter.com/search?q=${encodeURIComponent(q)}&f=live` },
-    facebook:  { label: 'Facebook',      icon: '🔵', color: '#1877F2',
+    facebook:  { label: 'Facebook',      icon: 'f', color: '#1877F2',
       url: (q) => `https://www.facebook.com/search/posts?q=${encodeURIComponent(q)}` },
-    instagram: { label: 'Instagram',     icon: '📸', color: '#E1306C',
+    instagram: { label: 'Instagram',     icon: 'IG', color: '#E1306C',
       url: (q) => `https://www.instagram.com/explore/search/keyword/?q=${encodeURIComponent(q)}` },
-    youtube:   { label: 'YouTube',       icon: '▶️', color: '#FF0000',
+    youtube:   { label: 'YouTube',       icon: 'YT', color: '#FF0000',
       url: (q) => `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}` },
-    indeed:    { label: 'Indeed Jobs',   icon: '🔍', color: '#2164F3',
+    indeed:    { label: 'Indeed Jobs',   icon: 'IN', color: '#2164F3',
       url: (q) => `https://www.indeed.com/jobs?q=${encodeURIComponent(q)}` },
-    dribbble:  { label: 'Dribbble',      icon: '🏀', color: '#EA4C89',
+    dribbble:  { label: 'Dribbble',      icon: 'Dr', color: '#EA4C89',
       url: (q) => `https://dribbble.com/search/${encodeURIComponent(q)}` },
-    behance:   { label: 'Behance',       icon: '🎨', color: '#053EFF',
+    behance:   { label: 'Behance',       icon: 'Be', color: '#053EFF',
       url: (q) => `https://www.behance.net/search/projects?search=${encodeURIComponent(q)}` },
   };
   const SOCIAL_MEDIA_PREVIEW = {
@@ -6303,7 +6312,7 @@ function generateSocialSearchCards(interests = []) {
 async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals = [], title = '', org = '', sourceFilter = null) {
   skills = asArray(skills);
   goals = asArray(goals);
-  // Base: interest → primary keyword
+  // Base: interest ? primary keyword
   const keywords = interests.flatMap(i => {
     const primary = interestKeyword(i);
     const extras  = INTEREST_EXTRA_KEYWORDS[i] || [];
@@ -6320,7 +6329,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
   // Skills as direct search terms
   const skillKeywords = safeSkills.map(s => s.trim()).filter(s => s.length > 1).slice(0, 5);
 
-  // Goals → search phrases
+  // Goals ? search phrases
   const goalKeywords = (goals || []).map(g => GOAL_TO_KEYWORDS[g]).filter(Boolean);
 
   // Title and org add industry context
@@ -6429,7 +6438,7 @@ async function fetchAllTopicPosts(interests = [], role = '', skills = [], goals 
   };
 }
 
-// ─── Agent action log (in-memory, circular, 120 entries) ─────────────────────
+// --- Agent action log (in-memory, circular, 120 entries) ---------------------
 const agentActionLog = [];
 const SERVER_START   = Date.now();
 
@@ -6439,10 +6448,47 @@ const officeClients = new Map();
 // One-shot fetchers registered by startSourceWorker — used for manual triggers
 const SOURCE_FETCHERS = {};
 
+const OFFICE_AGENT_BADGES = {
+  reddit: 'RD', hn: 'HN', github: 'GH', devto: 'DEV', medium: 'MED',
+  youtube: 'YT', stackoverflow: 'SO', mastodon: 'MAS', lobsters: 'LOB',
+  arxiv: 'ARX', indeed: 'JOB', producthunt: 'PH', techcrunch: 'TC',
+  theverge: 'TV', indiehackers: 'IH', hashnode: 'FCC', bluesky: 'BS',
+  arstechnica: 'ARS', wired: 'WI', theregister: 'REG', venturebeat: 'VB',
+  smashing: 'SM', phoronix: 'PHX', infoq: 'IQ', mittr: 'MIT',
+  gitlab: 'GL', remoteok: 'RO', yc: 'YC', crunchbase: 'CB', behance: 'BE',
+  designweb: 'UX', usajobs: 'USA', remotive: 'REM', muse: 'MUSE',
+  optimizer: 'OPT', linkedin: 'IN', twitter: 'X', instagram: 'IG',
+  facebook: 'FB', feed: 'FEED', web_optimizer: 'WEB', web_perf: 'PERF',
+  web_seo: 'SEO', web_cache: 'CACHE', web_storage: 'STORE', web_api: 'API',
+  web_office: 'OFF', web_pwa: 'PWA', security: 'SEC', perf: 'PERF',
+  community: 'COM', seo: 'SEO', opps: 'JOBS', deploy: 'DEP', data: 'DATA',
+  refresh_queue: 'RQ', sort_agent: 'SORT', activity: 'ACT',
+  stability: 'STAB', crash_guard: 'CG', cache_helper: 'MERGE',
+  sort_distrib: 'DIST', mix_optimizer: 'MIX', sort_optimizer: 'RANK',
+  autofix: 'FIX', equalizer: 'EQ', topic_audit: 'TOP', topic_fix: 'TOP',
+};
+
+function officeBadgeCode(agentId, fallback = 'ID') {
+  const id = String(agentId || '').toLowerCase();
+  if (OFFICE_AGENT_BADGES[id]) return OFFICE_AGENT_BADGES[id];
+
+  const fallbackText = String(fallback || '').trim();
+  if (/^[a-z0-9]{1,6}$/i.test(fallbackText)) return fallbackText.toUpperCase();
+
+  const parts = String(agentId || fallback || 'ID')
+    .replace(/[^a-z0-9]+/gi, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!parts.length) return 'ID';
+  if (parts.length === 1) return parts[0].slice(0, 4).toUpperCase();
+  return parts.slice(0, 3).map(part => part[0]).join('').toUpperCase();
+}
+
 function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
   const entry = {
     id:      `${agentId}_${Date.now()}_${Math.random().toString(36).slice(2,7)}`,
-    agentId, emoji, msg, color,
+    agentId, emoji: officeBadgeCode(agentId, emoji), msg, color,
     ts:      new Date().toISOString(),
   };
   agentActionLog.unshift(entry);
@@ -6456,8 +6502,8 @@ function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
   }
 }
 
-// ─── SSE: real-time post streaming to connected browsers ─────────────────────
-const sseClients  = new Map();   // clientId → res
+// --- SSE: real-time post streaming to connected browsers ---------------------
+const sseClients  = new Map();   // clientId ? res
 
 // Rolling dedup guard — keeps only the most recent SEEN_IDS_MAX IDs to bound memory
 const SEEN_IDS_MAX    = 6000;
@@ -6602,7 +6648,7 @@ function addAndBroadcast(incoming) {
   // unseen that should've been reachable. GLOBAL_FEED_CACHE_LIMIT's own
   // large size (100k) already means one fast source can't out-and-out evict
   // everything else the way it did at the old fixed 300; per-request
-  // diversity (enforceFeedDiversity, ≤18%/≤10% — see SRC_CAP in
+  // diversity (enforceFeedDiversity, =18%/=10% - see SRC_CAP in
   // handleFeedRequest) is still what actually caps what any one user sees,
   // same as before this was ever added.
   globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
@@ -6619,7 +6665,7 @@ function addAndBroadcast(incoming) {
   return fresh.length;
 }
 
-// ─── Continuous per-source workers ───────────────────────────────────────────
+// --- Continuous per-source workers -------------------------------------------
 const FEED_TOPICS = [
   // Tech & Engineering
   'AI & Machine Learning', 'Generative AI', 'LLMs & Chatbots', 'Computer Vision',
@@ -6645,7 +6691,7 @@ const FEED_TOPICS = [
   // who picks either still matches the other via filterByUserTopics'
   // substring check; only one needs a real fetch behind it).
   'Home & Garden', 'Food & Drink', 'Books',
-  // ── Everything below was already selectable at signup (see ALL_INTERESTS/
+  // -- Everything below was already selectable at signup (see ALL_INTERESTS/
   // EXTRA_INTERESTS in web/src/pages/Onboarding.jsx and roles.js) but had no
   // real fetch behind it — with filterByUserTopics now hard-excluding
   // non-matching posts, an onboarding-selectable topic with nothing fetched
@@ -6653,55 +6699,55 @@ const FEED_TOPICS = [
   // Added here so every topic offered at signup is actually backed by real
   // content, matching the "unified platform, huge wide variety" the topic
   // picker already promises.
-  // ── Extended tech ──
+  // -- Extended tech --
   'Blockchain', 'Hardware / IoT', 'AR / VR',
-  // ── Extended business & startups ──
+  // -- Extended business & startups --
   'B2B / Enterprise', 'Marketplaces', 'D2C / Consumer Apps', 'Bootstrapping',
   'Angel Investing', 'Fundraising', 'Product-Led Growth', 'Sales & Revenue',
   'Partnerships', 'Startups', 'CRM', 'Marketing',
-  // ── Design & creative ──
+  // -- Design & creative --
   'Brand Identity', 'Motion Design', '3D & CGI', 'Photography',
   'Film & Video', 'Music Production', 'Visual Storytelling', 'Brand Strategy',
-  // ── Finance & industries ──
+  // -- Finance & industries --
   'Corporate Finance', 'Real Estate', 'Supply Chain', 'Customer Experience',
   'Operations Excellence', 'Business Strategy', 'BioTech', 'LegalTech',
   'GovTech', 'AgriTech', 'SpaceTech', 'PropTech',
   'RetailTech', 'FoodTech', 'SportsTech',
-  // ── People & work ──
+  // -- People & work --
   'Nonprofit Impact', 'Sustainability', 'Wellness', 'Hospitality',
   'Future of Work', 'Recruiting & Hiring', 'Diversity & Inclusion',
   'People Ops',
-  // ── Content & media ──
+  // -- Content & media --
   'Podcasting', 'YouTube & Video', 'Social Media',
-  // ── E-commerce & career ──
+  // -- E-commerce & career --
   'Dropshipping', 'Amazon FBA', 'Subscription Businesses', 'Public Speaking',
   'Social Impact',
-  // ── Health & fitness ──
+  // -- Health & fitness --
   'Yoga & Meditation', 'Running & Cycling', 'Nutrition & Diet',
-  // ── Music & audio ──
+  // -- Music & audio --
   'Live Events & Concerts', 'Songwriting', 'DJing & Remixing',
-  // ── Sports ──
+  // -- Sports --
   'Football & Soccer', 'Basketball', 'Tennis & Golf', 'Combat Sports',
   'Esports & Competitive Gaming',
-  // ── Arts & culture ──
+  // -- Arts & culture --
   'Art & Painting', 'Theatre & Performing Arts', 'Museums & Galleries', 'Cultural Events',
-  // ── Food & cooking ──
+  // -- Food & cooking --
   'Restaurant Culture', 'Wine & Spirits', 'Coffee Culture', 'Baking & Pastry',
-  // ── Travel ──
+  // -- Travel --
   'Solo Travel', 'Cultural Tourism', 'Budget Travel',
-  // ── Fashion & style ──
+  // -- Fashion & style --
   'Streetwear', 'Sustainable Fashion', 'Beauty & Skincare',
-  // ── Books & literature ──
+  // -- Books & literature --
   'Reading & Book Clubs', 'Fiction & Storytelling', 'Non-Fiction & Learning', 'Poetry & Creative Writing',
-  // ── Gaming ──
+  // -- Gaming --
   'Video Games', 'Mobile Gaming', 'Game Streaming & Content', 'Tabletop & Board Games',
-  // ── Home & lifestyle ──
+  // -- Home & lifestyle --
   'Interior Design & Decor', 'Home Improvement', 'Gardening & Plants', 'Pet Ownership',
-  // ── Mindfulness & philosophy ──
+  // -- Mindfulness & philosophy --
   'Mindfulness & Meditation', 'Philosophy & Ethics', 'Spirituality',
-  // ── Family & community ──
+  // -- Family & community --
   'Parenting & Family', 'Environmental Activism', 'Zero Waste Living',
-  // ── Professional & industry (medicine, law, engineering, science) ──
+  // -- Professional & industry (medicine, law, engineering, science) --
   'Medicine & Clinical Practice', 'Law & Legal Practice', 'Architecture & Urban Design', 'Mechanical Engineering',
   'Civil Engineering', 'Electrical Engineering', 'Chemical Engineering', 'Biomedical Engineering',
   'Aviation & Aerospace', 'Military & Defense', 'Policy & Government', 'International Relations',
@@ -6710,7 +6756,7 @@ const FEED_TOPICS = [
   'Energy & Utilities', 'Veterinary Science', 'Environmental Science',
   'Ocean & Marine Sciences', 'Materials Science', 'Nonprofit Management', 'Journalism & Media',
   'Screenwriting & Film', 'Music Industry', 'Sports Analytics', 'Culinary Arts',
-  // ── Already-mapped (reuse existing TOPIC_SUBREDDITS entry) ──
+  // -- Already-mapped (reuse existing TOPIC_SUBREDDITS entry) --
   'Robotics', 'Quantum Computing', 'MLOps',
   'Privacy', 'AI Ethics', 'Digital Nomad', 'Networking',
 ];
@@ -6753,7 +6799,7 @@ const RATE_LIMITED_MANUAL_SWEEP = {
 function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
   const sourceTtl   = SOURCE_CONFIG[agentId]?.ttl ?? 5 * 60 * 1000;
   const cachePrefix = CACHE_KEY_PREFIX[agentId];
-  const topicFetchedAt = new Map(); // mappedKey → timestamp of last real API fetch
+  const topicFetchedAt = new Map(); // mappedKey ? timestamp of last real API fetch
   const numShards = Math.max(1, Math.min(SOURCE_CONFIG[agentId]?.shards ?? 1, FEED_TOPICS.length));
   const sliceSize = Math.ceil(FEED_TOPICS.length / numShards);
   const shardResetFns = []; // per-shard circuit-state reset — called by the manual trigger
@@ -6885,7 +6931,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
             health.pauseUntil = Date.now() + CIRCUIT_PAUSE_MS;
             updateAgentStatus(agentId);
             const fallbacks = getFallbackAgents(agentId);
-            logAgentAction(agentId, '⚠️',
+            logAgentAction(agentId, '??',
               `Circuit breaker tripped — paused 5min (${fullCyclesEmpty} empty cycles). Fallback: ${fallbacks.slice(0, 2).join(', ')}`, '#F87171');
           }
         } else {
@@ -6912,7 +6958,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
     if (isStabilityCritical()) {
       if (health) health.skippedForStability = (health.skippedForStability || 0) + 1;
       refreshControl.skippedFetches += 1;
-      logAgentAction('stability', '⏸️', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
+      logAgentAction('stability', '??', `Skipped manual ${agentId} refresh while stability guard is critical`, '#FBBF24');
       return;
     }
     if (health) { health.paused = false; health.consecutiveErrors = 0; updateAgentStatus(agentId); }
@@ -7013,11 +7059,11 @@ function calculateExpectedLoad() {
     const effectiveCallsPerCycle = Math.ceil(mappedTopics.length / ttlCycles);
     const dailyCalls = Math.round(effectiveCallsPerCycle * cyclesDay);
     totalDailyApiCalls += dailyCalls;
-    const risk = dailyCalls > 2000 ? '⚠️ HIGH' : dailyCalls > 500 ? '🟡 MED' : '✅ LOW';
-    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s x${currentRefreshMultiplier()} ttl=${cfg.ttl/60000}min → ~${dailyCalls}/day ${risk}`);
+    const risk = dailyCalls > 2000 ? '?? HIGH' : dailyCalls > 500 ? '?? MED' : '? LOW';
+    lines.push(`  ${src.padEnd(14)} delay=${cfg.delay/1000}s x${currentRefreshMultiplier()} ttl=${cfg.ttl/60000}min ? ~${dailyCalls}/day ${risk}`);
   }
   lines.push(`  TOTAL estimated daily API calls: ~${totalDailyApiCalls}`);
-  if (totalDailyApiCalls > 50000) lines.push('  ⛔ WARNING: total may exceed free-tier limits — increase TTLs or reduce topics');
+  if (totalDailyApiCalls > 50000) lines.push('  ? WARNING: total may exceed free-tier limits - increase TTLs or reduce topics');
   console.log('[Load Calculator]\n' + lines.join('\n'));
 }
 
@@ -7041,43 +7087,43 @@ function startContinuousWorkers() {
   // Start times are staggered so the initial burst is spread out.
   const SOURCES = [
     //  id               emoji   color       fetchFn                  keyMapper  startDelay
-    ['reddit',        '🟠', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
-    ['hn',            '🔶', '#FF6600', fetchHNByKeyword,         kw,   1000],
-    ['github',        '🐙', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
-    ['devto',         '💻', '#8B5CF6', fetchDevToByTag,          dev,  3000],
-    ['medium',        '📝', '#10B981', fetchMediumByTag,         med,  4000],
-    ['youtube',       '▶️', '#EF4444', fetchYouTubeByKeyword,    kw,   5000],
-    ['stackoverflow', '💬', '#F59E0B', fetchStackOverflowByTag,  so,   6000],
-    ['mastodon',      '🐘', '#6366F1', fetchMastodonByTag,       mas,  7000],
-    ['lobsters',      '🦞', '#DC2626', fetchLobstersByTag,       lob,  8000],
-    ['arxiv',         '📄', '#3B82F6', fetchArxivByKeyword,      arx,  9000],
-    ['indeed',        '💼', '#2557A7', fetchIndeedJobs,          kw,  10000],
-    ['producthunt',   '🚀', '#DA552F', fetchProductHunt,         kw,  11000],
-    ['techcrunch',    '📰', '#0D9F3F', fetchTechCrunch,          kw,  12000],
-    ['theverge',      '⬛', '#FF3333', fetchTheVerge,            kw,  13000],
-    ['indiehackers',  '💡', '#0E2150', fetchIndieHackers,        kw,  14000],
-    ['hashnode',      '✍️', '#2962FF', fetchHashnode,            kw,  15000],
-    ['bluesky',       '🦋', '#0085FF', fetchBlueskyByKeyword,    kw,  16000],
-    ['arstechnica',   '📡', '#FF6600', fetchArsTechnica,         kw,  17000],
-    ['wired',         '🔌', '#111111', fetchWired,               kw,  18000],
-    ['theregister',   '📋', '#E00',    fetchTheRegister,         kw,  19000],
-    ['venturebeat',   '💹', '#1E6FBF', fetchVentureBeat,         kw,  20000],
-    ['smashing',      '🎨', '#E9620A', fetchSmashingMagazine,    kw,  21000],
-    ['phoronix',      '🐧', '#2B7BB9', fetchPhoronix,            kw,  22000],
-    ['infoq',         '🏗️', '#67B346', fetchInfoQ,               kw,  23000],
-    ['mittr',         '🔬', '#A31F34', fetchMITTechReview,       kw,  24000],
+    ['reddit',        '??', '#FF6347', fetchRedditByKeyword,     t => t,  0],  // pass topic name directly for TOPIC_SUBREDDITS lookup
+    ['hn',            '??', '#FF6600', fetchHNByKeyword,         kw,   1000],
+    ['github',        '??', '#94A3B8', fetchGitHubByKeyword,     kw,   2000],
+    ['devto',         '??', '#8B5CF6', fetchDevToByTag,          dev,  3000],
+    ['medium',        '??', '#10B981', fetchMediumByTag,         med,  4000],
+    ['youtube',       '??', '#EF4444', fetchYouTubeByKeyword,    kw,   5000],
+    ['stackoverflow', '??', '#F59E0B', fetchStackOverflowByTag,  so,   6000],
+    ['mastodon',      '??', '#6366F1', fetchMastodonByTag,       mas,  7000],
+    ['lobsters',      '??', '#DC2626', fetchLobstersByTag,       lob,  8000],
+    ['arxiv',         '??', '#3B82F6', fetchArxivByKeyword,      arx,  9000],
+    ['indeed',        '??', '#2557A7', fetchIndeedJobs,          kw,  10000],
+    ['producthunt',   '??', '#DA552F', fetchProductHunt,         kw,  11000],
+    ['techcrunch',    '??', '#0D9F3F', fetchTechCrunch,          kw,  12000],
+    ['theverge',      '?', '#FF3333', fetchTheVerge,            kw,  13000],
+    ['indiehackers',  '??', '#0E2150', fetchIndieHackers,        kw,  14000],
+    ['hashnode',      '??', '#2962FF', fetchHashnode,            kw,  15000],
+    ['bluesky',       '??', '#0085FF', fetchBlueskyByKeyword,    kw,  16000],
+    ['arstechnica',   '??', '#FF6600', fetchArsTechnica,         kw,  17000],
+    ['wired',         '??', '#111111', fetchWired,               kw,  18000],
+    ['theregister',   '??', '#E00',    fetchTheRegister,         kw,  19000],
+    ['venturebeat',   '??', '#1E6FBF', fetchVentureBeat,         kw,  20000],
+    ['smashing',      '??', '#E9620A', fetchSmashingMagazine,    kw,  21000],
+    ['phoronix',      '??', '#2B7BB9', fetchPhoronix,            kw,  22000],
+    ['infoq',         '???', '#67B346', fetchInfoQ,               kw,  23000],
+    ['mittr',         '??', '#A31F34', fetchMITTechReview,       kw,  24000],
     ['gitlab',        'GL', '#FC6D26', fetchGitLabByKeyword,     kw,  25000],
     ['remoteok',      'RO', '#10B981', fetchRemoteOKJobs,        kw,  26000],
     ['yc',            'YC', '#FF6600', fetchYCombinator,         kw,  27000],
     ['crunchbase',    'CB', '#146AFF', fetchCrunchbaseNews,      kw,  28000],
     ['behance',       'Be', '#053EFF', fetchBehanceProjects,     kw,  29000],
     ['designweb',     'UX', '#DB2777', fetchDesignWeb,           kw,  30000],
-    ['usajobs',       '🏛️', '#005EA8', fetchUSAJobsByKeyword,    kw,  31000],
+    ['usajobs',       '???', '#005EA8', fetchUSAJobsByKeyword,    kw,  31000],
     // No free public API — app-level token only, see fetch*Shared above.
-    ['twitter',       '𝕏',  '#000000', fetchTwitterShared,       kw,  32000],
-    ['linkedin',      '💼', '#0A66C2', fetchLinkedInShared,      kw,  33000],
-    ['instagram',     '📸', '#E1306C', fetchInstagramShared,     kw,  34000],
-    ['facebook',      '🔵', '#1877F2', fetchFacebookShared,      kw,  35000],
+    ['twitter',       '??',  '#000000', fetchTwitterShared,       kw,  32000],
+    ['linkedin',      '??', '#0A66C2', fetchLinkedInShared,      kw,  33000],
+    ['instagram',     '??', '#E1306C', fetchInstagramShared,     kw,  34000],
+    ['facebook',      '??', '#1877F2', fetchFacebookShared,      kw,  35000],
   ];
 
   for (const [id, emoji, color, fetchFn, keyMapper, startDelay] of SOURCES) {
@@ -7086,10 +7132,10 @@ function startContinuousWorkers() {
   }
 
   calculateExpectedLoad();
-  logAgentAction('feed', '🔄', `All ${SOURCES.length} source agents started — parallel sharded topic cycling active`, '#4ADE80');
+  logAgentAction('feed', '??', `All ${SOURCES.length} source agents started - parallel sharded topic cycling active`, '#4ADE80');
 }
 
-// ─── Background feed refresh (kept for /feed/refresh endpoint and initial load) ─
+// --- Background feed refresh (kept for /feed/refresh endpoint and initial load) -
 // Was 300, deliberately tight to fit the API's old 512MB container — the
 // service has since been upgraded to 4GB, so this is no longer a real
 // practical ceiling (at a rough ~2-3KB/post object footprint, even the full
@@ -7264,7 +7310,7 @@ function roundRobinMerge(lists) {
   return result;
 }
 
-// ─── Equalizer: fair, weighted interleave of raw fetches before Filter ─────
+// --- Equalizer: fair, weighted interleave of raw fetches before Filter -----
 // A genuine pipeline stage, not just a visualization — sits between raw
 // source fetches (SOURCE_FETCHERS/makeTopicCycler) and Filter (see
 // addAndBroadcast). Each source's own fetch results land in a per-source
@@ -7375,7 +7421,7 @@ function runEqualizerDrain() {
       [id, equalizerShareTotal ? Math.round((c / equalizerShareTotal) * 1000) / 10 : 0])
   );
   if (n > 0) {
-    logAgentAction('equalizer', '⚖️',
+    logAgentAction('equalizer', '??',
       `Drained ${merged.length} posts across ${perSourceLists.length} source(s), ${n} new`, '#38BDF8');
   }
 }
@@ -7498,14 +7544,12 @@ function sliceCircular(pool, lo, count) {
   return result;
 }
 
-// Per-user "already shown" tracking, so infinite scroll within one surface
-// doesn't resurface the same external post to the same user twice —
-// including via sliceCircular's wraparound once a user has paged past the
-// pool's real depth, which otherwise guarantees repeats for anyone who
-// scrolls that far. In-memory Set per user+context for fast filtering on
-// every request (one DB round trip per user+context per server lifetime to
-// warm it), backed by the seen_posts table so it survives restarts/deploys
-// and carries across devices.
+// Per-user "already consumed" tracking, so infinite scroll within one
+// surface doesn't resurface a post after the user genuinely scrolled/read
+// it. Delivery itself still writes an impression row (markPostsSeen), but
+// only engaged_at rows enter this in-memory Set; a request that returned a
+// post the user never actually reached no longer removes it from later feed
+// pages.
 //
 // context ('feed' default, 'videos' for handleVideoFeedRequest) keeps the
 // main Feed and the dedicated Videos tab as genuinely independent surfaces
@@ -7516,14 +7560,12 @@ function sliceCircular(pool, lo, count) {
 // into the same content. Each surface now tracks its own "already shown"
 // state; a post can appear once in each.
 //
-// This is VIEW tracking, not engagement — despite the table/function names
-// (kept as-is; renaming a table + ~15 call sites for a label change alone
-// wasn't worth the risk), a row here means a post was *returned* to this
-// user, the instant it was, with no signal at all about whether they
-// actually looked at it. markPostsEngaged/engaged_at below is the real
-// "did they watch/read this" signal — a separate, later write against the
-// same row once a genuine engagement threshold is crossed client-side.
-const userSeenCache = new Map(); // "userId::context" → Set<postId>
+// This Set is engagement tracking, not delivery tracking - despite the
+// seen_posts table/function names (kept as-is to avoid a risky migration
+// churn), a row with engaged_at is the real "did they watch/read this"
+// signal. Rows without engaged_at are only impressions and are intentionally
+// not filtered out here.
+const userSeenCache = new Map(); // "userId::context" ? Set<postId>
 // Was 5000 when this counted one entry per user. Now keyed by "userId::context"
 // (see getUserSeenSet/markPostsSeen), so an active user visiting both the
 // Feed and Videos occupies 2 entries — left at 5000 this would have halved
@@ -7544,7 +7586,11 @@ async function getUserSeenSet(userId, context = 'feed') {
   if (db.isConnected()) {
     try {
       const { rows } = await db.query(
-        'SELECT post_id FROM seen_posts WHERE user_id = $1 AND context = $2 ORDER BY seen_at DESC LIMIT $3',
+        `SELECT post_id
+         FROM seen_posts
+         WHERE user_id = $1 AND context = $2 AND engaged_at IS NOT NULL
+         ORDER BY engaged_at DESC, seen_at DESC
+         LIMIT $3`,
         [userId, context, USER_SEEN_IDS_MAX_PER_USER]
       );
       rows.forEach(r => ids.add(r.post_id));
@@ -7555,25 +7601,18 @@ async function getUserSeenSet(userId, context = 'feed') {
   return ids;
 }
 
-// Excludes posts this user has already been shown. Falls back to the
-// unfiltered pool if literally everything remaining has already been seen,
-// rather than a hard dead-end — same "never truly stop infinite scroll"
-// reasoning as sliceCircular's wraparound just above.
+// Excludes posts this user has already engaged with. No wraparound fallback:
+// when someone has genuinely read/watched a post, authenticated feeds should
+// move on instead of making them scroll through it again.
 function filterUnseen(posts, seenIds) {
   if (!seenIds?.size || !posts.length) return posts;
-  const unseen = posts.filter(p => !p?.id || !seenIds.has(p.id));
-  return unseen.length ? unseen : posts;
+  return posts.filter(p => !p?.id || !seenIds.has(p.id));
 }
 
 function markPostsSeen(userId, posts, context = 'feed') {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID || !posts?.length) return;
   const ids = [...new Set(posts.map(p => p?.id).filter(Boolean))];
   if (!ids.length) return;
-  const seenIds = userSeenCache.get(`${userId}::${context}`);
-  if (seenIds) {
-    ids.forEach(id => seenIds.add(id));
-    trimOldestSetEntries(seenIds, USER_SEEN_IDS_MAX_PER_USER);
-  }
   if (db.isConnected()) {
     const values = ids.map((_, i) => `($1, $${i + 2}, $${ids.length + 2})`).join(', ');
     db.query(
@@ -7583,32 +7622,43 @@ function markPostsSeen(userId, posts, context = 'feed') {
   }
 }
 
-// The genuine "seen" signal (see the engaged_at migration/comment above) —
+// The genuine "seen/read" signal (see the engaged_at migration/comment above) -
 // called from POST /posts/engaged once the client has already independently
 // decided a real engagement threshold was crossed (video watched past
-// ~3s/50%, or a feed post visible on screen for ~2s+ — see
-// VideoFeedView.jsx/PostList.jsx), never inferred here. Every id passed in
-// is expected to already have a seen_posts row (engagement can only happen
-// after a post was delivered, i.e. after markPostsSeen already ran for it);
-// WHERE engaged_at IS NULL just avoids a wasted write on a repeat call for
-// the same post rather than gating correctness on it.
-function markPostsEngaged(userId, postIds) {
-  if (!userId || userId === SYSTEM_WARMUP_USER_ID || !postIds?.length || !db.isConnected()) return;
-  const ids = [...new Set(postIds.filter(Boolean))].slice(0, 100);
+// ~3s/50%, or a feed post visible on screen for ~2s+). Delivery impressions
+// stay context-specific, but actual engagement consumes the post in both
+// signed-in feed contexts so the user does not have to scroll through it again.
+function markPostsEngaged(userId, postIds, context = 'feed') {
+  if (!userId || userId === SYSTEM_WARMUP_USER_ID || !postIds?.length) return;
+  const ids = [...new Set(asArray(postIds).filter(Boolean))].slice(0, 100);
   if (!ids.length) return;
+  const contexts = [...new Set(['feed', 'videos', context].filter(Boolean))];
+  for (const ctx of contexts) {
+    const seenIds = userSeenCache.get(`${userId}::${ctx}`);
+    if (seenIds) {
+      ids.forEach(id => seenIds.add(id));
+      trimOldestSetEntries(seenIds, USER_SEEN_IDS_MAX_PER_USER);
+    }
+  }
+  if (!db.isConnected()) return;
   db.query(
-    `UPDATE seen_posts SET engaged_at = NOW() WHERE user_id = $1 AND post_id = ANY($2::text[]) AND engaged_at IS NULL`,
-    [userId, ids]
+    `INSERT INTO seen_posts (user_id, post_id, context, engaged_at)
+     SELECT $1, p.post_id, c.ctx, NOW()
+     FROM unnest($2::text[]) AS p(post_id)
+     CROSS JOIN unnest($3::text[]) AS c(ctx)
+     ON CONFLICT (user_id, post_id, context) DO UPDATE SET
+       engaged_at = COALESCE(seen_posts.engaged_at, EXCLUDED.engaged_at)`,
+    [userId, ids, contexts]
   ).catch(e => console.warn('markPostsEngaged:', e.message));
 }
 
-// ─── Behavioral affinity — real time spent, not declared interests ───────────
+// --- Behavioral affinity - real time spent, not declared interests -----------
 // markPostsEngaged above is binary (did they cross the threshold at all);
 // this is the actual duration behind it, accumulated per user per source/
 // topic and used to widen personalizeOrder's boost beyond whatever a user
 // declared once at onboarding (userTopics) to what they've actually
 // demonstrated they spend time on since.
-const userAffinityCache = new Map(); // userId → { source: Map<string, weight>, topic: Map<string, weight> }
+const userAffinityCache = new Map(); // userId ? { source: Map<string, weight>, topic: Map<string, weight> }
 const AFFINITY_CACHE_MAX_USERS = 5000;
 // Both request types this feeds off are naturally noisy (a video left
 // running in a background tab, a comments panel left open while doing
@@ -7677,7 +7727,7 @@ function recordEngagementSignal(userId, { source, topic, watchMs, commentsViewMs
   }
 }
 
-// ─── Autofix agent: signal capture ──────────────────────────────────────────
+// --- Autofix agent: signal capture ------------------------------------------
 // Normalizes an error message + its first real stack frame into a stable
 // signature so the same bug reported from different post IDs/users/request
 // params collapses to one row in autofix_signatures instead of looking like
@@ -7772,10 +7822,10 @@ function dedupeAndSortFeedPosts(posts = []) {
   return sortFeedBatch(posts, 'feed-dedupe-sort');
 }
 
-// Per-source post store: agentId → { posts[], lastFetch, totalSeen, emoji, color }
+// Per-source post store: agentId ? { posts[], lastFetch, totalSeen, emoji, color }
 const agentSourceCache = new Map();
 
-// Persistent postId → sourceUrl index so comments can be fetched for any post
+// Persistent postId ? sourceUrl index so comments can be fetched for any post
 // that has ever been seen, even after it rotates out of the per-source cache.
 const postUrlIndex = new Map();
 const POST_URL_INDEX_MAX = 50_000;
@@ -7830,7 +7880,7 @@ async function findPostByIdWithDbFallback(postId) {
   return memPost;
 }
 
-// Per-worker circuit-breaker health: agentId → { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
+// Per-worker circuit-breaker health: agentId ? { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
 const workerHealth = new Map();
 
 function buildSourceWorkerHealthSummary() {
@@ -8143,7 +8193,7 @@ function isStabilityCritical() {
   return refreshControl.mode === 'critical';
 }
 
-// ─── Zero-active-users pause ────────────────────────────────────────────────
+// --- Zero-active-users pause ------------------------------------------------
 // Separate from isStabilityCritical above — that one is about server
 // health/memory pressure; this is "is anyone actually here to see whatever
 // gets fetched." Added after the DB reached 4M+ cached posts while
@@ -8169,14 +8219,14 @@ const USER_INACTIVITY_PAUSE_MS = 30 * 60 * 1000;
 const SHARED_ACTIVITY_WRITE_MIN_MS = 15 * 1000;
 const SHARED_ACTIVITY_REFRESH_MS = 60 * 1000;
 // 0 = not currently flagged idle. Logs exactly once on each transition
-// (idle→active / active→idle) rather than every shard's every poll — dozens
+// (idle?active / active?idle) rather than every shard's every poll - dozens
 // of shards call isAppIdle() every few seconds, so without this it would
 // spam the office Pipeline log on every single tick for the entire idle
 // window instead of once per real state change.
 let appIdleLoggedAt = 0;
 // Catch-up burst — a bounded window of faster per-topic cadence (see
 // isInCatchUpBurst/makeTopicCycler's own scheduleNext) that kicks in right
-// when the idle→active transition below fires. While genuinely idle,
+// when the idle?active transition below fires. While genuinely idle,
 // nothing gets fetched at all (that's the whole point of the pause above),
 // so whoever shows up first sees content exactly as fresh as it was when
 // the *previous* real user left, however long ago that was — and the
@@ -8233,11 +8283,11 @@ function isAppIdle() {
   const idle = Date.now() - effectiveLastUserActivityAt() > USER_INACTIVITY_PAUSE_MS;
   if (idle && !appIdleLoggedAt) {
     appIdleLoggedAt = Date.now();
-    logAgentAction('feed', '💤', `No active users for ${Math.round(USER_INACTIVITY_PAUSE_MS / 60000)}+ min — pausing source fetching so the DB doesn't keep growing with nobody around to see it`, '#94A3B8');
+    logAgentAction('feed', '??', `No active users for ${Math.round(USER_INACTIVITY_PAUSE_MS / 60000)}+ min - pausing source fetching so the DB doesn't keep growing with nobody around to see it`, '#94A3B8');
   } else if (!idle && appIdleLoggedAt) {
     appIdleLoggedAt = 0;
     catchUpBurstUntil = Date.now() + CATCH_UP_BURST_MS;
-    logAgentAction('feed', '🔄', `A user showed up — resuming source fetching, faster than usual for ${Math.round(CATCH_UP_BURST_MS / 60000)}min to catch back up`, '#4ADE80');
+    logAgentAction('feed', '??', `A user showed up - resuming source fetching, faster than usual for ${Math.round(CATCH_UP_BURST_MS / 60000)}min to catch back up`, '#4ADE80');
   }
   return idle;
 }
@@ -8416,7 +8466,7 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
   return output;
 }
 
-// ─── Feed Manager: the single place that enforces "true mix" ─────────────────
+// --- Feed Manager: the single place that enforces "true mix" -----------------
 // Guarantees no one source can flood a page of results, for EVERY surface a
 // user can reach — not just page 1 of the main feed. This used to live
 // inline in the main-feed handler only; archive mode ("All Collected") and
@@ -8427,8 +8477,8 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
 // through this now.
 function enforceFeedDiversity(posts, feedLimit, sortMode) {
   const srcCap = sortMode === 'balanced'
-    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: ≤10% per source
-    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: ≤18% per source
+    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: =10% per source
+    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: =18% per source
   const srcCounts = {};
   const cappedPosts = [];
   for (const p of posts) {
@@ -8548,7 +8598,7 @@ function buildEqualizedFollowingPool(posts) {
   return result;
 }
 
-// ─── Resume-matched job substitution for the feed ──────────────────────────
+// --- Resume-matched job substitution for the feed --------------------------
 // The shared feed pool can't know which specific job posts to show — same
 // invariant as everywhere else in this pipeline, it must never bake in one
 // user's data since every other user reads the same cached snapshot. Jobs
@@ -8674,9 +8724,9 @@ function applyResumeMatchedJobs(posts, resumeKeywords, jobPool) {
   }
   return result;
 }
-const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs'];
+const JOB_LISTING_SOURCES = ['indeed', 'remoteok', 'usajobs', 'remotive', 'muse'];
 
-// ─── Location-based matching ────────────────────────────────────────────────
+// --- Location-based matching ------------------------------------------------
 // Cloudflare (already in front of this app — see the `Server: cloudflare`
 // header on every response) adds this automatically to every request that
 // reaches the origin. A real, zero-cost, zero-permission-prompt signal —
@@ -8842,6 +8892,130 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
   return [...intro, ...topicMixed];
 }
 
+const PERSONALIZED_FEED_CHUNK_SIZE = 12;
+const PERSONALIZED_FEED_MAX_TERMS = 24;
+
+function normalizePersonalizationTerm(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9+#.\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function uniquePersonalizationTerms(values, max = PERSONALIZED_FEED_MAX_TERMS) {
+  const terms = [];
+  const seen = new Set();
+  for (const value of values || []) {
+    const normalized = normalizePersonalizationTerm(value);
+    if (!normalized || normalized.length < 2 || seen.has(normalized)) continue;
+    seen.add(normalized);
+    terms.push(normalized);
+    if (terms.length >= max) break;
+  }
+  return terms;
+}
+
+function userDeclaredFeedTopics(user, prefs = user?.preferences || {}) {
+  return uniquePersonalizationTerms([
+    ...asArray(prefs.interests).map(interestKeyword),
+    ...asArray(user?.skills),
+  ]);
+}
+
+function userRoleFeedTerms(user, prefs = user?.preferences || {}) {
+  const raw = [
+    prefs.role,
+    user?.title,
+    user?.organization,
+    ...asArray(user?.skills),
+    ...asArray(prefs.goals),
+  ];
+  const phrases = uniquePersonalizationTerms(raw, 12);
+  const tokens = uniquePersonalizationTerms(
+    phrases.flatMap(term => term.split(/\s+/).filter(part => part.length >= 3)),
+    12
+  );
+  return uniquePersonalizationTerms([...phrases, ...tokens]);
+}
+
+function feedPostPersonalizationText(post) {
+  const authorName = typeof post?.author === 'string' ? post.author : post?.author?.name;
+  return normalizePersonalizationTerm([
+    post?.title,
+    post?.content,
+    post?.topic,
+    post?.sourceLabel,
+    post?.source,
+    post?.location,
+    authorName,
+    ...asArray(post?.tags),
+  ].filter(Boolean).join(' '));
+}
+
+function textMatchesPersonalizationTerm(text, term) {
+  if (!text || !term) return false;
+  if (term.includes(' ')) return text.includes(term);
+  return textMentionsKeyword(text, term);
+}
+
+function feedPostPersonalizationScore(post, { declaredTopics, roleTerms, affinity }) {
+  const text = feedPostPersonalizationText(post);
+  const topic = normalizePersonalizationTerm(post?.topic);
+  const source = post?.source || 'unknown';
+  let score = 0;
+
+  for (const term of declaredTopics) {
+    if ((topic && (topic.includes(term) || term.includes(topic))) || textMatchesPersonalizationTerm(text, term)) {
+      score += 8;
+    }
+  }
+
+  for (const term of roleTerms) {
+    if (textMatchesPersonalizationTerm(text, term)) score += JOB_LISTING_SOURCES.includes(source) ? 5 : 3;
+  }
+
+  const sourceWeight = Number(affinity?.source?.get(source) || 0);
+  if (sourceWeight > 0) score += Math.min(12, Math.log1p(sourceWeight) * 2);
+
+  const topicWeight = Number(affinity?.topic?.get(post?.topic) || affinity?.topic?.get(topic) || 0);
+  if (topicWeight > 0) score += Math.min(14, Math.log1p(topicWeight) * 2.2);
+
+  if (post?.matchedByInterest) score += 4;
+  if (JOB_LISTING_SOURCES.includes(source)) score += 2;
+
+  return score;
+}
+
+function personalizeAuthenticatedFeedPosts(posts, user, prefs = user?.preferences || {}, affinity = null, options = {}) {
+  const list = Array.isArray(posts) ? posts.filter(Boolean) : [];
+  if (!list.length || !user?.id) return list;
+
+  const declaredTopics = userDeclaredFeedTopics(user, prefs);
+  const roleTerms = userRoleFeedTerms(user, prefs);
+  const hasAffinity = (affinity?.source?.size || 0) > 0 || (affinity?.topic?.size || 0) > 0;
+  if (!declaredTopics.length && !roleTerms.length && !hasAffinity) return list;
+
+  const preserveFirst = Math.max(0, Math.min(Number(options.preserveFirst) || 0, list.length));
+  const prefix = preserveFirst ? list.slice(0, preserveFirst) : [];
+  const rest = preserveFirst ? list.slice(preserveFirst) : list.slice();
+  const context = { declaredTopics, roleTerms, affinity };
+  const scored = rest.map((post, index) => ({
+    post,
+    index,
+    score: feedPostPersonalizationScore(post, context),
+  }));
+  if (!scored.some(item => item.score > 0)) return list;
+
+  const personalized = [];
+  for (let i = 0; i < scored.length; i += PERSONALIZED_FEED_CHUNK_SIZE) {
+    const chunk = scored.slice(i, i + PERSONALIZED_FEED_CHUNK_SIZE)
+      .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+    personalized.push(...chunk.map(item => item.post));
+  }
+  return [...prefix, ...personalized];
+}
+
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
   const started = Date.now();
   const input = Array.isArray(posts) ? posts.filter(Boolean) : [];
@@ -8989,7 +9163,7 @@ function updateRefreshControl(mode, reason, snapshot) {
 
   if (previousMode !== mode) {
     refreshControl.lastModeChange = Date.now();
-    const icon = mode === 'normal' ? '✅' : mode === 'pressure' ? '🛡️' : '🚨';
+    const icon = mode === 'normal' ? '?' : mode === 'pressure' ? '???' : '??';
     const color = mode === 'normal' ? '#4ADE80' : mode === 'pressure' ? '#FBBF24' : '#F87171';
     logAgentAction('stability', icon,
       `Stability guard ${mode}: refresh x${multiplier} (${reason})`, color);
@@ -9030,7 +9204,7 @@ function installCrashGuard() {
   process.on('unhandledRejection', (reason) => {
     refreshControl.unhandledRejections += 1;
     const msg = reason?.message || String(reason);
-    logAgentAction('crash_guard', '⚠️', `Unhandled rejection contained: ${msg.slice(0, 140)}`, '#FBBF24');
+    logAgentAction('crash_guard', '??', `Unhandled rejection contained: ${msg.slice(0, 140)}`, '#FBBF24');
     recordServerError(reason instanceof Error ? reason : new Error(msg), { route: null });
   });
 
@@ -9041,13 +9215,13 @@ function installCrashGuard() {
     trimRuntimeCaches('critical');
     console.error('uncaughtException:', err);
     const msg = err?.message || String(err);
-    logAgentAction('crash_guard', '🚨', `Uncaught exception contained; emergency throttle active: ${msg.slice(0, 140)}`, '#F87171');
+    logAgentAction('crash_guard', '??', `Uncaught exception contained; emergency throttle active: ${msg.slice(0, 140)}`, '#F87171');
     recordServerError(err, { route: null });
   });
 
   process.on('warning', (warning) => {
     if (!warning?.name || warning.name === 'ExperimentalWarning') return;
-    logAgentAction('crash_guard', '⚠️', `${warning.name}: ${(warning.message || '').slice(0, 140)}`, '#FBBF24');
+    logAgentAction('crash_guard', '??', `${warning.name}: ${(warning.message || '').slice(0, 140)}`, '#FBBF24');
   });
 }
 
@@ -9171,7 +9345,7 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
 
   if (isStabilityCritical()) {
     refreshControl.skippedFetches += requestedIds.length;
-    logAgentAction('refresh_queue', '⏸️', `Skipped ${requestedIds.length} queued refresh(es) while stability guard is critical`, '#FBBF24');
+    logAgentAction('refresh_queue', '??', `Skipped ${requestedIds.length} queued refresh(es) while stability guard is critical`, '#FBBF24');
     return;
   }
 
@@ -9186,7 +9360,7 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
   } else {
     sourceRefreshQueue.batchTotal += requestedIds.length;
   }
-  logAgentAction('refresh_queue', '🔁',
+  logAgentAction('refresh_queue', '??',
     `Queued ${requestedIds.length} source refresh(es) - ${sourceRefreshQueue.pendingIds.size} pending`, '#38BDF8');
   // (see AUTO_TRANSFER_INTERVAL_MS below for the automatic trigger that
   // used to require someone to click "Transfer content to website" in the
@@ -9196,7 +9370,7 @@ function enqueueSourceRefresh(ids, reason = 'manual') {
     setImmediate(() => drainSourceRefreshQueue().catch((err) => {
       sourceRefreshQueue.running = false;
       sourceRefreshQueue.lastError = err?.message || String(err);
-      logAgentAction('refresh_queue', '⚠️', `Refresh queue error: ${sourceRefreshQueue.lastError}`, '#FBBF24');
+      logAgentAction('refresh_queue', '??', `Refresh queue error: ${sourceRefreshQueue.lastError}`, '#FBBF24');
     }));
   }
 }
@@ -9296,12 +9470,12 @@ async function drainSourceRefreshQueue() {
     sourceRefreshQueue.running = false;
     sourceRefreshQueue.currentIds = new Array(TRANSFER_WORKER_COUNT).fill(null);
     sourceRefreshQueue.lastFinished = Date.now();
-    logAgentAction('refresh_queue', '✅',
+    logAgentAction('refresh_queue', '?',
       `Refresh queue complete - ${stats.processed} source(s) processed`, '#4ADE80');
   }
 }
 
-// ─── Security Agent: real metric scan ────────────────────────────────────────
+// --- Security Agent: real metric scan ----------------------------------------
 let _secIdx = 0;
 function runSecurityScan() {
   const skipped = refreshControl.skippedFetches;
@@ -9310,11 +9484,11 @@ function runSecurityScan() {
   const crashes = refreshControl.crashEvents || 0;
   const uptime  = Math.floor(process.uptime() / 60);
   const checks = [
-    () => logAgentAction('security', '🔒', `JWT + CORS scan — 0 anomalies · ${crashes} crash events contained · uptime ${uptime}m`, '#4ADE80'),
-    () => logAgentAction('security', '🛡️', `Rate-limit monitor: ${skipped} skipped fetches · event-loop lag ${lag}ms · heap ${heapPct}%`, skipped > 100 ? '#FBBF24' : '#4ADE80'),
-    () => logAgentAction('security', '✅', `Feed integrity: ${globalFeedCache.posts.length.toLocaleString()} posts · ${seenPostIds.size.toLocaleString()} unique IDs · ${agentSourceCache.size} source caches verified`, '#4ADE80'),
-    () => logAgentAction('security', '🔐', `Auth endpoints healthy · ${users.length} user records · 0 suspicious patterns detected`, '#4ADE80'),
-    () => logAgentAction('security', '📋', `CVE scan: stack clean · SSE clients: ${sseClients.size} · office connections: ${officeClients.size}`, '#4ADE80'),
+    () => logAgentAction('security', '??', `JWT + CORS scan - 0 anomalies - ${crashes} crash events contained - uptime ${uptime}m`, '#4ADE80'),
+    () => logAgentAction('security', '???', `Rate-limit monitor: ${skipped} skipped fetches - event-loop lag ${lag}ms - heap ${heapPct}%`, skipped > 100 ? '#FBBF24' : '#4ADE80'),
+    () => logAgentAction('security', '?', `Feed integrity: ${globalFeedCache.posts.length.toLocaleString()} posts - ${seenPostIds.size.toLocaleString()} unique IDs - ${agentSourceCache.size} source caches verified`, '#4ADE80'),
+    () => logAgentAction('security', '??', `Auth endpoints healthy - ${users.length} user records - 0 suspicious patterns detected`, '#4ADE80'),
+    () => logAgentAction('security', '??', `CVE scan: stack clean - SSE clients: ${sseClients.size} - office connections: ${officeClients.size}`, '#4ADE80'),
   ];
   // Run two staggered checks per invocation so the dashboard always shows fresh activity
   const i = _secIdx % checks.length;
@@ -9323,7 +9497,7 @@ function runSecurityScan() {
   _secIdx += 2;
 }
 
-// ─── Perf Agent: real heap + event-loop metrics ───────────────────────────────
+// --- Perf Agent: real heap + event-loop metrics -------------------------------
 let _perfIdx = 0;
 function runPerfCheck() {
   const heap  = refreshControl.heapUsedMB?.toFixed(1) ?? '?';
@@ -9334,10 +9508,10 @@ function runPerfCheck() {
   const lh    = 88 + Math.floor(Math.random() * 10);
   const posts = globalFeedCache.posts.length;
   const checks = [
-    () => logAgentAction('perf', '⚡', `Heap: ${heap}MB / ${limit}MB · RSS: ${rss}MB · event-loop lag: ${lag}ms`, lag > 500 ? '#FBBF24' : '#4ADE80'),
-    () => logAgentAction('perf', '🚀', `TTFB: ${ttfb}ms · Lighthouse: ${lh} · ${posts.toLocaleString()} feed posts in memory`, '#4ADE80'),
-    () => logAgentAction('perf', '📊', `Refresh mode: ${refreshControl.mode} · multiplier: x${refreshControl.multiplier} · ${sseClients.size} SSE clients`, '#4ADE80'),
-    () => logAgentAction('perf', '✅', `CDN cache hit rate: 94% · JS bundle: 312KB gzip · ${agentSourceCache.size} source workers active`, '#4ADE80'),
+    () => logAgentAction('perf', '?', `Heap: ${heap}MB / ${limit}MB - RSS: ${rss}MB - event-loop lag: ${lag}ms`, lag > 500 ? '#FBBF24' : '#4ADE80'),
+    () => logAgentAction('perf', '??', `TTFB: ${ttfb}ms - Lighthouse: ${lh} - ${posts.toLocaleString()} feed posts in memory`, '#4ADE80'),
+    () => logAgentAction('perf', '??', `Refresh mode: ${refreshControl.mode} - multiplier: x${refreshControl.multiplier} - ${sseClients.size} SSE clients`, '#4ADE80'),
+    () => logAgentAction('perf', '?', `CDN cache hit rate: 94% - JS bundle: 312KB gzip - ${agentSourceCache.size} source workers active`, '#4ADE80'),
   ];
   const i = _perfIdx % checks.length;
   checks[i]();
@@ -9345,7 +9519,7 @@ function runPerfCheck() {
   _perfIdx += 2;
 }
 
-// ─── Community Agent: real groups + conversation metrics ──────────────────────
+// --- Community Agent: real groups + conversation metrics ----------------------
 let _commIdx = 0;
 function runCommunityCheck() {
   const groupCount = groups?.length ?? 0;
@@ -9354,10 +9528,10 @@ function runCommunityCheck() {
   const userCount  = users?.length ?? 0;
   const topContrib = Math.floor(Math.random() * 6) + 3;
   const checks = [
-    () => logAgentAction('community', '🌐', `${groupCount} active groups · ${userCount} members · ${convCount} conversations · ${msgCount} messages`, '#A78BFA'),
-    () => logAgentAction('community', '✅', `Content review: 0 violations · spam filter clean · ${topContrib} top contributors scored this cycle`, '#4ADE80'),
-    () => logAgentAction('community', '📈', `Engagement: ${convCount} open threads · ${msgCount} total messages · community sentiment positive`, '#A78BFA'),
-    () => logAgentAction('community', '🛡️', `Group health check: all ${groupCount} communities passing · moderation queue clear`, '#4ADE80'),
+    () => logAgentAction('community', '??', `${groupCount} active groups - ${userCount} members - ${convCount} conversations - ${msgCount} messages`, '#A78BFA'),
+    () => logAgentAction('community', '?', `Content review: 0 violations - spam filter clean - ${topContrib} top contributors scored this cycle`, '#4ADE80'),
+    () => logAgentAction('community', '??', `Engagement: ${convCount} open threads - ${msgCount} total messages - community sentiment positive`, '#A78BFA'),
+    () => logAgentAction('community', '???', `Group health check: all ${groupCount} communities passing - moderation queue clear`, '#4ADE80'),
   ];
   const i = _commIdx % checks.length;
   checks[i]();
@@ -9365,7 +9539,7 @@ function runCommunityCheck() {
   _commIdx += 2;
 }
 
-// ─── SEO Agent: real feed + route metrics ─────────────────────────────────────
+// --- SEO Agent: real feed + route metrics -------------------------------------
 let _seoIdx = 0;
 function runSeoCheck() {
   const posts  = globalFeedCache.posts.length;
@@ -9373,10 +9547,10 @@ function runSeoCheck() {
   const lcpMs  = (1100 + Math.floor(Math.random() * 300));
   const cls    = (Math.random() * 0.05).toFixed(3);
   const checks = [
-    () => logAgentAction('seo', '🔍', `Meta tags + OG images validated · sitemap covers ${posts.toLocaleString()} indexed posts · ${sources} source feeds`, '#34D399'),
-    () => logAgentAction('seo', '✅', `Core Web Vitals: LCP ${lcpMs}ms · CLS ${cls} · FID < 100ms — all passing`, '#4ADE80'),
-    () => logAgentAction('seo', '📄', `Structured data clean · ${sources} content sources · canonical links verified`, '#34D399'),
-    () => logAgentAction('seo', '🗺️', `Sitemap.xml up-to-date · robots.txt valid · ${posts.toLocaleString()} posts indexable`, '#34D399'),
+    () => logAgentAction('seo', '??', `Meta tags + OG images validated - sitemap covers ${posts.toLocaleString()} indexed posts - ${sources} source feeds`, '#34D399'),
+    () => logAgentAction('seo', '?', `Core Web Vitals: LCP ${lcpMs}ms - CLS ${cls} - FID < 100ms - all passing`, '#4ADE80'),
+    () => logAgentAction('seo', '??', `Structured data clean - ${sources} content sources - canonical links verified`, '#34D399'),
+    () => logAgentAction('seo', '???', `Sitemap.xml up-to-date - robots.txt valid - ${posts.toLocaleString()} posts indexable`, '#34D399'),
   ];
   const i = _seoIdx % checks.length;
   checks[i]();
@@ -9384,7 +9558,7 @@ function runSeoCheck() {
   _seoIdx += 2;
 }
 
-// ─── Opps Agent: real job post + source metrics ───────────────────────────────
+// --- Opps Agent: real job post + source metrics -------------------------------
 let _oppsIdx = 0;
 function runOppsCheck() {
   const jobPosts  = globalFeedCache.posts.filter(p => p?.source === 'indeed' || p?.source === 'usajobs').length;
@@ -9393,10 +9567,10 @@ function runOppsCheck() {
   const indeedCount = indeedCache?.posts?.length ?? 0;
   const liveJobs = Math.floor(Math.random() * 15) + 20;
   const checks = [
-    () => logAgentAction('opps', '💼', `Indeed: ${indeedCount} live listings in cache · ${jobPosts} job posts in feed · ${liveJobs} active positions`, '#F97316'),
-    () => logAgentAction('opps', '✅', `Job source URLs responding · expired listings cleaned · salary coverage: 91% of ${indeedCount} listings`, '#4ADE80'),
-    () => logAgentAction('opps', '📊', `Relevance rankings updated · ${totalPosts.toLocaleString()} total feed posts · job-to-content ratio healthy`, '#F97316'),
-    () => logAgentAction('opps', '🔄', `USAJobs + Indeed feed sync complete · ${indeedCount} cached · ${liveJobs} freshly ranked`, '#F97316'),
+    () => logAgentAction('opps', '??', `Indeed: ${indeedCount} live listings in cache - ${jobPosts} job posts in feed - ${liveJobs} active positions`, '#F97316'),
+    () => logAgentAction('opps', '?', `Job source URLs responding - expired listings cleaned - salary coverage: 91% of ${indeedCount} listings`, '#4ADE80'),
+    () => logAgentAction('opps', '??', `Relevance rankings updated - ${totalPosts.toLocaleString()} total feed posts - job-to-content ratio healthy`, '#F97316'),
+    () => logAgentAction('opps', '??', `USAJobs + Indeed feed sync complete - ${indeedCount} cached - ${liveJobs} freshly ranked`, '#F97316'),
   ];
   const i = _oppsIdx % checks.length;
   checks[i]();
@@ -9404,11 +9578,11 @@ function runOppsCheck() {
   _oppsIdx += 2;
 }
 
-// ─── Cache Helper Agent: merge per-source caches into global feed ─────────────
+// --- Cache Helper Agent: merge per-source caches into global feed -------------
 function runCacheHelperCheck() {
   if (isStabilityCritical()) {
     trimRuntimeCaches('critical');
-    logAgentAction('cache_helper', '⏸️', 'Cache merge skipped while stability guard is critical', '#FBBF24');
+    logAgentAction('cache_helper', '??', 'Cache merge skipped while stability guard is critical', '#FBBF24');
     return;
   }
   if (agentSourceCache.size === 0) return;
@@ -9416,19 +9590,19 @@ function runCacheHelperCheck() {
   const total = allSourcePosts.length;
   const n = addAndBroadcast(allSourcePosts);
   if (n > 0) {
-    logAgentAction('cache_helper', '✅',
+    logAgentAction('cache_helper', '?',
       `Merged ${n} new posts from ${agentSourceCache.size} source agents — global feed: ${globalFeedCache.posts.length}`, '#6366F1');
   } else {
-    logAgentAction('cache_helper', '🗄️',
+    logAgentAction('cache_helper', '???',
       `Cache sync: ${total} posts across ${agentSourceCache.size} agents — all up to date`, '#6366F1');
   }
 }
 
-// ─── Sort Agent: centralizes heavy feed sorting/dedupe work ──────────────────
+// --- Sort Agent: centralizes heavy feed sorting/dedupe work ------------------
 function runSortAgentCheck() {
   if (isStabilityCritical()) {
     trimRuntimeCaches('critical');
-    logAgentAction('sort_agent', '⏸️', 'Sort pass skipped while stability guard is critical', '#FBBF24');
+    logAgentAction('sort_agent', '??', 'Sort pass skipped while stability guard is critical', '#FBBF24');
     return;
   }
 
@@ -9458,18 +9632,18 @@ function runSortAgentCheck() {
     });
   }
 
-  logAgentAction('sort_agent', '🧮',
+  logAgentAction('sort_agent', '??',
     `Sorted ${beforeGlobal.toLocaleString()} global posts and ${sourcePosts.toLocaleString()} posts across ${sourcePools} source caches`, '#A78BFA');
 
   } catch (e) {
-    logAgentAction('sort_agent', '⚠️', `Sort pass failed: ${e.message}`, '#F87171');
+    logAgentAction('sort_agent', '??', `Sort pass failed: ${e.message}`, '#F87171');
   }
 }
 
-// ─── Sort Distribution Agent: refills empty sources + diversifies global feed ──
+// --- Sort Distribution Agent: refills empty sources + diversifies global feed --
 async function runSortDistribCheck() {
   if (isStabilityCritical()) {
-    logAgentAction('sort_distrib', '⏸️', 'Distribution pass skipped while stability guard is critical', '#FBBF24');
+    logAgentAction('sort_distrib', '??', 'Distribution pass skipped while stability guard is critical', '#FBBF24');
     return;
   }
 
@@ -9539,15 +9713,15 @@ async function runSortDistribCheck() {
   if (emptySources.length > 0) parts.push(`refilled ${emptySources.length} empty source(s): ${emptySources.join(', ')}`);
   if (diversified > 0) parts.push(`${diversified}-post diversity head from ${activeSources} sources`);
   if (parts.length === 0) parts.push(`all ${knownSources.length} sources have content — feed balanced`);
-  logAgentAction('sort_distrib', '🔀', parts.join(' · '), '#818CF8');
+  logAgentAction('sort_distrib', '??', parts.join(' - '), '#818CF8');
   } catch (e) {
     sortDistribState.lastError = e.message;
     sortDistribState.lastRun = Date.now();
-    logAgentAction('sort_distrib', '⚠️', `Distribution pass failed: ${e.message}`, '#FBBF24');
+    logAgentAction('sort_distrib', '??', `Distribution pass failed: ${e.message}`, '#FBBF24');
   }
 }
 
-// ─── Topic Audit + Topic Fix agents ─────────────────────────────────────────
+// --- Topic Audit + Topic Fix agents -----------------------------------------
 // Every post's `topic` field is set once, at fetch time, to whichever
 // FEED_TOPICS keyword the search that found it was actually searching for
 // (see the `topic: keyword`/`topic: tag` assignments throughout the source
@@ -9647,14 +9821,14 @@ function runTopicAuditCheck() {
     topicAuditState.lastMismatches = mismatches;
     topicAuditState.lastRun = Date.now();
     topicAuditState.lastError = null;
-    logAgentAction('topic_audit', '🔍',
+    logAgentAction('topic_audit', '??',
       mismatches > 0
         ? `Checked ${Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length)} posts — found ${mismatches} in the wrong topic`
         : `Checked ${Math.min(TOPIC_AUDIT_BATCH_SIZE, pool.length)} posts — all correctly sorted`,
       mismatches > 0 ? '#FBBF24' : '#4ADE80');
   } catch (e) {
     topicAuditState.lastError = e.message;
-    logAgentAction('topic_audit', '⚠️', `Topic audit failed: ${e.message}`, '#F87171');
+    logAgentAction('topic_audit', '??', `Topic audit failed: ${e.message}`, '#F87171');
   }
 }
 
@@ -9705,18 +9879,18 @@ async function runTopicFixCheck() {
       topicFixState.recentFixes.unshift(m);
       if (topicFixState.recentFixes.length > 30) topicFixState.recentFixes.pop();
     }
-    logAgentAction('topic_fix', '🛠️', `Moved ${fixed} post(s) to their correct topic (${topicMismatchQueue.length} still queued)`, '#818CF8');
+    logAgentAction('topic_fix', '???', `Moved ${fixed} post(s) to their correct topic (${topicMismatchQueue.length} still queued)`, '#818CF8');
   } catch (e) {
     topicFixState.lastError = e.message;
-    logAgentAction('topic_fix', '⚠️', `Topic fix failed: ${e.message}`, '#F87171');
+    logAgentAction('topic_fix', '??', `Topic fix failed: ${e.message}`, '#F87171');
   }
 }
 
-// ─── Feed Optimizer Agent: monitors all source workers, heals failing ones ─────
+// --- Feed Optimizer Agent: monitors all source workers, heals failing ones -----
 async function runFeedOptimizer() {
   if (isStabilityCritical()) {
     trimRuntimeCaches('critical');
-    logAgentAction('optimizer', '⏸️',
+    logAgentAction('optimizer', '??',
       `Skipped source healing while stability guard is critical - refresh x${refreshControl.multiplier}`, '#FBBF24');
     return;
   }
@@ -9763,15 +9937,15 @@ async function runFeedOptimizer() {
   const healthyCount = statsBySource.filter(s => !s.isPaused && !s.isDegraded).length;
 
   if (healed.length > 0) {
-    logAgentAction('optimizer', '🔧',
+    logAgentAction('optimizer', '??',
       `Healed ${healed.length} source(s): ${healed.join(', ')} — ${totalPosts.toLocaleString()} posts total`, '#F59E0B');
   } else {
-    logAgentAction('optimizer', '✅',
+    logAgentAction('optimizer', '?',
       `${healthyCount}/${statsBySource.length} sources healthy — ${totalPosts.toLocaleString()} posts in cache`, '#10B981');
   }
 }
 
-// ─── Mix Optimizer Agent: keeps the "true mix" feed pool balanced ────────────
+// --- Mix Optimizer Agent: keeps the "true mix" feed pool balanced ------------
 // The main feed intentionally blends every source + job listings into one
 // shared pool (mainFeedSnapshots) instead of separate tabs/feeds. Nothing
 // upstream re-checks that blend once a pool is built — this audits every
@@ -9782,7 +9956,7 @@ async function runFeedOptimizer() {
 // hit a stale/lopsided cache.
 async function runMixOptimizerCheck() {
   if (isStabilityCritical()) {
-    logAgentAction('mix_optimizer', '⏸️', 'Mix audit skipped while stability guard is critical', '#FBBF24');
+    logAgentAction('mix_optimizer', '??', 'Mix audit skipped while stability guard is critical', '#FBBF24');
     return;
   }
   try {
@@ -9850,22 +10024,22 @@ async function runMixOptimizerCheck() {
     mixOptimizerState.lastError = null;
 
     if (issues.length > 0) {
-      logAgentAction('mix_optimizer', '🎛️', `Rebalanced ${issues.length} pool(s): ${issues.join(' · ')}`, '#22D3EE');
+      logAgentAction('mix_optimizer', '???', `Rebalanced ${issues.length} pool(s): ${issues.join(' - ')}`, '#22D3EE');
     } else {
       const videoNote = videoAudit
         ? ` + video (${videoAudit.sourceCount} sources, top ${(videoAudit.topShare * 100).toFixed(0)}%)`
         : '';
-      logAgentAction('mix_optimizer', '✅',
+      logAgentAction('mix_optimizer', '?',
         `${checkedPools} mix pool(s) balanced${videoNote} — ${totalPosts.toLocaleString()} posts, source spread + job cadence healthy`, '#22D3EE');
     }
   } catch (e) {
     mixOptimizerState.lastError = e.message;
     mixOptimizerState.lastRun = Date.now();
-    logAgentAction('mix_optimizer', '⚠️', `Mix audit failed: ${e.message}`, '#F87171');
+    logAgentAction('mix_optimizer', '??', `Mix audit failed: ${e.message}`, '#F87171');
   }
 }
 
-// ─── Sort Optimizer Agent: audits ranking quality, distinct from Sort Agent ───
+// --- Sort Optimizer Agent: audits ranking quality, distinct from Sort Agent ---
 // Sort Agent (above) does the mechanical work of dedup/cap/sort every cycle.
 // This asks a different question: is the *ranking itself* doing anything
 // useful? A bug that made postRankScore degenerate (e.g. every post landing
@@ -9875,13 +10049,13 @@ async function runMixOptimizerCheck() {
 // order actually diverges from plain 'newest' order.
 function runSortOptimizerCheck() {
   if (isStabilityCritical()) {
-    logAgentAction('sort_optimizer', '⏸️', 'Sort quality audit skipped while stability guard is critical', '#FBBF24');
+    logAgentAction('sort_optimizer', '??', 'Sort quality audit skipped while stability guard is critical', '#FBBF24');
     return;
   }
   try {
     const pool = realFeedPosts(globalFeedCache.posts);
     if (pool.length < 10) {
-      logAgentAction('sort_optimizer', '🧭', `Pool too small to audit (${pool.length} posts)`, '#A78BFA');
+      logAgentAction('sort_optimizer', '??', `Pool too small to audit (${pool.length} posts)`, '#A78BFA');
       return;
     }
     const sample = pool.slice(0, 200);
@@ -9919,19 +10093,19 @@ function runSortOptimizerCheck() {
       const reasons = [];
       if (collapsed) reasons.push(`score spread only ${spread.toFixed(1)}`);
       if (indistinct) reasons.push(`ranked/newest overlap ${overlap}/20`);
-      logAgentAction('sort_optimizer', '⚠️', `Ranking quality degraded: ${reasons.join(', ')} — sampled ${sample.length} posts`, '#FBBF24');
+      logAgentAction('sort_optimizer', '??', `Ranking quality degraded: ${reasons.join(', ')} - sampled ${sample.length} posts`, '#FBBF24');
     } else {
-      logAgentAction('sort_optimizer', '🧭',
+      logAgentAction('sort_optimizer', '??',
         `Ranking healthy — score spread ${spread.toFixed(1)}, ranked/newest overlap ${overlap}/20 across ${sample.length} sampled posts`, '#A78BFA');
     }
   } catch (e) {
     sortOptimizerState.lastError = e.message;
     sortOptimizerState.lastRun = Date.now();
-    logAgentAction('sort_optimizer', '⚠️', `Sort quality audit failed: ${e.message}`, '#F87171');
+    logAgentAction('sort_optimizer', '??', `Sort quality audit failed: ${e.message}`, '#F87171');
   }
 }
 
-// ─── Deploy Agent: ping all three live services and log each response ────────
+// --- Deploy Agent: ping all three live services and log each response --------
 function fetchPublicText(url, { maxBytes = 1_500_000, redirects = 3, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
@@ -10048,13 +10222,13 @@ async function runWebPerfSubAgent(snapshot = null) {
       bytes: snap.bytes,
       statusCode: snap.statusCode,
     });
-    logAgentAction(id, ok ? '⚡' : '⚠️',
+    logAgentAction(id, ok ? '?' : '??',
       `${WEB_OPTIMIZER_URL}: HTTP ${snap.statusCode} · TTFB ${snap.ttfbMs}ms · total ${snap.totalMs}ms · ${Math.round(snap.bytes / 1024)}KB`,
       ok ? '#FBBF24' : '#F87171');
     return snap;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `Public performance check failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `Public performance check failed: ${e.message}`, '#F87171');
     return null;
   }
 }
@@ -10081,13 +10255,13 @@ async function runWebSeoSubAgent(snapshot = null) {
     const passed = Object.values(checks).filter(Boolean).length;
     const healthy = passed >= 5;
     updateWebSubAgent(id, { increment: true, status: healthy ? 'healthy' : 'degraded', lastError: null, checks, routes });
-    logAgentAction(id, healthy ? '🔍' : '⚠️',
+    logAgentAction(id, healthy ? '??' : '??',
       `SEO public-domain audit: ${passed}/6 checks passing · sitemap routes ${routes} · manifest ${checks.manifest ? 'ok' : 'missing'}`,
       healthy ? '#34D399' : '#FBBF24');
     return checks;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `SEO audit failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `SEO audit failed: ${e.message}`, '#F87171');
     return null;
   }
 }
@@ -10107,13 +10281,13 @@ async function runWebCacheSubAgent() {
       sourceCaches: agentSourceCache.size,
       globalPosts: globalFeedCache.posts.length,
     });
-    logAgentAction(id, '🗄️',
+    logAgentAction(id, '???',
       `Public cache optimized · service worker ${hasServiceWorker ? 'active' : 'not detected'} · ${agentSourceCache.size} source caches · ${globalFeedCache.posts.length.toLocaleString()} global posts`,
       '#6366F1');
     return true;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `Web cache optimization failed: ${e.message}`, '#FBBF24');
+    logAgentAction(id, '??', `Web cache optimization failed: ${e.message}`, '#FBBF24');
     return false;
   }
 }
@@ -10134,7 +10308,7 @@ async function runWebStorageSubAgent() {
   }
   if (isStabilityCritical()) {
     updateWebSubAgent(id, { increment: true, status: 'skipped', lastError: 'stability critical' });
-    logAgentAction(id, '⏸️', 'Fast storage pass skipped while stability guard is critical', '#FBBF24');
+    logAgentAction(id, '??', 'Fast storage pass skipped while stability guard is critical', '#FBBF24');
     return;
   }
   webStorageInFlight = true;
@@ -10188,12 +10362,12 @@ async function runWebStorageSubAgent() {
         renderPlan: DB_RENDER_PLAN,
       },
     });
-    logAgentAction(id, '💾',
+    logAgentAction(id, '??',
       `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB ${dbSizeState.mb ?? '?'}MB/${DB_SIZE_LIMIT_MB}MB`,
       '#FB7185');
   } catch (e) {
     updateWebSubAgent(id, { status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `Fast storage pass failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `Fast storage pass failed: ${e.message}`, '#F87171');
   } finally {
     webStorageInFlight = false;
   }
@@ -10230,13 +10404,13 @@ async function runWebApiSubAgent() {
       agentCount,
       hasOptimizerAgents,
     });
-    logAgentAction(id, ok ? '🧠' : '⚠️',
+    logAgentAction(id, ok ? '??' : '??',
       `API optimizer audit: HTTP ${health.statusCode} · db ${parsed?.db === true ? 'connected' : parsed?.db === false ? 'fallback' : 'unknown'} · ${agentCount} agents exposed`,
       ok ? '#0EA5E9' : '#FBBF24');
     return ok;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `API optimization audit failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `API optimization audit failed: ${e.message}`, '#F87171');
     return false;
   }
 }
@@ -10256,13 +10430,13 @@ async function runWebOfficeSubAgent() {
       bytes: snap.bytes,
       hasAppShell: /<div[^>]+id=["']root["']/i.test(html) || /script/i.test(html),
     });
-    logAgentAction(id, ok ? '🏢' : '⚠️',
+    logAgentAction(id, ok ? '??' : '??',
       `Office optimizer audit: HTTP ${snap.statusCode} · total ${snap.totalMs}ms · ${Math.round(snap.bytes / 1024)}KB app shell`,
       ok ? '#A855F7' : '#FBBF24');
     return ok;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `Office optimization audit failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `Office optimization audit failed: ${e.message}`, '#F87171');
     return false;
   }
 }
@@ -10298,13 +10472,13 @@ async function runWebPwaSubAgent() {
       startUrl: manifestJson?.start_url,
       iconCount: manifestJson?.icons?.length || 0,
     });
-    logAgentAction(id, healthy ? '📱' : '⚠️',
+    logAgentAction(id, healthy ? '??' : '??',
       `PWA/app optimizer audit: ${passed}/7 checks passing · display ${manifestJson?.display || 'missing'} · icons ${manifestJson?.icons?.length || 0}`,
       healthy ? '#06B6D4' : '#FBBF24');
     return healthy;
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
-    logAgentAction(id, '⚠️', `PWA/app optimization audit failed: ${e.message}`, '#F87171');
+    logAgentAction(id, '??', `PWA/app optimization audit failed: ${e.message}`, '#F87171');
     return false;
   }
 }
@@ -10356,14 +10530,14 @@ async function runWebsiteOptimizerCheck() {
     const summary = degradedSubAgents.length
       ? `${degradedSubAgents.length} surface check(s) need attention: ${degradedSubAgents.slice(0, 3).join(', ')}`
       : assessment.findings.length ? assessment.findings.slice(0, 2).join(' · ') : 'all public-system checks passing';
-    logAgentAction('web_optimizer', '🌐',
+    logAgentAction('web_optimizer', '??',
       `Full optimizer score ${assessment.score}/100 · website ${WEB_OPTIMIZER_URL} · API ${WEB_OPTIMIZER_API_URL} · office ${WEB_OPTIMIZER_OFFICE_URL} · ${summary}`,
       websiteOptimizerState.status === 'healthy' ? '#14B8A6' : '#FBBF24');
   } catch (e) {
     websiteOptimizerState.status = 'degraded';
     websiteOptimizerState.lastError = e.message;
     websiteOptimizerState.lastRun = Date.now();
-    logAgentAction('web_optimizer', '⚠️', `Website optimizer failed: ${e.message}`, '#F87171');
+    logAgentAction('web_optimizer', '??', `Website optimizer failed: ${e.message}`, '#F87171');
   }
 }
 
@@ -10383,15 +10557,15 @@ async function runDeployCheckAll() {
         https.get(target.url, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
       });
       const ms = Date.now() - start;
-      logAgentAction('deploy', status < 400 ? '✅' : '⚠️',
+      logAgentAction('deploy', status < 400 ? '?' : '??',
         `${target.name}: HTTP ${status} — ${ms}ms`, status < 400 ? '#38BDF8' : '#FBBF24');
     } catch {
-      logAgentAction('deploy', '❌', `${target.name}: unreachable`, '#F87171');
+      logAgentAction('deploy', '?', `${target.name}: unreachable`, '#F87171');
     }
   }
 }
 
-// ─── Data Agent: monitor DB health and in-memory record counts ───────────────
+// --- Data Agent: monitor DB health and in-memory record counts ---------------
 let _dataIdx = 0;
 async function runDataCheck() {
   const msgCount = conversations?.reduce((s, c) => s + c.messages.length, 0) ?? 0;
@@ -10401,16 +10575,16 @@ async function runDataCheck() {
       if (db.isConnected()) {
         const r = await db.query('SELECT COUNT(*) FROM users').catch(() => null);
         const count = r?.rows?.[0]?.count ?? users.length;
-        logAgentAction('data', '🗄️', `DB connected — ${count} users · ${globalFeedCache.posts.length.toLocaleString()} feed posts · ${seenPostIds.size.toLocaleString()} unique IDs`, '#FB7185');
+        logAgentAction('data', '???', `DB connected - ${count} users - ${globalFeedCache.posts.length.toLocaleString()} feed posts - ${seenPostIds.size.toLocaleString()} unique IDs`, '#FB7185');
       } else {
-        logAgentAction('data', '💾', `In-memory mode — ${users.length} users · ${globalFeedCache.posts.length.toLocaleString()} posts · heap ${heapMB}MB`, '#FB7185');
+        logAgentAction('data', '??', `In-memory mode - ${users.length} users - ${globalFeedCache.posts.length.toLocaleString()} posts - heap ${heapMB}MB`, '#FB7185');
       }
     },
-    async () => logAgentAction('data', '📊',
+    async () => logAgentAction('data', '??',
       `Feed: ${globalFeedCache.posts.length.toLocaleString()} posts · ${agentSourceCache.size} source caches · ${seenPostIds.size.toLocaleString()} deduped IDs`, '#FB7185'),
-    async () => logAgentAction('data', '🔗',
+    async () => logAgentAction('data', '??',
       `Conversations: ${conversations.length} active · ${msgCount} messages · ${groups.length} communities`, '#FB7185'),
-    async () => logAgentAction('data', '👥',
+    async () => logAgentAction('data', '??',
       `Users: ${users.length} · Agent log: ${agentActionLog.length} entries · ${sseClients.size} SSE subscribers live`, '#FB7185'),
   ];
   try {
@@ -10421,7 +10595,7 @@ async function runDataCheck() {
   } catch {}
 }
 
-// ─── Activity Agent: gives every registered agent a visible heartbeat ─────────
+// --- Activity Agent: gives every registered agent a visible heartbeat ---------
 function lastLogForAgent(id) {
   return agentActionLog.find(e => e.agentId === id) || null;
 }
@@ -10532,7 +10706,7 @@ function runAgentActivityCheck(fullSweep = false) {
   activityAgentState.lastSweep = Date.now();
   activityAgentState.lastCount = logged;
   if (!fullSweep) {
-    logAgentAction('activity', '📡',
+    logAgentAction('activity', '??',
       `Heartbeat sweep checked ${staleAgents.length} stale agent(s), refreshed ${logged}`, '#22D3EE');
   }
 }
@@ -10540,8 +10714,8 @@ function runAgentActivityCheck(fullSweep = false) {
 // Seed immediately on startup (non-blocking)
 installCrashGuard();
 runStabilityGuard();
-logAgentAction('feed',      '🚀', 'UFIconnect Agent System initialized', '#60A5FA');
-logAgentAction('security',  '✅', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
+logAgentAction('feed',      '??', 'UFIconnect Agent System initialized', '#60A5FA');
+logAgentAction('security',  '?', 'All agents online - adaptive refresh, sorting, and crash guards active', '#4ADE80');
 // Warm Reddit OAuth token on startup so the first fetch uses authenticated access
 if (process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET) {
   console.log('[Reddit] OAuth credentials found — will use authenticated API access');
@@ -10631,7 +10805,7 @@ setTimeout(() => { runMixOptimizerCheck(); setInterval(runMixOptimizerCheck, 5 *
 setTimeout(() => { runSortOptimizerCheck(); setInterval(runSortOptimizerCheck, 7 * 60 * 1000); }, 150 * 1000);
 setTimeout(runDataCheck,  12000);
 
-// ─── Platform config (OAuth metadata) ────────────────────────────────────────
+// --- Platform config (OAuth metadata) ----------------------------------------
 const PLATFORMS = {
   linkedin: {
     name: 'LinkedIn', color: '#0A66C2', icon: 'linkedin',
@@ -10821,7 +10995,8 @@ const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // permanently confined to the single-source-tab Following view even once a
 // token WAS set, never joining sort/rank or the composition cap like every
 // other source does.
-const AGGREGATE_FEED_SOURCES = Object.keys(SOURCE_CONFIG);
+const PIPELINE_ONLY_FEED_SOURCES = ['remotive', 'muse'];
+const AGGREGATE_FEED_SOURCES = [...new Set([...Object.keys(SOURCE_CONFIG), ...PIPELINE_ONLY_FEED_SOURCES])];
 
 // The unfiltered video feed used to hand every one of AGGREGATE_FEED_SOURCES
 // (36) to getCursorFeedPage on every single request, even though only a
@@ -10894,7 +11069,7 @@ async function auditVideoFeedMix() {
   return { dominated, thin, topSource: topSourceName, topShare, sampleSize: pool.length, sourceCount: bySource.size };
 }
 
-// ─── Per-post deep link generator for curated social posts ───────────────────
+// --- Per-post deep link generator for curated social posts -------------------
 function getSocialPostUrl(platform, post) {
   const author = post.author || '';
   const source = post.source || '';
@@ -10926,22 +11101,22 @@ function getSocialPostUrl(platform, post) {
   }
 }
 
-// ─── buildCuratedSourcePosts: all sources are live — no mock fallbacks ───────
+// --- buildCuratedSourcePosts: all sources are live - no mock fallbacks -------
 function buildCuratedSourcePosts() { return []; }
 
-// ─── Registered users ─────────────────────────────────────────────────────────
+// --- Registered users ---------------------------------------------------------
 // Live users — populated from PostgreSQL at login/register, no hardcoded demos
 let users = [];
 
-// ─── Groups (let — reloaded from DB at startup) ───────────────────────────────
-// ─── ALL_GROUPS_SEED — REAL external communities only, seeded into PostgreSQL ─
+// --- Groups (let - reloaded from DB at startup) -------------------------------
+// --- ALL_GROUPS_SEED - REAL external communities only, seeded into PostgreSQL -
 const ALL_GROUPS_SEED = [
-  // ── AI & ML ──────────────────────────────────────────────────────────────────
+  // -- AI & ML ------------------------------------------------------------------
   { id: 'ext_r_ml',       category: 'AI & ML',     name: 'r/MachineLearning',        description: 'The largest ML research community on Reddit. Papers, discussions, and career advice from 3.5M+ members.',              members: 3500000, isExternal: true, subreddit: 'MachineLearning',   externalUrl: 'https://reddit.com/r/MachineLearning' },
   { id: 'ext_r_ai',       category: 'AI & ML',     name: 'r/artificial',             description: 'AI news, breakthroughs, and debates from 2M+ redditors across research, product, and policy.',                        members: 2000000, isExternal: true, subreddit: 'artificial',        externalUrl: 'https://reddit.com/r/artificial' },
   { id: 'ext_r_ds',       category: 'AI & ML',     name: 'r/datascience',            description: 'Data science career advice, tool comparisons, and project showcases from 1.2M+ members.',                            members: 1200000, isExternal: true, subreddit: 'datascience',       externalUrl: 'https://reddit.com/r/datascience' },
   { id: 'ext_r_llm',      category: 'AI & ML',     name: 'r/LocalLLaMA',             description: 'Running LLMs locally — hardware setups, model comparisons, and fine-tuning guides for 580K+ AI enthusiasts.',         members: 580000,  isExternal: true, subreddit: 'LocalLLaMA',        externalUrl: 'https://reddit.com/r/LocalLLaMA' },
-  // ── Engineering ──────────────────────────────────────────────────────────────
+  // -- Engineering --------------------------------------------------------------
   { id: 'ext_r_prog',     category: 'Engineering', name: 'r/programming',            description: 'The original programming community — 6.3M+ developers sharing articles, tools, and industry discourse.',              members: 6300000, isExternal: true, subreddit: 'programming',       externalUrl: 'https://reddit.com/r/programming' },
   { id: 'ext_r_webdev',   category: 'Engineering', name: 'r/webdev',                 description: 'Web development tutorials, job advice, roast-my-site threads, and frontend/backend discussions.',                     members: 2500000, isExternal: true, subreddit: 'webdev',            externalUrl: 'https://reddit.com/r/webdev' },
   { id: 'ext_r_devops',   category: 'Engineering', name: 'r/devops',                 description: 'DevOps practices, Kubernetes, CI/CD pipelines, cloud infra, and SRE war stories.',                                   members: 440000,  isExternal: true, subreddit: 'devops',            externalUrl: 'https://reddit.com/r/devops' },
@@ -10952,51 +11127,51 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_r_gamedev',  category: 'Engineering', name: 'r/gamedev',                description: 'Game development tutorials, portfolio showcases, game engine discussions, and indie dev stories.',                    members: 900000,  isExternal: true, subreddit: 'gamedev',           externalUrl: 'https://reddit.com/r/gamedev' },
   { id: 'ext_r_robotics', category: 'Engineering', name: 'r/robotics',               description: 'Robotics engineering, ROS, autonomous systems, and hardware hacking from hobbyists to researchers.',                  members: 250000,  isExternal: true, subreddit: 'robotics',          externalUrl: 'https://reddit.com/r/robotics' },
   { id: 'ext_r_nocode',   category: 'Engineering', name: 'r/nocode',                 description: 'No-code and low-code tools, automation workflows, and building products without traditional programming.',             members: 120000,  isExternal: true, subreddit: 'nocode',            externalUrl: 'https://reddit.com/r/nocode' },
-  // ── Startups ─────────────────────────────────────────────────────────────────
+  // -- Startups -----------------------------------------------------------------
   { id: 'ext_r_startups', category: 'Startups',    name: 'r/startups',               description: 'Founder stories, early-stage advice, product pivots, and team building from 1.4M+ entrepreneurs.',                  members: 1400000, isExternal: true, subreddit: 'startups',          externalUrl: 'https://reddit.com/r/startups' },
   { id: 'ext_r_entrep',   category: 'Startups',    name: 'r/Entrepreneur',           description: '1.5M+ business owners sharing revenue milestones, hiring tips, and marketing wins.',                                 members: 1500000, isExternal: true, subreddit: 'Entrepreneur',      externalUrl: 'https://reddit.com/r/Entrepreneur' },
   { id: 'ext_r_saas',     category: 'Startups',    name: 'r/SaaS',                   description: 'SaaS metrics, pricing strategy, churn reduction, and tool stack discussions.',                                       members: 290000,  isExternal: true, subreddit: 'SaaS',              externalUrl: 'https://reddit.com/r/SaaS' },
   { id: 'ext_r_pm',       category: 'Startups',    name: 'r/ProductManagement',      description: 'Product manager career growth, roadmap frameworks, stakeholder management, and interview prep.',                     members: 220000,  isExternal: true, subreddit: 'ProductManagement', externalUrl: 'https://reddit.com/r/ProductManagement' },
   { id: 'ext_r_sideproj', category: 'Startups',    name: 'r/SideProject',            description: 'Builders showing off their side projects, getting feedback, and sharing launch stories.',                            members: 180000,  isExternal: true, subreddit: 'SideProject',       externalUrl: 'https://reddit.com/r/SideProject' },
-  // ── Design ───────────────────────────────────────────────────────────────────
+  // -- Design -------------------------------------------------------------------
   { id: 'ext_r_ux',       category: 'Design',      name: 'r/UXDesign',               description: 'UX research, portfolio critiques, design systems, and career advice from 530K+ designers.',                         members: 530000,  isExternal: true, subreddit: 'UXDesign',          externalUrl: 'https://reddit.com/r/UXDesign' },
   { id: 'ext_r_gfx',      category: 'Design',      name: 'r/graphic_design',         description: 'Logo critiques, branding showcases, typography discussion, and freelance pricing from 5.6M+ creatives.',            members: 5600000, isExternal: true, subreddit: 'graphic_design',    externalUrl: 'https://reddit.com/r/graphic_design' },
   { id: 'ext_r_photo',    category: 'Design',      name: 'r/photography',            description: 'Camera gear, composition tips, RAW editing, and photo critique from 5M+ photography enthusiasts.',                   members: 5000000, isExternal: true, subreddit: 'photography',       externalUrl: 'https://reddit.com/r/photography' },
   { id: 'ext_r_blender',  category: 'Design',      name: 'r/blender',                description: '3D modelling, sculpting, animation, and rendering with Blender — tutorials and showcases.',                          members: 700000,  isExternal: true, subreddit: 'blender',           externalUrl: 'https://reddit.com/r/blender' },
   { id: 'ext_d_design',   category: 'Design',      name: 'Design Buddies Discord',   description: '100K+ UX/UI designers sharing portfolio feedback, job leads, and career advice.',                                    members: 100000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/designbuddies' },
-  // ── Marketing ────────────────────────────────────────────────────────────────
+  // -- Marketing ----------------------------------------------------------------
   { id: 'ext_r_mktg',     category: 'Marketing',   name: 'r/marketing',              description: 'Digital marketing strategies, campaign post-mortems, and tool recommendations.',                                     members: 500000,  isExternal: true, subreddit: 'marketing',         externalUrl: 'https://reddit.com/r/marketing' },
   { id: 'ext_r_seo',      category: 'Marketing',   name: 'r/SEO',                    description: 'Search engine optimisation — technical SEO, content strategy, algorithm updates, and link building.',               members: 280000,  isExternal: true, subreddit: 'SEO',               externalUrl: 'https://reddit.com/r/SEO' },
   { id: 'ext_r_content',  category: 'Marketing',   name: 'r/content_marketing',      description: 'Content strategy, editorial calendars, distribution, and measuring ROI from 150K+ content marketers.',              members: 150000,  isExternal: true, subreddit: 'content_marketing', externalUrl: 'https://reddit.com/r/content_marketing' },
   { id: 'ext_li_gh',      category: 'Marketing',   name: 'Growth Hackers (LinkedIn)',description: 'Growth marketing tactics, A/B test results, and acquisition case studies shared by 300K+ marketers.',               members: 300000,  isExternal: true, platform: 'linkedin',           externalUrl: 'https://linkedin.com/groups/1868995' },
-  // ── Finance ──────────────────────────────────────────────────────────────────
+  // -- Finance ------------------------------------------------------------------
   { id: 'ext_r_pf',       category: 'Finance',     name: 'r/personalfinance',        description: 'Budgeting, debt payoff, investing basics, and financial independence advice from 20M+ members.',                     members: 20000000,isExternal: true, subreddit: 'personalfinance',   externalUrl: 'https://reddit.com/r/personalfinance' },
   { id: 'ext_r_inv',      category: 'Finance',     name: 'r/investing',              description: 'Long-term investing, ETFs, stock picks, and portfolio strategy from 2.5M+ investors.',                              members: 2500000, isExternal: true, subreddit: 'investing',         externalUrl: 'https://reddit.com/r/investing' },
   { id: 'ext_r_crypto',   category: 'Finance',     name: 'r/CryptoCurrency',         description: 'Crypto news, DeFi protocols, NFT analysis, and on-chain data from 6M+ members.',                                   members: 6000000, isExternal: true, subreddit: 'CryptoCurrency',    externalUrl: 'https://reddit.com/r/CryptoCurrency' },
   { id: 'ext_r_algotrade',category: 'Finance',     name: 'r/algotrading',            description: 'Algorithmic trading strategies, backtesting frameworks, quant finance, and data-driven investing.',                  members: 300000,  isExternal: true, subreddit: 'algotrading',       externalUrl: 'https://reddit.com/r/algotrading' },
   { id: 'ext_r_fintech',  category: 'Finance',     name: 'r/fintech',                description: 'Financial technology news, product launches, startup funding, and the future of banking.',                           members: 140000,  isExternal: true, subreddit: 'fintech',           externalUrl: 'https://reddit.com/r/fintech' },
-  // ── Remote Work ──────────────────────────────────────────────────────────────
+  // -- Remote Work --------------------------------------------------------------
   { id: 'ext_r_nomad',    category: 'Remote Work', name: 'r/digitalnomad',           description: 'Visa guides, best coworking spots, tax strategies, and remote work tools from 1.8M+ nomads.',                      members: 1800000, isExternal: true, subreddit: 'digitalnomad',      externalUrl: 'https://reddit.com/r/digitalnomad' },
   { id: 'ext_r_remote',   category: 'Remote Work', name: 'r/remotework',             description: 'Remote job leads, home office setups, async communication, and WFH culture.',                                       members: 450000,  isExternal: true, subreddit: 'remotework',        externalUrl: 'https://reddit.com/r/remotework' },
   { id: 'ext_r_free',     category: 'Remote Work', name: 'r/freelance',              description: 'Freelance rates, client red flags, contract templates, and growing a solo business.',                               members: 400000,  isExternal: true, subreddit: 'freelance',         externalUrl: 'https://reddit.com/r/freelance' },
-  // ── Education ────────────────────────────────────────────────────────────────
+  // -- Education ----------------------------------------------------------------
   { id: 'ext_r_learn',    category: 'Education',   name: 'r/learnprogramming',       description: 'Beginner-friendly coding community — 4.3M+ people learning Python, JavaScript, and beyond.',                       members: 4300000, isExternal: true, subreddit: 'learnprogramming',  externalUrl: 'https://reddit.com/r/learnprogramming' },
   { id: 'ext_r_cscareer', category: 'Education',   name: 'r/cscareerquestions',      description: 'Salary negotiations, interview prep, resume reviews, and career switching advice for developers.',                  members: 1200000, isExternal: true, subreddit: 'cscareerquestions', externalUrl: 'https://reddit.com/r/cscareerquestions' },
   { id: 'ext_r_edtech',   category: 'Education',   name: 'r/edtech',                 description: 'Education technology, online learning platforms, instructional design, and the future of learning.',                members: 60000,   isExternal: true, subreddit: 'edtech',            externalUrl: 'https://reddit.com/r/edtech' },
   { id: 'ext_r_prod',     category: 'Education',   name: 'r/productivity',           description: 'Productivity systems, time management, deep work, and personal efficiency from 1.5M+ members.',                    members: 1500000, isExternal: true, subreddit: 'productivity',      externalUrl: 'https://reddit.com/r/productivity' },
-  // ── Health Tech ──────────────────────────────────────────────────────────────
+  // -- Health Tech --------------------------------------------------------------
   { id: 'ext_r_healthtech',category: 'Health',     name: 'r/healthtech',             description: 'Digital health, medical devices, health informatics, and the intersection of technology and medicine.',              members: 30000,   isExternal: true, subreddit: 'healthtech',        externalUrl: 'https://reddit.com/r/healthtech' },
   { id: 'ext_r_mental',   category: 'Health',      name: 'r/mentalhealth',           description: 'Mental health awareness, resources, and supportive community for those navigating mental wellness.',                  members: 1000000, isExternal: true, subreddit: 'mentalhealth',      externalUrl: 'https://reddit.com/r/mentalhealth' },
-  // ── Climate & Space ──────────────────────────────────────────────────────────
+  // -- Climate & Space ----------------------------------------------------------
   { id: 'ext_r_sustain',  category: 'Climate',     name: 'r/sustainability',         description: 'Sustainable living, climate action, green tech, and environmental solutions from 700K+ members.',                   members: 700000,  isExternal: true, subreddit: 'sustainability',    externalUrl: 'https://reddit.com/r/sustainability' },
   { id: 'ext_r_space',    category: 'Space',        name: 'r/space',                  description: 'Space exploration, astronomy, rockets, and the latest news from NASA, SpaceX, and ESA.',                           members: 25000000,isExternal: true, subreddit: 'space',             externalUrl: 'https://reddit.com/r/space' },
-  // ── Discord servers ──────────────────────────────────────────────────────────
+  // -- Discord servers ----------------------------------------------------------
   { id: 'ext_d_reactiflux',category: 'Engineering',name: 'Reactiflux Discord',       description: 'The largest React.js Discord server — 80K+ developers discussing React, Redux, GraphQL, and TypeScript.',            members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/reactiflux' },
   { id: 'ext_d_pydisc',   category: 'Engineering', name: 'Python Discord',           description: 'Official Python community Discord — 300K+ members, code reviews, project showcases, and mentorship.',               members: 300000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/python' },
   { id: 'ext_d_tph',      category: 'Engineering', name: "The Programmer's Hangout", description: 'Welcoming community for programmers at all levels — code challenges, project collabs, and career advice.',           members: 80000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/programming' },
-  // ── LinkedIn groups ──────────────────────────────────────────────────────────
+  // -- LinkedIn groups ----------------------------------------------------------
   { id: 'ext_li_pm',      category: 'Startups',    name: 'Product Management Professionals', description: "LinkedIn's largest PM group — product strategy, roadmapping, and career growth for product managers.", members: 500000, isExternal: true, platform: 'linkedin',            externalUrl: 'https://linkedin.com/groups/42115' },
-  // ── More Engineering ─────────────────────────────────────────────────────────
+  // -- More Engineering ---------------------------------------------------------
   { id: 'ext_r_swift',    category: 'Engineering', name: 'r/swift',                  description: 'Swift programming language — iOS, macOS, server-side, and SwiftUI from Apple developers worldwide.',               members: 200000,  isExternal: true, subreddit: 'swift',             externalUrl: 'https://reddit.com/r/swift' },
   { id: 'ext_r_android',  category: 'Engineering', name: 'r/androiddev',             description: 'Android development — Kotlin, Jetpack Compose, architecture, and Play Store strategies.',                         members: 400000,  isExternal: true, subreddit: 'androiddev',        externalUrl: 'https://reddit.com/r/androiddev' },
   { id: 'ext_r_golang',   category: 'Engineering', name: 'r/golang',                 description: 'Go language — backend services, concurrency patterns, and the Go ecosystem.',                                      members: 250000,  isExternal: true, subreddit: 'golang',            externalUrl: 'https://reddit.com/r/golang' },
@@ -11007,30 +11182,30 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_r_linux',    category: 'Engineering', name: 'r/linux',                  description: 'Linux news, distro reviews, configuration tips, and the open-source community.',                                   members: 1200000, isExternal: true, subreddit: 'linux',             externalUrl: 'https://reddit.com/r/linux' },
   { id: 'ext_r_cs',       category: 'Engineering', name: 'r/compsci',                description: 'Computer science theory, algorithms, data structures, and academic research.',                                     members: 800000,  isExternal: true, subreddit: 'compsci',           externalUrl: 'https://reddit.com/r/compsci' },
   { id: 'ext_r_api',      category: 'Engineering', name: 'r/apidevelopment',         description: 'API design, REST, GraphQL, gRPC, and building developer-friendly interfaces.',                                     members: 45000,   isExternal: true, subreddit: 'apidevelopment',    externalUrl: 'https://reddit.com/r/apidevelopment' },
-  // ── More Startups ────────────────────────────────────────────────────────────
+  // -- More Startups ------------------------------------------------------------
   { id: 'ext_r_indiehack',category: 'Startups',   name: 'r/indiehackers',           description: 'Indie hackers sharing revenue numbers, growth tactics, and honest startup stories.',                               members: 150000,  isExternal: true, subreddit: 'indiehackers',      externalUrl: 'https://reddit.com/r/indiehackers' },
   { id: 'ext_r_venturecap',category:'Finance',    name: 'r/venturecapital',          description: 'VC deals, fund dynamics, LP relations, and the business of backing early-stage startups.',                         members: 95000,   isExternal: true, subreddit: 'venturecapital',    externalUrl: 'https://reddit.com/r/venturecapital' },
   { id: 'ext_r_angelinv', category: 'Finance',    name: 'r/angelinvesting',          description: 'Angel investing strategies, deal sourcing, term sheets, and portfolio management.',                                members: 40000,   isExternal: true, subreddit: 'angelinvesting',    externalUrl: 'https://reddit.com/r/angelinvesting' },
   { id: 'ext_r_dropship', category: 'Startups',   name: 'r/dropship',               description: 'Dropshipping product research, supplier vetting, ad creatives, and e-commerce scaling.',                          members: 400000,  isExternal: true, subreddit: 'dropship',          externalUrl: 'https://reddit.com/r/dropship' },
   { id: 'ext_r_amzfba',   category: 'Startups',   name: 'r/FulfillmentByAmazon',    description: 'Amazon FBA strategies, product sourcing, listing optimisation, and PPC campaigns.',                                members: 120000,  isExternal: true, subreddit: 'FulfillmentByAmazon', externalUrl: 'https://reddit.com/r/FulfillmentByAmazon' },
   { id: 'ext_r_shopify',  category: 'Startups',   name: 'r/shopify',                description: 'Shopify store building, apps, conversion rate optimisation, and e-commerce growth.',                               members: 300000,  isExternal: true, subreddit: 'shopify',           externalUrl: 'https://reddit.com/r/shopify' },
-  // ── More Design ──────────────────────────────────────────────────────────────
+  // -- More Design --------------------------------------------------------------
   { id: 'ext_r_figma',    category: 'Design',     name: 'r/FigmaDesign',            description: 'Figma tips, plugins, design systems, and collaborative design workflows.',                                         members: 250000,  isExternal: true, subreddit: 'FigmaDesign',       externalUrl: 'https://reddit.com/r/FigmaDesign' },
   { id: 'ext_r_logo',     category: 'Design',     name: 'r/logodesign',             description: 'Logo design critiques, client horror stories, branding projects, and type treatments.',                            members: 350000,  isExternal: true, subreddit: 'logodesign',        externalUrl: 'https://reddit.com/r/logodesign' },
   { id: 'ext_r_motion',   category: 'Design',     name: 'r/motiongraphics',         description: 'Motion graphics, After Effects, animation workflows, and reel critiques.',                                         members: 200000,  isExternal: true, subreddit: 'motiongraphics',    externalUrl: 'https://reddit.com/r/motiongraphics' },
   { id: 'ext_r_typography',category:'Design',     name: 'r/typography',             description: 'Type selection, font pairing, lettering, and the craft of communicating with letterforms.',                        members: 350000,  isExternal: true, subreddit: 'typography',        externalUrl: 'https://reddit.com/r/typography' },
   { id: 'ext_r_illustration',category:'Design',   name: 'r/Illustration',           description: 'Illustration showcases, client work, style development, and artist feedback.',                                     members: 750000,  isExternal: true, subreddit: 'Illustration',      externalUrl: 'https://reddit.com/r/Illustration' },
-  // ── Marketing / Creator ───────────────────────────────────────────────────────
+  // -- Marketing / Creator -------------------------------------------------------
   { id: 'ext_r_podcasting',category:'Marketing',  name: 'r/podcasting',             description: 'Podcast gear, editing workflows, growing an audience, and monetisation strategies.',                               members: 170000,  isExternal: true, subreddit: 'podcasting',        externalUrl: 'https://reddit.com/r/podcasting' },
   { id: 'ext_r_yt',       category: 'Marketing',  name: 'r/youtubers',              description: 'YouTube creators sharing growth strategies, thumbnail design, and channel monetisation.',                           members: 450000,  isExternal: true, subreddit: 'youtubers',         externalUrl: 'https://reddit.com/r/youtubers' },
   { id: 'ext_r_blogging', category: 'Marketing',  name: 'r/Blogging',               description: 'Blog writing, SEO, building an audience, and monetising a content site.',                                         members: 180000,  isExternal: true, subreddit: 'Blogging',          externalUrl: 'https://reddit.com/r/Blogging' },
   { id: 'ext_r_twitch',   category: 'Marketing',  name: 'r/Twitch',                 description: 'Twitch streaming tips, channel growth, emotes, and building a viewer community.',                                  members: 800000,  isExternal: true, subreddit: 'Twitch',            externalUrl: 'https://reddit.com/r/Twitch' },
-  // ── Finance ──────────────────────────────────────────────────────────────────
+  // -- Finance ------------------------------------------------------------------
   { id: 'ext_r_fire',     category: 'Finance',    name: 'r/financialindependence',  description: 'FIRE movement — financial independence, early retirement, frugality, and investment strategy.',                     members: 1900000, isExternal: true, subreddit: 'financialindependence', externalUrl: 'https://reddit.com/r/financialindependence' },
   { id: 'ext_r_realestate',category:'Finance',    name: 'r/realestateinvesting',    description: 'Real estate investing — rentals, house hacking, REITs, and market analysis.',                                     members: 800000,  isExternal: true, subreddit: 'realestateinvesting', externalUrl: 'https://reddit.com/r/realestateinvesting' },
   { id: 'ext_r_ethereum', category: 'Finance',    name: 'r/ethereum',               description: 'Ethereum ecosystem — DeFi, NFTs, Layer 2 scaling, and Solidity development.',                                     members: 1500000, isExternal: true, subreddit: 'ethereum',          externalUrl: 'https://reddit.com/r/ethereum' },
   { id: 'ext_r_bitcoin',  category: 'Finance',    name: 'r/Bitcoin',                description: 'Bitcoin news, technical analysis, and long-term holder community with 5M+ members.',                              members: 5000000, isExternal: true, subreddit: 'Bitcoin',           externalUrl: 'https://reddit.com/r/Bitcoin' },
-  // ── Lifestyle & Culture ──────────────────────────────────────────────────────
+  // -- Lifestyle & Culture ------------------------------------------------------
   { id: 'ext_r_fitness',  category: 'Health',     name: 'r/Fitness',                description: 'Workout routines, nutrition science, progress pictures, and form checks from 12M+ members.',                      members: 12000000,isExternal: true, subreddit: 'Fitness',           externalUrl: 'https://reddit.com/r/Fitness' },
   { id: 'ext_r_loseit',   category: 'Health',     name: 'r/loseit',                 description: 'Weight loss journeys, calorie counting, motivation, and maintaining a healthy lifestyle.',                         members: 4000000, isExternal: true, subreddit: 'loseit',            externalUrl: 'https://reddit.com/r/loseit' },
   { id: 'ext_r_running',  category: 'Health',     name: 'r/running',                description: 'Running training plans, race prep, gear reviews, and the global running community.',                              members: 1800000, isExternal: true, subreddit: 'running',           externalUrl: 'https://reddit.com/r/running' },
@@ -11070,10 +11245,10 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_r_parenting',category: 'Lifestyle',  name: 'r/Parenting',              description: 'Parenting advice, developmental milestones, family life, and honest parenthood conversations.',                  members: 3200000, isExternal: true, subreddit: 'Parenting',         externalUrl: 'https://reddit.com/r/Parenting' },
   { id: 'ext_r_climate',  category: 'Climate',    name: 'r/climate',                description: 'Climate science, policy, activism, and solutions from 260K+ members committed to a sustainable future.',         members: 260000,  isExternal: true, subreddit: 'climate',           externalUrl: 'https://reddit.com/r/climate' },
   { id: 'ext_r_zerowaste',category: 'Climate',    name: 'r/ZeroWaste',              description: 'Zero waste living, plastic-free alternatives, sustainable swaps, and reducing your footprint.',                  members: 600000,  isExternal: true, subreddit: 'ZeroWaste',         externalUrl: 'https://reddit.com/r/ZeroWaste' },
-  // ── News & DEV Community ───────────────────────────────────────────────────────
+  // -- News & DEV Community -------------------------------------------------------
   { id: 'ext_hn',         category: 'Engineering', name: 'Hacker News',             description: "Y Combinator's community for startup and technology discussion — the internet's sharpest tech commentary.",        members: 5000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://news.ycombinator.com' },
   { id: 'ext_devto',      category: 'Engineering', name: 'DEV Community',           description: 'dev.to — 1M+ developers writing tutorials, sharing learnings, and building in public.',                           members: 1000000, isExternal: true, platform: 'devto',              externalUrl: 'https://dev.to' },
-  // ── More Discord Servers ─────────────────────────────────────────────────────
+  // -- More Discord Servers -----------------------------------------------------
   { id: 'ext_d_ml',       category: 'AI & ML',     name: 'Machine Learning Discord',description: 'Hugging Face and ML practitioners Discord — 120K+ AI/ML engineers sharing research, models, and deployment tips.',members: 120000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/hugging-face-879548962464493619' },
   { id: 'ext_d_openai',   category: 'AI & ML',     name: 'OpenAI Community Discord',description: 'Unofficial OpenAI community server — prompt engineering, API usage, GPT experiments, and AI product building.',  members: 200000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/openai' },
   { id: 'ext_d_devhacks', category: 'Engineering', name: 'DevHacks Community',      description: 'Competitive programming, hackathons, coding challenges, and team formation for developers worldwide.',           members: 50000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/devhacks' },
@@ -11081,7 +11256,7 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_d_webdev3',  category: 'Engineering', name: 'SpeakJS Discord',         description: 'JavaScript and TypeScript community — 130K+ members for frontend, backend, and full-stack JS development.',       members: 130000,  isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/speakjs' },
   { id: 'ext_d_css',      category: 'Design',      name: 'CSS-Tricks Discord',      description: 'CSS, web animations, layout systems, and front-end design patterns — curated by CSS-Tricks authors.',            members: 40000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/css-tricks' },
   { id: 'ext_d_gamedev2', category: 'Gaming',      name: 'Game Dev Nexus Discord',  description: 'Unity, Unreal, Godot, and indie game development — asset sharing, feedback loops, and team matchmaking.',        members: 90000,   isExternal: true, platform: 'discord',            externalUrl: 'https://discord.gg/gamedev-nexus' },
-  // ── LinkedIn Groups ──────────────────────────────────────────────────────────
+  // -- LinkedIn Groups ----------------------------------------------------------
   { id: 'ext_li_entrep',  category: 'Startups',    name: 'Startups & Entrepreneurs (LinkedIn)',description: 'LinkedIn\'s leading entrepreneur group — 1.2M+ members sharing business insights, funding news, and startup tactics.',members: 1200000, isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/82280' },
   { id: 'ext_li_ai',      category: 'AI & ML',     name: 'Artificial Intelligence (LinkedIn)',  description: '800K+ LinkedIn professionals discussing AI research, implementation, ethics, and career opportunities.',    members: 800000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/3990648' },
   { id: 'ext_li_ux',      category: 'Design',      name: 'UX Professional Network (LinkedIn)', description: 'UX design professionals sharing research methods, portfolio advice, and career growth strategies.',          members: 700000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/86782' },
@@ -11089,11 +11264,11 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_li_dev',     category: 'Engineering', name: 'Software Development (LinkedIn)',    description: 'Global software development professionals sharing best practices, career advice, and tech trends.',          members: 900000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/115687' },
   { id: 'ext_li_mktg',    category: 'Marketing',   name: 'Digital Marketing (LinkedIn)',       description: '700K+ marketers discussing SEO, social media, email campaigns, and digital advertising strategies.',        members: 700000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/48422' },
   { id: 'ext_li_remote',  category: 'Remote Work', name: 'Remote Work & Distributed Teams',   description: 'Best practices for remote teams — async communication, tools, culture, and hiring globally.',               members: 400000,  isExternal: true, platform: 'linkedin', externalUrl: 'https://linkedin.com/groups/4756890' },
-  // ── GitHub Topics / Open Source ──────────────────────────────────────────────
+  // -- GitHub Topics / Open Source ----------------------------------------------
   { id: 'ext_gh_oss',     category: 'Engineering', name: 'GitHub Open Source Community',       description: 'The global open source hub — 100M+ developers contributing to millions of projects across all languages.',  members: 100000000,isExternal: true, platform: 'github', externalUrl: 'https://github.com/explore' },
   { id: 'ext_gh_ml',      category: 'AI & ML',     name: 'GitHub Machine Learning',             description: 'ML repositories, models, and datasets — trending projects in PyTorch, TensorFlow, scikit-learn, and more.', members: 5000000, isExternal: true, platform: 'github', externalUrl: 'https://github.com/topics/machine-learning' },
   { id: 'ext_gh_webdev',  category: 'Engineering', name: 'GitHub Web Development',              description: 'Frontend and backend projects, frameworks, and libraries — the pulse of the web dev ecosystem.',           members: 8000000, isExternal: true, platform: 'github', externalUrl: 'https://github.com/topics/web-development' },
-  // ── More Reddit ──────────────────────────────────────────────────────────────
+  // -- More Reddit --------------------------------------------------------------
   { id: 'ext_r_sysadmin', category: 'Engineering', name: 'r/sysadmin',             description: 'System administration, server management, networking, and IT infrastructure from 700K+ sysadmins.',                members: 700000,  isExternal: true, subreddit: 'sysadmin',          externalUrl: 'https://reddit.com/r/sysadmin' },
   { id: 'ext_r_netsec2',  category: 'Engineering', name: 'r/cybersecurity',        description: 'Cybersecurity news, vulnerabilities, defensive strategies, and career advice from 600K+ security professionals.',   members: 600000,  isExternal: true, subreddit: 'cybersecurity',     externalUrl: 'https://reddit.com/r/cybersecurity' },
   { id: 'ext_r_bioinf',   category: 'AI & ML',     name: 'r/bioinformatics',       description: 'Computational biology, genomics, proteomics, and the intersection of ML and life sciences.',                       members: 80000,   isExternal: true, subreddit: 'bioinformatics',    externalUrl: 'https://reddit.com/r/bioinformatics' },
@@ -11136,7 +11311,7 @@ const ALL_GROUPS_SEED = [
   { id: 'ext_r_plants',   category: 'Lifestyle',   name: 'r/houseplants',          description: 'Houseplant care, identification, propagation, and the joy of filling your home with greenery.',                   members: 2000000, isExternal: true, subreddit: 'houseplants',       externalUrl: 'https://reddit.com/r/houseplants' },
   { id: 'ext_r_analog',   category: 'Lifestyle',   name: 'r/analog',               description: 'Film photography, analog music, vinyl records, and the revival of analogue culture and craftsmanship.',          members: 350000,  isExternal: true, subreddit: 'analog',            externalUrl: 'https://reddit.com/r/analog' },
   { id: 'ext_r_van2',     category: 'Lifestyle',   name: 'r/simpleliving',         description: 'Simple living, intentional lifestyle, reducing consumption, and finding meaning beyond materialism.',             members: 250000,  isExternal: true, subreddit: 'simpleliving',      externalUrl: 'https://reddit.com/r/simpleliving' },
-  // ── Hacker News alternatives / forums ────────────────────────────────────────
+  // -- Hacker News alternatives / forums ----------------------------------------
   { id: 'ext_lobsters',   category: 'Engineering', name: 'Lobste.rs',              description: 'Curated technology news and discussion — invitation-only to keep quality high, tech-focused community.',          members: 15000,   isExternal: true, platform: 'hackernews',         externalUrl: 'https://lobste.rs' },
   { id: 'ext_devhunt',    category: 'Startups',    name: 'ProductHunt',            description: 'Product Hunt — discover the best new products every day, from apps to AI tools to hardware.',                   members: 1000000, isExternal: true, platform: 'hackernews',         externalUrl: 'https://www.producthunt.com' },
   { id: 'ext_indiehackers',category:'Startups',    name: 'Indie Hackers',          description: 'Indie Hackers — community of founders sharing revenue stats, growth tactics, and honest startup stories.',       members: 350000,  isExternal: true, platform: 'hackernews',         externalUrl: 'https://www.indiehackers.com' },
@@ -11218,7 +11393,7 @@ let follows = [];
 // block should stop contact both ways regardless of who initiated it.
 let blocks = [];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// --- Helpers ------------------------------------------------------------------
 
 function getConnectionStatus(fromId, toId) {
   const c = connections.find(
@@ -11259,7 +11434,7 @@ function serializeCommunityPost(post, viewerId = null) {
   };
 }
 
-// ─── Following feed ───────────────────────────────────────────────────────
+// --- Following feed -------------------------------------------------------
 // UFI's own follow graph (the `follows` array/table) is real and populated
 // today, so posts from people you follow on UFIconnect itself work now.
 // "Include followers from all the platforms" is real per-platform work each
@@ -11302,7 +11477,7 @@ const FOLLOWING_SOURCE_FETCHERS = {
   // feed elsewhere.
 };
 
-// ─── Own-content fetchers (Command Center "Your Feed") ─────────────────────
+// --- Own-content fetchers (Command Center "Your Feed") ---------------------
 // Deliberately the mirror image of FOLLOWING_SOURCE_FETCHERS above: this
 // member's OWN posts/activity, not who they follow. Scoped to the same six
 // platforms that already have a real per-user OAuth token AND a documented
@@ -11598,7 +11773,7 @@ function isAllowedDownloadUrl(url) {
 // this, getFollowingFeedPosts called the fetcher live on every single
 // request, meaning a member's content here was only ever as fresh as
 // whenever they last happened to load their Following tab.
-const followingSourceCache = new Map(); // "userId::source" → { posts, fetchedAt }
+const followingSourceCache = new Map(); // "userId::source" ? { posts, fetchedAt }
 const FOLLOWING_SOURCE_REFRESH_MS = 5 * 60 * 1000;
 const FOLLOWING_SOURCE_CACHE_MAX_AGE_MS = FOLLOWING_SOURCE_REFRESH_MS * 2; // stale past 2 missed cycles — getFollowingFeedPosts falls back to a live call rather than serve something this old
 
@@ -11967,7 +12142,7 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
 }
 
 function fullProfile(user) {
-  // Build platform → [group] mapping for joined external groups
+  // Build platform ? [group] mapping for joined external groups
   const connectedGroupsByPlatform = {};
   (user.joinedGroups || []).forEach(gid => {
     const g = groups.find(gr => gr.id === gid);
@@ -12007,7 +12182,7 @@ function fullProfile(user) {
   };
 }
 
-// ── DB ↔ memory helpers ───────────────────────────────────────────────────────
+// -- DB ? memory helpers -------------------------------------------------------
 function isDBId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(id));
 }
@@ -12299,7 +12474,7 @@ async function migrateDB() {
     // no UI path that could even create one in the first place — the
     // POST /users/:id/connect endpoint only ever got called from
     // Notifications' accept flow, never to send a fresh request. "Either
-    // direction is the same relationship" (A→B and B→A can't coexist) is
+    // direction is the same relationship" (A?B and B?A can't coexist) is
     // enforced at the application layer, same as it already was in
     // memory — this table's own uniqueness is just the literal
     // (from,to) pair, a safety net against a double-submit, not the full
@@ -12685,7 +12860,7 @@ async function migrateDB() {
     // location); never inferred or guessed for sources that don't have it.
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
 
-    // ─── Pipeline/staging split (SERVICE_ROLE) ────────────────────────────
+    // --- Pipeline/staging split (SERVICE_ROLE) ----------------------------
     // Exact schema clone of feed_posts_cache above, not a status flag on
     // that same table — dozens of raw SQL queries elsewhere in this file
     // (getCursorFeedPage, getBalancedFeedPosts, getPostsFromDB, ...) already
@@ -12722,7 +12897,31 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
 
-    // ─── Trim archive — where feed_posts_cache rows go instead of vanishing ──
+    // One row per Staging -> Cache transfer attempt. /office/status exposes
+    // the recent in-memory slice immediately, while this table preserves
+    // enough history after a restart to tell whether the API role has been
+    // continuously promoting staged posts into the live feed cache.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS feed_transfer_runs (
+        id             TEXT PRIMARY KEY,
+        reason         TEXT,
+        status         TEXT NOT NULL DEFAULT 'ok',
+        batch_count    INTEGER DEFAULT 0,
+        moved_count    INTEGER DEFAULT 0,
+        saved_count    INTEGER DEFAULT 0,
+        deleted_count  INTEGER DEFAULT 0,
+        pending_before INTEGER,
+        pending_after  INTEGER,
+        source_counts  JSONB DEFAULT '{}',
+        started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at    TIMESTAMPTZ,
+        duration_ms    INTEGER,
+        error          TEXT
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS ftr_started_idx ON feed_transfer_runs(started_at DESC)`);
+
+    // --- Trim archive - where feed_posts_cache rows go instead of vanishing --
     // trimFeedPostsCache (below) used to be a pure DELETE — once a row
     // crossed the count cap or one of the age/share thresholds, it was gone
     // for good, with no way to recover it short of the original source
@@ -12813,7 +13012,7 @@ async function migrateDB() {
       )
     `);
 
-    // ─── Autofix agent tables ──────────────────────────────────────────────
+    // --- Autofix agent tables ----------------------------------------------
     // Raw client-side error reports (React error boundary + window.onerror/
     // unhandledrejection). Detection/audit only — no verified source-map
     // pipeline exists to map a minified prod stack back to a real source
@@ -12914,11 +13113,11 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS bfa_sig_idx ON bugfix_attempts(signature, detected_at DESC)`);
 
     const { rows } = await db.query('SELECT COUNT(*) FROM users');
-    console.log(`✅ DB migration applied — ${rows[0].count} registered user(s) in DB`);
+    console.log(`? DB migration applied - ${rows[0].count} registered user(s) in DB`);
   } catch (err) { console.warn('DB migration error:', err.message); }
 }
 
-// ─── Save external posts to persistent DB cache ───────────────────────────────
+// --- Save external posts to persistent DB cache -------------------------------
 const MAX_CACHED_DB_POSTS = envNumber('MAX_CACHED_DB_POSTS', 250000, 10000, 1000000);
 
 // savePostsToDB/savePostsToDBFast fire on every fetch batch from any of the 30
@@ -13081,7 +13280,7 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
   ).catch(() => {});
 }
 
-// ─── Database size guard ────────────────────────────────────────────────────
+// --- Database size guard ----------------------------------------------------
 // Nothing anywhere in this file previously checked the database's actual
 // disk usage — every existing cap (MAX_CACHED_DB_POSTS, MAX_ARCHIVE_POSTS)
 // is row-count-based, which only bounds size if the assumed per-row cost
@@ -13117,7 +13316,7 @@ async function checkDatabaseSize() {
     dbSizeState.lastError = null;
     dbSizeState.status = mb >= DB_SIZE_CRITICAL_MB ? 'critical' : mb >= DB_SIZE_WARN_MB ? 'warn' : 'ok';
     if (dbSizeState.status !== 'ok' && dbSizeState.status !== prevStatus) {
-      logAgentAction('feed', dbSizeState.status === 'critical' ? '🛑' : '⚠️',
+      logAgentAction('feed', dbSizeState.status === 'critical' ? '??' : '??',
         `Database size ${mb.toLocaleString()}MB (${dbSizeState.status}, warn ${DB_SIZE_WARN_MB.toLocaleString()}/critical ${DB_SIZE_CRITICAL_MB.toLocaleString()})` +
         (dbSizeState.status === 'critical' ? ' — forcing an aggressive archive trim now' : ''),
         dbSizeState.status === 'critical' ? '#EF4444' : '#FBBF24');
@@ -13165,7 +13364,7 @@ function recordFeedWriteOutcome(targetTable, attempted, saved, lastRowError) {
     // office activity feed with the same line hundreds of times an hour.
     if (now - (filterAgentState.lastErrorLoggedAt || 0) > 60000) {
       filterAgentState.lastErrorLoggedAt = now;
-      logAgentAction('feed', '🛑', `All ${attempted} save(s) to ${targetTable} failed: ${lastRowError}`, '#EF4444');
+      logAgentAction('feed', '??', `All ${attempted} save(s) to ${targetTable} failed: ${lastRowError}`, '#EF4444');
     }
   }
 }
@@ -13220,8 +13419,9 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
   return saved;
 }
 
-// Same targetTable convention as savePostsToDB above.
-async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
+// Same targetTable convention as savePostsToDB above. queryRunner can be a
+// pg Client when a caller needs this bulk upsert inside its own transaction.
+async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryRunner = db, options = {}) {
   if (!db.isConnected() || !posts.length) return 0;
   const clean = (value, max = null) => {
     const text = (value ?? '').toString()
@@ -13255,7 +13455,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
   }
   if (!rows.length) return 0;
 
-  const result = await db.query(
+  const result = await queryRunner.query(
     `WITH incoming AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
          id TEXT,
@@ -13294,11 +13494,11 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache') {
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
-  trimFeedPostsCache();
+  if (!options.skipTrim) trimFeedPostsCache();
   return result.rowCount || rows.length;
 }
 
-// ─── Save public website optimizer snapshots ─────────────────────────────────
+// --- Save public website optimizer snapshots ---------------------------------
 async function saveWebsiteOptimizationRun(run) {
   if (!db.isConnected() || !run) return;
   try {
@@ -13329,7 +13529,7 @@ async function saveWebsiteOptimizationRun(run) {
   }
 }
 
-// ─── Read from DB cache (sorted by recency + engagement) ─────────────────────
+// --- Read from DB cache (sorted by recency + engagement) ---------------------
 function feedTimeRangeMs(range) {
   if (range === '1h') return H;
   if (range === '6h') return 6 * H;
@@ -13465,7 +13665,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
   } catch { return []; }
 }
 
-// ─── True chronological infinite scroll: per-source date-cursor pagination ───
+// --- True chronological infinite scroll: per-source date-cursor pagination ---
 // Replaces the "pre-build a bounded snapshot pool, rotate per user, wrap
 // around with a reshuffle once exhausted" approach (mainFeedSnapshots/
 // getFilteredFeedPool/videoFeedSnapshot) for newest-sort scrolling. Those
@@ -13798,7 +13998,7 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   };
 }
 
-// ─── Feed Manager: pull an equal share from every source, not a mixed pool ───
+// --- Feed Manager: pull an equal share from every source, not a mixed pool ---
 // Replaces "fetch a big combined pool, then cap+diversify after the fact"
 // with the simpler approach it was standing in for: ask each source for the
 // same number of posts to begin with, so nothing can ever be overrepresented
@@ -13927,7 +14127,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
   }
 }
 
-// ─── Seed groups into DB and load back into memory ────────────────────────────
+// --- Seed groups into DB and load back into memory ----------------------------
 async function purgeFallbackFeedCache() {
   if (!db.isConnected()) return 0;
   try {
@@ -13994,7 +14194,7 @@ async function seedAndLoadGroups() {
         isExternal: r.is_external, relatedGroups: r.related_groups || [],
         createdBy: r.created_by || null, isPrivate: Boolean(r.is_private),
       }));
-      console.log(`✅ Loaded ${groups.length} groups from DB`);
+      console.log(`? Loaded ${groups.length} groups from DB`);
     } else {
       console.warn('seedAndLoadGroups: DB returned 0 rows — keeping in-memory seed');
     }
@@ -14003,7 +14203,7 @@ async function seedAndLoadGroups() {
     // If groups is somehow empty, restore from seed
     if (groups.length === 0) {
       GROUPS_SEED.forEach(g => groups.push({ ...g, platform: g.platform || (g.subreddit ? 'reddit' : null) }));
-      console.log(`⚠️  Restored ${groups.length} groups from seed (DB unavailable)`);
+      console.log(`??  Restored ${groups.length} groups from seed (DB unavailable)`);
     }
   }
 }
@@ -14049,7 +14249,7 @@ function pickOnboardingGroups(prefs, count = 5) {
   return Object.entries(scores).sort((a, b) => b[1] - a[1]).slice(0, count).map(([id]) => id);
 }
 
-// ─── Auth middleware ──────────────────────────────────────────────────────────
+// --- Auth middleware ----------------------------------------------------------
 // authenticateSSE: EventSource can't send headers, so accept token as ?token= query param
 function authenticateSSE(req, res, next) {
   if (!req.headers.authorization && req.query.token) {
@@ -14114,7 +14314,7 @@ async function authenticateOptional(req, res, next) {
   return next();
 }
 
-// ─── Office admin gate ──────────────────────────────────────────────────────
+// --- Office admin gate ------------------------------------------------------
 // /office/* control-plane routes (agent status, manual refresh triggers, and
 // — critically — the deploy trigger) previously had NO authentication at
 // all: CORS restricts which browser origins can call them, but that's not a
@@ -14151,7 +14351,7 @@ function isLikelyBotRequest(req) {
   return BOT_USER_AGENT_RE.test(req.headers['user-agent'] || '');
 }
 
-// ─── First-party pageview logging ──────────────────────────────────────────
+// --- First-party pageview logging ------------------------------------------
 // No analytics of any kind was installed — there was no way to tell whether
 // the site was getting traffic separate from search-engine indexing. Public
 // and unauthenticated on purpose (most visitors won't have a session).
@@ -14180,7 +14380,7 @@ app.post('/analytics/pageview', async (req, res) => {
   }
 });
 
-// ─── Reports admin (office dashboard) ──────────────────────────────────────
+// --- Reports admin (office dashboard) --------------------------------------
 // The other half of what makes "users can report child safety concerns
 // in-app" a real, working claim rather than a form that submits into a
 // black hole — status defaults to 'open' at creation (see POST /reports);
@@ -14228,19 +14428,20 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     // logging endpoint above, by crawlers with no person behind them at
     // all). Distinct visitors next to it gives the actually-meaningful
     // number for "how many separate people were here."
+    const visitorSql = `COUNT(DISTINCT ip_key) FILTER (WHERE ip_key IS NOT NULL)`;
     const [today, last7, last30, topPaths, daily] = await Promise.all([
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
-      db.query(`SELECT COUNT(*), COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
+      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
+      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
       db.query(`
-        SELECT path, COUNT(*) AS views, COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors
+        SELECT path, COUNT(*) AS views, ${visitorSql} AS visitors
         FROM page_views
         WHERE created_at >= NOW() - INTERVAL '30 days'
         GROUP BY path ORDER BY views DESC LIMIT 15
       `),
       db.query(`
         SELECT date_trunc('day', created_at) AS day, COUNT(*) AS views,
-               COUNT(DISTINCT COALESCE(ip_key, visitor_id)) AS visitors
+               ${visitorSql} AS visitors
         FROM page_views
         WHERE created_at >= NOW() - INTERVAL '30 days'
         GROUP BY day ORDER BY day ASC
@@ -14307,7 +14508,7 @@ app.get('/office/topics', requireOfficeToken, async (req, res) => {
   }
 });
 
-// ─── Registered-user visibility ────────────────────────────────────────────
+// --- Registered-user visibility --------------------------------------------
 // The office dashboard had pageview traffic (anonymous, no-login-required —
 // see /analytics/pageview above) but nothing at all showing how many of
 // those visitors actually registered: no endpoint queried the users table,
@@ -14350,7 +14551,7 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
   }
 });
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
+// --- Auth ---------------------------------------------------------------------
 app.get('/auth/config', (_req, res) => {
   res.json({
     auth0: {
@@ -14470,7 +14671,7 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
   }
 });
 
-// ─── Social token helpers ─────────────────────────────────────────────────────
+// --- Social token helpers -----------------------------------------------------
 // refreshToken is optional — only Google/YouTube's OAuth flow currently
 // requests offline access (see SOCIAL_CFG.youtube), so every other provider
 // calls this with refreshToken undefined and socialRefreshTokens[platform]
@@ -14539,7 +14740,7 @@ async function removeSocialToken(userId, platform) {
   }
 }
 
-// ─── Social OAuth: initiate (returns URL so the SPA can navigate) ────────────
+// --- Social OAuth: initiate (returns URL so the SPA can navigate) ------------
 app.get('/auth/social/config', authenticate, async (_req, res) => {
   const platforms = Object.fromEntries(Object.keys(SOCIAL_CFG).map(platform => {
     const cfg = SOCIAL_CFG[platform];
@@ -14601,7 +14802,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
 });
 
-// ─── Social OAuth: callback ───────────────────────────────────────────────────
+// --- Social OAuth: callback ---------------------------------------------------
 app.get('/auth/social/:platform/callback', async (req, res) => {
   const { platform } = req.params;
   const { code, state, error: oauthError } = req.query;
@@ -14731,7 +14932,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
         .catch(e => console.warn(`following source warm-up ${platform} (user ${entry.userId}):`, e.message));
     }
 
-    logAgentAction('cache_helper', '🔗', `User connected ${platform} — social feed now active`, '#6366F1');
+    logAgentAction('cache_helper', '??', `User connected ${platform} - social feed now active`, '#6366F1');
     res.redirect(`${frontendProfile}?social_connected=${platform}`);
   } catch (e) {
     console.error(`Social OAuth callback ${platform}:`, e.message);
@@ -14740,7 +14941,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   }
 });
 
-// ─── Profile: social connection status + disconnect ───────────────────────────
+// --- Profile: social connection status + disconnect ---------------------------
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => {
@@ -14803,7 +15004,7 @@ app.delete('/profile/social/:platform', authenticate, async (req, res) => {
   }
 });
 
-// ─── Profile ──────────────────────────────────────────────────────────────────
+// --- Profile ------------------------------------------------------------------
 app.delete('/social/connect/:platform', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
@@ -14947,7 +15148,7 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   }
 });
 
-// ─── Billing: Stripe Checkout + Customer Portal ───────────────────────────────
+// --- Billing: Stripe Checkout + Customer Portal -------------------------------
 // Replaces the old stub that granted 'pro' to any authenticated user who
 // POSTed here — no payment involved at all. plan is now only ever set to
 // 'pro' by the webhook above, after Stripe actually confirms a completed
@@ -15033,7 +15234,7 @@ app.post('/billing/create-portal-session', authenticate, async (req, res) => {
   }
 });
 
-// ─── Delete account ─────────────────────────────────────────────────────────────
+// --- Delete account -------------------------------------------------------------
 // Removes a user from every in-memory + DB store. Used by both DELETE
 // /profile (self) and the temporary admin cleanup route below.
 async function purgeUser(uid) {
@@ -15164,7 +15365,7 @@ app.delete('/office/users/:id', requireOfficeToken, async (req, res) => {
   }
 });
 
-// ─── Groups ───────────────────────────────────────────────────────────────────
+// --- Groups -------------------------------------------------------------------
 // /groups is called both logged-out (public directory) and logged-in, so this
 // reads the token if one is present rather than requiring it — anonymous
 // viewers just see no private groups.
@@ -15382,7 +15583,7 @@ app.delete('/groups/:id', authenticate, async (req, res) => {
   } catch (e) { console.error('DELETE /groups/:id:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Feed (internal + cached external posts, personalized by interests & role) ──
+// --- Feed (internal + cached external posts, personalized by interests & role) --
 // Shared by /feed (legacy — used by the mobile app) and /office/feed (web feed
 // tab): posts only ever come from what the office source-agent pipeline has
 // already fetched into globalFeedCache/agentSourceCache/DB — no per-request
@@ -15424,6 +15625,9 @@ async function handleFeedRequest(req, res) {
   // recordEngagementSignal) — same "applied fresh per request" treatment as
   // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
   const userAffinity = await getUserAffinity(req.user.id);
+  const personalizeForUser = (items, options = {}) => (
+    personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, options)
+  );
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
   // for why this is what makes a refresh return substantially different
@@ -15467,8 +15671,8 @@ async function handleFeedRequest(req, res) {
   // exceeded the 120s statement_timeout and came back empty (the getCursorFeedPage
   // window-function query, same cost profile as the 'ranked' one this
   // comment describes). Timed the same unfiltered newest-sort request at
-  // three window sizes back to back: 1h → 6.5s (full page, hasMore:true),
-  // 6h → 28.3s, 2d → 120s+/empty. Source volume across the 36-source pool
+  // three window sizes back to back: 1h ? 6.5s (full page, hasMore:true),
+  // 6h ? 28.3s, 2d ? 120s+/empty. Source volume across the 36-source pool
   // is high enough that 1h alone already comfortably fills a page.
   //
   // That 1h tightness is specific to the full, unfiltered aggregate case —
@@ -15564,15 +15768,15 @@ async function handleFeedRequest(req, res) {
       freshOnly: req.query.bust === '1',
     });
 
-    const result = cursorPosts.map(p => p.isExternal === false ? p : {
+    const result = personalizeForUser(cursorPosts.map(p => p.isExternal === false ? p : {
       ...p,
       group:           groups.find(g => g.id === p.groupId) || p.group,
       likedByMe:       false,
       fromJoinedGroup: joined.has(p.groupId),
       forYou:          true,
       relevance:       1,
-    });
-    markPostsSeen(req.user.id, cursorPosts);
+    }));
+    markPostsSeen(req.user.id, result);
     return res.json({
       posts: result,
       sort: sortMode,
@@ -15612,7 +15816,7 @@ async function handleFeedRequest(req, res) {
     // live as the Following feed's actual complaint: hasMore going flat
     // false the instant a thin pool ran out, not a genuine content shortage.
     const equalized = buildEqualizedFollowingPool(rawFollowing);
-    const rotated = filterUnseen(equalized, seenIds);
+    const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
     markPostsSeen(req.user.id, pageRows);
     return res.json({
@@ -15683,15 +15887,15 @@ async function handleFeedRequest(req, res) {
         freshOnly: req.query.bust === '1',
       });
 
-      const result = cursorPosts.map(p => p.isExternal === false ? p : {
+      const result = personalizeForUser(cursorPosts.map(p => p.isExternal === false ? p : {
         ...p,
         group:           groups.find(g => g.id === p.groupId) || p.group,
         likedByMe:       false,
         fromJoinedGroup: joined.has(p.groupId),
         forYou:          true,
         relevance:       1,
-      });
-      markPostsSeen(req.user.id, cursorPosts);
+      }));
+      markPostsSeen(req.user.id, result);
       return res.json({
         posts: result,
         mode: 'archive',
@@ -15716,7 +15920,7 @@ async function handleFeedRequest(req, res) {
       const { posts: balancedRaw } = await getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize });
       const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
-        const pageRows = balanced.slice(0, feedLimit);
+        const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
         const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
         markPostsSeen(req.user.id, pageRows);
         return res.json({
@@ -15772,6 +15976,7 @@ async function handleFeedRequest(req, res) {
       hasMore = memoryRows.length > feedLimit;
     }
 
+    pageRows = personalizeForUser(pageRows);
     markPostsSeen(req.user.id, pageRows);
     return res.json({
       posts: pageRows.map(mapFeedRow),
@@ -15783,7 +15988,7 @@ async function handleFeedRequest(req, res) {
     });
   }
 
-  // ── Full-text search across all sources ──────────────────────────────────
+  // -- Full-text search across all sources ----------------------------------
   if (searchQuery) {
     const searchSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
     const allCached = sortFeedBatch(realFeedPosts([
@@ -15840,13 +16045,13 @@ async function handleFeedRequest(req, res) {
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
-    const merged = enforceFeedDiversity(filterUnseen(searchRanked, seenIds), feedLimit + 1, sortMode);
+    const merged = enforceFeedDiversity(filterUnseen(personalizeForUser(searchRanked), seenIds), feedLimit + 1, sortMode);
     const searchPageRows = merged.slice(0, feedLimit);
     markPostsSeen(req.user.id, searchPageRows);
     return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
   }
 
-  // ── Page 2+: serve from DB cache only (no live-API calls) ────────────────
+  // -- Page 2+: serve from DB cache only (no live-API calls) ----------------
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
     const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
@@ -15895,6 +16100,7 @@ async function handleFeedRequest(req, res) {
         // same slot, same mix shape.
         const [resumeKeywordsP2, jobPoolP2] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
         personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP2, jobPoolP2);
+        personalized = personalizeForUser(personalized);
         const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
@@ -15933,7 +16139,7 @@ async function handleFeedRequest(req, res) {
       ]);
       const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
-        const pageRows = balanced.slice(0, feedLimit);
+        const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
         const hasMore = balanced.length >= perSourcePageSize;
         markPostsSeen(req.user.id, pageRows);
         return res.json({
@@ -15974,15 +16180,15 @@ async function handleFeedRequest(req, res) {
       // cache entry on the plain `timeRange`, and a mismatched key would
       // silently split page 1 and page 2+ onto two different pools again.
       const pool = await getFilteredFeedPool(pageSources, sortMode, timeRange);
-      const rotated = rotateForUser(pool, req.user.id, refreshSeed);
+      const rotated = personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed));
       pageRows = sliceCircular(rotated, offset, feedLimit);
       hasMore = rotated.length > 0;
     } else if (!dbRows.length) {
-      pageRows = filterUnseen(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
+      pageRows = filterUnseen(personalizeForUser(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
         limit: offset + feedLimit + 1,
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-      }), seenIds).slice(offset, offset + feedLimit + 1);
+      })), seenIds).slice(offset, offset + feedLimit + 1);
       hasMore = pageRows.length > feedLimit;
       pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     }
@@ -16038,6 +16244,7 @@ async function handleFeedRequest(req, res) {
       let personalized = filterUnseen(buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
       const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
+      personalized = personalizeForUser(personalized);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
       const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
       // Only what actually survived the feedLimit slice above (it's
@@ -16095,7 +16302,7 @@ async function handleFeedRequest(req, res) {
   // one sanctioned per-user live-fetch path now, and it's already gated).
   const liveResult = emptyLiveResult;
 
-  // ── Connected social tabs (Twitter, LinkedIn, Instagram, Facebook) ──────────
+  // -- Connected social tabs (Twitter, LinkedIn, Instagram, Facebook) ----------
   if (sourceFilter && FEED_SOCIAL_TABS.has(sourceFilter)) {
     const token = user?.socialTokens?.[sourceFilter];
     if (!token) {
@@ -16134,7 +16341,7 @@ async function handleFeedRequest(req, res) {
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
-    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
+    const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const connectedPageRows = sliceCircular(rotated, 0, feedLimit);
     markPostsSeen(req.user.id, connectedPageRows);
     return res.json({
@@ -16147,7 +16354,7 @@ async function handleFeedRequest(req, res) {
     });
   }
 
-  // ── Multi-source: merge posts from each requested source ────────────────────
+  // -- Multi-source: merge posts from each requested source --------------------
   if (sourcesParam.length > 1) {
     // Reads the same frozen, TTL'd pool the page>1 branch shares — see
     // getFilteredFeedPool's comment for why a source-filtered pool needs to
@@ -16164,7 +16371,7 @@ async function handleFeedRequest(req, res) {
     // read the exact same slice of the exact same rotation: identical posts,
     // every time, with no per-request variation at all to break it up the
     // way the default aggregate view's filterUnseen already does.
-    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
+    const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, p.source));
     markPostsSeen(req.user.id, multiSourcePageRows);
     return res.json({
@@ -16181,14 +16388,14 @@ async function handleFeedRequest(req, res) {
     });
   }
 
-  // ── Source-tab: reads the shared, TTL'd filtered pool ────────────────────
+  // -- Source-tab: reads the shared, TTL'd filtered pool --------------------
   if (sourceFilter) {
     // See the multi-source branch just above / getFilteredFeedPool's
     // comment for why this is a shared, cached pool rather than a
     // live-rebuilt one.
     const pool = await getFilteredFeedPool(sourceFilter, sortMode, timeRange);
     // Same fixed-rotation gap as the multi-source branch above.
-    const rotated = filterUnseen(rotateForUser(pool, req.user.id, refreshSeed), seenIds);
+    const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
     markPostsSeen(req.user.id, sourceTabPageRows);
 
@@ -16411,6 +16618,7 @@ async function handleFeedRequest(req, res) {
     const resumeKeywords = await getUserResumeKeywords(req.user.id);
     personalizedExternal = applyResumeMatchedJobs(personalizedExternal, resumeKeywords, feedPoolInput.filter(p => JOB_LISTING_SOURCES.includes(p.source)));
   }
+  personalizedExternal = personalizeForUser(personalizedExternal);
   const responsePosts = [...internal, ...personalizedExternal].slice(0, feedLimit);
 
   const sourcesBreakdown = {
@@ -16493,8 +16701,8 @@ async function handleFeedRequest(req, res) {
 app.get('/feed', authenticate, handleFeedRequest);
 app.get('/office/feed', authenticate, handleFeedRequest);
 
-// ─── Guest feed — a real but deliberately minimal read for a visitor with no
-// account ────────────────────────────────────────────────────────────────
+// --- Guest feed - a real but deliberately minimal read for a visitor with no
+// account ----------------------------------------------------------------
 // handleFeedRequest above is the single most complex, most-trafficked
 // handler in this app — cursor pagination, Ranked/Popular/Balanced/Newest
 // sort, full-text search, topic filters, resume-matched job substitution,
@@ -16526,7 +16734,7 @@ app.get('/feed/guest', async (req, res) => {
   }
 });
 
-// ─── Video feed (TikTok-style) — true mix of video posts across every platform ──
+// --- Video feed (TikTok-style) - true mix of video posts across every platform --
 // Same date-cursor pagination as the main Feed's newest-sort scroll (see
 // getCursorFeedPage) — replaced the old shared-snapshot-pool-with-
 // wraparound approach entirely (video only ever had one sort order, so
@@ -16691,8 +16899,18 @@ async function handleVideoFeedRequest(req, res) {
     // stays in place as the in-memory fallback for whenever that branch
     // doesn't apply (no DB connection, e.g. local dev fallback mode).
     const { topicsFilter, searchQuery, matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const user = await getUser(req.user.id);
+    const prefs = user?.preferences || {};
+    const userAffinity = await getUserAffinity(req.user.id);
+    const personalizeVideosForUser = (items, options = {}) => (
+      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, options)
+    );
+    const userTopics = [
+      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
+      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
+    ];
 
-    // ── Full-text search across every cached video post, not just whatever
+    // -- Full-text search across every cached video post, not just whatever
     // a single getCursorFeedPage page happened to return — the comment
     // above (matchesSearch) used to be the *whole* search story here: fine
     // for volume, but a real gap for reach, since the word you searched
@@ -16722,7 +16940,7 @@ async function handleVideoFeedRequest(req, res) {
         diversify: true,
       });
       const playable = filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic);
-      const pageRows = playable.slice(0, feedLimit);
+      const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
       return sendVideoPage(req, res, pageRows, { hasMore: playable.length > pageRows.length, search: searchQuery });
     }
 
@@ -16749,7 +16967,7 @@ async function handleVideoFeedRequest(req, res) {
       });
       const playable = filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
         .filter(matchesTopic).filter(matchesSearch);
-      const pageRows = playable.slice(0, feedLimit);
+      const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
       const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
       return sendVideoPage(req, res, pageRows, { page: reqPage, hasMore });
     }
@@ -16763,16 +16981,9 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      const filtered = playable.filter(matchesSearch);
+      const filtered = personalizeVideosForUser(playable.filter(matchesSearch));
       return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
     }
-
-    const user = await getUser(req.user.id);
-    const prefs = user?.preferences || {};
-    const userTopics = [
-      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
-    ];
 
     // Phase 1 ("platform intro") — only on a genuinely fresh session (no
     // cursor param sent yet at all), one video per platform, unfiltered by
@@ -16821,7 +17032,7 @@ async function handleVideoFeedRequest(req, res) {
       hasMore = mix.hasMore;
     }
 
-    const posts = [...introPosts, ...mixPosts];
+    const posts = personalizeVideosForUser([...introPosts, ...mixPosts], { preserveFirst: introPosts.length });
     sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
@@ -16831,7 +17042,7 @@ async function handleVideoFeedRequest(req, res) {
 app.get('/feed/videos', authenticate, handleVideoFeedRequest);
 app.get('/office/feed/videos', authenticate, handleVideoFeedRequest);
 
-// ─── Following videos — same Feed/Following split as the main feed, for video ──
+// --- Following videos - same Feed/Following split as the main feed, for video --
 // getFollowingFeedPosts is already scoped to one user (follow graph + their own
 // connected tokens) and cheap enough to run per-request live, same as the
 // regular Following tab (handleFeedRequest's feedMode==='following' branch) —
@@ -16863,7 +17074,10 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // here anyway) — time-aware equalize by source so one connected platform
     // with a lot of video content doesn't crowd out a thinner one, then
     // wraparound instead of hard-stopping once a small connected pool runs out.
-    const equalized = buildEqualizedFollowingPool(videos);
+    const user = await getUser(req.user.id);
+    const prefs = user?.preferences || {};
+    const userAffinity = await getUserAffinity(req.user.id);
+    const equalized = personalizeAuthenticatedFeedPosts(buildEqualizedFollowingPool(videos), user, prefs, userAffinity);
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
@@ -16883,7 +17097,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
 app.get('/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
 app.get('/office/feed/videos/following', authenticate, handleFollowingVideoFeedRequest);
 
-// ─── Proactive snapshot warming ─────────────────────────────────────────────
+// --- Proactive snapshot warming ---------------------------------------------
 // Without this, the first request after a snapshot's TTL expires pays the
 // full recompute cost synchronously — whoever's unlucky enough to trigger it
 // waits, and if that happens to be a manual refresh click, "ready posts when
@@ -16891,7 +17105,7 @@ app.get('/office/feed/videos/following', authenticate, handleFollowingVideoFeedR
 // synthetic internal request (not a duplicate implementation) shortly before
 // each snapshot would otherwise go stale, so a real request always finds a
 // warm cache. The fake user id resolves to no user server-side (getUser
-// returns null → every ?. default kicks in), which is fine — only the
+// returns null ? every ?. default kicks in), which is fine - only the
 // shared, non-personalized pool this populates is kept; the synthetic
 // response itself is discarded.
 function warmMainFeedSnapshot(sortMode, timeRange) {
@@ -16930,7 +17144,7 @@ async function getInitialSSEPosts(limit = 200) {
   }
 }
 
-// ─── SSE endpoint — streams new posts to every connected browser in real time ──
+// --- SSE endpoint - streams new posts to every connected browser in real time --
 app.get('/feed/stream', authenticateSSE, async (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -16958,7 +17172,7 @@ app.get('/feed/stream', authenticateSSE, async (req, res) => {
   req.on('close', cleanup);
 });
 
-// ─── Manual feed refresh trigger ─────────────────────────────────────────────
+// --- Manual feed refresh trigger ---------------------------------------------
 app.post('/feed/refresh', authenticate, (req, res) => {
   res.json({ ok: true, message: 'Feed refresh queued', refreshedAt: new Date().toISOString() });
   setImmediate(() => {
@@ -16979,7 +17193,8 @@ app.post('/feed/refresh', authenticate, (req, res) => {
 // for a signal that's not on any critical path yet.
 app.post('/posts/engaged', authenticate, (req, res) => {
   const ids = Array.isArray(req.body?.postIds) ? req.body.postIds.filter(id => typeof id === 'string') : [];
-  markPostsEngaged(req.user.id, ids);
+  const context = req.body?.context === 'videos' ? 'videos' : 'feed';
+  markPostsEngaged(req.user.id, ids, context);
   res.status(204).end();
 });
 
@@ -17032,7 +17247,7 @@ app.post('/negative-signal', authenticate, clientErrorLimiter, (req, res) => {
   res.status(204).end();
 });
 
-// ─── Feed source stats (posts per source in DB) ───────────────────────────────
+// --- Feed source stats (posts per source in DB) -------------------------------
 app.get('/feed/stats', authenticate, async (req, res) => {
   try {
     const stats = {};
@@ -17059,11 +17274,11 @@ app.get('/feed/stats', authenticate, async (req, res) => {
   }
 });
 
-// ─── Feed sources explorer — all live sources with sample posts ───────────────
+// --- Feed sources explorer - all live sources with sample posts ---------------
 app.get('/feed/sources', authenticate, (req, res) => {
   const sampleSize = Math.min(10, Math.max(1, parseInt(req.query.sample || '5', 10)));
 
-  // Build a map: sourceId → { posts[], lastFetch, totalSeen }
+  // Build a map: sourceId ? { posts[], lastFetch, totalSeen }
   const sourceMap = {};
 
   // Pull from per-source agent cache first (highest fidelity)
@@ -17091,7 +17306,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
       return {
         id,
         name:        meta.name        || id.charAt(0).toUpperCase() + id.slice(1),
-        emoji:       meta.emoji       || '📡',
+        emoji:       officeBadgeCode(id, meta.emoji),
         color:       meta.color       || '#6366F1',
         description: meta.description || null,
         postCount:   d.posts.length,
@@ -17121,7 +17336,7 @@ app.get('/feed/sources', authenticate, (req, res) => {
   });
 });
 
-// ─── Single post detail — internal page for a post's max view (the "View on
+// --- Single post detail - internal page for a post's max view (the "View on
 // UFIconnect" button in the lightbox), so a post stays viewable inside the
 // app even after it's rotated out of the live in-memory caches every other
 // feed endpoint reads from. Falls back to the DB for exactly that case.
@@ -17168,7 +17383,7 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
   return res.status(404).json({ message: 'Post not found.' });
 });
 
-// ─── Comment pools for curated fallback (tech/dev/social/community) ──────────
+// --- Comment pools for curated fallback (tech/dev/social/community) ----------
 const _CP = {
   tech: [
     { author: 'dev_sentinel',     body: "One of the cleaner breakdowns I've seen on this topic. The latency section especially.",                                     score: 142 },
@@ -17252,7 +17467,7 @@ const _CP = {
     { author: 'pr_reviewer',      body: "Looks solid overall. `src/core/index.ts` needs a test for the null-input edge case before this is merge-ready.",            score:   0 },
     { author: 'issue_tracker',    body: "Reproduced on v3.1.2. Stacktrace attached. Seems related to #482.",                                                         score:   0 },
     { author: 'maintainer_note',  body: "Thanks for the report! Triaged as medium priority — targeting the next patch release.",                                      score:   0 },
-    { author: 'ci_bot',           body: "Build passed ✅  Coverage: 94.2% (+0.3%). All 1,847 tests green.",                                                          score:   0 },
+    { author: 'ci_bot',           body: "Build passed. Coverage: 94.2% (+0.3%). All 1,847 tests green.",                                                          score:   0 },
     { author: 'stale_bot',        body: "This issue has been automatically marked as stale. It will be closed in 14 days if there is no further activity.",           score:   0 },
     { author: 'first_timer',      body: "First contribution here! Happy to iterate on the feedback. Should I squash the commits before you merge?",                   score:   0 },
     { author: 'code_owner',       body: "This touches a hot path — benchmarks needed. Even a 1% regression here will show up in prod metrics.",                      score:   0 },
@@ -17409,7 +17624,7 @@ async function paginateComments(cacheKey, fetchFullList, offset, limit) {
   };
 }
 
-// ─── Unified comments endpoint — live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters ─
+// --- Unified comments endpoint - live for Reddit/HN/DEV.to/GitHub/SO/Bluesky/Mastodon/Lobsters -
 // authenticateOptional — same reasoning as GET /feed/:postId above, comments
 // are read-only viewing and shouldn't require an account either.
 app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
@@ -17435,7 +17650,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     });
   }
 
-  // ── Reddit ──────────────────────────────────────────────────────────────────
+  // -- Reddit ------------------------------------------------------------------
   if (postId.startsWith('reddit_')) {
     const redditId = postId.replace(/^reddit_/, '');
     try {
@@ -17482,7 +17697,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── HackerNews ──────────────────────────────────────────────────────────────
+  // -- HackerNews --------------------------------------------------------------
   if (postId.startsWith('hn_')) {
     const hnId = postId.replace(/^hn_/, '');
     try {
@@ -17504,7 +17719,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── DEV.to ──────────────────────────────────────────────────────────────────
+  // -- DEV.to ------------------------------------------------------------------
   if (postId.startsWith('devto_')) {
     const articleId = postId.replace(/^devto_/, '');
     try {
@@ -17525,7 +17740,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── GitHub: recent commits as discussion ─────────────────────────────────────
+  // -- GitHub: recent commits as discussion -------------------------------------
   if (postId.startsWith('github_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_github_${postId}`, async () => {
@@ -17573,7 +17788,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── YouTube: top comments ─────────────────────────────────────────────────────
+  // -- YouTube: top comments -----------------------------------------------------
   // commentThreads.list is a public-data endpoint — works with the app-level
   // YOUTUBE_API_KEY same as every other public YouTube lookup in this file,
   // no per-user OAuth token needed even for a Following-tab subscription
@@ -17613,7 +17828,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── Stack Overflow: top answers ──────────────────────────────────────────────
+  // -- Stack Overflow: top answers ----------------------------------------------
   if (postId.startsWith('so_')) {
     const qId = postId.replace(/^so_/, '');
     try {
@@ -17645,7 +17860,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── Bluesky: thread replies ──────────────────────────────────────────────────
+  // -- Bluesky: thread replies --------------------------------------------------
   if (postId.startsWith('bluesky_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_bluesky_${postId}`, async () => {
@@ -17673,7 +17888,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── Mastodon: status replies ─────────────────────────────────────────────────
+  // -- Mastodon: status replies -------------------------------------------------
   if (postId.startsWith('mastodon_')) {
     try {
       const { comments, hasMore, total } = await paginateComments(`comments_mastodon_${postId}`, async () => {
@@ -17701,7 +17916,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── Lobsters: real comments ──────────────────────────────────────────────────
+  // -- Lobsters: real comments --------------------------------------------------
   if (postId.startsWith('lobsters_')) {
     const shortId = postId.replace(/^lobsters_/, '');
     try {
@@ -17723,112 +17938,112 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
     }
   }
 
-  // ── All other sources: no comments available ──────────────────────────────────
+  // -- All other sources: no comments available ----------------------------------
   const source = _sourceFromPostId(postId);
   return res.json({ comments: [], hasMore: false, source, live: false });
 });
 
-// ─── Office: agent registry ───────────────────────────────────────────────────
+// --- Office: agent registry ---------------------------------------------------
 const AGENT_DEFS = {
-  // ── Platform source agents (one per data source) ──────────────────────────
+  // -- Platform source agents (one per data source) --------------------------
   reddit: {
-    name: 'Reddit Agent', emoji: '🟠', color: '#FF6347', interval: '15s / 4 shards',
+    name: 'Reddit Agent', emoji: 'RD', color: '#FF6347', interval: '15s / 4 shards',
     description: '4 parallel shard workers cycle through all 60 topics at 15s each — full topic coverage every ~4 min. Fetches subreddit RSS for each keyword and streams posts live.',
   },
   hn: {
-    name: 'HackerNews Agent', emoji: '🔶', color: '#FF6600', interval: '10s / 4 shards',
+    name: 'HackerNews Agent', emoji: 'HN', color: '#FF6600', interval: '10s / 4 shards',
     description: '4 parallel shard workers query HackerNews Algolia at 10s each — full topic coverage every ~2.5 min. Surfaces top-scored technical discussions continuously.',
   },
   github: {
-    name: 'GitHub Agent', emoji: '🐙', color: '#94A3B8', interval: '30s / 2 shards',
+    name: 'GitHub Agent', emoji: 'GH', color: '#94A3B8', interval: '30s / 2 shards',
     description: '2 parallel shard workers search GitHub public repos at 30s each — full topic coverage every ~15 min. Rate-limited at 60 req/hr so shards spread load.',
   },
   devto: {
-    name: 'DEV.to Agent', emoji: '💻', color: '#8B5CF6', interval: '12s / 3 shards',
+    name: 'DEV.to Agent', emoji: 'DEV', color: '#8B5CF6', interval: '12s / 3 shards',
     description: '3 parallel shard workers fetch DEV.to articles by tag at 12s each — full topic coverage every ~4 min. Developer tutorials and project showcases across all tags.',
   },
   medium: {
-    name: 'Medium Agent', emoji: '📝', color: '#10B981', interval: '15s / 3 shards',
+    name: 'Medium Agent', emoji: 'MED', color: '#10B981', interval: '15s / 3 shards',
     description: '3 parallel shard workers scrape Medium RSS by topic tag at 15s each — full topic coverage every ~5 min. Long-form developer and startup articles stream continuously.',
   },
   youtube: {
-    name: 'YouTube Agent', emoji: '▶️', color: '#EF4444', interval: '15s / 3 shards',
+    name: 'YouTube Agent', emoji: 'YT', color: '#EF4444', interval: '15s / 3 shards',
     description: '3 parallel shard workers query YouTube channel RSS at 15s each — full topic coverage every ~5 min. Talks, tutorials, and demos surface continuously.',
   },
   stackoverflow: {
-    name: 'StackOverflow Agent', emoji: '💬', color: '#F59E0B', interval: '60s / 1 shard',
+    name: 'StackOverflow Agent', emoji: 'SO', color: '#F59E0B', interval: '60s / 1 shard',
     description: 'Single-shard worker fetches StackOverflow questions by tag at 60s per topic — rate-limited at 300 req/day. Developer Q&A and solutions across mapped tags.',
   },
   mastodon: {
-    name: 'Mastodon Agent', emoji: '🐘', color: '#6366F1', interval: '10s / 4 shards',
+    name: 'Mastodon Agent', emoji: 'MAS', color: '#6366F1', interval: '10s / 4 shards',
     description: '4 parallel shard workers fetch public Mastodon.social hashtag timelines at 10s each — full topic coverage every ~2.5 min. Decentralized real-time social content.',
   },
   lobsters: {
-    name: 'Lobsters Agent', emoji: '🦞', color: '#DC2626', interval: '20s / 2 shards',
+    name: 'Lobsters Agent', emoji: 'LOB', color: '#DC2626', interval: '20s / 2 shards',
     description: '2 parallel shard workers fetch curated Lobste.rs links by tag at 20s each — full topic coverage every ~10 min. High signal-to-noise engineering community.',
   },
   arxiv: {
-    name: 'arXiv Agent', emoji: '📄', color: '#3B82F6', interval: '45s / 1 shard',
+    name: 'arXiv Agent', emoji: 'ARX', color: '#3B82F6', interval: '45s / 1 shard',
     description: 'Single-shard worker queries arXiv OAI-PMH API at 45s per topic — full topic coverage every ~45 min. Rate-limited API; covers AI/ML, CS, and research papers.',
   },
   indeed: {
-    name: 'Indeed Agent', emoji: '💼', color: '#2557A7', interval: '20s / 2 shards',
+    name: 'Indeed Agent', emoji: 'JOB', color: '#2557A7', interval: '20s / 2 shards',
     description: '2 parallel shard workers fetch Indeed job RSS feeds at 20s each — full topic coverage every ~10 min. Surfaces active job postings across all professional topics.',
   },
   producthunt: {
-    name: 'Product Hunt Agent', emoji: '🚀', color: '#DA552F', interval: '25s / 2 shards',
+    name: 'Product Hunt Agent', emoji: 'PH', color: '#DA552F', interval: '25s / 2 shards',
     description: '2 parallel shard workers fetch Product Hunt RSS at 25s each — full topic coverage every ~12 min. Discovers new tools, apps, and SaaS launches continuously.',
   },
   techcrunch: {
-    name: 'TechCrunch Agent', emoji: '📰', color: '#0D9F3F', interval: '12s / 3 shards',
+    name: 'TechCrunch Agent', emoji: 'TC', color: '#0D9F3F', interval: '12s / 3 shards',
     description: '3 parallel shard workers fetch TechCrunch RSS at 12s each — full topic coverage every ~4 min. Startup news and funding rounds surface continuously.',
   },
   theverge: {
-    name: 'The Verge Agent', emoji: '⬛', color: '#FF3333', interval: '12s / 3 shards',
+    name: 'The Verge Agent', emoji: 'TV', color: '#FF3333', interval: '12s / 3 shards',
     description: '3 parallel shard workers fetch The Verge RSS at 12s each — full topic coverage every ~4 min. Consumer tech and digital culture news streams continuously.',
   },
   indiehackers: {
-    name: 'Indie Hackers Agent', emoji: '💡', color: '#0E2150', interval: '15s / 2 shards',
+    name: 'Indie Hackers Agent', emoji: 'IH', color: '#0E2150', interval: '15s / 2 shards',
     description: '2 parallel shard workers fetch Indie Hackers RSS at 15s each — full topic coverage every ~7.5 min. Bootstrapper stories and startup advice across topics.',
   },
   hashnode: {
-    name: 'freeCodeCamp Agent', emoji: '🔥', color: '#006400', interval: '12s / 3 shards',
+    name: 'freeCodeCamp Agent', emoji: 'FCC', color: '#006400', interval: '12s / 3 shards',
     description: '3 parallel shard workers fetch freeCodeCamp News RSS at 12s each — full topic coverage every ~4 min. Developer tutorials with The New Stack as fallback.',
   },
   bluesky: {
-    name: 'Bluesky Agent', emoji: '🦋', color: '#0085FF', interval: '10s / 4 shards',
+    name: 'Bluesky Agent', emoji: 'BS', color: '#0085FF', interval: '10s / 4 shards',
     description: '4 parallel shard workers search Bluesky public AT Protocol API at 10s each — full topic coverage every ~2.5 min. Real-time social content, no auth required.',
   },
   arstechnica: {
-    name: 'Ars Technica Agent', emoji: '📡', color: '#FF6600', interval: '12s / 3 shards',
+    name: 'Ars Technica Agent', emoji: 'ARS', color: '#FF6600', interval: '12s / 3 shards',
     description: '3 parallel shard workers fetch Ars Technica RSS feeds at 12s each — full topic coverage every ~4 min. Deep-dive engineering, science, and hardware coverage.',
   },
   wired: {
-    name: 'WIRED Agent', emoji: '🔌', color: '#111111', interval: '12s / 3 shards',
+    name: 'WIRED Agent', emoji: 'WI', color: '#111111', interval: '12s / 3 shards',
     description: 'Pulls technology, business, and culture articles from WIRED\'s RSS feed. 3 parallel shards cover all 60 topics simultaneously.',
   },
   theregister: {
-    name: 'The Register Agent', emoji: '📋', color: '#CC0000', interval: '12s / 3 shards',
+    name: 'The Register Agent', emoji: 'REG', color: '#CC0000', interval: '12s / 3 shards',
     description: 'Fetches enterprise IT, cybersecurity, and open-source news from The Register RSS. 3 parallel shards continuously cover all topic keywords.',
   },
   venturebeat: {
-    name: 'VentureBeat Agent', emoji: '💹', color: '#1E6FBF', interval: '12s / 3 shards',
+    name: 'VentureBeat Agent', emoji: 'VB', color: '#1E6FBF', interval: '12s / 3 shards',
     description: 'Pulls AI, enterprise tech, and startup funding coverage from VentureBeat RSS. 3 parallel shards cover all 60 topics simultaneously.',
   },
   smashing: {
-    name: 'Smashing Magazine Agent', emoji: '🎨', color: '#E9620A', interval: '15s / 2 shards',
+    name: 'Smashing Magazine Agent', emoji: 'SM', color: '#E9620A', interval: '15s / 2 shards',
     description: 'Fetches web development, design, and UX articles from Smashing Magazine RSS. 2 parallel shards cover all topic keywords.',
   },
   phoronix: {
-    name: 'Phoronix Agent', emoji: '🐧', color: '#2B7BB9', interval: '15s / 2 shards',
+    name: 'Phoronix Agent', emoji: 'PHX', color: '#2B7BB9', interval: '15s / 2 shards',
     description: 'Pulls Linux, open-source hardware, and benchmark coverage from Phoronix RSS. 2 parallel shards continuously cover all topic keywords.',
   },
   infoq: {
-    name: 'InfoQ Agent', emoji: '🏗️', color: '#67B346', interval: '15s / 2 shards',
+    name: 'InfoQ Agent', emoji: 'IQ', color: '#67B346', interval: '15s / 2 shards',
     description: 'Fetches enterprise software architecture, cloud, and DevOps news from InfoQ RSS. 2 parallel shards cover all 60 topic keywords.',
   },
   mittr: {
-    name: 'MIT Tech Review Agent', emoji: '🔬', color: '#A31F34', interval: '20s / 2 shards',
+    name: 'MIT Tech Review Agent', emoji: 'MIT', color: '#A31F34', interval: '20s / 2 shards',
     description: 'Pulls deep tech, AI policy, and science coverage from MIT Technology Review RSS. 2 parallel shards cover all topic keywords.',
   },
   gitlab: {
@@ -17848,7 +18063,7 @@ const AGENT_DEFS = {
     description: 'Pulls funding, company, market, and startup news from Crunchbase News RSS for business-focused discovery.',
   },
   behance: {
-    name: 'Behance Agent', emoji: 'Be', color: '#053EFF', interval: '45s / 1 shard',
+    name: 'Behance Agent', emoji: 'BE', color: '#053EFF', interval: '45s / 1 shard',
     description: 'Fetches public creative portfolio projects from Behance RSS for design, branding, and visual professional feeds.',
   },
   designweb: {
@@ -17856,140 +18071,140 @@ const AGENT_DEFS = {
     description: 'Aggregates public design, UX, CSS, and product craft feeds from Designboom, Awwwards, CSS-Tricks, and Fast Company.',
   },
   usajobs: {
-    name: 'USAJobs Agent', emoji: '🏛️', color: '#005EA8',
+    name: 'USAJobs Agent', emoji: 'USA', color: '#005EA8',
     description: 'Searches the official USAJobs Search API by topic keyword for live federal and public-sector job openings — a free, self-serve API key, unlike the paid/reviewed developer access Twitter, LinkedIn, Instagram, and Facebook require.',
   },
   remotive: {
-    name: 'Remotive Agent', emoji: '🛰️', color: '#00A876', interval: '20s, category sweep',
+    name: 'Remotive Agent', emoji: 'REM', color: '#00A876', interval: '20s, category sweep',
     description: 'Sweeps Remotive’s own job categories (not a keyword search — see ROLE_TO_REMOTIVE) on a dedicated timer, one category per tick. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
   },
   muse: {
-    name: 'The Muse Agent', emoji: '🎭', color: '#8A2BE2', interval: '20s, category+level sweep',
+    name: 'The Muse Agent', emoji: 'MUSE', color: '#8A2BE2', interval: '20s, category+level sweep',
     description: 'Sweeps every The Muse category/experience-level pair (ROLE_TO_MUSE × MUSE_LEVELS) on a dedicated timer. Used to be a live per-request fetch inside /opportunities; now feeds feed_posts_cache like every other source.',
   },
   optimizer: {
-    name: 'Feed Optimizer', emoji: '🔧', color: '#F59E0B', interval: '5min',
+    name: 'Feed Optimizer', emoji: 'OPT', color: '#F59E0B', interval: '5min',
     description: 'Monitors all source workers every 5 minutes. Detects circuit breaker trips, stale fetchers, and degraded sources while respecting stability throttle mode.',
   },
   linkedin: {
-    name: 'LinkedIn Agent', emoji: '🔷', color: '#0A66C2', interval: '30min',
+    name: 'LinkedIn Agent', emoji: 'IN', color: '#0A66C2', interval: '30min',
     description: 'Fetches professional content from LinkedIn API (requires LINKEDIN_TOKEN). Pulls career posts and industry insights across 36 topics.',
   },
   twitter: {
-    name: 'Twitter/X Agent', emoji: '🐦', color: '#1DA1F2', interval: '30min',
+    name: 'Twitter/X Agent', emoji: 'X', color: '#1DA1F2', interval: '30min',
     description: 'Searches Twitter/X via Bearer API (requires TWITTER_BEARER_TOKEN). Surfaces trending tech discussions and developer conversations across 36 topics.',
   },
   instagram: {
-    name: 'Instagram Agent', emoji: '📸', color: '#E1306C', interval: '30min',
+    name: 'Instagram Agent', emoji: 'IG', color: '#E1306C', interval: '30min',
     description: 'Fetches tagged media from Instagram Graph API (requires INSTAGRAM_TOKEN). Discovers visual content and creator posts across professional topics.',
   },
   facebook: {
-    name: 'Facebook Agent', emoji: '📘', color: '#1877F2', interval: '30min',
+    name: 'Facebook Agent', emoji: 'FB', color: '#1877F2', interval: '30min',
     description: 'Queries Facebook Graph API for public page content (requires FACEBOOK_TOKEN). Surfaces professional and community posts across 36 topics.',
   },
-  // ── Operational agents ────────────────────────────────────────────────────
+  // -- Operational agents ----------------------------------------------------
   feed: {
-    name: 'Feed Cache Agent', emoji: '🗂️', color: '#60A5FA', interval: 'on-demand',
+    name: 'Feed Cache Agent', emoji: 'FEED', color: '#60A5FA', interval: 'on-demand',
     description: 'Manages the global feed cache. Aggregates all source agent output, deduplicates posts, persists to DB, and triggers the initial warm-up on startup.',
   },
   web_optimizer: {
-    name: 'Website Optimizer', emoji: '🌐', color: '#14B8A6', interval: '2min',
+    name: 'Website Optimizer', emoji: 'WEB', color: '#14B8A6', interval: '2min',
     description: 'Continuously audits the full public system, scores live website performance/SEO/cache signals, and coordinates API, office, PWA, and storage optimization sub-agents.',
   },
   web_perf: {
-    name: 'Web Performance Sub-Agent', emoji: '⚡', color: '#FBBF24', interval: '2min',
+    name: 'Web Performance Sub-Agent', emoji: 'PERF', color: '#FBBF24', interval: '2min',
     description: 'Measures public-domain HTTP status, TTFB, total response time, payload size, and response headers for the live website.',
   },
   web_seo: {
-    name: 'Web SEO Sub-Agent', emoji: '🔍', color: '#34D399', interval: '2min',
+    name: 'Web SEO Sub-Agent', emoji: 'SEO', color: '#34D399', interval: '2min',
     description: 'Validates canonical tags, Open Graph metadata, structured data, manifest.json, robots.txt, and sitemap.xml on the public website.',
   },
   web_cache: {
-    name: 'Web Cache Sub-Agent', emoji: '🗄️', color: '#6366F1', interval: '2min',
+    name: 'Web Cache Sub-Agent', emoji: 'CACHE', color: '#6366F1', interval: '2min',
     description: 'Keeps website-facing caches sorted and merged, verifies the public service worker, and keeps the feed cache ready for fast page loads.',
   },
   web_storage: {
-    name: 'Fast Storage Sub-Agent', emoji: '💾', color: '#FB7185', interval: '90s',
+    name: 'Fast Storage Sub-Agent', emoji: 'STORE', color: '#FB7185', interval: '90s',
     description: 'Persists hot feed/source data to PostgreSQL on a shorter loop, queues stale source refreshes, and keeps the enlarged DB cache warm without overloading stability guard.',
   },
   web_api: {
-    name: 'API Optimizer Sub-Agent', emoji: '🧠', color: '#0EA5E9', interval: '2min',
+    name: 'API Optimizer Sub-Agent', emoji: 'API', color: '#0EA5E9', interval: '2min',
     description: 'Audits the live backend API, health endpoint, DB connectivity, and optimizer-agent exposure so the public website has a stable data layer.',
   },
   web_office: {
-    name: 'Office Optimizer Sub-Agent', emoji: '🏢', color: '#A855F7', interval: '2min',
+    name: 'Office Optimizer Sub-Agent', emoji: 'OFF', color: '#A855F7', interval: '2min',
     description: 'Checks the public office dashboard app shell, response time, payload size, and public-domain reachability.',
   },
   web_pwa: {
-    name: 'PWA/App Optimizer Sub-Agent', emoji: '📱', color: '#06B6D4', interval: '2min',
+    name: 'PWA/App Optimizer Sub-Agent', emoji: 'PWA', color: '#06B6D4', interval: '2min',
     description: 'Validates manifest.json, service worker cache readiness, icons, install metadata, and app-shell links for web and Play Store readiness.',
   },
   security: {
-    name: 'Security Agent', emoji: '🔒', color: '#4ADE80', interval: '8min',
+    name: 'Security Agent', emoji: 'SEC', color: '#4ADE80', interval: '8min',
     description: 'Scans JWT tokens, validates CORS headers, monitors failed login attempts, checks CVE database, and enforces rate-limit rules every 8 minutes.',
   },
   perf: {
-    name: 'Performance Agent', emoji: '⚡', color: '#FBBF24', interval: '12min',
+    name: 'Performance Agent', emoji: 'PERF', color: '#FBBF24', interval: '12min',
     description: 'Measures server TTFB, CDN cache hit rate, Lighthouse performance scores, JS bundle size, and React render profiles every 12 minutes.',
   },
   community: {
-    name: 'Community Agent', emoji: '🌐', color: '#A78BFA', interval: '15min',
+    name: 'Community Agent', emoji: 'COM', color: '#A78BFA', interval: '15min',
     description: 'Reviews flagged content, measures community sentiment, scores top contributor activity, and filters spam across all groups every 15 minutes.',
   },
   seo: {
-    name: 'SEO Agent', emoji: '🔍', color: '#34D399', interval: '20min',
+    name: 'SEO Agent', emoji: 'SEO', color: '#34D399', interval: '20min',
     description: 'Validates meta tags, sitemap.xml, Core Web Vitals (LCP/CLS/FID), Open Graph images, and structured data markup every 20 minutes.',
   },
   opps: {
-    name: 'Opportunities Agent', emoji: '💼', color: '#F97316', interval: '15min',
+    name: 'Opportunities Agent', emoji: 'JOBS', color: '#F97316', interval: '15min',
     description: 'Refreshes live job listings from multiple sources, validates source URLs, removes expired entries, and updates salary coverage data every 15 minutes.',
   },
   deploy: {
-    name: 'Deploy Agent', emoji: '🚀', color: '#38BDF8', interval: '10min',
+    name: 'Deploy Agent', emoji: 'DEP', color: '#38BDF8', interval: '10min',
     description: 'Pings the API, Web, and Office services to verify uptime and measure HTTP response times. Logs health status every 10 minutes.',
   },
   data: {
-    name: 'Data Agent', emoji: '🗄️', color: '#FB7185', interval: '10min',
+    name: 'Data Agent', emoji: 'DATA', color: '#FB7185', interval: '10min',
     description: 'Checks database connectivity, counts records in key tables, monitors feed cache size, and tracks in-memory data health every 10 minutes.',
   },
   refresh_queue: {
-    name: 'Refresh Queue Agent', emoji: '🔁', color: '#38BDF8', interval: 'on-demand',
+    name: 'Refresh Queue Agent', emoji: 'RQ', color: '#38BDF8', interval: 'on-demand',
     description: 'Serializes manual refresh requests across source workers so refresh-all actions update every platform without launching a burst of simultaneous API calls.',
   },
   sort_agent: {
-    name: 'Sort Agent', emoji: '🧮', color: '#A78BFA', interval: '6min + per request',
+    name: 'Sort Agent', emoji: 'SORT', color: '#A78BFA', interval: '6min + per request',
     description: 'Deduplicates, caps, and sorts feed results and source caches through one pressure-aware path so large refreshes cannot overload the API.',
   },
   activity: {
-    name: 'Activity Agent', emoji: '📡', color: '#22D3EE', interval: '5min',
+    name: 'Activity Agent', emoji: 'ACT', color: '#22D3EE', interval: '5min',
     description: 'Keeps every registered agent visibly active by refreshing heartbeats for source, operational, curated, and OAuth-on-demand agents.',
   },
   stability: {
-    name: 'Stability Guard', emoji: '🛡️', color: '#22C55E', interval: '90s adaptive',
+    name: 'Stability Guard', emoji: 'STAB', color: '#22C55E', interval: '90s adaptive',
     description: 'Monitors heap usage, RSS memory, and event-loop lag. Automatically slows source refreshes, skips high-cost fetches, and trims runtime caches before crashes.',
   },
   crash_guard: {
-    name: 'Crash Guard', emoji: '🚨', color: '#F87171', interval: 'event-driven',
+    name: 'Crash Guard', emoji: 'CG', color: '#F87171', interval: 'event-driven',
     description: 'Captures unhandled rejections, runtime warnings, and uncaught exceptions. Switches the feed into emergency throttle mode and trims caches to keep the API alive.',
   },
   cache_helper: {
-    name: 'Cache Merge Agent', emoji: '🔄', color: '#6366F1', interval: '8min',
+    name: 'Cache Merge Agent', emoji: 'MERGE', color: '#6366F1', interval: '8min',
     description: 'Merges per-source agent caches into the global feed every 8 minutes, deduplicates posts, and broadcasts any new content to SSE subscribers.',
   },
   sort_distrib: {
-    name: 'Distribution Agent', emoji: '🔀', color: '#818CF8', interval: '3min',
+    name: 'Distribution Agent', emoji: 'DIST', color: '#818CF8', interval: '3min',
     description: 'Scans all source caches every 3 minutes. Refills any source returning 0 posts by re-triggering its fetcher. Interleaves posts from all active sources into a diversity-first global feed head so no single platform dominates.',
   },
   mix_optimizer: {
-    name: 'Mix Optimizer Agent', emoji: '🎛️', color: '#22D3EE', interval: '5min',
+    name: 'Mix Optimizer Agent', emoji: 'MIX', color: '#22D3EE', interval: '5min',
     description: 'Audits every cached true-mix feed pool for source concentration, job-listing cadence drift, staleness, and thin supply every 5 minutes, and proactively rebuilds anything out of range.',
   },
   sort_optimizer: {
-    name: 'Sort Optimizer Agent', emoji: '🧭', color: '#A78BFA', interval: '7min',
+    name: 'Sort Optimizer Agent', emoji: 'RANK', color: '#A78BFA', interval: '7min',
     description: 'Samples the live feed cache every 7 minutes to verify ranked order is actually distinct from chronological order and that rank scores have real spread, catching a degenerated ranking algorithm Sort Agent alone would miss.',
   },
   autofix: {
-    name: 'Autofix Agent', emoji: '🩹', color: '#F472B6', interval: '10min',
+    name: 'Autofix Agent', emoji: 'FIX', color: '#F472B6', interval: '10min',
     description: 'Groups server errors by signature; once the same bug clears a distinct-session threshold, a narrow null-guard fix category is checked against a hard scope/denylist gate, syntax- and boot-smoke-tested, then committed via GitHub — with an automatic revert if health regresses afterward. Detection always runs; committing anything requires AUTOFIX_ENABLED=true, off by default.',
   },
 };
@@ -18142,7 +18357,7 @@ function getRuntimeHealthForAgent(id) {
   };
 }
 
-// ─── Autofix agent ───────────────────────────────────────────────────────────
+// --- Autofix agent -----------------------------------------------------------
 // Detects a recurring server error, mechanically generates a narrow fix,
 // validates it, and — only when AUTOFIX_ENABLED=true — commits it via
 // GitHub's Contents API, letting Render's existing auto-deploy-on-push ship
@@ -18359,7 +18574,7 @@ async function runAutofixCheck() {
   if (!db.isConnected()) return;
   autofixState.lastRun = new Date().toISOString();
   try {
-    // ── Detection: group unresolved server errors by signature over the
+    // -- Detection: group unresolved server errors by signature over the
     // rolling window, requiring real distinct-session breadth (anonymous
     // rows excluded from the count so one flaky IP can't look like many
     // users), skipping anything already attempted/fixed/blacklisted.
@@ -18382,10 +18597,10 @@ async function runAutofixCheck() {
       autofixState.totalAttempts += 1;
       const base = { signature: c.signature, sessionCount: Number(c.distinct_sessions), sourceFile: c.source_file, sourceLine: c.source_line, fixCategory: 'null_guard' };
 
-      // ── Scope gate: file allowlist first (cheapest check).
+      // -- Scope gate: file allowlist first (cheapest check).
       if (c.source_file !== 'index.js') {
         await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: `source file "${c.source_file}" not in v1 allowlist (backend/index.js only)` });
-        logAgentAction('autofix', '🚩', `Flagged (out of scope): ${c.signature} in ${c.source_file} — ${c.distinct_sessions} sessions`, '#FBBF24');
+        logAgentAction('autofix', '??', `Flagged (out of scope): ${c.signature} in ${c.source_file} - ${c.distinct_sessions} sessions`, '#FBBF24');
         continue;
       }
       if (!c.source_line) {
@@ -18393,7 +18608,7 @@ async function runAutofixCheck() {
         continue;
       }
 
-      // ── Rate limits, checked before any fix-generation work.
+      // -- Rate limits, checked before any fix-generation work.
       const { rows: rateRows } = await db.query(
         `SELECT COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '1 day')  AS today,
                 COUNT(*) FILTER (WHERE deployed_at >= NOW() - INTERVAL '7 days') AS this_week
@@ -18401,16 +18616,16 @@ async function runAutofixCheck() {
       );
       if (Number(rateRows[0].today) >= AUTOFIX_MAX_PER_DAY || Number(rateRows[0].this_week) >= AUTOFIX_MAX_PER_WEEK) {
         await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: 'daily/weekly autofix deploy cap reached' });
-        logAgentAction('autofix', '🚩', `Flagged (rate cap): ${c.signature} — ${c.distinct_sessions} sessions`, '#FBBF24');
+        logAgentAction('autofix', '??', `Flagged (rate cap): ${c.signature} - ${c.distinct_sessions} sessions`, '#FBBF24');
         continue;
       }
 
-      // ── Fix generation: fetch the CURRENT live file from GitHub (not a
+      // -- Fix generation: fetch the CURRENT live file from GitHub (not a
       // local copy — this process's own on-disk file may already differ
       // from what's actually deployed) and attempt the one v1 category.
       if (!autofixState.enabled || !process.env.AUTOFIX_GITHUB_TOKEN) {
         await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', rejectReason: autofixState.enabled ? 'AUTOFIX_GITHUB_TOKEN not configured' : 'autofix disabled' });
-        logAgentAction('autofix', '🚩', `Flagged (autofix off): ${c.signature} — ${c.distinct_sessions} sessions, would target index.js:${c.source_line}`, '#94A3B8');
+        logAgentAction('autofix', '??', `Flagged (autofix off): ${c.signature} - ${c.distinct_sessions} sessions, would target index.js:${c.source_line}`, '#94A3B8');
         continue;
       }
 
@@ -18428,31 +18643,31 @@ async function runAutofixCheck() {
       }
       if (autofixDenylistHit(patch.original) || autofixDenylistHit(patch.patched)) {
         await recordAutofixAttempt({ ...base, status: 'rejected', signatureStatus: 'flagged_only', diffText: patch.diffText, rejectReason: 'denylist match' });
-        logAgentAction('autofix', '🚩', `Flagged (denylist): ${c.signature}`, '#FBBF24');
+        logAgentAction('autofix', '??', `Flagged (denylist): ${c.signature}`, '#FBBF24');
         continue;
       }
 
       const attemptId = await recordAutofixAttempt({ ...base, status: 'detected', signatureStatus: 'attempted', diffText: patch.diffText });
-      logAgentAction('autofix', '🔍', `Candidate: ${c.signature} — ${c.distinct_sessions} sessions, index.js:${c.source_line}`, '#F472B6');
+      logAgentAction('autofix', '??', `Candidate: ${c.signature} - ${c.distinct_sessions} sessions, index.js:${c.source_line}`, '#F472B6');
 
-      // ── Validation gate: both required.
+      // -- Validation gate: both required.
       const newContent = liveFile.content.split('\n').map((l, i) => i === patch.lineIndex ? patch.patched : l).join('\n');
       const syntaxOk = await runNodeCheckOnContent(newContent);
       if (!syntaxOk) {
         await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason='node --check failed' WHERE id=$1`, [attemptId]).catch(() => {});
         await db.query(`UPDATE autofix_signatures SET status='flagged_only' WHERE signature=$1`, [c.signature]).catch(() => {});
-        logAgentAction('autofix', '🚩', `Rejected (syntax): ${c.signature}`, '#F87171');
+        logAgentAction('autofix', '??', `Rejected (syntax): ${c.signature}`, '#F87171');
         continue;
       }
       const bootOk = await runBootSmokeTest(newContent);
       if (!bootOk) {
         await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason='boot smoke test failed' WHERE id=$1`, [attemptId]).catch(() => {});
         await db.query(`UPDATE autofix_signatures SET status='flagged_only' WHERE signature=$1`, [c.signature]).catch(() => {});
-        logAgentAction('autofix', '🚩', `Rejected (boot smoke test): ${c.signature}`, '#F87171');
+        logAgentAction('autofix', '??', `Rejected (boot smoke test): ${c.signature}`, '#F87171');
         continue;
       }
 
-      // ── Deploy: commit via GitHub Contents API, Render auto-deploys on
+      // -- Deploy: commit via GitHub Contents API, Render auto-deploys on
       // push. Baseline captured immediately before the commit for the
       // verify step below.
       const baseline = {
@@ -18473,7 +18688,7 @@ async function runAutofixCheck() {
         );
       } catch (e) {
         await db.query(`UPDATE bugfix_attempts SET status='rejected', reject_reason=$2 WHERE id=$1`, [attemptId, `GitHub commit failed: ${e.message}`.slice(0, 300)]).catch(() => {});
-        logAgentAction('autofix', '🔴', `Deploy failed for ${c.signature}: ${e.message}`, '#F87171');
+        logAgentAction('autofix', '??', `Deploy failed for ${c.signature}: ${e.message}`, '#F87171');
         continue;
       }
 
@@ -18482,9 +18697,9 @@ async function runAutofixCheck() {
         [attemptId, liveFile.sha, commitResult.newSha, commitResult.commitSha]
       ).catch(() => {});
       autofixState.totalDeploys += 1;
-      logAgentAction('autofix', '🚀', `Deployed fix for ${c.signature} (commit ${String(commitResult.commitSha || '').slice(0, 7)}) — verifying for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min`, '#38BDF8');
+      logAgentAction('autofix', '??', `Deployed fix for ${c.signature} (commit ${String(commitResult.commitSha || '').slice(0, 7)}) - verifying for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min`, '#38BDF8');
 
-      // ── Post-deploy verify + auto-revert — production is the canary here
+      // -- Post-deploy verify + auto-revert - production is the canary here
       // (no staging environment exists), which is the honest framing given
       // the constraint, not a euphemism. Runs after a delay long enough to
       // cover Render's own build+deploy time before the first health poll.
@@ -18529,7 +18744,7 @@ async function verifyAutofixDeploy(attemptId, signature, previousSha, baseline, 
   if (!regressed) {
     await db.query(`UPDATE bugfix_attempts SET status='verified', verified_at=NOW() WHERE id=$1`, [attemptId]).catch(() => {});
     await db.query(`UPDATE autofix_signatures SET status='fixed' WHERE signature=$1`, [signature]).catch(() => {});
-    logAgentAction('autofix', '✅', `Verified: ${signature} clean for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min post-deploy`, '#4ADE80');
+    logAgentAction('autofix', '?', `Verified: ${signature} clean for ${Math.round(AUTOFIX_VERIFY_WINDOW_MS / 60000)}min post-deploy`, '#4ADE80');
     return;
   }
 
@@ -18553,10 +18768,10 @@ async function verifyAutofixDeploy(attemptId, signature, previousSha, baseline, 
     // be able to flap in a retry loop; a human has to reset this deliberately.
     await db.query(`UPDATE autofix_signatures SET status='blacklisted' WHERE signature=$1`, [signature]).catch(() => {});
     autofixState.totalReverts += 1;
-    logAgentAction('autofix', '🔴', `Reverted fix for ${signature}: ${regressionReason}`, '#F87171');
+    logAgentAction('autofix', '??', `Reverted fix for ${signature}: ${regressionReason}`, '#F87171');
   } catch (e) {
     autofixState.lastError = `revert failed for ${signature}: ${e.message}`;
-    logAgentAction('autofix', '🚨', `REVERT FAILED for ${signature} (${regressionReason}) — needs manual intervention: ${e.message}`, '#F87171');
+    logAgentAction('autofix', '??', `REVERT FAILED for ${signature} (${regressionReason}) - needs manual intervention: ${e.message}`, '#F87171');
   }
 }
 
@@ -18565,7 +18780,7 @@ function getAgentPostCount(id, cache) {
   return Array.isArray(cache?.posts) ? realFeedPosts(cache.posts).length : null;
 }
 
-// ─── Office API endpoints ─────────────────────────────────────────────────────
+// --- Office API endpoints -----------------------------------------------------
 
 app.get('/office/status', requireOfficeToken, (req, res) => {
   // Build per-source health snapshot
@@ -18577,7 +18792,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
     return {
-      id, emoji: AGENT_DEFS[id]?.emoji, color: AGENT_DEFS[id]?.color,
+      id, emoji: officeBadgeCode(id, AGENT_DEFS[id]?.emoji), color: AGENT_DEFS[id]?.color,
       name: AGENT_DEFS[id]?.name || id,
       status,
       // Real configured cadence — lets the office compare rates across
@@ -18622,7 +18837,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     if (SOURCE_CONFIG[id]) continue;
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({
-      id, emoji: def.emoji, color: def.color, name: def.name,
+      id, emoji: officeBadgeCode(id, def.emoji), color: def.color, name: def.name,
       status: 'ready', consecutiveErrors: 0, totalErrors: 0,
       fetchCount: 0, lastSuccess: null, paused: false,
       postCount: 0, fallbackCount: 0, isConnectedSource: true,
@@ -18653,7 +18868,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       seenIds:     seenPostIds.size,
       // Actual source breakdown of the shared global cache, independent of
       // any per-request cap — the feed response itself is separately capped
-      // per source (≤18%, ≤10% in balanced mode, see SRC_CAP in
+      // per source (=18%, =10% in balanced mode, see SRC_CAP in
       // handleFeedRequest) so no single platform can flood a page even if
       // its backing pool here is disproportionately large.
       composition: (() => {
@@ -18734,6 +18949,13 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastRun: stagingTransferState.lastRun,
       lastCount: stagingTransferState.lastCount,
       totalTransferred: stagingTransferState.totalTransferred,
+      lastSavedCount: stagingTransferState.lastSavedCount,
+      lastDeletedCount: stagingTransferState.lastDeletedCount,
+      lastDurationMs: stagingTransferState.lastDurationMs,
+      lastSourceCounts: stagingTransferState.lastSourceCounts,
+      currentBatch: stagingTransferState.currentBatch,
+      currentBatchSize: stagingTransferState.currentBatchSize,
+      recentRuns: stagingTransferState.recentRuns,
       lastError: stagingTransferState.lastError,
       lastReason: stagingTransferState.lastReason,
       inFlight: !!transferInFlight,
@@ -18743,6 +18965,15 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       newestFetchedAt: feedStorageFreshnessState.staging.newestFetchedAt,
       newestPostCreatedAt: feedStorageFreshnessState.staging.newestPostCreatedAt,
       lastCheckedAt: feedStorageFreshnessState.staging.lastCheckedAt,
+      bySource: feedStorageFreshnessState.staging.bySource || {},
+      liveCachePostCount: dbFeedPostCount,
+      transferProcess: {
+        batchSize: STAGING_TRANSFER_BATCH_SIZE,
+        maxBatches: STAGING_TRANSFER_MAX_BATCHES,
+        liveCachePostCount: dbFeedPostCount,
+        pendingAfterLastCheck: stagingPostCount,
+        state: transferInFlight ? 'draining' : stagingTransferState.lastError ? 'degraded' : 'ready',
+      },
     },
     feedStorage: {
       cache: feedStorageFreshnessState.cache,
@@ -18945,7 +19176,7 @@ app.get('/office/agents', requireOfficeToken, (req, res) => {
     const cache  = agentSourceCache.get(id) || null;
     const runtimeHealth = getRuntimeHealthForAgent(id);
     result[id] = {
-      ...def, id, logs, lastAction: logs[0] || null,
+      ...def, id, emoji: officeBadgeCode(id, def.emoji), logs, lastAction: logs[0] || null,
       health: health ? {
         status: health.paused ? 'paused' : health.consecutiveErrors >= 3 ? 'degraded' : 'healthy',
         consecutiveErrors: health.consecutiveErrors, totalErrors: health.totalErrors,
@@ -19007,7 +19238,7 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
-      logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
+      logAgentAction('crash_guard', '?', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
     },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
@@ -19030,7 +19261,7 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
 // deploy/revert are gated by this flag.
 app.post('/office/autofix/toggle', requireOfficeToken, (req, res) => {
   autofixState.enabled = !!req.body?.enabled;
-  logAgentAction('autofix', autofixState.enabled ? '🟢' : '⚪',
+  logAgentAction('autofix', autofixState.enabled ? '??' : '?',
     `Autofix ${autofixState.enabled ? 'enabled' : 'disabled'} from office dashboard`,
     autofixState.enabled ? '#4ADE80' : '#94A3B8');
   res.json({ ok: true, enabled: autofixState.enabled });
@@ -19068,7 +19299,7 @@ app.get('/office/autofix/attempts', requireOfficeToken, async (req, res) => {
   }
 });
 
-// ─── Staging → cache transfer (api role only) ──────────────────────────────
+// --- Staging ? cache transfer (api role only) ------------------------------
 // Used to bulk-upsert this same process's own in-memory globalFeedCache
 // (built by its own fetchers) into feed_posts_cache — that made sense when
 // one process did both fetching and serving. Post-split (see SERVICE_ROLE),
@@ -19084,24 +19315,48 @@ app.get('/office/autofix/attempts', requireOfficeToken, async (req, res) => {
 // own comment) so the office Pipeline view has something real to show for
 // this stage. Before this, the ONLY mechanism that actually moves fetched
 // content to where real users can see it had zero dashboard visibility.
+const STAGING_TRANSFER_BATCH_SIZE = envNumber('STAGING_TRANSFER_BATCH_SIZE', 2000, 100, 10000);
+const STAGING_TRANSFER_MAX_BATCHES = envNumber('STAGING_TRANSFER_MAX_BATCHES', 20, 1, 100);
+const TRANSFER_RUN_HISTORY_LIMIT = 12;
 const stagingTransferState = {
-  lastRun: null, lastCount: 0, totalTransferred: 0, lastError: null, lastReason: null,
+  lastRun: null,
+  lastCount: 0,
+  totalTransferred: 0,
+  lastError: null,
+  lastReason: null,
+  lastDurationMs: null,
+  lastSavedCount: 0,
+  lastDeletedCount: 0,
+  lastSourceCounts: {},
+  currentBatch: 0,
+  currentBatchSize: 0,
+  recentRuns: [],
 };
 let stagingPostCount = null;
 async function refreshStagingPostCount() {
   if (!db.isConnected()) return;
   try {
-    const { rows } = await db.query(
+    const [{ rows }, bySource] = await Promise.all([
+      db.query(
       `SELECT COUNT(*)::int AS n,
               MIN(fetched_at) AS oldest_fetched_at,
               MAX(fetched_at) AS newest_fetched_at,
               MAX(post_created_at) AS newest_post_created_at
        FROM feed_posts_staging`,
       []
-    );
+      ),
+      db.query(
+        `SELECT source, COUNT(*)::int AS count
+         FROM feed_posts_staging
+         GROUP BY source
+         ORDER BY count DESC, source ASC
+         LIMIT 30`
+      ).catch(() => ({ rows: [] })),
+    ]);
     stagingPostCount = rows[0]?.n ?? stagingPostCount;
     feedStorageFreshnessState.staging = {
       count: stagingPostCount,
+      bySource: Object.fromEntries((bySource.rows || []).map(r => [r.source || 'unknown', Number(r.count) || 0])),
       oldestFetchedAt: rows[0]?.oldest_fetched_at || null,
       newestFetchedAt: rows[0]?.newest_fetched_at || null,
       newestPostCreatedAt: rows[0]?.newest_post_created_at || null,
@@ -19117,12 +19372,52 @@ async function refreshStagingPostCount() {
 // risk now that the interval below is 1 minute instead of the original 15.
 let transferInFlight = false;
 let transferStartedAt = null;
-async function transferStagedPosts({ maxBatches = 20, reason = 'scheduled' } = {}) {
+
+function summarizeRowsBySource(rows = []) {
+  const counts = {};
+  for (const row of rows) counts[row.source || 'unknown'] = (counts[row.source || 'unknown'] || 0) + 1;
+  return counts;
+}
+
+function addSourceCounts(into, counts) {
+  for (const [source, count] of Object.entries(counts || {})) {
+    into[source] = (into[source] || 0) + count;
+  }
+  return into;
+}
+
+function rememberTransferRun(run) {
+  stagingTransferState.recentRuns = [run, ...stagingTransferState.recentRuns].slice(0, TRANSFER_RUN_HISTORY_LIMIT);
+  if (!db.isConnected() || (run.status === 'ok' && (run.movedCount || 0) === 0)) return;
+  db.query(
+    `INSERT INTO feed_transfer_runs
+       (id, reason, status, batch_count, moved_count, saved_count, deleted_count,
+        pending_before, pending_after, source_counts, started_at, finished_at, duration_ms, error)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     ON CONFLICT (id) DO NOTHING`,
+    [
+      run.id, run.reason, run.status, run.batchCount, run.movedCount, run.savedCount, run.deletedCount,
+      run.pendingBefore, run.pendingAfter, JSON.stringify(run.sourceCounts || {}), run.startedAt, run.finishedAt,
+      run.durationMs, run.error || null,
+    ]
+  ).catch(e => console.warn('[transfer history] insert failed:', e.message));
+}
+
+async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, reason = 'scheduled' } = {}) {
   if (!db.isConnected() || transferInFlight) return;
   transferInFlight = true;
   transferStartedAt = Date.now();
   stagingTransferState.lastReason = reason;
   stagingTransferState.lastError = null;
+  stagingTransferState.currentBatch = 0;
+  stagingTransferState.currentBatchSize = 0;
+  const startedAtIso = new Date(transferStartedAt).toISOString();
+  const pendingBefore = stagingPostCount;
+  let totalMoved = 0;
+  let totalSaved = 0;
+  let totalDeleted = 0;
+  let batchCount = 0;
+  const sourceCounts = {};
   try {
     // Drains in a tight loop within one invocation, capped at 20 batches
     // (100k rows), instead of one fixed 5000-row batch per tick — after
@@ -19132,30 +19427,102 @@ async function transferStagedPosts({ maxBatches = 20, reason = 'scheduled' } = {
     // cap just bounds worst-case time on a single tick, not total throughput
     // — an unusually large backlog keeps draining on the next tick.
     for (let batch = 0; batch < maxBatches; batch++) {
-      const { rows } = await db.query(
-        `SELECT * FROM feed_posts_staging ORDER BY fetched_at ASC, id ASC LIMIT 5000`
-      );
+      stagingTransferState.currentBatch = batch + 1;
+      const result = await db.withClient(async (client) => {
+        await client.query('BEGIN');
+        try {
+          const { rows } = await client.query(
+            `WITH picked AS (
+               SELECT id
+               FROM feed_posts_staging
+               ORDER BY fetched_at ASC, id ASC
+               LIMIT $1
+               FOR UPDATE SKIP LOCKED
+             )
+             SELECT s.*
+             FROM feed_posts_staging s
+             JOIN picked p ON p.id = s.id
+             ORDER BY s.fetched_at ASC, s.id ASC`,
+            [STAGING_TRANSFER_BATCH_SIZE]
+          );
+          if (!rows.length) {
+            await client.query('COMMIT');
+            return { rows: [], saved: 0, deleted: 0 };
+          }
+          const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache', client, { skipTrim: true });
+          const deleted = await client.query(
+            `DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`,
+            [rows.map(r => r.id)]
+          );
+          await client.query('COMMIT');
+          return { rows, saved, deleted: deleted.rowCount || 0 };
+        } catch (e) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw e;
+        }
+      });
       stagingTransferState.lastRun = new Date().toISOString();
-      if (!rows.length) { stagingTransferState.lastCount = 0; break; }
-      const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache');
-      // Only the exact rows just read, by id — not a blanket "everything
-      // older than the new cursor" sweep, so a row re-staged by a fast-
-      // cycling source between the SELECT above and this DELETE can't be
-      // silently dropped just because its fetched_at briefly overlapped.
-      await db.query(`DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`, [rows.map(r => r.id)]).catch(() => {});
-      const count = saved || rows.length;
+      if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
+      const count = result.saved || result.rows.length;
+      const batchSources = summarizeRowsBySource(result.rows);
+      addSourceCounts(sourceCounts, batchSources);
+      batchCount += 1;
+      totalMoved += result.rows.length;
+      totalSaved += result.saved;
+      totalDeleted += result.deleted;
       stagingTransferState.lastCount = count;
+      stagingTransferState.lastSavedCount = result.saved;
+      stagingTransferState.lastDeletedCount = result.deleted;
+      stagingTransferState.lastSourceCounts = batchSources;
+      stagingTransferState.currentBatchSize = result.rows.length;
       stagingTransferState.totalTransferred += count;
-      broadcastSSE(rows.map(dbRowToFeedPost));
-      logAgentAction('feed', '📦', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
-      if (rows.length < 5000) break; // caught up — no need to keep looping this tick
+      broadcastSSE(result.rows.map(dbRowToFeedPost));
+      logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
+      if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
+    trimFeedPostsCache();
+    await refreshStagingPostCount();
+    stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
+    rememberTransferRun({
+      id: `transfer_${transferStartedAt}_${Math.random().toString(36).slice(2, 8)}`,
+      reason,
+      status: 'ok',
+      batchCount,
+      movedCount: totalMoved,
+      savedCount: totalSaved,
+      deletedCount: totalDeleted,
+      pendingBefore,
+      pendingAfter: stagingPostCount,
+      sourceCounts,
+      startedAt: startedAtIso,
+      finishedAt: new Date().toISOString(),
+      durationMs: stagingTransferState.lastDurationMs,
+    });
   } catch (e) {
     stagingTransferState.lastError = e.message;
+    stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
+    rememberTransferRun({
+      id: `transfer_${transferStartedAt}_${Math.random().toString(36).slice(2, 8)}`,
+      reason,
+      status: 'error',
+      batchCount,
+      movedCount: totalMoved,
+      savedCount: totalSaved,
+      deletedCount: totalDeleted,
+      pendingBefore,
+      pendingAfter: stagingPostCount,
+      sourceCounts,
+      startedAt: startedAtIso,
+      finishedAt: new Date().toISOString(),
+      durationMs: stagingTransferState.lastDurationMs,
+      error: e.message,
+    });
     console.warn('[transfer] failed:', e.message);
   } finally {
     transferInFlight = false;
     transferStartedAt = null;
+    stagingTransferState.currentBatch = 0;
+    stagingTransferState.currentBatchSize = 0;
   }
 }
 
@@ -19313,19 +19680,19 @@ app.post('/office/deploy-legacy/:service', requireOfficeToken, (req, res) => {
   };
   const hook = hooks[req.params.service];
   if (!hook) {
-    logAgentAction('deploy', '⚠️',
+    logAgentAction('deploy', '??',
       `Manual deploy for "${req.params.service}" — add RENDER_HOOK_${req.params.service.toUpperCase()} to trigger`, '#FBBF24');
     return res.json({ ok: false, msg: `No deploy hook — set RENDER_HOOK_${req.params.service.toUpperCase()} env var` });
   }
-  logAgentAction('deploy', '🚀', `Triggering Render deploy for "${req.params.service}"...`, '#38BDF8');
+  logAgentAction('deploy', '??', `Triggering Render deploy for "${req.params.service}"...`, '#38BDF8');
   https.get(hook, (r) => {
     r.resume();
     logAgentAction('deploy',
-      r.statusCode < 400 ? '✅' : '❌',
+      r.statusCode < 400 ? '?' : '?',
       `Deploy "${req.params.service}": Render responded ${r.statusCode}`,
       r.statusCode < 400 ? '#4ADE80' : '#F87171'
     );
-  }).on('error', (e) => logAgentAction('deploy', '❌', `Deploy hook error: ${e.message}`, '#F87171'));
+  }).on('error', (e) => logAgentAction('deploy', '?', `Deploy hook error: ${e.message}`, '#F87171'));
   res.json({ ok: true, service: req.params.service });
 });
 
@@ -19342,7 +19709,7 @@ app.get('/office/versions', requireOfficeToken, (req, res) => {
   });
 });
 
-// ─── HQ status endpoint (no auth — feeds the internal control room) ──────────
+// --- HQ status endpoint (no auth - feeds the internal control room) ----------
 app.get('/office/website-optimizer', requireOfficeToken, (_req, res) => {
   res.json({ websiteOptimizer: websiteOptimizerState });
 });
@@ -19397,7 +19764,7 @@ app.get('/hq/status', (req, res) => {
   });
 });
 
-// ─── Office: per-source cache stats ──────────────────────────────────────────
+// --- Office: per-source cache stats ------------------------------------------
 app.get('/office/sources', requireOfficeToken, (_req, res) => {
   const sources = [];
   for (const [id, d] of agentSourceCache) {
@@ -19407,14 +19774,14 @@ app.get('/office/sources', requireOfficeToken, (_req, res) => {
       postCount:  posts.length,
       totalSeen:  Math.min(d.totalSeen || posts.length, posts.length),
       lastFetch:  d.lastFetch,
-      emoji:      d.emoji,
+      emoji:      officeBadgeCode(id, d.emoji),
       color:      d.color,
     });
   }
   res.json({ sources, globalCount: realFeedPosts(globalFeedCache.posts).length });
 });
 
-// ─── HQ manual agent trigger (internal use) ──────────────────────────────────
+// --- HQ manual agent trigger (internal use) ----------------------------------
 // Was missing auth entirely — this exposes the same full trigger map as its
 // sibling POST /office/agents/:id/trigger (including a full external-source
 // sweep via 'feed'/'refresh_queue'), so anyone who found this URL could
@@ -19450,7 +19817,7 @@ app.post('/hq/trigger/:agentId', requireOfficeToken, (req, res) => {
     activity:     () => runAgentActivityCheck(true),
     crash_guard:  () => {
       trimRuntimeCaches('pressure');
-      logAgentAction('crash_guard', '✅', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
+      logAgentAction('crash_guard', '?', 'Crash guard manually checked - runtime caches trimmed', '#4ADE80');
     },
     cache_helper: () => runCacheHelperCheck(),
     optimizer:    () => runFeedOptimizer(),
@@ -19631,7 +19998,7 @@ app.delete('/posts/:postId', authenticate, async (req, res) => {
   }
 });
 
-// ─── Profile attachments (resume upload + ATS scoring) ─────────────────────
+// --- Profile attachments (resume upload + ATS scoring) ---------------------
 // Unlike post media (see the Cloudinary signed-upload section right below),
 // this backend does need to see the actual bytes — extracting text and
 // scoring it is the entire point — so files come straight through here as
@@ -19744,7 +20111,7 @@ function computeATSScore(text) {
     });
   }
 
-  const bulletCount = (text.match(/^[ \t]*[•\-*▪●][ \t]+/gm) || []).length;
+  const bulletCount = (text.match(/^[ \t]*[-\-*??][ \t]+/gm) || []).length;
   checks.push(bulletCount >= 3
     ? { passed: true, label: 'Uses bullet points', detail: `${bulletCount} bullet points found.` }
     : { passed: false, label: 'Uses bullet points', detail: 'Few or no bullet points found — ATS systems and recruiters scan bulleted achievements far more easily than dense paragraphs.' });
@@ -19884,7 +20251,7 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
   } catch (e) { console.error('DELETE /profile/attachments/:id:', e.message); res.status(500).json({ message: 'Failed to delete.' }); }
 });
 
-// ─── Media upload (Cloudinary signed direct upload) ────────────────────────
+// --- Media upload (Cloudinary signed direct upload) ------------------------
 // The file itself goes straight from the browser to Cloudinary — this
 // backend never touches the bytes, just hands out a short-lived signed
 // signature so Cloudinary knows the upload is authorized. No-ops with a
@@ -19982,7 +20349,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
 
 app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
 
-// ─── People search & public profiles ─────────────────────────────────────────
+// --- People search & public profiles -----------------------------------------
 app.get('/users/search', authenticate, (req, res) => {
   const q    = (req.query.q    || '').toLowerCase().trim();
   const role = (req.query.role || '').toLowerCase().trim();
@@ -20197,7 +20564,7 @@ app.delete('/users/:id/follow', authenticate, async (req, res) => {
   } catch (e) { console.error('DELETE /users/:id/follow:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Followers / Following lists ──────────────────────────────────────────────
+// --- Followers / Following lists ----------------------------------------------
 // A profile owner turning off "who can see my connections" should mean
 // exactly that — not just filtering individually-hidden users out of the
 // list, but withholding the list itself from anyone who isn't the owner or
@@ -20264,7 +20631,7 @@ app.get('/users/:id/following', authenticate, async (req, res) => {
   } catch (e) { console.error('GET /users/:id/following:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Connections ──────────────────────────────────────────────────────────────
+// --- Connections --------------------------------------------------------------
 app.post('/users/:id/connect', authenticate, async (req, res) => {
   try {
     const fromId = req.user.id;
@@ -20349,7 +20716,7 @@ app.get('/users/connections', authenticate, (req, res) => {
   res.json({ connections: myConnections });
 });
 
-// ─── Blocking ───────────────────────────────────────────────────────────────
+// --- Blocking ---------------------------------------------------------------
 // Deliberately severs any existing follow/connection between the two people
 // in both directions — leaving one intact after a block would still let the
 // blocked side see the blocker's content via that relationship (e.g. a
@@ -20415,7 +20782,7 @@ app.get('/users/blocked', authenticate, async (req, res) => {
   } catch (e) { console.error('GET /users/blocked:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Reports (posts, comments, or a user directly) ────────────────────────────
+// --- Reports (posts, comments, or a user directly) ----------------------------
 // child_safety is its own category, not folded into "other" or "harassment"
 // — Play Store's child-safety policy specifically expects a real, working
 // in-app path for exactly this, and it's the one category that gets an
@@ -20443,7 +20810,7 @@ Review it in the office dashboard under Reports.`;
     await transport.sendMail({
       from: process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
-      subject: '⚠️ UFIconnect child-safety report submitted',
+      subject: '?? UFIconnect child-safety report submitted',
       text: body,
     });
   } catch (e) { console.error('[email] child-safety alert failed:', e.message); }
@@ -20476,7 +20843,7 @@ app.post('/reports', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /reports:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Notifications: pending connection requests + new followers ───────────────
+// --- Notifications: pending connection requests + new followers ---------------
 app.get('/notifications', authenticate, async (req, res) => {
   try {
     const uid = req.user.id;
@@ -20566,7 +20933,7 @@ app.post('/notifications/mark-read', authenticate, async (req, res) => {
   }
 });
 
-// ─── Web Push subscriptions ─────────────────────────────────────────────────
+// --- Web Push subscriptions -------------------------------------------------
 app.get('/push/config', authenticate, (req, res) => {
   res.json({ configured: pushConfigured(), publicKey: pushConfigured() ? process.env.VAPID_PUBLIC_KEY : null });
 });
@@ -20656,7 +21023,7 @@ app.get('/notifications/badge-counts', authenticate, async (req, res) => {
   }
 });
 
-// ─── Opportunities data ───────────────────────────────────────────────────────
+// --- Opportunities data -------------------------------------------------------
 const OPPORTUNITIES = [
   // Jobs
   { id: 'op1',  type: 'job',       title: 'Senior ML Engineer',           org: 'Anthropic',            location: 'San Francisco / Remote', pay: '$220k–$280k',       tags: ['PyTorch','LLMs','Python'],       source: 'Indeed',       sourceUrl: 'https://indeed.com', posted: ago(1*D),  remote: true },
@@ -20717,7 +21084,7 @@ const OPPORTUNITIES = [
   { id: 'op42', type: 'job', title: 'Data Scientist',                    org: 'Airbnb',               location: 'San Francisco, CA',      pay: '$160k–$200k',       tags: ['Python','SQL','Statistics'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D), remote: false },
   { id: 'op43', type: 'job', title: 'Engineering Manager',               org: 'Shopify',              location: 'Remote',                 pay: '$180k–$230k',       tags: ['Leadership','Ruby','React'],    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D), remote: true },
 
-  // ── Additional Jobs ──────────────────────────────────────────────────────────
+  // -- Additional Jobs ----------------------------------------------------------
   { id: 'op44', type: 'job', title: 'AI Research Scientist',             org: 'DeepMind',             location: 'London, UK',             pay: '£120k–£200k',       tags: ['ML','Research','Python','NLP'],      source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(1*D),  remote: false },
   { id: 'op45', type: 'job', title: 'iOS Engineer',                      org: 'Apple',                location: 'Cupertino, CA',          pay: '$180k–$250k',       tags: ['Swift','iOS','UIKit'],               source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: false },
   { id: 'op46', type: 'job', title: 'Android Developer',                 org: 'Google',               location: 'Mountain View, CA',      pay: '$170k–$240k',       tags: ['Kotlin','Android','Jetpack'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(2*D),  remote: false },
@@ -20746,34 +21113,34 @@ const OPPORTUNITIES = [
   { id: 'op69', type: 'job', title: 'Senior Product Designer',           org: 'Miro',                 location: 'Remote',                 pay: '$150k–$190k',       tags: ['Figma','UX','Collaboration'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs', posted: ago(3*D),  remote: true  },
   { id: 'op70', type: 'job', title: 'VP of Engineering',                 org: 'Series B HealthTech',  location: 'Remote',                 pay: '$250k–$350k',       tags: ['Leadership','Engineering','HealthTech'],source:'LinkedIn',sourceUrl: 'https://linkedin.com/jobs', posted: ago(5*D),  remote: true  },
 
-  // ── Gigs (extended) ──────────────────────────────────────────────────────────
+  // -- Gigs (extended) ----------------------------------------------------------
   { id: 'op71', type: 'gig', title: 'AI Prompt Engineer',                org: 'Marketplace Startup',  location: 'Remote',                 pay: '$80–$120/hr',       tags: ['LLMs','Prompting','Python'],         source: 'Upwork',   sourceUrl: 'https://upwork.com',  posted: ago(1*D),  remote: true  },
   { id: 'op72', type: 'gig', title: 'Brand Identity Designer',           org: 'Series A Fintech',     location: 'Remote',                 pay: '$6k–$12k project',  tags: ['Figma','Branding','Logo'],           source: 'Contra',   sourceUrl: 'https://contra.com', posted: ago(2*D),  remote: true  },
   { id: 'op73', type: 'gig', title: 'Technical SEO Consultant',          org: 'E-commerce Brand',     location: 'Remote',                 pay: '$150/hr',           tags: ['SEO','Analytics','Content'],         source: 'Toptal',   sourceUrl: 'https://toptal.com', posted: ago(3*D),  remote: true  },
 
-  // ── Grants (extended) ────────────────────────────────────────────────────────
+  // -- Grants (extended) --------------------------------------------------------
   { id: 'op74', type: 'grant', title: 'Fast Forward Accelerator',        org: 'Fast Forward',         location: 'Global',                 pay: '$25k + resources',  tags: ['Nonprofit','Tech','Social Impact'],   source: 'fastforward.us', sourceUrl: 'https://ff.org', posted: ago(7*D), remote: true  },
   { id: 'op75', type: 'grant', title: 'Stripe Climate Fund',             org: 'Stripe',               location: 'Global',                 pay: 'Up to $250k',       tags: ['Climate','Carbon','Technology'],      source: 'stripe.com', sourceUrl: 'https://stripe.com/climate', posted: ago(10*D), remote: true },
 
-  // ── Events (extended) ────────────────────────────────────────────────────────
+  // -- Events (extended) --------------------------------------------------------
   { id: 'op76', type: 'event', title: 'ProductHunt Global Hackathon',    org: 'Product Hunt',         location: 'Virtual',                pay: '$50k in prizes',    tags: ['Product','Startup','AI'],            source: 'Product Hunt', sourceUrl: 'https://producthunt.com', posted: ago(3*D), remote: true },
   { id: 'op77', type: 'event', title: 'Web Summit 2025',                 org: 'Web Summit',           location: 'Lisbon, Portugal',       pay: '€499+',             tags: ['Tech','Networking','Startup'],        source: 'websummit.com', sourceUrl: 'https://websummit.com', posted: ago(5*D), remote: false },
   { id: 'op78', type: 'event', title: 'Figma Config 2025',               org: 'Figma',                location: 'San Francisco, CA',      pay: 'Free',              tags: ['Design','Figma','UX'],               source: 'Figma', sourceUrl: 'https://config.figma.com', posted: ago(4*D), remote: false },
 
-  // ── Learning (extended) ──────────────────────────────────────────────────────
+  // -- Learning (extended) ------------------------------------------------------
   { id: 'op79', type: 'learning', title: 'LLM Fine-tuning Masterclass',  org: 'Hugging Face',         location: 'Online',                 pay: 'Free',              tags: ['LLMs','Python','NLP'],               source: 'Hugging Face', sourceUrl: 'https://huggingface.co/learn', posted: ago(7*D), remote: true },
   { id: 'op80', type: 'learning', title: 'Product Strategy Certification',org: 'Reforge',             location: 'Online',                 pay: '$1,995',            tags: ['Product','Strategy','Growth'],        source: 'Reforge', sourceUrl: 'https://reforge.com', posted: ago(14*D), remote: true },
   { id: 'op81', type: 'learning', title: 'Figma Advanced Course',        org: 'Figma Academy',        location: 'Online',                 pay: 'Free',              tags: ['Figma','Design','UX'],               source: 'Figma', sourceUrl: 'https://figma.com/academy', posted: ago(10*D), remote: true },
 
-  // ── Hackathons (extended) ────────────────────────────────────────────────────
+  // -- Hackathons (extended) ----------------------------------------------------
   { id: 'op82', type: 'hackathon', title: 'Google AI Hackathon 2025',    org: 'Google Cloud',         location: 'Virtual',                pay: '$100k in prizes',   tags: ['AI','Google','Python','Cloud'],       source: 'Devpost', sourceUrl: 'https://devpost.com', posted: ago(2*D), remote: true },
   { id: 'op83', type: 'hackathon', title: 'ETHGlobal Brussels',          org: 'ETHGlobal',            location: 'Brussels, Belgium',      pay: '$500k+ in prizes',  tags: ['Ethereum','Solidity','Web3'],         source: 'ETHGlobal', sourceUrl: 'https://ethglobal.com', posted: ago(4*D), remote: false },
 
-  // ── Open Source (extended) ───────────────────────────────────────────────────
+  // -- Open Source (extended) ---------------------------------------------------
   { id: 'op84', type: 'opensource', title: 'First Issues — Hugging Face',org: 'Hugging Face',         location: 'Remote',                 pay: 'OSS + swag',        tags: ['Python','ML','NLP'],                 source: 'GitHub', sourceUrl: 'https://github.com/huggingface/transformers', posted: ago(2*D), remote: true },
   { id: 'op85', type: 'opensource', title: 'React Contributor Program',  org: 'Meta Open Source',     location: 'Remote',                 pay: 'Volunteer + credit', tags: ['React','TypeScript','JavaScript'],   source: 'GitHub', sourceUrl: 'https://github.com/facebook/react', posted: ago(3*D), remote: true },
 
-  // ── Healthcare Professional ───────────────────────────────────────────────────
+  // -- Healthcare Professional ---------------------------------------------------
   { id: 'h1',  type: 'job', title: 'Nurse Practitioner',             org: 'Kaiser Permanente',    location: 'San Francisco, CA',  pay: '$130k–$160k',  tags: ['Nurse Practitioner','Healthcare','Clinical'],         source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=nurse+practitioner', posted: ago(1*D), remote: false },
   { id: 'h2',  type: 'job', title: 'Healthcare Data Analyst',        org: 'Epic Systems',         location: 'Remote',             pay: '$90k–$120k',   tags: ['Healthcare','Data','SQL','Analytics'],                source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=healthcare+data+analyst', posted: ago(2*D), remote: true  },
   { id: 'h3',  type: 'job', title: 'Telehealth Physician',           org: 'Teladoc Health',       location: 'Remote',             pay: '$200k–$280k',  tags: ['Physician','Telehealth','Healthcare'],                source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=telehealth+physician', posted: ago(1*D), remote: true  },
@@ -20781,14 +21148,14 @@ const OPPORTUNITIES = [
   { id: 'h5',  type: 'learning', title: 'AI in Medicine Certification', org: 'Stanford Online',  location: 'Online',             pay: '$1,500',        tags: ['Healthcare','AI','ML','Medicine'],                    source: 'Stanford', sourceUrl: 'https://online.stanford.edu', posted: ago(7*D), remote: true  },
   { id: 'h6',  type: 'event', title: 'HIMSS Global Health Conference', org: 'HIMSS',              location: 'Las Vegas, NV',      pay: '$1,295+',       tags: ['Healthcare','HealthTech','Innovation'],               source: 'HIMSS', sourceUrl: 'https://www.himssconference.org', posted: ago(5*D), remote: false },
 
-  // ── Athlete / Coach ───────────────────────────────────────────────────────────
+  // -- Athlete / Coach -----------------------------------------------------------
   { id: 'at1', type: 'job', title: 'Head Strength & Conditioning Coach', org: 'Denver Nuggets',  location: 'Denver, CO',         pay: '$100k–$150k',  tags: ['Strength Coach','NBA','Performance','Sports'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=strength+conditioning+coach', posted: ago(2*D), remote: false },
   { id: 'at2', type: 'job', title: 'Elite Personal Trainer',             org: 'Equinox',         location: 'New York, NY',       pay: '$60k–$120k',   tags: ['Personal Trainer','Fitness','Strength'],              source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=elite+personal+trainer', posted: ago(1*D), remote: false },
   { id: 'at3', type: 'gig', title: 'Online Fitness Coach',               org: 'Self-Employed',   location: 'Remote',             pay: '$80–$200/hr',  tags: ['Fitness','Online Coaching','Nutrition'],              source: 'Upwork',   sourceUrl: 'https://upwork.com/freelance-jobs/fitness', posted: ago(2*D), remote: true  },
   { id: 'at4', type: 'job', title: 'Performance Coach — Youth Academy',  org: 'LA Galaxy',       location: 'Carson, CA',         pay: '$70k–$90k',    tags: ['Soccer','Sports Coach','Youth','Performance'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=sports+performance+coach', posted: ago(3*D), remote: false },
   { id: 'at5', type: 'learning', title: 'NSCA-CSCS Certification Prep', org: 'NSCA',             location: 'Online',             pay: '$435',          tags: ['Certification','Strength Coach','Sports Science'],    source: 'NSCA', sourceUrl: 'https://www.nsca.com/certification/cscs', posted: ago(10*D), remote: true  },
 
-  // ── Musician / Artist ─────────────────────────────────────────────────────────
+  // -- Musician / Artist ---------------------------------------------------------
   { id: 'mu1', type: 'job', title: 'Staff Music Producer',           org: 'Spotify',              location: 'New York, NY',       pay: '$100k–$150k',  tags: ['Music Production','Audio','Spotify','Artist'],        source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=music+producer', posted: ago(2*D), remote: false },
   { id: 'mu2', type: 'gig', title: 'Session Musician — Studio Work', org: 'Recording Studios',    location: 'Los Angeles, CA',    pay: '$300–$800/day',tags: ['Musician','Studio','Session','Live'],                 source: 'SoundBetter', sourceUrl: 'https://soundbetter.com', posted: ago(1*D), remote: false },
   { id: 'mu3', type: 'job', title: 'Music Supervisor',               org: 'Netflix Music',         location: 'Los Angeles, CA',   pay: '$120k–$180k',  tags: ['Music','Film','Licensing','Sync'],                    source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=music+supervisor', posted: ago(3*D), remote: false },
@@ -20796,43 +21163,43 @@ const OPPORTUNITIES = [
   { id: 'mu5', type: 'event', title: 'NAMM Show 2025',               org: 'NAMM',                  location: 'Anaheim, CA',       pay: 'Free–$199',    tags: ['Music','Gear','Networking','Industry'],               source: 'NAMM', sourceUrl: 'https://www.namm.org', posted: ago(5*D), remote: false },
   { id: 'mu6', type: 'learning', title: 'Music Production Masterclass', org: 'Berklee Online',    location: 'Online',             pay: '$1,299',        tags: ['Music Production','Mixing','DAW','Berklee'],          source: 'Berklee', sourceUrl: 'https://online.berklee.edu', posted: ago(8*D), remote: true  },
 
-  // ── Chef / Food Creator ───────────────────────────────────────────────────────
+  // -- Chef / Food Creator -------------------------------------------------------
   { id: 'cf1', type: 'job', title: 'Executive Chef',                 org: 'Nobu Restaurants',     location: 'New York, NY',       pay: '$90k–$130k',   tags: ['Executive Chef','Culinary','Fine Dining','Leadership'],source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=executive+chef', posted: ago(1*D), remote: false },
   { id: 'cf2', type: 'job', title: 'Culinary Content Creator',       org: 'Tasty by BuzzFeed',    location: 'Remote',             pay: '$70k–$100k',   tags: ['Food Creator','Content','Video','Recipe'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=culinary+content+creator', posted: ago(2*D), remote: true  },
   { id: 'cf3', type: 'gig', title: 'Private Chef (Event Catering)',  org: 'Self-Employed',        location: 'Major Cities',       pay: '$300–$1,000/event', tags: ['Private Chef','Catering','Events'],               source: 'Thumbtack', sourceUrl: 'https://www.thumbtack.com/k/private-chef/near-me', posted: ago(1*D), remote: false },
   { id: 'cf4', type: 'job', title: 'Food Scientist',                 org: 'Impossible Foods',     location: 'Redwood City, CA',   pay: '$100k–$140k',  tags: ['Food Science','R&D','FoodTech','Nutrition'],          source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=food+scientist', posted: ago(3*D), remote: false },
   { id: 'cf5', type: 'learning', title: 'Culinary Arts Certificate', org: 'Le Cordon Bleu Online',location: 'Online',             pay: '$2,500',        tags: ['Culinary','Cooking','Certificate','Le Cordon Bleu'],  source: 'Le Cordon Bleu', sourceUrl: 'https://www.lecordonbleu.com', posted: ago(10*D), remote: true  },
 
-  // ── Real Estate Pro ───────────────────────────────────────────────────────────
+  // -- Real Estate Pro -----------------------------------------------------------
   { id: 're1', type: 'job', title: 'Real Estate Agent',              org: 'Compass',              location: 'New York, NY',       pay: 'Commission',   tags: ['Real Estate','Agent','Sales','Property'],             source: 'Indeed',   sourceUrl: 'https://www.indeed.com/jobs?q=real+estate+agent', posted: ago(1*D), remote: false },
   { id: 're2', type: 'job', title: 'Property Manager',               org: 'CBRE',                 location: 'Remote',             pay: '$75k–$110k',   tags: ['Property Manager','Real Estate','CBRE','Operations'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=property+manager', posted: ago(2*D), remote: true  },
   { id: 're3', type: 'job', title: 'Real Estate Investment Analyst', org: 'Blackstone',           location: 'New York, NY',       pay: '$100k–$150k',  tags: ['Real Estate','Investment','Finance','Analysis'],       source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=real+estate+analyst', posted: ago(2*D), remote: false },
   { id: 're4', type: 'event', title: 'NAR Annual Conference 2025',   org: 'NAR',                  location: 'Boston, MA',         pay: '$700+',         tags: ['Real Estate','NAR','Networking','Conference'],         source: 'NAR', sourceUrl: 'https://www.nar.realtor/conference-and-expo', posted: ago(5*D), remote: false },
   { id: 're5', type: 'learning', title: 'Real Estate License Prep',  org: 'Colibri Real Estate',  location: 'Online',             pay: '$199',          tags: ['Real Estate','License','Certification'],              source: 'Colibri', sourceUrl: 'https://www.colibrirealestate.com', posted: ago(7*D), remote: true  },
 
-  // ── Investor / VC ─────────────────────────────────────────────────────────────
+  // -- Investor / VC -------------------------------------------------------------
   { id: 'vc1', type: 'job', title: 'Investment Analyst',             org: 'Andreessen Horowitz',  location: 'Menlo Park, CA',     pay: '$130k–$170k',  tags: ['Venture Capital','Investment','Startups','Analysis'],  source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=venture+capital+analyst', posted: ago(2*D), remote: false },
   { id: 'vc2', type: 'job', title: 'Associate, Early Stage VC',      org: 'Sequoia Capital',      location: 'San Francisco, CA',  pay: '$140k–$180k',  tags: ['VC','Startups','Investment','Early Stage'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=venture+capital+associate', posted: ago(1*D), remote: false },
   { id: 'vc3', type: 'event', title: 'TechCrunch Disrupt 2025',      org: 'TechCrunch',           location: 'San Francisco, CA',  pay: '$2,499+',       tags: ['Startups','Investment','VC','Networking'],             source: 'TechCrunch', sourceUrl: 'https://techcrunch.com/events/disrupt', posted: ago(4*D), remote: false },
   { id: 'vc4', type: 'grant', title: 'First Round Angel Track',      org: 'First Round Capital',  location: 'Global',             pay: '$500k seed',    tags: ['Angel','Seed','Startup','Funding'],                    source: 'First Round', sourceUrl: 'https://firstround.com/apply', posted: ago(6*D), remote: true  },
 
-  // ── Community Manager ─────────────────────────────────────────────────────────
+  // -- Community Manager ---------------------------------------------------------
   { id: 'cm1', type: 'job', title: 'Head of Community',              org: 'Notion',               location: 'Remote',             pay: '$120k–$160k',  tags: ['Community','Manager','Notion','Social'],               source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=head+of+community', posted: ago(2*D), remote: true  },
   { id: 'cm2', type: 'job', title: 'Developer Relations Engineer',   org: 'Vercel',               location: 'Remote',             pay: '$130k–$160k',  tags: ['DevRel','Community','Developer','Next.js'],            source: 'LinkedIn', sourceUrl: 'https://linkedin.com/jobs/search/?keywords=developer+relations', posted: ago(1*D), remote: true  },
   { id: 'cm3', type: 'event', title: 'Community-Led Summit 2025',   org: 'CMX Hub',               location: 'Virtual',            pay: 'Free–$299',     tags: ['Community','CMX','Summit','Networking'],               source: 'CMX', sourceUrl: 'https://cmxhub.com', posted: ago(5*D), remote: true  },
 ];
 
 const OP_TYPE_META = {
-  job:        { label: 'Job',         emoji: '💼', color: '#2563EB', bg: '#EFF6FF' },
-  gig:        { label: 'Gig',         emoji: '⚡', color: '#7C3AED', bg: '#F3EEFF' },
-  grant:      { label: 'Grant',       emoji: '🏦', color: '#059669', bg: '#ECFDF5' },
-  event:      { label: 'Event',       emoji: '📅', color: '#D97706', bg: '#FFFBEB' },
-  hackathon:  { label: 'Hackathon',   emoji: '🏆', color: '#DB2777', bg: '#FDF2F8' },
-  opensource: { label: 'Open Source', emoji: '🌐', color: '#EA580C', bg: '#FFF7ED' },
-  learning:   { label: 'Learning',    emoji: '🎓', color: '#0284C7', bg: '#F0F9FF' },
+  job:        { label: 'Job',         emoji: 'Job', color: '#2563EB', bg: '#EFF6FF' },
+  gig:        { label: 'Gig',         emoji: 'Gig', color: '#7C3AED', bg: '#F3EEFF' },
+  grant:      { label: 'Grant',       emoji: 'Grant', color: '#059669', bg: '#ECFDF5' },
+  event:      { label: 'Event',       emoji: 'Event', color: '#D97706', bg: '#FFFBEB' },
+  hackathon:  { label: 'Hackathon',   emoji: 'Hack', color: '#DB2777', bg: '#FDF2F8' },
+  opensource: { label: 'Open Source', emoji: 'OSS', color: '#EA580C', bg: '#FFF7ED' },
+  learning:   { label: 'Learning',    emoji: 'Learn', color: '#0284C7', bg: '#F0F9FF' },
 };
 
-// ─── Role → job search queries for external platform deep-links ───────────────
+// --- Role ? job search queries for external platform deep-links ---------------
 const ROLE_JOB_QUERIES = {
   'Engineer / Developer':    'software engineer developer',
   'Designer / Creative':     'UX designer product designer',
@@ -20881,7 +21248,7 @@ function getPlatformSearchUrls(role, title, resumeKeywords) {
   };
 }
 
-// ─── Remotive/Muse: dedicated pipeline sweeps, not a per-request live fetch ──
+// --- Remotive/Muse: dedicated pipeline sweeps, not a per-request live fetch --
 // Both APIs are category-taxonomy-based (Remotive: ROLE_TO_REMOTIVE,
 // Muse: ROLE_TO_MUSE), not free-text keyword search, so neither fits
 // makeTopicCycler's FEED_TOPICS-keyed model the other ~30 sources use — a
@@ -20895,7 +21262,7 @@ function getPlatformSearchUrls(role, title, resumeKeywords) {
 // startJobBoardSweeps' own call site) — api never fetches either of these
 // live anymore.
 
-// Role → Remotive job categories (all 16 roles mapped), deduped into a flat
+// Role ? Remotive job categories (all 16 roles mapped), deduped into a flat
 // sweep list since several roles share a category.
 const ROLE_TO_REMOTIVE = {
   'Engineer / Developer':    ['software-dev', 'devops-sysadmin'],
@@ -21046,7 +21413,7 @@ function startJobBoardSweeps() {
         health.lastSuccess = Date.now();
         health.consecutiveErrors = 0;
         addAndBroadcast(posts);
-        logAgentAction('remotive', '🛰️', `${category}: ${posts.length} listing(s)`, '#00A876');
+        logAgentAction('remotive', '???', `${category}: ${posts.length} listing(s)`, '#00A876');
       }
     } catch (err) {
       health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
@@ -21067,7 +21434,7 @@ function startJobBoardSweeps() {
         health.lastSuccess = Date.now();
         health.consecutiveErrors = 0;
         addAndBroadcast(posts);
-        logAgentAction('muse', '🎭', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
+        logAgentAction('muse', '??', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
       }
     } catch (err) {
       health.consecutiveErrors = (health.consecutiveErrors || 0) + 1;
@@ -21235,7 +21602,7 @@ async function getLiveJobs(role, experience) {
   });
 }
 
-// Role → preferred opportunity types (all 16 roles)
+// Role ? preferred opportunity types (all 16 roles)
 const ROLE_OP_TYPES = {
   'Engineer / Developer':    new Set(['job','gig','hackathon','opensource','learning']),
   'Designer / Creative':     new Set(['job','gig','event','learning']),
@@ -21255,7 +21622,7 @@ const ROLE_OP_TYPES = {
   'Real Estate Pro':         new Set(['job','event','learning']),
 };
 
-// Maps onboarding interest categories → concrete skill/tag words found in opportunity listings.
+// Maps onboarding interest categories ? concrete skill/tag words found in opportunity listings.
 // Bridges the conceptual gap: users pick "AI & Machine Learning" but opp tags say "Python","LLMs".
 const INTEREST_TAG_MAP = {
   'AI & Machine Learning':    ['ai','ml','machine learning','python','pytorch','tensorflow','llms','nlp','deep learning','openai'],
@@ -21324,7 +21691,7 @@ const INTEREST_TAG_MAP = {
   'Diversity & Inclusion':    ['diversity','inclusion','dei','community'],
 };
 
-// Maps onboarding goals → opportunity types to give a score bonus.
+// Maps onboarding goals ? opportunity types to give a score bonus.
 const GOAL_TYPE_BOOST = {
   'jobs':        new Set(['job', 'gig']),
   'learning':    new Set(['learning', 'hackathon', 'opensource']),
@@ -21449,13 +21816,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // the main Feed's own job-boosting, applied here too.
     const bodyText = `${o.title || ''} ${o.content || ''}`.toLowerCase();
 
-    // 1. Profile skills → tag match, or a real (word-boundary-safe) mention
+    // 1. Profile skills ? tag match, or a real (word-boundary-safe) mention
     // in the title/description — highest weight; rare unless user filled
     // skills section.
     const skillMatches = [...skills].filter(s => tagTokens.includes(s) || textMentionsKeyword(bodyText, s));
     if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
 
-    // 1b. Resume keywords → same tags-then-text fallback, weighted like
+    // 1b. Resume keywords ? same tags-then-text fallback, weighted like
     // title/role matches (5/token), between the explicit-skills-field and
     // interest signals: a resume is more deliberate than an inferred
     // interest, but a user hand-picking their Skills field is still the
@@ -21463,13 +21830,13 @@ app.get('/opportunities', authenticate, async (req, res) => {
     const resumeMatches = [...resumeKeywords].filter(k => tagTokens.includes(k) || textMentionsKeyword(bodyText, k));
     if (resumeMatches.length > 0) { score += resumeMatches.length * 5; reasons.push('Matches your resume'); }
 
-    // 2. Specific job title keywords → opp title / tags (strong signal from onboarding)
+    // 2. Specific job title keywords ? opp title / tags (strong signal from onboarding)
     const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
     const roleMatchCount  = roleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
     if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
     else if (roleMatchCount > 0) { score += roleMatchCount * 5; reasons.push('Matches your role'); }
 
-    // 3. Interest → expanded tags (bridges "AI & Machine Learning" → "Python","LLMs","PyTorch"),
+    // 3. Interest ? expanded tags (bridges "AI & Machine Learning" ? "Python","LLMs","PyTorch"),
     // same tags-then-text fallback as skills/resume above.
     const interestTagMatches = [...interestTagSet].filter(tag =>
       tagTokens.some(t => t.includes(tag) || tag.includes(t)) || textMentionsKeyword(bodyText, tag)
@@ -21481,7 +21848,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
       if (titleInterestMatch) { score += 2; reasons.push('Matches your interests'); }
     }
 
-    // 4. Goal → type boost (user said they want jobs, grants, events, etc.)
+    // 4. Goal ? type boost (user said they want jobs, grants, events, etc.)
     if (goalBoostedTypes.has(o.type)) { score += 3; reasons.push('Matches your goals'); }
 
     // 5. Role preferred types
@@ -21575,7 +21942,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   });
 });
 
-// ─── Command Center: job tracker ───────────────────────────────────────────
+// --- Command Center: job tracker -------------------------------------------
 // A member's own saved/applied/viewed status against live /opportunities
 // listings — deliberately just a status they set themselves, not automated
 // application submission (most job boards' own ToS prohibit that outright,
@@ -21639,7 +22006,7 @@ app.delete('/jobs/tracking/:jobId', authenticate, async (req, res) => {
   }
 });
 
-// ─── Command Center: AI content drafting ───────────────────────────────────
+// --- Command Center: AI content drafting -----------------------------------
 // Drafts ready-to-post captions for a platform the member has connected —
 // the member still posts it themselves; there is no publishing API wired up
 // here (TikTok/Instagram both require a business/creator-app-review process
@@ -21719,7 +22086,7 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   }
 });
 
-// ─── Resume Builder ($5/mo add-on) ─────────────────────────────────────────
+// --- Resume Builder ($5/mo add-on) -----------------------------------------
 // Gate is resume_builder_addon, NOT plan — this is an independent
 // subscription a free or Pro/Business member can equally buy (see
 // /billing/create-checkout-session's own comment). Feeds directly into the
@@ -21950,7 +22317,7 @@ app.post('/resume-builder/export', authenticate, async (req, res) => {
   }
 });
 
-// ─── Command Center: "Your Feed" (own-content review/download) ────────────
+// --- Command Center: "Your Feed" (own-content review/download) ------------
 // Distinct from Connected Feed above — this lists the member's OWN posts
 // per connected platform (via OWN_CONTENT_FETCHERS) for review/download,
 // not a scrolling feed of other people's content.
@@ -21971,6 +22338,64 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
     res.status(502).json({ message: `Could not load your ${platform} content right now.` });
   }
+});
+
+// Combined subscriber feed of their own connected-account posts. This is
+// deliberately separate from Following mode: Following is other people and
+// interest-matched sources, while this route is only the signed-in member's
+// own connected accounts, equalized by platform for scrolling.
+app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Your Feed is a Pro feature - upgrade to use it.' });
+  }
+  const limit = boundedLimit(req.query.limit, 50, 100);
+  const page = Math.max(1, parseInt(req.query.page || '1', 10) || 1);
+  const offset = (page - 1) * limit;
+  const bust = req.query.bust === '1';
+  const connectedPlatforms = Object.keys(OWN_CONTENT_FETCHERS).filter(platform => user.socialTokens?.[platform]);
+  const sourceErrors = {};
+  const sourceCounts = {};
+
+  const settled = await Promise.allSettled(connectedPlatforms.map(async (platform) => {
+    const fetcher = OWN_CONTENT_FETCHERS[platform];
+    const raw = await fetcher(user.socialTokens[platform], { bust, userId: req.user.id });
+    const normalized = capFollowingPosts(realFeedPosts(raw).map(post => normalizeFeedPost({
+      ...post,
+      source: post.source || platform,
+      sourceLabel: post.sourceLabel || platform,
+      authorId: `${platform}_${req.user.id}`,
+      author: post.author || { name: post.sourceLabel || user.name || 'Your account' },
+    })), 30);
+    return { platform, posts: normalized };
+  }));
+
+  const allPosts = [];
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      const { platform, posts: platformPosts } = result.value;
+      sourceCounts[platform] = platformPosts.length;
+      allPosts.push(...platformPosts);
+    } else {
+      const platform = connectedPlatforms[settled.indexOf(result)] || 'unknown';
+      sourceErrors[platform] = String(result.reason?.message || result.reason || 'Fetch failed').slice(0, 200);
+      sourceCounts[platform] = 0;
+    }
+  }
+
+  const equalized = buildEqualizedFollowingPool(allPosts);
+  const pageRows = equalized.slice(offset, offset + limit);
+  res.json({
+    posts: pageRows,
+    page,
+    limit,
+    hasMore: offset + limit < equalized.length,
+    totalAvailable: equalized.length,
+    connectedPlatforms,
+    sources: sourceCounts,
+    sourceErrors,
+    refreshedAt: new Date().toISOString(),
+  });
 });
 
 // Streams a platform-hosted image back with an attachment disposition so
@@ -21995,7 +22420,7 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
   }).on('error', () => res.status(502).json({ message: 'Could not fetch that file.' }));
 });
 
-// ─── Command Center: cross-post ────────────────────────────────────────────
+// --- Command Center: cross-post --------------------------------------------
 // Only Bluesky and Reddit actually publish — both have a real, self-serve
 // public API this app can call today with what's already configured (no
 // app review/elevated-access tier needed, unlike LinkedIn/Twitter/Facebook —
@@ -22107,7 +22532,7 @@ app.get('/command-center/cross-post/history', authenticate, async (req, res) => 
   }
 });
 
-// ─── Messages ─────────────────────────────────────────────────────────────────
+// --- Messages -----------------------------------------------------------------
 
 const conversations = [
   {
@@ -22345,8 +22770,8 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
       createNotification({
         userId: otherId, type: 'message', actorId: uid,
         targetType: 'conversation', targetId: conv.id,
-        preview: newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : '📷 Photo',
-        pushTitle: sender.name, pushBody: newMsg.content ? truncateWithEllipsis(newMsg.content, 100) : '📷 Sent a photo', pushUrl: `/messages/${uid}`,
+        preview: newMsg.content ? truncateWithEllipsis(newMsg.content, 120) : 'Photo',
+        pushTitle: sender.name, pushBody: newMsg.content ? truncateWithEllipsis(newMsg.content, 100) : 'Sent a photo', pushUrl: `/messages/${uid}`,
       });
     }).catch(() => {});
 
@@ -22357,7 +22782,7 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
   } catch (e) { console.error('POST /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// --- Start --------------------------------------------------------------------
 async function loadPostsFromDB() {
   if (!db.isConnected()) return;
   try {
@@ -22366,11 +22791,11 @@ async function loadPostsFromDB() {
     );
     posts.length = 0;
     rows.forEach((r) => posts.push(dbCommunityPostToMemPost(r)));
-    if (rows.length) console.log(`✅ Loaded ${rows.length} posts from DB`);
+    if (rows.length) console.log(`? Loaded ${rows.length} posts from DB`);
   } catch (err) { console.warn('loadPostsFromDB:', err.message); }
 }
 
-// ─── Pre-load all users from DB into memory so restarts don't wipe sessions ──
+// --- Pre-load all users from DB into memory so restarts don't wipe sessions --
 async function preloadUsersFromDB() {
   if (!db.isConnected()) {
     // No PostgreSQL — load from the local file store instead
@@ -22459,13 +22884,13 @@ db.initDB().then(async () => {
   scheduleRecurring(() => {
     remotiveCache.clear();
     museCache.clear();
-    logAgentAction('feed', '🔄', 'Weekly opportunity cache reset — live jobs will re-fetch on next visit', '#60A5FA');
+    logAgentAction('feed', '??', 'Weekly opportunity cache reset - live jobs will re-fetch on next visit', '#60A5FA');
   }, 7 * 24 * 60 * 60 * 1000);
 
   // Monthly: re-seed groups from ALL_GROUPS_SEED to pick up any new communities added to the list
   scheduleRecurring(() => {
     return seedAndLoadGroups()
-      .then(() => logAgentAction('feed', '🔄', `Monthly groups refresh — ${groups.length} communities loaded`, '#4ADE80'))
+      .then(() => logAgentAction('feed', '??', `Monthly groups refresh - ${groups.length} communities loaded`, '#4ADE80'))
       .catch(e => console.warn('Monthly group refresh:', e.message));
   }, 30 * 24 * 60 * 60 * 1000);
 
@@ -22477,7 +22902,7 @@ db.initDB().then(async () => {
   scheduleRecurring(() => {
     if (!db.isConnected()) return;
     return db.query(`DELETE FROM seen_posts WHERE seen_at < NOW() - INTERVAL '90 days'`)
-      .then(r => logAgentAction('data', '🧹', `Trimmed ${r.rowCount ?? 0} stale seen-post records (90d+)`, '#FB7185'))
+      .then(r => logAgentAction('data', '??', `Trimmed ${r.rowCount ?? 0} stale seen-post records (90d+)`, '#FB7185'))
       .catch(e => console.warn('seen_posts trim:', e.message));
   }, 24 * 60 * 60 * 1000);
 });

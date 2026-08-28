@@ -10,20 +10,20 @@ function initials(name = '') {
 }
 
 const ROLE_META = {
-  'Engineer / Developer':    { icon: '💻', color: '#2563EB', bg: '#EFF6FF' },
-  'Designer / Creative':     { icon: '🎨', color: '#7C3AED', bg: '#F3EEFF' },
-  'Product Manager':         { icon: '📋', color: '#0284C7', bg: '#F0F9FF' },
-  'Marketer / Growth':       { icon: '📈', color: '#059669', bg: '#ECFDF5' },
-  'Founder / Entrepreneur':  { icon: '🚀', color: '#D97706', bg: '#FFFBEB' },
-  'Investor / VC':           { icon: '💰', color: '#DB2777', bg: '#FDF2F8' },
-  'Data / Analytics':        { icon: '📊', color: '#EA580C', bg: '#FFF7ED' },
-  'Student / Learner':       { icon: '🎓', color: '#7C3AED', bg: '#F3EEFF' },
-  'Sales / Business Dev':    { icon: '🤝', color: '#2563EB', bg: '#EFF6FF' },
-  'Operations / Finance':    { icon: '⚙️', color: '#059669', bg: '#ECFDF5' },
-  'Content Creator':         { icon: '🎬', color: '#D97706', bg: '#FFFBEB' },
-  'Community Manager':       { icon: '🌐', color: '#0284C7', bg: '#F0F9FF' },
-  'Researcher / Academic':   { icon: '🔬', color: '#7C3AED', bg: '#F3EEFF' },
-  'HR / People Ops':         { icon: '👥', color: '#DB2777', bg: '#FDF2F8' },
+  'Engineer / Developer':    { icon: 'ED', color: '#2563EB', bg: '#EFF6FF' },
+  'Designer / Creative':     { icon: 'DC', color: '#7C3AED', bg: '#F3EEFF' },
+  'Product Manager':         { icon: 'PM', color: '#0284C7', bg: '#F0F9FF' },
+  'Marketer / Growth':       { icon: 'MG', color: '#059669', bg: '#ECFDF5' },
+  'Founder / Entrepreneur':  { icon: 'FE', color: '#D97706', bg: '#FFFBEB' },
+  'Investor / VC':           { icon: 'VC', color: '#DB2777', bg: '#FDF2F8' },
+  'Data / Analytics':        { icon: 'DA', color: '#EA580C', bg: '#FFF7ED' },
+  'Student / Learner':       { icon: 'SL', color: '#7C3AED', bg: '#F3EEFF' },
+  'Sales / Business Dev':    { icon: 'BD', color: '#2563EB', bg: '#EFF6FF' },
+  'Operations / Finance':    { icon: 'OF', color: '#059669', bg: '#ECFDF5' },
+  'Content Creator':         { icon: 'CC', color: '#D97706', bg: '#FFFBEB' },
+  'Community Manager':       { icon: 'CM', color: '#0284C7', bg: '#F0F9FF' },
+  'Researcher / Academic':   { icon: 'RA', color: '#7C3AED', bg: '#F3EEFF' },
+  'HR / People Ops':         { icon: 'HR', color: '#DB2777', bg: '#FDF2F8' },
 };
 
 const ROLE_FILTERS = [
@@ -34,12 +34,12 @@ const ROLE_FILTERS = [
 ];
 
 const CATEGORY_ICONS = {
-  'AI & Machine Learning': '🤖', 'Web Development': '🌐', 'Mobile Dev': '📱',
-  'DevOps & Cloud': '☁️', 'Cybersecurity': '🔐', 'Open Source': '🐙',
-  'Data Science': '📊', 'Product & Design': '🎨', 'Startup & Founders': '🚀',
-  'Finance & Investing': '💰', 'Marketing & Growth': '📈', 'Career & Jobs': '💼',
-  'Community': '🌐', 'Science & Research': '🔬', 'Gaming': '🎮',
-  'Blockchain & Web3': '⛓️', 'Healthcare': '🏥', 'Education': '📚',
+  'AI & Machine Learning': 'AI', 'Web Development': 'WD', 'Mobile Dev': 'MD',
+  'DevOps & Cloud': 'DC', 'Cybersecurity': 'CY', 'Open Source': 'OS',
+  'Data Science': 'DS', 'Product & Design': 'PD', 'Startup & Founders': 'SF',
+  'Finance & Investing': 'FI', 'Marketing & Growth': 'MG', 'Career & Jobs': 'CJ',
+  'Community': 'CM', 'Science & Research': 'SR', 'Gaming': 'GM',
+  'Blockchain & Web3': 'W3', 'Healthcare': 'HC', 'Education': 'ED',
 };
 
 export default function Search() {
@@ -176,8 +176,8 @@ export default function Search() {
       {/* Tab switcher */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
         {[
-          { key: 'people', label: '👥 People' },
-          { key: 'groups', label: '🌐 Communities' },
+          { key: 'people', label: 'People' },
+          { key: 'groups', label: 'Communities' },
         ].map(tab => (
           <button
             key={tab.key}
@@ -203,7 +203,7 @@ export default function Search() {
           <span style={{
             position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)',
             fontSize: '1rem', pointerEvents: 'none', opacity: 0.5,
-          }}>🔍</span>
+          }}>Q</span>
           <input
             className="form-input"
             placeholder={activeTab === 'people'
@@ -290,7 +290,7 @@ export default function Search() {
           {!loading && !hasQuery && sortedResults.length > 0 && (
             <div style={{ maxWidth: 640, marginBottom: 8 }}>
               <span style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>
-                ✦ Suggested for you
+                Suggested for you
               </span>
             </div>
           )}
@@ -298,7 +298,7 @@ export default function Search() {
           <div style={{ maxWidth: 640 }}>
             {!loading && sortedResults.length === 0 && (
               <div className="card" style={{ textAlign: 'center', padding: '32px 24px' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>🔍</div>
+                <div style={{ fontSize: '2.5rem', marginBottom: 12, fontWeight: 800 }}>Search</div>
                 <div style={{ fontWeight: 700, marginBottom: 6 }}>No people found</div>
                 <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: 0 }}>
                   Try a different name, skill, or role.
@@ -366,13 +366,13 @@ export default function Search() {
                               style={{ minWidth: 84 }}
                               onClick={e => toggleFollow(user, e)}
                             >
-                              {user.isFollowing ? '✓ Following' : '+ Follow'}
+                              {user.isFollowing ? 'Following' : '+ Follow'}
                             </button>
                             <Link
                               to={`/messages/${user.id}`}
                               className="btn btn-ghost btn-sm"
                               style={{ padding: '0 12px', display: 'flex', alignItems: 'center', gap: 4, textDecoration: 'none' }}
-                            >💬</Link>
+                            >Message</Link>
                           </div>
                         )}
                       </div>
@@ -406,7 +406,7 @@ export default function Search() {
                         </span>
                         {!user.isSelf && user.sharedInterests?.length > 0 && (
                           <span style={{ fontSize: '.7rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '1px 8px', borderRadius: 8 }}>
-                            ✦ {user.sharedInterests.length === 1
+                            {user.sharedInterests.length === 1
                               ? `Both into ${user.sharedInterests[0]}`
                               : `${user.sharedInterests.length} shared interests`}
                           </span>
@@ -440,7 +440,7 @@ export default function Search() {
 
               {filteredGroups.length === 0 && (
                 <div className="card" style={{ textAlign: 'center', padding: '32px 24px', maxWidth: 640 }}>
-                  <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>🌐</div>
+                  <div style={{ fontSize: '2.5rem', marginBottom: 12, fontWeight: 800 }}>Groups</div>
                   <div style={{ fontWeight: 700, marginBottom: 6 }}>No communities found</div>
                   <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: 0 }}>
                     Try a different keyword or browse without a filter.
@@ -450,7 +450,7 @@ export default function Search() {
 
               <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {filteredGroups.map(group => {
-                  const catIcon = CATEGORY_ICONS[group.category] || '🌐';
+                  const catIcon = CATEGORY_ICONS[group.category] || 'GR';
                   const isJoined = joinedGroups.has(group.id);
                   const isJoining = joining === group.id;
                   return (
@@ -468,7 +468,7 @@ export default function Search() {
                           background: 'var(--bg-secondary)',
                           display: 'flex', alignItems: 'center', justifyContent: 'center',
                           fontSize: '1.4rem',
-                        }}>{group.emoji || catIcon}</div>
+                        }}>{catIcon}</div>
 
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: '.92rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.name}</div>
@@ -492,7 +492,7 @@ export default function Search() {
                         <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                           {isJoined ? (
                             <span style={{ fontSize: '.72rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '4px 10px', borderRadius: 6 }}>
-                              ✓ Joined
+                              Joined
                             </span>
                           ) : (
                             <button

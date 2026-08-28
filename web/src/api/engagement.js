@@ -17,17 +17,21 @@ import client from './client';
 const FLUSH_INTERVAL_MS = 3000;
 const MAX_BATCH = 50;
 
-const reported = new Set(); // ids already sent this session — never re-queued even if re-viewed
-const queue = new Set();
+const reported = new Set(); // post ids already sent this session - never re-queued even if re-viewed
+const queues = new Map(); // context -> Set<postId>
 let flushTimer = null;
 
 function flush() {
   flushTimer = null;
-  if (!queue.size) return;
-  const postIds = [...queue].slice(0, MAX_BATCH);
-  postIds.forEach(id => { queue.delete(id); reported.add(id); });
-  client.post('/posts/engaged', { postIds }).catch(() => {});
-  if (queue.size) scheduleFlush();
+  let hasMore = false;
+  for (const [context, queue] of queues.entries()) {
+    if (!queue.size) continue;
+    const postIds = [...queue].slice(0, MAX_BATCH);
+    postIds.forEach(id => { queue.delete(id); reported.add(id); });
+    client.post('/posts/engaged', { postIds, context }).catch(() => {});
+    if (queue.size) hasMore = true;
+  }
+  if (hasMore) scheduleFlush();
 }
 
 function scheduleFlush() {
@@ -35,8 +39,22 @@ function scheduleFlush() {
   flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
 }
 
-export function reportEngaged(postId) {
-  if (!postId || reported.has(postId) || queue.has(postId)) return;
+function isQueued(postId) {
+  for (const queue of queues.values()) {
+    if (queue.has(postId)) return true;
+  }
+  return false;
+}
+
+export function reportEngaged(postId, context = 'feed') {
+  if (!postId || reported.has(postId) || isQueued(postId)) return;
+  const key = context === 'videos' ? 'videos' : 'feed';
+  let queue = queues.get(key);
+  if (!queue) {
+    queue = new Set();
+    queues.set(key, queue);
+  }
+  if (queue.has(postId)) return;
   queue.add(postId);
   scheduleFlush();
 }

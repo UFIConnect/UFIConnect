@@ -12,7 +12,7 @@ function MaintenancePage() {
       alignItems: 'center', justifyContent: 'center',
       background: 'var(--bg, #f8fafc)', padding: 24, textAlign: 'center',
     }}>
-      <div style={{ fontSize: '3rem', marginBottom: 16 }}>🔧</div>
+      <div style={{ fontSize: '1rem', fontWeight: 900, letterSpacing: '.08em', marginBottom: 16 }}>UFIconnect</div>
       <h1 style={{ fontSize: '1.75rem', fontWeight: 700, marginBottom: 12, color: 'var(--text, #0f172a)' }}>
         We're making improvements
       </h1>
@@ -56,23 +56,23 @@ const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/Search'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
-const AgentDashboard = lazy(() => import('./pages/AgentDashboard'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
 const TermsOfService = lazy(() => import('./pages/TermsOfService'));
 const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
 const Sources        = lazy(() => import('./pages/Sources'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
+const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 
 function RequireAuth({ children }) {
   const { token, loading } = useAuth();
-  if (loading) return <div className="splash">Loading…</div>;
+  if (loading) return <div className="splash">Loading...</div>;
   return token ? children : <Navigate to="/login" replace />;
 }
 
 function RequireOnboarding({ children }) {
   const { profile, loading } = useAuth();
-  if (loading) return <div className="splash">Loading…</div>;
+  if (loading) return <div className="splash">Loading...</div>;
   if (profile && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   return children;
 }
@@ -87,7 +87,7 @@ function PageviewTracker() {
 
 function HomeRoute() {
   const { token, profile, loading } = useAuth();
-  if (loading) return <div className="splash">Loading…</div>;
+  if (loading) return <div className="splash">Loading...</div>;
   if (!token) {
     return <Landing />;
   }
@@ -111,7 +111,7 @@ export default function App() {
   return (
     <>
     <PageviewTracker />
-    <Suspense fallback={<div className="splash">Loading…</div>}>
+    <Suspense fallback={<div className="splash">Loading...</div>}>
     <Routes>
       {/* Public */}
       <Route path="/login"    element={<Login />} />
@@ -131,11 +131,10 @@ export default function App() {
       <Route path="/videos" element={
         <RequireAuth><RequireOnboarding><Videos /></RequireOnboarding></RequireAuth>
       }/>
-      {/* "You" — a full equalizer feed of the member's connected-platform
-          activity. Reuses Feed.jsx's existing Following-mode machinery
-          (see forcedMode) rather than a second feed engine. */}
+      {/* "You" is the member's own connected-account posts, separate from
+          Following mode's other-people/interest-matched feed. */}
       <Route path="/you" element={
-        <RequireAuth><RequireOnboarding><Feed forcedMode="following" /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups" element={
         <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
@@ -189,8 +188,8 @@ export default function App() {
       }/>
 
       {/* Agent Control Room — live on public domain */}
-      <Route path="/hq"     element={<AgentDashboard />} />
-      <Route path="/agents" element={<Navigate to="/hq" replace />} />
+      <Route path="/hq"     element={<Navigate to="/command-center" replace />} />
+      <Route path="/agents" element={<Navigate to="/command-center" replace />} />
 
       {/* Legal */}
       <Route path="/privacy" element={<PrivacyPolicy />} />

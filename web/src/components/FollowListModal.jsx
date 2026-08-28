@@ -79,7 +79,7 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
           )}
           {!loading && restricted && (
             <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--muted)', fontSize: '.9rem' }}>
-              🔒 This list is private.
+              This list is private.
             </div>
           )}
           {!loading && !restricted && users.length === 0 && (
@@ -114,7 +114,7 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
                     style={{ minWidth: 76, fontSize: '.75rem' }}
                     onClick={e => toggleFollow(user, e)}
                   >
-                    {user.isFollowing ? '✓ Following' : '+ Follow'}
+                    {user.isFollowing ? 'Following' : '+ Follow'}
                   </button>
                   <Link
                     to={`/messages/${user.id}`}
@@ -122,7 +122,7 @@ export default function FollowListModal({ userId, type, title, onClose, fetchUrl
                     style={{ borderRadius: 20, padding: '0 10px', display: 'flex', alignItems: 'center', fontSize: '.85rem', textDecoration: 'none' }}
                     onClick={onClose}
                   >
-                    💬
+                    Message
                   </Link>
                 </div>
               )}

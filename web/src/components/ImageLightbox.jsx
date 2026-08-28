@@ -467,7 +467,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
           onClick={e => { e.stopPropagation(); toggleMuted(); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           style={{ position: 'absolute', top: 16, right: 64, ...OVERLAY_BTN_STYLE, fontSize: '1.05rem' }}
-        >{muted ? '🔇' : '🔊'}</button>
+        >{muted ? 'M' : 'S'}</button>
       )}
 
       {/* Zoom controls — photos only. Pinch/double-tap/wheel all drive the

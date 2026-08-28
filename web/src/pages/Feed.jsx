@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, youTubePosterUrl } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -120,10 +120,10 @@ const SOURCE_TABS = [
   { key: 'crunchbase' }, { key: 'techcrunch' }, { key: 'theverge' }, { key: 'arstechnica' },
   { key: 'wired' }, { key: 'theregister' }, { key: 'venturebeat' }, { key: 'infoq' },
   { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
-  { key: 'designweb' }, { key: 'indeed' }, { key: 'remoteok' }, { key: 'usajobs' },
+  { key: 'designweb' }, { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
 ].map(({ key }) => key === 'all'
-  ? { key: 'all', label: 'All', icon: '⚡' }
-  : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' });
+  ? { key: 'all', label: 'All', icon: '' }
+  : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' });
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
 // this is exactly the content SOURCE_TABS deliberately excludes (native
@@ -135,9 +135,9 @@ const SOURCE_TABS = [
 // LinkedIn/Twitter/Instagram/Facebook, so a user who'd connected e.g.
 // GitHub or Reddit had no way to even select it here.
 const FOLLOWING_SOURCE_TABS = [
-  { key: 'all', label: 'All', icon: '⚡' },
-  { key: 'uficonnect', label: 'UFIconnect', icon: '🌐' },
-  ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || '📡' })),
+  { key: 'all', label: 'All', icon: '' },
+  { key: 'uficonnect', label: 'UFIconnect', icon: 'UFI' },
+  ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
@@ -189,9 +189,9 @@ const ALL_FILTER_SOURCES = [
   'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube', 'hackernews',
   'bluesky', 'linkedin', 'twitter', 'instagram', 'facebook',
   'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
-  'indeed', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
-  'remoteok', 'yc', 'crunchbase', 'behance', 'designweb',
+  'yc', 'crunchbase', 'behance', 'designweb',
 ];
 
 // Following's filter-panel options — native UFIconnect posts from people you
@@ -525,6 +525,7 @@ function MaximizeButton({ onClick }) {
 
 function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
   const [inView, setInView] = useState(false);
+  const posterUrl = poster || youTubePosterUrl(embedId);
   // Whether the real YT.Player has actually been constructed yet — separate
   // from `playing`/`effectivelyPlaying` (see below) because construction
   // happens at most once per embedId and is never redone just because
@@ -676,18 +677,18 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
       <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none' }} />
       {showPoster && (
         <div style={{ position: 'absolute', inset: 0 }}>
-          {poster && <img src={poster} alt={title} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
+          {posterUrl && <img src={posterUrl} alt={title} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
             onError={e => {
               e.currentTarget.style.display = 'none';
               const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
               if (fallback) fallback.style.display = 'flex';
             }} />}
           <div data-youtube-fallback style={{
-            display: poster ? 'none' : 'flex', position: 'absolute', inset: 0,
+            display: posterUrl ? 'none' : 'flex', position: 'absolute', inset: 0,
             alignItems: 'center', justifyContent: 'center',
             background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
           }}>
-            🎥 Thumbnail unavailable
+            Thumbnail unavailable
           </div>
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
             <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
@@ -710,7 +711,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
             border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer', fontSize: '.9rem',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
-        >{muted ? '🔇' : '🔊'}</button>
+        >{muted ? 'M' : 'S'}</button>
       )}
     </div>
   );
@@ -726,7 +727,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
         <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
-        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
+        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
           {timeAgo(post.createdAt)}
         </Link>
@@ -749,7 +750,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
             display: 'none', alignItems: 'center', justifyContent: 'center',
             height: 200, color: 'var(--muted)', fontSize: '.85rem',
           }}>
-            📷 Image unavailable
+            Image unavailable
           </div>
         </div>
       ) : null}
@@ -759,7 +760,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
             <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
             <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
-            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>▶️ Watch ↗</span>
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>Watch</span>
           </a>
         </div>
       )}
@@ -821,7 +822,7 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
         <img src={poster} alt={title} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
       ) : (
         <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)', fontSize: '.85rem' }}>
-          🎬 Vimeo video
+          Vimeo video
         </div>
       )}
     </div>
@@ -1100,9 +1101,9 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
-        {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>💼 Job</span>}
+        {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
-        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>🏷 {post.topic}</span>}
+        {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
           {timeAgo(post.createdAt)}
@@ -1139,7 +1140,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
                 onMouseOver={e => e.currentTarget.style.background = 'var(--hover, rgba(0,0,0,.04))'}
                 onMouseOut={e => e.currentTarget.style.background = 'transparent'}
               >
-                🚩 Report post
+                Report post
               </button>
             </div>
           )}
@@ -1209,7 +1210,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
               display: 'none', alignItems: 'center', justifyContent: 'center',
               height: 200, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 500,
             }}>
-              📷 Image unavailable
+              Image unavailable
             </div>
           </div>
         </button>
@@ -1286,7 +1287,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
                   alignItems: 'center', justifyContent: 'center',
                   background: 'rgba(0,0,0,0.5)', color: 'var(--muted)', fontSize: '.85rem',
                 }}>
-                  🎬 Video unavailable
+                  Video unavailable
                 </div>
                 <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <div style={{ width: 60, height: 60, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
@@ -1313,7 +1314,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
           // just those two keeps the real number (still a genuine, useful
           // signal) without misrepresenting what it means.
           <span style={{ fontSize: '.75rem', color: 'var(--muted)' }}>
-            {(post.source === 'github' || post.source === 'gitlab') ? '⭐' : '❤️'} {post.likesCount.toLocaleString()}
+            {post.likesCount.toLocaleString()} likes
           </span>
         )}
         {hasComments && (
@@ -1321,7 +1322,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             onClick={toggleComments}
             style={{ all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: showComments ? src.color : 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4, fontWeight: showComments ? 700 : 400 }}
           >
-            💬 {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}{showComments ? `Hide ${sectionLabel}` : sectionLabel}
+            {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}{showComments ? `Hide ${sectionLabel}` : sectionLabel}
           </button>
         )}
         {post.sourceUrl && (
@@ -1495,7 +1496,7 @@ class FeedErrorBoundary extends Component {
     if (this.state.error) {
       return (
         <div className="empty-state">
-          <div className="empty-icon">⚠️</div>
+          <div className="empty-icon">!</div>
           <div className="empty-title">Some posts couldn't be displayed</div>
           <div className="empty-desc">
             <button className="btn btn-ghost btn-sm" onClick={() => this.setState({ error: null })}>
@@ -2284,10 +2285,12 @@ export default function Feed({ forcedMode } = {}) {
             verticalAlign: 'middle',
           }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: liveActive ? '#22C55E' : '#CBD5E1', display: 'inline-block', animation: liveActive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-            {liveActive ? 'LIVE' : 'connecting…'}
+            {liveActive ? 'LIVE' : 'connecting...'}
           </span>
         </h1>
-
+        <p className="page-subtitle">
+          Good to see you. Posts, videos, and job listings stay mixed in one live scroll so the feed keeps moving without one source taking over.
+        </p>
       </div>
 
 
@@ -2296,7 +2299,7 @@ export default function Feed({ forcedMode } = {}) {
         {/* Search */}
         <div style={{ flex: 1, position: 'relative', display: 'flex', gap: 6 }}>
           <div style={{ flex: 1, position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.85rem', opacity: 0.4, pointerEvents: 'none' }}>🔍</span>
+            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.75rem', fontWeight: 800, opacity: 0.55, pointerEvents: 'none' }}>Q</span>
             <input
               className="form-input"
               placeholder="Search posts…"
@@ -2362,7 +2365,7 @@ export default function Feed({ forcedMode } = {}) {
               cursor: 'pointer', fontWeight: 600, fontSize: '.875rem', whiteSpace: 'nowrap',
             }}
           >
-            ⚙ Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''} {filterOpen ? '▲' : '▼'}
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''} {filterOpen ? 'Hide' : 'Show'}
           </button>
 
           {filterOpen && (
@@ -2551,10 +2554,9 @@ export default function Feed({ forcedMode } = {}) {
           fontSize: '.85rem', fontWeight: 500, color: '#92400E',
           boxShadow: '0 2px 8px rgba(234, 88, 12, 0.1)',
         }}>
-          <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>🚀</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, marginBottom: 2 }}>Personalize your feed</div>
-            <div style={{ fontSize: '.78rem', opacity: 0.9 }}>Connect social accounts to discover content tailored to your interests</div>
+            <div style={{ fontSize: '.78rem', opacity: 0.9 }}>Connect accounts to add more of your world to the feed.</div>
           </div>
           <Link to="/connected-accounts" style={{
             background: '#EA580C', color: '#fff', fontWeight: 700, fontSize: '.8rem',
@@ -2622,12 +2624,8 @@ export default function Feed({ forcedMode } = {}) {
             alignItems: 'center',
             gap: 8
           }}>
-            <span style={{
-              display: 'inline-block',
-              animation: 'spin 1s linear infinite',
-              transformOrigin: 'center'
-            }}>⚡</span>
-            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts…` : 'Loading your feed…'}
+            <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
+            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading your feed...'}
           </div>
           <PostCardSkeleton />
           <PostCardSkeleton />
@@ -2635,7 +2633,7 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       ) : feedError && displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">⚠️</div>
+          <div className="empty-icon">!</div>
           <div className="empty-title">Couldn't load posts</div>
           <div className="empty-desc">
             <p style={{ marginBottom: 12 }}>{feedError}</p>
@@ -2647,7 +2645,7 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? '🔍' : viewMode === 'following' ? '👥' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || '📭'}</div>
+          <div className="empty-icon">{search ? 'Search' : viewMode === 'following' ? 'Following' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || 'Feed'}</div>
           <div className="empty-title">
             {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Your feed is empty'}
           </div>
@@ -2686,7 +2684,7 @@ export default function Feed({ forcedMode } = {}) {
               </>
             ) : activeTabs.length > 0 ? (
               <>
-                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources!</p>
+                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
@@ -2710,7 +2708,7 @@ export default function Feed({ forcedMode } = {}) {
               </>
             ) : (
               <>
-                <p style={{ marginBottom: 12 }}>Your feed is ready! Start by connecting your social accounts to personalize your experience.</p>
+                <p style={{ marginBottom: 12 }}>Your feed is ready. Connect accounts when you want a more personal mix.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect accounts</Link>
                   <Link to="/groups" className="btn btn-ghost btn-sm">Join communities</Link>
@@ -2749,8 +2747,8 @@ export default function Feed({ forcedMode } = {}) {
               padding: '12px 16px', borderRadius: 8, background: 'var(--card)',
               border: '1px dashed var(--border)'
             }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>📍 You've reached the end</div>
-              Showing {displayed.length.toLocaleString()} post{displayed.length !== 1 ? 's' : ''} · Pull to refresh for new content
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>You are caught up</div>
+              Showing {displayed.length.toLocaleString()} post{displayed.length !== 1 ? 's' : ''}. Pull to refresh for new content.
             </div>
           )}
         </>
@@ -2769,7 +2767,6 @@ export default function Feed({ forcedMode } = {}) {
           gap: 12, padding: '14px 20px',
           boxShadow: '0 -4px 20px rgba(0,0,0,0.18)',
         }}>
-          <span style={{ fontSize: '1.1rem' }}>🌐</span>
           <span style={{ fontSize: '.9rem', fontWeight: 500 }}>
             Sign in to personalise your feed, save posts, and join communities
           </span>

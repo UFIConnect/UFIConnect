@@ -10,7 +10,7 @@ import { useState, useRef, useEffect } from 'react';
 // Self-contained (owns its own menu open/close + outside-click, same
 // pattern as EmojiPicker) so any upload area just drops this in instead of
 // wiring two file inputs and a menu itself.
-export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', label = '📷 Photo', disabled = false, className, style }) {
+export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', label = 'Photo', disabled = false, className, style }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
@@ -71,7 +71,7 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
             onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
-            🖼️ Choose from library
+            Choose from library
           </button>
           <button
             type="button"
@@ -85,7 +85,7 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
             onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
-            📸 Take a photo
+            Take a photo
           </button>
         </div>
       )}

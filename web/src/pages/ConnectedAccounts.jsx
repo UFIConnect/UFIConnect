@@ -169,7 +169,7 @@ export default function ConnectedAccounts() {
             display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24,
             background: 'var(--bg-secondary)', borderRadius: 10, padding: '12px 16px',
           }}>
-            <div style={{ fontSize: '1.5rem' }}>🔗</div>
+            <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
                 {connectedList.length} of {platforms.length} accounts connected
@@ -201,7 +201,7 @@ export default function ConnectedAccounts() {
           {connectedList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
               <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 10 }}>
-                ✓ Connected
+                Connected
               </div>
               {connectedList.map(([key, p]) => (
                 <PlatformCard
@@ -345,7 +345,7 @@ function PlatformCard({
                 fontSize: '.65rem', fontWeight: 700, color: '#059669',
                 background: '#ECFDF5', padding: '1px 6px', borderRadius: 4,
               }}>
-                ✓ Connected
+                Connected
               </span>
             )}
             {comingSoon && (
@@ -407,7 +407,7 @@ function PlatformCard({
               <ul style={{ margin: 0, paddingLeft: 16, listStyle: 'none' }}>
                 {benefits.map((b, i) => (
                   <li key={i} style={{ fontSize: '.8rem', color: 'var(--text)', marginBottom: 4, display: 'flex', gap: 6 }}>
-                    <span style={{ color: p.color }}>✦</span> {b}
+                    <span style={{ color: p.color, fontWeight: 800 }}>OK</span> {b}
                   </li>
                 ))}
               </ul>

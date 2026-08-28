@@ -9,14 +9,14 @@ import client from '../api/client';
 // "Opportunities" (13 characters each) wrap badly at that width. The
 // desktop sidebar has room to spare, so it always uses the full label.
 const NAV = [
-  { to: '/',              icon: '📰', label: 'Feed'         },
-  { to: '/videos',        icon: '▶️', label: 'Videos'       },
-  { to: '/post',          icon: '✏️', label: 'Posts'        },
-  { to: '/search',        icon: '🔍', label: 'Search'       },
-  { to: '/notifications', icon: '🔔', label: 'Notifications', shortLabel: 'Alerts' },
-  { to: '/groups',        icon: '🌐', label: 'Groups'       },
-  { to: '/opportunities', icon: '💼', label: 'Opportunities', shortLabel: 'Jobs' },
-  { to: '/profile',       icon: '👤', label: 'Profile'      },
+  { to: '/',              icon: 'FE', label: 'Feed'         },
+  { to: '/videos',        icon: 'VI', label: 'Videos'       },
+  { to: '/post',          icon: 'PO', label: 'Posts'        },
+  { to: '/search',        icon: 'SE', label: 'Search'       },
+  { to: '/notifications', icon: 'AL', label: 'Notifications', shortLabel: 'Alerts' },
+  { to: '/groups',        icon: 'GR', label: 'Groups'       },
+  { to: '/opportunities', icon: 'JO', label: 'Opportunities', shortLabel: 'Jobs' },
+  { to: '/profile',       icon: 'ME', label: 'Profile'      },
 ];
 
 function initials(name = '') {
@@ -154,7 +154,7 @@ export default function Layout({ children }) {
             </div>
             <div style={{ display: 'flex', gap: 4 }}>
               <NavLink to="/settings" title="Settings">
-                <button className="sidebar-logout" title="Settings" style={{ fontSize: '1rem' }}>⚙️</button>
+                <button className="sidebar-logout" title="Settings" style={{ fontSize: '.72rem', fontWeight: 800 }}>SET</button>
               </NavLink>
               <button className="sidebar-logout sidebar-logout--danger" onClick={handleLogout} aria-label="Log out" title="Log out">⎋</button>
             </div>

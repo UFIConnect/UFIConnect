@@ -112,7 +112,7 @@ export default function ChildSafety() {
 
         <Section title="4. How to report a concern">
           <P>
-            Every profile and every post on {APP_NAME} has a <strong>Report</strong> option (🚩) — open
+            Every profile and every post on {APP_NAME} has a <strong>Report</strong> option — open
             the "•••" menu on a profile, or the "•••" menu on a post, choose <strong>Report</strong>,
             and select <strong>"Child safety concern"</strong> as the reason. Reports filed under this
             reason are routed to our team for immediate review.

@@ -17,6 +17,7 @@ const VISIBILITY_THRESHOLD = 0.6;
 let sharedObserver = null;
 const dwellTimers = new WeakMap(); // Element -> timeout id
 const elementPostIds = new WeakMap(); // Element -> postId
+const elementContexts = new WeakMap(); // Element -> feed context
 
 function handleIntersect(entries) {
   for (const entry of entries) {
@@ -27,7 +28,7 @@ function handleIntersect(entries) {
       if (dwellTimers.has(el)) continue; // already counting down
       const timer = setTimeout(() => {
         dwellTimers.delete(el);
-        reportEngaged(postId);
+        reportEngaged(postId, elementContexts.get(el) || 'feed');
       }, DWELL_MS);
       dwellTimers.set(el, timer);
     } else {
@@ -47,18 +48,20 @@ function getSharedObserver() {
 // elementRef: a ref to the card's root DOM node. postId: what to report
 // once the dwell threshold is crossed — pass null/undefined to skip
 // tracking (e.g. a post with no real id yet).
-export function useEngagementTracking(elementRef, postId) {
+export function useEngagementTracking(elementRef, postId, context = 'feed') {
   useEffect(() => {
     const el = elementRef.current;
     if (!el || !postId) return;
     const observer = getSharedObserver();
     elementPostIds.set(el, postId);
+    elementContexts.set(el, context);
     observer.observe(el);
     return () => {
       observer.unobserve(el);
       elementPostIds.delete(el);
+      elementContexts.delete(el);
       const timer = dwellTimers.get(el);
       if (timer) { clearTimeout(timer); dwellTimers.delete(el); }
     };
-  }, [elementRef, postId]);
+  }, [elementRef, postId, context]);
 }

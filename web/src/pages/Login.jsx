@@ -118,7 +118,7 @@ export default function Login() {
         </div>
 
         <div className="demo-hint">
-          Demo credentials: <strong>maria@example.com</strong> / <strong>password123</strong>
+          Use your UFIconnect account credentials to continue.
         </div>
       </div>
     </div>

@@ -192,7 +192,7 @@ export default function PostDetail() {
     return (
       <Shell>
         <div style={{ maxWidth: 640, margin: '60px auto', textAlign: 'center', padding: 24 }}>
-          <div style={{ fontSize: '2rem', marginBottom: 12 }}>🔍</div>
+          <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12 }}>Q</div>
           <h2 style={{ marginBottom: 8 }}>Post not found</h2>
           <p style={{ color: 'var(--muted)', marginBottom: 20 }}>
             It may have aged out of the feed, or the link is no longer valid.
@@ -203,7 +203,7 @@ export default function PostDetail() {
     );
   }
 
-  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: '🌐', label: 'UFIconnect', color: 'var(--primary)' };
+  const src = SOURCE_META[post.source] || SOURCE_META.uficonnect || { icon: 'UFI', label: 'UFIconnect', color: 'var(--primary)' };
   const isVideo = post.mediaType === 'video';
   const isImage = post.mediaType === 'image';
   const playlistUrl = isVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
@@ -261,7 +261,7 @@ export default function PostDetail() {
                 onClick={() => toggleMuted()}
                 aria-label={muted ? 'Unmute' : 'Mute'}
                 style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
-              >{muted ? '🔇' : '🔊'}</button>
+              >{muted ? 'M' : 'S'}</button>
             </div>
           )}
           {!youtubeId && (playlistUrl || directVideoUrl) && (
@@ -283,7 +283,7 @@ export default function PostDetail() {
                 onClick={() => toggleMuted()}
                 aria-label={muted ? 'Unmute' : 'Mute'}
                 style={{ position: 'absolute', top: 12, right: 12, width: 38, height: 38, borderRadius: '50%', background: 'rgba(0,0,0,.55)', border: 'none', color: '#fff', fontSize: '1.05rem', cursor: 'pointer' }}
-              >{muted ? '🔇' : '🔊'}</button>
+              >{muted ? 'M' : 'S'}</button>
             </div>
           )}
           {!youtubeId && !playlistUrl && !directVideoUrl && isImage && post.mediaUrl && (
@@ -311,7 +311,7 @@ export default function PostDetail() {
               // Same GitHub/GitLab star-vs-like distinction as Feed.jsx's
               // stats bar — those two sources' likesCount is really a repo/
               // project star count, not a like on this specific post.
-              post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{(post.source === 'github' || post.source === 'gitlab') ? '⭐' : '❤️'} {post.likesCount.toLocaleString()}</span>
+              post.likesCount > 0 && <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>{post.likesCount.toLocaleString()} {(post.source === 'github' || post.source === 'gitlab') ? 'stars' : 'likes'}</span>
             )}
             {!post.isExternal && post.likesCount > 0 && token && (
               <button

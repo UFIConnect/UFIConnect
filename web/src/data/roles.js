@@ -76,8 +76,18 @@ const T = {
   ecom:    ['E-commerce', 'Growth Marketing', 'Dropshipping', 'Social Media', 'Personal Finance'],
 };
 
+export function roleCode(value) {
+  return String(value || '')
+    .split(/[\s/()-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .toUpperCase() || 'RL';
+}
+
 function r(value, icon, desc, tKey) {
-  return { value, icon, label: value, desc, topics: T[tKey] || T.core };
+  return { value, icon: roleCode(value), label: value, desc, topics: T[tKey] || T.core };
 }
 
 export const ALL_ROLES = [

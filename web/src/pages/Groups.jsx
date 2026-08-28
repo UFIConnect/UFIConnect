@@ -6,35 +6,35 @@ import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const CATEGORY_META = {
-  'AI & ML':     { icon: '🤖', bg: '#F3EEFF', text: '#7C3AED' },
-  'Engineering': { icon: '💻', bg: '#EFF6FF', text: '#2563EB' },
-  'Startups':    { icon: '🚀', bg: '#FFFBEB', text: '#D97706' },
-  'Design':      { icon: '🎨', bg: '#FDF2F8', text: '#DB2777' },
-  'Marketing':   { icon: '📈', bg: '#ECFDF5', text: '#059669' },
-  'Finance':     { icon: '💰', bg: '#F0F9FF', text: '#0284C7' },
-  'Remote Work': { icon: '🌍', bg: '#EEF2FF', text: '#4338CA' },
-  'Education':   { icon: '🎓', bg: '#FFF7ED', text: '#EA580C' },
-  'Social':      { icon: '🔗', bg: '#F9FAFB', text: '#6B7280' },
-  'Health':      { icon: '🏃', bg: '#F0FDF4', text: '#16A34A' },
-  'Climate':     { icon: '🌱', bg: '#ECFDF5', text: '#065F46' },
-  'Food':        { icon: '🍳', bg: '#FFF7ED', text: '#C2410C' },
-  'Travel':      { icon: '✈️', bg: '#F0F9FF', text: '#0369A1' },
-  'Gaming':      { icon: '🎮', bg: '#F5F3FF', text: '#6D28D9' },
-  'Music':       { icon: '🎵', bg: '#FDF4FF', text: '#A21CAF' },
-  'Fashion':     { icon: '👗', bg: '#FFF1F2', text: '#BE123C' },
-  'Lifestyle':   { icon: '🌟', bg: '#FFFFF0', text: '#92400E' },
-  'Sports':      { icon: '⚽', bg: '#ECFDF5', text: '#047857' },
-  'Space':       { icon: '🚀', bg: '#EEF2FF', text: '#3730A3' },
+  'AI & ML':     { icon: 'AI', bg: '#F3EEFF', text: '#7C3AED' },
+  'Engineering': { icon: 'EN', bg: '#EFF6FF', text: '#2563EB' },
+  'Startups':    { icon: 'ST', bg: '#FFFBEB', text: '#D97706' },
+  'Design':      { icon: 'DS', bg: '#FDF2F8', text: '#DB2777' },
+  'Marketing':   { icon: 'MK', bg: '#ECFDF5', text: '#059669' },
+  'Finance':     { icon: 'FI', bg: '#F0F9FF', text: '#0284C7' },
+  'Remote Work': { icon: 'RW', bg: '#EEF2FF', text: '#4338CA' },
+  'Education':   { icon: 'ED', bg: '#FFF7ED', text: '#EA580C' },
+  'Social':      { icon: 'SO', bg: '#F9FAFB', text: '#6B7280' },
+  'Health':      { icon: 'HE', bg: '#F0FDF4', text: '#16A34A' },
+  'Climate':     { icon: 'CL', bg: '#ECFDF5', text: '#065F46' },
+  'Food':        { icon: 'FD', bg: '#FFF7ED', text: '#C2410C' },
+  'Travel':      { icon: 'TR', bg: '#F0F9FF', text: '#0369A1' },
+  'Gaming':      { icon: 'GM', bg: '#F5F3FF', text: '#6D28D9' },
+  'Music':       { icon: 'MU', bg: '#FDF4FF', text: '#A21CAF' },
+  'Fashion':     { icon: 'FA', bg: '#FFF1F2', text: '#BE123C' },
+  'Lifestyle':   { icon: 'LI', bg: '#FFFFF0', text: '#92400E' },
+  'Sports':      { icon: 'SP', bg: '#ECFDF5', text: '#047857' },
+  'Space':       { icon: 'SC', bg: '#EEF2FF', text: '#3730A3' },
 };
 
 const PLATFORM_META = {
-  reddit:      { icon: '🟠', label: 'Reddit',         color: '#FF4500' },
-  discord:     { icon: '💬', label: 'Discord',        color: '#5865F2' },
-  linkedin:    { icon: '💼', label: 'LinkedIn',       color: '#0A66C2' },
-  hackernews:  { icon: '🔶', label: 'News',           color: '#FF6600' },
-  devto:       { icon: '👩‍💻', label: 'DEV Community',  color: '#3B49DF' },
-  github:      { icon: '🐙', label: 'GitHub',         color: '#24292F' },
-  uficonnect:  { icon: '🌐', label: 'UFIconnect',    color: '#6366F1' },
+  reddit:      { icon: 'RD', label: 'Reddit',         color: '#FF4500' },
+  discord:     { icon: 'DS', label: 'Discord',        color: '#5865F2' },
+  linkedin:    { icon: 'in', label: 'LinkedIn',       color: '#0A66C2' },
+  hackernews:  { icon: 'HN', label: 'News',           color: '#FF6600' },
+  devto:       { icon: 'DEV', label: 'DEV Community', color: '#3B49DF' },
+  github:      { icon: 'GH', label: 'GitHub',         color: '#24292F' },
+  uficonnect:  { icon: 'UFI', label: 'UFIconnect',    color: '#6366F1' },
 };
 
 function debounce(fn, delay) {
@@ -156,8 +156,8 @@ function CreateGroupModal({ categories, onClose, onCreate }) {
           <label className="form-label">Visibility</label>
           <div style={{ display: 'flex', gap: 8 }}>
             {[
-              { value: false, label: '🌐 Public', desc: 'Listed for everyone, anyone can join' },
-              { value: true,  label: '🔒 Private', desc: 'Hidden from the directory — join by invite only' },
+              { value: false, label: 'Public', desc: 'Listed for everyone, anyone can join' },
+              { value: true,  label: 'Private', desc: 'Hidden from the directory - join by invite only' },
             ].map(({ value, label, desc }) => {
               const active = isPrivate === value;
               return (
@@ -391,7 +391,7 @@ function GroupsContent() {
             gap: 8,
           }}
         >
-          <span>⚠️</span>
+          <span>!</span>
           <span>
             Failed to load groups.{' '}
             <button
@@ -425,7 +425,7 @@ function GroupsContent() {
               opacity: 0.5,
             }}
           >
-            🔍
+            Q
           </span>
           <input
             className="form-input"
@@ -555,7 +555,7 @@ function GroupsContent() {
       {/* Content */}
       {!loading && !error && displayed.length === 0 && (
         <div className="empty-state">
-          <div className="empty-icon">🔍</div>
+          <div className="empty-icon">Q</div>
           <div className="empty-title">
             {search ? 'No groups found' : 'No groups in this category'}
           </div>
@@ -595,7 +595,7 @@ function GroupsContent() {
           <div className="groups-grid">
             {displayed.map((group) => {
               const meta = CATEGORY_META[group.category] || {
-                icon: '📌',
+                icon: 'GR',
                 bg: '#F1F5F9',
                 text: '#64748B',
               };
@@ -662,7 +662,7 @@ function GroupsContent() {
                       padding: '2px 8px', borderRadius: 4,
                       display: 'flex', alignItems: 'center', gap: 3,
                     }}>
-                      🔒 Private
+                      Private
                     </div>
                   )}
 
@@ -742,7 +742,7 @@ function GroupsContent() {
                         fontWeight: 500,
                       }}
                     >
-                      👥 {group.members?.toLocaleString() || 0}
+                      {group.members?.toLocaleString() || 0} members
                     </span>
                     {group.isExternal ? (
                       <a
@@ -774,7 +774,7 @@ function GroupsContent() {
                       >
                         {joiningId === group.id
                           ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} style={{ width: 14, height: 14 }} />
-                          : isJoined ? '✓ Joined' : 'Join'}
+                          : isJoined ? 'Joined' : 'Join'}
                       </button>
                     )}
                   </div>

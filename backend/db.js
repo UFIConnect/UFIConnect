@@ -136,6 +136,7 @@ async function initBackupDB() {
         source_url      TEXT,
         media_url       TEXT,
         media_type      TEXT,
+        media_poster    TEXT,
         topic           TEXT,
         likes_count     INTEGER DEFAULT 0,
         comments_count  INTEGER DEFAULT 0,
@@ -145,6 +146,7 @@ async function initBackupDB() {
       )
     `);
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
+    await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     // Same compound indexes migrateDB() gives the primary for this exact
     // query shape — without these the backup just reproduces the seq-scan-
     // and-external-sort cost failover exists to avoid, the moment any real
@@ -164,7 +166,7 @@ async function initBackupDB() {
 
 const BACKUP_SYNC_COLUMNS = [
   'id', 'source', 'title', 'content', 'author_name', 'source_url', 'media_url',
-  'media_type', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
+  'media_type', 'media_poster', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
 ];
 
 // Keeps the backup's feed_posts_cache from just sitting frozen at whatever
@@ -227,6 +229,19 @@ async function query(text, params) {
     throw new Error('DB not available');
   }
   return pool.query(text, params);
+}
+
+/** Borrow a primary DB client for a short transaction. */
+async function withClient(fn) {
+  if (!pool || !_connected) {
+    throw new Error('DB not available');
+  }
+  const client = await pool.connect();
+  try {
+    return await fn(client);
+  } finally {
+    client.release();
+  }
 }
 
 // primaryReadPool's own statement_timeout option is a startup-packet
@@ -316,4 +331,4 @@ function isReadFailoverActive() {
   return Date.now() < primaryReadOutageUntil;
 }
 
-module.exports = { initDB, initBackupDB, startBackupSync, query, readQuery, isConnected, isBackupConnected, isReadFailoverActive };
+module.exports = { initDB, initBackupDB, startBackupSync, query, withClient, readQuery, isConnected, isBackupConnected, isReadFailoverActive };

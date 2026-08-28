@@ -51,6 +51,30 @@ function officeStreamUrl(path, base = API) {
   return token ? `${base}${path}?token=${encodeURIComponent(token)}` : `${base}${path}`;
 }
 
+function useMediaQuery(query) {
+  const read = useCallback(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia(query).matches
+      : false
+  ), [query]);
+  const [matches, setMatches] = useState(read);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const media = window.matchMedia(query);
+    const onChange = () => setMatches(media.matches);
+    onChange();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    }
+    media.addListener(onChange);
+    return () => media.removeListener(onChange);
+  }, [query]);
+
+  return matches;
+}
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function fmtUptime(ms) {
@@ -86,6 +110,18 @@ function storageColor(dbSize) {
   if (dbSize?.status === 'critical') return '#f87171';
   if (dbSize?.status === 'warn') return '#fbbf24';
   return '#64748b';
+}
+
+function badgeCode(value, fallback = 'ID') {
+  const code = String(value || '')
+    .replace(/\b(agent|source|worker)\b/gi, '')
+    .split(/[\s/_-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .toUpperCase();
+  return code || fallback;
 }
 
 const H1 = { margin: '0 0 6px', fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: '#f1f5f9' };
@@ -182,7 +218,9 @@ function LogEntry({ entry }) {
       display: 'flex', alignItems: 'flex-start', gap: 10,
       padding: '7px 0', borderBottom: '1px solid rgba(255,255,255,.035)',
     }}>
-      <span style={{ fontSize: 14, lineHeight: 1.5, flexShrink: 0 }}>{entry.emoji}</span>
+      <span style={{ fontSize: 10, lineHeight: 1.5, flexShrink: 0, fontWeight: 800, color: entry.color || '#94a3b8', minWidth: 22 }}>
+        {badgeCode(entry.agentId, 'LOG')}
+      </span>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ color: entry.color || '#94a3b8', fontSize: 12, lineHeight: 1.5 }}>{entry.msg}</div>
         <div style={{ fontSize: 10, color: '#334155', marginTop: 1 }}>{entry.agentId}</div>
@@ -236,7 +274,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 20 }}>🌐</span>
+          <span style={{ fontSize: 11, fontWeight: 800, color: '#60a5fa' }}>WEB</span>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0' }}>Website Health</div>
             {web.lastRun && (
@@ -281,7 +319,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
       <div style={{ marginBottom: 16 }}>
         <Label>Findings</Label>
         {!web.findings || web.findings.length === 0 ? (
-          <div style={{ fontSize: 12, color: '#4ade80', marginTop: 8 }}>✓ No issues found</div>
+          <div style={{ fontSize: 12, color: '#4ade80', marginTop: 8 }}>No issues found</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
             {web.findings.map((f, i) => {
@@ -293,7 +331,7 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
                   background: 'rgba(251,191,36,.06)', border: '1px solid rgba(251,191,36,.15)',
                   borderRadius: 7,
                 }}>
-                  <span style={{ fontSize: 12, color: '#fbbf24' }}>⚠ {f}</span>
+                  <span style={{ fontSize: 12, color: '#fbbf24' }}>! {f}</span>
                   {pts > 0 && (
                     <span style={{ fontSize: 10, fontWeight: 700, color: '#f87171', whiteSpace: 'nowrap', flexShrink: 0 }}>
                       −{pts} pts
@@ -362,23 +400,23 @@ function OverviewView({ status, log, agents, triggerAgent, triggering }) {
           background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.2)',
           display: 'flex', alignItems: 'center', gap: 10,
         }}>
-          <span style={{ fontSize: 14 }}>⚠️</span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: '#f87171' }}>!</span>
           <span style={{ fontSize: 12, color: '#fca5a5' }}>
             <strong>{pausedWorkers.length}</strong> source worker{pausedWorkers.length !== 1 ? 's' : ''} paused by circuit breaker
-            {' — '}{pausedWorkers.map(w => w.emoji + ' ' + (w.name?.replace(' Agent','') || w.id)).join(', ')}
+            {' - '}{pausedWorkers.map(w => `${badgeCode(w.name || w.id)} ${(w.name?.replace(' Agent','') || w.id)}`).join(', ')}
             {'. Will auto-resume in ~5min.'}
           </span>
         </div>
       )}
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
-        <StatCard icon="⏱" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
-        <StatCard icon="📰" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
-        <StatCard icon="🤖" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
-        <StatCard icon="🗄️" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.db}                        color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
-        <StatCard icon="📡" label="SSE Clients"   value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
+        <StatCard icon="UP" label="Uptime"        value={s ? fmtUptime(s.uptime) : '—'}           sub={s?.env}                                                     color="#60a5fa" />
+        <StatCard icon="FP" label="Feed Posts"    value={f?.postCount?.toLocaleString() ?? '—'}    sub={f?.refreshedAt ? `refreshed ${fmtAgo(f.refreshedAt)}` : null} color="#4ade80" />
+        <StatCard icon="AG" label="Agents"        value={a?.active ?? '—'}                         sub={`${a?.logSize || 0} log entries`}                            color="#fbbf24" />
+        <StatCard icon="DB" label="Database"     value={s?.db === 'connected' ? 'Live' : s?.db === 'fallback' ? 'Memory' : '—'} sub={s?.dbReadFailoverActive ? 'read failover active' : s?.dbBackup ? 'backup ready' : s?.db} color={s?.db === 'connected' ? '#4ade80' : '#f97316'} />
+        <StatCard icon="SSE" label="SSE Clients"  value={f?.sseClients ?? '—'}                     sub="feed subscribers"                                            color="#a78bfa" />
         <StatCard
-          icon="🌐"
+          icon="SRC"
           label="Sources"
           value={src ? `${src.healthy}/${src.total}` : '—'}
           sub={src?.paused ? `${src.paused} paused` : src?.starting ? `${src.starting} starting` : 'all healthy'}
@@ -396,7 +434,9 @@ function OverviewView({ status, log, agents, triggerAgent, triggering }) {
       }}>
         {Object.entries(agents).map(([id, ag]) => (
           <Card key={id} style={{ padding: '13px 15px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-            <span style={{ fontSize: 20, lineHeight: 1.3, flexShrink: 0 }}>{ag.emoji}</span>
+            <span style={{ fontSize: 10, lineHeight: 1.5, flexShrink: 0, fontWeight: 800, color: ag.color || '#94a3b8', minWidth: 24 }}>
+              {badgeCode(ag.name || id, 'AG')}
+            </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: ag.color }}>{ag.name}</div>
               <div style={{
@@ -537,7 +577,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
       desc: 'Node.js Express — REST API + agent system',
       url: 'https://uficonnect-api-708r.onrender.com',
       health: 'https://uficonnect-api-708r.onrender.com/health',
-      icon: '⚙️',
+      icon: 'API',
       hook: 'RENDER_HOOK_API',
     },
     {
@@ -545,7 +585,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
       name: 'Web Frontend',
       desc: 'React SPA — main user-facing app',
       url: 'https://uficonnect.org',
-      icon: '🌐',
+      icon: 'WEB',
       hook: 'RENDER_HOOK_WEB',
     },
     {
@@ -553,7 +593,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
       name: 'Office',
       desc: 'This dashboard — operations & monitoring',
       url: 'https://office.uficonnect.org',
-      icon: '🏢',
+      icon: 'OFF',
       hook: 'RENDER_HOOK_OFFICE',
     },
     {
@@ -562,7 +602,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
       desc: 'Same codebase as Backend API (SERVICE_ROLE=pipeline) — does all external-source fetching',
       url: 'https://uficonnect-pipeline-708r.onrender.com',
       health: 'https://uficonnect-pipeline-708r.onrender.com/health',
-      icon: '📦',
+      icon: 'PIPE',
       hook: 'RENDER_HOOK_PIPELINE',
     },
   ];
@@ -579,7 +619,7 @@ function DeployView({ triggerDeploy, deploying, log }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 13, maxWidth: 680, marginBottom: 30 }}>
         {services.map(({ slug, name, desc, url, icon, hook }) => (
           <Card key={slug} style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 30, flexShrink: 0 }}>{icon}</span>
+            <span style={{ fontSize: 12, fontWeight: 800, flexShrink: 0, color: '#60a5fa', minWidth: 34 }}>{icon}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>{name}</div>
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{desc}</div>
@@ -686,7 +726,7 @@ function AutofixView() {
       </p>
 
       <Card style={{ display: 'flex', alignItems: 'center', gap: 16, maxWidth: 680, marginBottom: 20 }}>
-        <span style={{ fontSize: 30, flexShrink: 0 }}>🩹</span>
+        <span style={{ fontSize: 12, fontWeight: 800, flexShrink: 0, color: '#38bdf8', minWidth: 34 }}>FIX</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#f1f5f9' }}>
             Autofix is {data.enabled ? 'ENABLED' : 'disabled'}
@@ -873,7 +913,7 @@ function AnalyticsView() {
                     color: '#f87171', fontSize: 13, opacity: deletingId === u.id ? 0.5 : 1, padding: '2px 4px',
                   }}
                 >
-                  {deletingId === u.id ? '…' : '🗑'}
+                  {deletingId === u.id ? '...' : 'Delete'}
                 </button>
               </Card>
             ))}
@@ -966,7 +1006,7 @@ function VersionsView({ versions, status, pipelineStatus }) {
       name: 'UFconnect Monorepo',
       desc: 'Backend (Node.js) · Web (React) · Mobile (Expo) · Office (React)',
       url: 'https://github.com/yosufkaka99-alt/UFConnect',
-      icon: '📦',
+      icon: 'PKG',
     },
   ];
 
@@ -1099,12 +1139,12 @@ function SourcesView({ status, triggerAgent, triggering }) {
       <p style={SUBTITLE}>Real-time health of all {src?.total ?? 'data'} sources, including public workers, curated fallback agents, and Pro OAuth-authenticated per-user sources.</p>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 28 }}>
-        <StatCard icon="🌐" label="Total Sources"   value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
-        <StatCard icon="✅" label="Healthy"          value={src?.healthy ?? '—'}  sub="fetching or fallback-backed" color="#4ade80" />
+        <StatCard icon="SRC" label="Total Sources"  value={src?.total ?? '—'}    sub="active workers"            color="#60a5fa" />
+        <StatCard icon="OK" label="Healthy"         value={src?.healthy ?? '—'}  sub="fetching or fallback-backed" color="#4ade80" />
         <StatCard icon="⏳" label="Starting"         value={src?.starting ?? '—'} sub="awaiting first fetch"       color="#94a3b8" />
-        <StatCard icon="⚠️" label="Degraded"        value={src?.degraded ?? '—'} sub="≥3 consecutive errors"     color="#fbbf24" />
-        <StatCard icon="🔴" label="Paused"           value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
-        <StatCard icon="📰" label="Total Seen"
+        <StatCard icon="!" label="Degraded"         value={src?.degraded ?? '—'} sub=">=3 consecutive errors"    color="#fbbf24" />
+        <StatCard icon="PZ" label="Paused"          value={src?.paused ?? '—'}   sub="circuit breaker tripped"   color="#f87171" />
+        <StatCard icon="POST" label="Total Seen"
           value={workers.reduce((s, w) => s + (w.postCount || 0), 0).toLocaleString()}
           sub="posts across all sources" color="#a78bfa" />
       </div>
@@ -1125,7 +1165,9 @@ function SourcesView({ status, triggerAgent, triggering }) {
                 display: 'flex', flexDirection: 'column', gap: 8,
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 20, lineHeight: 1 }}>{w.emoji}</span>
+                  <span style={{ fontSize: 10, lineHeight: 1, fontWeight: 800, minWidth: 22, color: w.color || '#e2e8f0' }}>
+                    {badgeCode(w.name || w.id, 'SRC')}
+                  </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: w.color || '#e2e8f0' }}>
                       {w.name?.replace(' Agent', '') || w.id}
@@ -1147,9 +1189,9 @@ function SourcesView({ status, triggerAgent, triggering }) {
                 </div>
 
                 <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#64748b', flexWrap: 'wrap' }}>
-                  <span>📥 <strong style={{ color: '#e2e8f0' }}>{(w.postCount || 0).toLocaleString()}</strong> posts</span>
-                  <span>🔄 <strong style={{ color: '#e2e8f0' }}>{(w.fetchCount || 0).toLocaleString()}</strong> fetches</span>
-                  <span>❌ <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong> err</span>
+                  <span>In <strong style={{ color: '#e2e8f0' }}>{(w.postCount || 0).toLocaleString()}</strong> posts</span>
+                  <span>Fetches <strong style={{ color: '#e2e8f0' }}>{(w.fetchCount || 0).toLocaleString()}</strong></span>
+                  <span>Err <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong></span>
                 </div>
 
                 {w.isConnectedSource ? (
@@ -1169,12 +1211,12 @@ function SourcesView({ status, triggerAgent, triggering }) {
                           color: w.paused ? '#f87171' : '#60a5fa',
                         }}
                       >
-                        {triggering[w.id] ? '...' : w.paused ? '↺ Reset' : '▶ Run'}
+                        {triggering[w.id] ? '...' : w.paused ? 'Reset' : 'Run'}
                       </button>
                     </div>
                     {w.paused && (
                       <div style={{ fontSize: 10, color: '#f87171', padding: '4px 8px', background: 'rgba(239,68,68,.06)', borderRadius: 4 }}>
-                        ⏸ Paused — {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
+                        Paused - {w.consecutiveErrors} consecutive errors. Auto-resumes in ~5 min.
                       </div>
                     )}
                   </>
@@ -1217,16 +1259,16 @@ function SortHelperPanel({ status, triggerAgent, triggering }) {
         <Label color="#a78bfa">Sort Helper</Label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_agent')} disabled={triggering.sort_agent}>
-            {triggering.sort_agent ? '...' : '🧮 Re-sort now'}
+            {triggering.sort_agent ? '...' : 'Re-sort now'}
           </Btn>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_distrib')} disabled={triggering.sort_distrib}>
-            {triggering.sort_distrib ? '...' : '🔀 Re-diversify now'}
+            {triggering.sort_distrib ? '...' : 'Re-diversify now'}
           </Btn>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('mix_optimizer')} disabled={triggering.mix_optimizer}>
-            {triggering.mix_optimizer ? '...' : '🎛️ Audit mix now'}
+            {triggering.mix_optimizer ? '...' : 'Audit mix now'}
           </Btn>
           <Btn size="sm" variant="ghost" onClick={() => triggerAgent('sort_optimizer')} disabled={triggering.sort_optimizer}>
-            {triggering.sort_optimizer ? '...' : '🧭 Audit ranking now'}
+            {triggering.sort_optimizer ? '...' : 'Audit ranking now'}
           </Btn>
         </div>
       </div>
@@ -1363,7 +1405,7 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
                       background: id ? '#38bdf8' : '#334155',
                       animation: id ? 'pulse 1.1s ease-in-out infinite' : 'none',
                     }} />
-                    {id ? <>{w?.emoji || '⚙️'} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
+                    {id ? <>{badgeCode(w?.name || id, 'SRC')} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
                   </div>
                 );
               })}
@@ -1405,7 +1447,7 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
             }}
           >
             {transferable.map(w => (
-              <option key={w.id} value={w.id}>{w.emoji} {(w.name || w.id).replace(' Agent', '')}</option>
+              <option key={w.id} value={w.id}>{badgeCode(w.name || w.id)} {(w.name || w.id).replace(' Agent', '')}</option>
             ))}
           </select>
           <Btn
@@ -1413,7 +1455,7 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
             onClick={() => targetSource && triggerAgent(targetSource)}
             disabled={!targetSource || targetBusy}
           >
-            {targetBusy ? 'Refetching...' : '⇪ Refetch source'}
+            {targetBusy ? 'Refetching...' : 'Refetch source'}
           </Btn>
         </div>
         {targetWorker && (
@@ -1426,7 +1468,7 @@ function RefetchHelperPanel({ status, triggerAgent, triggering }) {
 
       {outage?.active && (
         <div style={{ fontSize: 11, color: '#fbbf24', padding: '8px 10px', background: 'rgba(251,191,36,.08)', borderRadius: 6, marginBottom: 4 }}>
-          🟠 Reddit is in a protective backoff right now — its anonymous endpoints are being rate-limited
+          Reddit is in a protective backoff right now - its anonymous endpoints are being rate-limited
           by Reddit, so it's standing down rather than retrying (until {fmtTime(outage.until)}). This is
           expected behavior, not a broken source.
         </div>
@@ -1477,11 +1519,11 @@ function SvcTag({ svc }) {
   );
 }
 
-function FlowConnector({ colors, fast }) {
+function FlowConnector({ colors, fast, compact = false }) {
   const dur = fast ? 1.1 : 2.6;
   return (
     <div style={{
-      position: 'relative', height: 4, flex: '0 0 56px', margin: '0 2px',
+      position: 'relative', height: 4, flex: compact ? '0 0 34px' : '0 0 56px', margin: '0 2px',
       background: 'rgba(255,255,255,.05)', borderRadius: 2, overflow: 'hidden', alignSelf: 'center',
     }}>
       {colors.map((c, i) => (
@@ -1522,7 +1564,7 @@ function TransferRing({ pct, active }) {
         strokeDasharray={c} strokeDashoffset={active ? c - (pct / 100) * c : c}
         transform="rotate(-90 32 32)" style={{ transition: 'stroke-dashoffset .5s ease' }}
       />
-      <text x={32} y={38} textAnchor="middle" fontSize={18} fill="#e2e8f0">⇪</text>
+      <text x={32} y={38} textAnchor="middle" fontSize={13} fontWeight="800" fill="#e2e8f0">RQ</text>
     </svg>
   );
 }
@@ -1539,7 +1581,7 @@ function TransferRing({ pct, active }) {
 //   the request — always api, since pipeline has no public traffic).
 // Viewed stays its own independent fetch either way (DB-backed analytics,
 // correct regardless of which service answers it).
-function PipelineView({ status, pipelineStatus }) {
+function PipelineView({ status, pipelineStatus, compact = false }) {
   const [pageviews, setPageviews] = useState(null);
   useEffect(() => {
     let cancelled = false;
@@ -1566,6 +1608,13 @@ function PipelineView({ status, pipelineStatus }) {
   const q            = pipelineStatus?.refreshQueue;
   const running      = !!q?.running;
   const pct          = q?.batchTotal ? Math.round((q.batchDone / q.batchTotal) * 100) : 0;
+  const smallNode = compact
+    ? { flexBasis: 168, width: 168, minWidth: 168, padding: 12 }
+    : {};
+  const wideNode = compact
+    ? { flexBasis: 230, width: 230, minWidth: 230, padding: 12 }
+    : {};
+  const ringSize = compact ? 52 : 62;
 
   return (
     <>
@@ -1576,10 +1625,10 @@ function PipelineView({ status, pipelineStatus }) {
         and onward run on api. Moves in real time as it actually happens, nothing staged for the screenshot.
       </p>
 
-      <Card style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: 1400 }}>
+      <Card style={{ overflowX: 'auto', padding: compact ? 12 : 20 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: compact ? 1250 : 1400 }}>
           {/* Stage 1 — Sources */}
-          <PipelineNode style={{ flex: '1 1 360px', minWidth: 320 }}>
+          <PipelineNode style={{ flex: '1 1 360px', minWidth: 320, ...wideNode }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <div><Label color="#60a5fa">Sources</Label><SvcTag svc="pipeline" /></div>
               <span style={{ fontSize: 11, color: '#64748b' }}>{healthyCount}/{workers.length} live</span>
@@ -1603,7 +1652,7 @@ function PipelineView({ status, pipelineStatus }) {
                         border: `1px solid ${isLive ? `${dot}55` : 'rgba(255,255,255,.06)'}`,
                       }}
                     >
-                      <span style={{ fontSize: 12, lineHeight: 1 }}>{w.emoji}</span>
+                      <span style={{ fontSize: 9, lineHeight: 1, fontWeight: 800, minWidth: 18, color: dot }}>{badgeCode(w.name || w.id, 'S')}</span>
                       <span style={{
                         display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: dot,
                         animation: isLive ? 'pulse 1.6s ease-in-out infinite' : 'none',
@@ -1615,7 +1664,7 @@ function PipelineView({ status, pipelineStatus }) {
             )}
           </PipelineNode>
 
-          <FlowConnector colors={['#60a5fa', '#38bdf8']} />
+          <FlowConnector colors={['#60a5fa', '#38bdf8']} compact={compact} />
 
           {/* Stage 1.5 — Equalizer: sits between raw fetches and Filter —
               see runEqualizerDrain server-side. Each source's fetches queue
@@ -1626,15 +1675,15 @@ function PipelineView({ status, pipelineStatus }) {
               actually made it through recently — never excludes, only
               reorders, same as every other diversity mechanism in this
               pipeline. */}
-          <PipelineNode glow="#38bdf8" style={{ flex: '0 0 210px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#38bdf8" style={{ flex: '0 0 210px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#38bdf8">Equalizer</Label><SvcTag svc="pipeline" /></div>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(56,189,248,.28), rgba(56,189,248,.03))',
               border: '1px solid rgba(56,189,248,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>⚖️</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>EQ</span></div>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
               {(equalizer?.pendingTotal ?? 0).toLocaleString()} queued
             </div>
@@ -1643,7 +1692,7 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#38bdf8', '#fbbf24']} />
+          <FlowConnector colors={['#38bdf8', '#fbbf24']} compact={compact} />
 
           {/* Stage 2 — Filter: every fetched post's first checkpoint, before
               it's even eligible for sorting — see filterAgentState/
@@ -1651,15 +1700,15 @@ function PipelineView({ status, pipelineStatus }) {
               here: invalid (no id, or a fallback/placeholder post) and
               duplicate (already broadcast by this or another source, within
               the rolling seenPostIds window). */}
-          <PipelineNode glow="#fbbf24" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#fbbf24" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#fbbf24">Filter</Label><SvcTag svc="pipeline" /></div>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(251,191,36,.28), rgba(251,191,36,.03))',
               border: '1px solid rgba(251,191,36,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>🧹</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>FL</span></div>
             <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 8, fontWeight: 700 }}>
               <span style={{ color: '#f87171' }}>−{((filterAgent?.lastDroppedInvalid ?? 0) + (filterAgent?.lastDroppedDuplicate ?? 0)).toLocaleString()}</span>
               <span style={{ color: '#4ade80' }}>+{(filterAgent?.lastOutput ?? 0).toLocaleString()}</span>
@@ -1669,18 +1718,18 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#fbbf24', '#a78bfa']} />
+          <FlowConnector colors={['#fbbf24', '#a78bfa']} compact={compact} />
 
           {/* Stage 3 — Sort & Rank */}
-          <PipelineNode glow="#a78bfa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#a78bfa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#a78bfa">Sort &amp; Rank</Label><SvcTag svc="pipeline" /></div>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(167,139,250,.28), rgba(167,139,250,.03))',
               border: '1px solid rgba(167,139,250,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>🧮</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>SR</span></div>
             {composition.length > 0 && (
               <div style={{ display: 'flex', height: 8, width: '100%', borderRadius: 4, overflow: 'hidden', marginBottom: 8 }}>
                 {composition.slice(0, 14).map((c, i) => (
@@ -1696,7 +1745,7 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} />
+          <FlowConnector colors={['#a78bfa', '#38bdf8']} fast={running} compact={compact} />
 
           {/* Stage 4 — Refetch Queue (was labeled "Transfer" — renamed to
               avoid colliding with the actual Staging → Cache transfer added
@@ -1711,7 +1760,7 @@ function PipelineView({ status, pipelineStatus }) {
               that anything's actually happening overall — a rolling count
               underneath does that regardless of whether a batch happens to
               be running at this exact instant. */}
-          <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow={running ? '#38bdf8' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#38bdf8">Refetch Queue</Label><SvcTag svc="pipeline" /></div>
             <div style={{ margin: '14px 0' }}>
               <TransferRing pct={pct} active={running} />
@@ -1727,7 +1776,7 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#38bdf8', '#00d4aa']} />
+          <FlowConnector colors={['#38bdf8', '#00d4aa']} compact={compact} />
 
           {/* Stage 4.5 — Staging → Cache. The mechanism that actually moves
               content to where users can see it post-split — everything
@@ -1737,15 +1786,15 @@ function PipelineView({ status, pipelineStatus }) {
               request actually reads from. Runs on the api role, not
               pipeline — see staging above (status.staging, not
               pipelineStatus). */}
-          <PipelineNode glow="#00d4aa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#00d4aa" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#00d4aa">Staging → Cache</Label><SvcTag svc="api" /></div>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(0,212,170,.28), rgba(0,212,170,.03))',
               border: '1px solid rgba(0,212,170,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>📦</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>DB</span></div>
             <div style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
               {(staging?.pendingCount ?? 0).toLocaleString()} pending
             </div>
@@ -1756,10 +1805,11 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
             <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
               {(staging?.totalTransferred ?? 0).toLocaleString()} total transferred
+              {staging?.liveCachePostCount != null ? ` · ${staging.liveCachePostCount.toLocaleString()} live posts` : ''}
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#00d4aa', '#f472b6']} />
+          <FlowConnector colors={['#00d4aa', '#f472b6']} compact={compact} />
 
           {/* Stage 5 — Topic Filter: the one genuinely per-user step in this
               pipeline — every stage before this is shared/global, the same
@@ -1769,15 +1819,15 @@ function PipelineView({ status, pipelineStatus }) {
               request happened most recently, same live-motion convention
               Sort & Rank's own node already uses for its own per-request
               calls — not a global aggregate. */}
-          <PipelineNode glow="#f472b6" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#f472b6" style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#f472b6">Topic Filter</Label><SvcTag svc="api" /></div>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(244,114,182,.28), rgba(244,114,182,.03))',
               border: '1px solid rgba(244,114,182,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>🎯</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>TF</span></div>
             <div style={{ display: 'flex', gap: 8, fontSize: 11, marginBottom: 8, fontWeight: 700 }}>
               <span style={{ color: '#f87171' }}>−{(topicFilterAgent?.lastDropped ?? 0).toLocaleString()}</span>
               <span style={{ color: '#4ade80' }}>+{(topicFilterAgent?.lastOutput ?? 0).toLocaleString()}</span>
@@ -1787,18 +1837,18 @@ function PipelineView({ status, pipelineStatus }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#f472b6', '#4ade80']} />
+          <FlowConnector colors={['#f472b6', '#4ade80']} compact={compact} />
 
           {/* Stage 6 — Viewed (live site) */}
-          <PipelineNode glow="#4ade80" style={{ flex: '1 1 200px', textAlign: 'center', alignItems: 'center' }}>
+          <PipelineNode glow="#4ade80" style={{ flex: '1 1 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <Label color="#4ade80">Viewed</Label>
             <div style={{
-              width: 62, height: 62, borderRadius: '50%', margin: '14px 0',
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(74,222,128,.24), rgba(74,222,128,.03))',
               border: '1px solid rgba(74,222,128,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
               animation: 'glowPulse 2.4s ease-in-out infinite',
-            }}>🌐</div>
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>PV</span></div>
             <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0', lineHeight: 1 }}>
               {pageviews?.available === false ? '—' : (pageviews?.today ?? '—')}
             </div>
@@ -1822,7 +1872,7 @@ function PipelineView({ status, pipelineStatus }) {
       </div>
 
       {/* ── Detail row: what's actually happening inside each stage ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14, marginTop: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${compact ? 240 : 300}px, 1fr))`, gap: 14, marginTop: 20 }}>
         <EqualizerDetailCard equalizer={equalizer} workers={workers} />
         <FilterDetailCard filterAgent={filterAgent} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
@@ -1856,7 +1906,7 @@ function EqualizerDetailCard({ equalizer, workers = [] }) {
   const queuedRows = Object.entries(bufferedBySource).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const shareRows = Object.entries(sharePct).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const nameFor = (id) => (workers.find(w => w.id === id)?.name || id).replace(' Agent', '');
-  const emojiFor = (id) => workers.find(w => w.id === id)?.emoji || '⚙️';
+  const badgeFor = (id) => badgeCode(workers.find(w => w.id === id)?.name || id, 'SRC');
 
   return (
     <Card>
@@ -1882,7 +1932,7 @@ function EqualizerDetailCard({ equalizer, workers = [] }) {
                 display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: '#e2e8f0',
                 padding: '3px 9px', borderRadius: 14, background: 'rgba(56,189,248,.1)', border: '1px solid rgba(56,189,248,.25)',
               }}>
-                {emojiFor(id)} {nameFor(id)} <span style={{ color: '#64748b' }}>{n}</span>
+                {badgeFor(id)} {nameFor(id)} <span style={{ color: '#64748b' }}>{n}</span>
               </span>
             ))}
           </div>
@@ -1893,7 +1943,7 @@ function EqualizerDetailCard({ equalizer, workers = [] }) {
         <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
           <div style={{ marginBottom: 4 }}>Recent output share (what the dampening reacts to):</div>
           {shareRows.map(([id, pct]) => (
-            <div key={id}>{emojiFor(id)} {nameFor(id)}: <span style={{ color: '#94a3b8' }}>{pct}%</span></div>
+            <div key={id}>{badgeFor(id)} {nameFor(id)}: <span style={{ color: '#94a3b8' }}>{pct}%</span></div>
           ))}
         </div>
       )}
@@ -1956,7 +2006,7 @@ function FilterDetailCard({ filterAgent }) {
 
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
         Last source in: <span style={{ color: '#94a3b8' }}>{filterAgent?.lastContext || '—'}</span>
-        {filterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {filterAgent.lastError}</div>}
+        {filterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>! {filterAgent.lastError}</div>}
       </div>
 
       {bySource.length > 0 && (
@@ -2028,7 +2078,7 @@ function SortRankDetailCard({ sortAgent, distrib, composition }) {
 
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
         Triggered by: <span style={{ color: '#94a3b8' }}>{sortAgent?.lastContext || '—'}</span>
-        {sortAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {sortAgent.lastError}</div>}
+        {sortAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>! {sortAgent.lastError}</div>}
       </div>
 
       {composition.length > 0 && (
@@ -2097,7 +2147,7 @@ function TransferDetailCard({ q, workers = [], dbSize, cacheFreshness = {} }) {
                   background: id ? '#38bdf8' : '#334155',
                   animation: id ? 'pulse 1.1s ease-in-out infinite' : 'none',
                 }} />
-                {id ? <>{w?.emoji || '⚙️'} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
+                {id ? <>{badgeCode(w?.name || id, 'SRC')} {(w?.name || id).replace(' Agent', '')}</> : 'idle'}
               </div>
             );
           })}
@@ -2132,7 +2182,7 @@ function TransferDetailCard({ q, workers = [], dbSize, cacheFreshness = {} }) {
         <div>Last full run took: <span style={{ color: '#94a3b8' }}>{lastFullRunS != null ? `${lastFullRunS}s` : '—'}</span></div>
         <div>Reason: <span style={{ color: '#94a3b8' }}>{q?.lastReason || '—'}</span></div>
         <div>Newest cached post date: <span style={{ color: '#94a3b8' }}>{cacheFreshness?.newestPostCreatedAt ? fmtAgo(cacheFreshness.newestPostCreatedAt) : '—'}</span></div>
-        {q?.lastError && <div style={{ color: '#f87171' }}>⚠ {q.lastError}</div>}
+        {q?.lastError && <div style={{ color: '#f87171' }}>! {q.lastError}</div>}
       </div>
     </Card>
   );
@@ -2146,6 +2196,24 @@ function TransferDetailCard({ q, workers = [], dbSize, cacheFreshness = {} }) {
 // hours. Runs on the api role only; staging (the object this reads) comes
 // from that role's own /office/status response.
 function StagingTransferDetailCard({ staging }) {
+  const process = staging?.transferProcess || {};
+  const liveCachePostCount = staging?.liveCachePostCount ?? process.liveCachePostCount;
+  const bySourceRows = Object.entries(staging?.bySource || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  const movedRows = Object.entries(staging?.lastSourceCounts || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  const recentRuns = Array.isArray(staging?.recentRuns) ? staging.recentRuns.slice(0, 5) : [];
+  const batchCapacity = process.batchSize && process.maxBatches
+    ? process.batchSize * process.maxBatches
+    : null;
+  const formatMs = (ms) => {
+    if (ms == null) return '—';
+    if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+    return `${Math.round(ms)}ms`;
+  };
+
   return (
     <Card>
       <Label color="#38bdf8">Staging → Cache — detail</Label>
@@ -2156,14 +2224,21 @@ function StagingTransferDetailCard({ staging }) {
       </p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="pending in staging" value={staging?.pendingCount != null ? staging.pendingCount.toLocaleString() : '—'} color="#38bdf8" />
+        <DetailStat label="live cache posts" value={liveCachePostCount != null ? liveCachePostCount.toLocaleString() : '—'} color="#4ade80" />
         <DetailStat label="last run moved" value={(staging?.lastCount ?? 0).toLocaleString()} />
+        <DetailStat label="saved / deleted" value={`${(staging?.lastSavedCount ?? 0).toLocaleString()} / ${(staging?.lastDeletedCount ?? 0).toLocaleString()}`} />
         <DetailStat label="total transferred" value={(staging?.totalTransferred ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="transfer lock" value={staging?.inFlight ? 'active' : 'clear'} color={staging?.inFlight ? '#fbbf24' : '#4ade80'} />
+        <DetailStat label="process state" value={process.state || (staging?.inFlight ? 'draining' : 'ready')} color={process.state === 'degraded' ? '#f87171' : '#38bdf8'} />
+        <DetailStat label="last duration" value={formatMs(staging?.lastDurationMs)} />
+        <DetailStat label="batch capacity" value={batchCapacity != null ? `${batchCapacity.toLocaleString()}/min` : '—'} />
         <DetailStat label="latest staged write" value={staging?.newestFetchedAt ? fmtAgo(staging.newestFetchedAt) : '—'} color="#38bdf8" />
       </div>
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Last run: <span style={{ color: '#94a3b8' }}>{staging?.lastRun ? fmtAgo(staging.lastRun) : 'not run yet'}</span></div>
         <div>Last trigger: <span style={{ color: '#94a3b8' }}>{staging?.lastReason || '—'}</span></div>
+        <div>Current batch: <span style={{ color: '#94a3b8' }}>{staging?.currentBatch ? `${staging.currentBatch} (${(staging.currentBatchSize || 0).toLocaleString()} rows)` : 'idle'}</span></div>
+        <div>Configured batch: <span style={{ color: '#94a3b8' }}>{process.batchSize ? `${process.batchSize.toLocaleString()} x ${process.maxBatches || 1}` : '—'}</span></div>
         <div>Oldest staged row: <span style={{ color: '#94a3b8' }}>{staging?.oldestFetchedAt ? fmtAgo(staging.oldestFetchedAt) : 'none queued'}</span></div>
         <div>Newest staged post date: <span style={{ color: '#94a3b8' }}>{staging?.newestPostCreatedAt ? fmtAgo(staging.newestPostCreatedAt) : '—'}</span></div>
         {staging?.inFlight && (
@@ -2171,8 +2246,46 @@ function StagingTransferDetailCard({ staging }) {
             Transfer lock active for {Math.round((staging.lockAgeMs || 0) / 1000)}s
           </div>
         )}
-        {staging?.lastError && <div style={{ color: '#f87171' }}>⚠ {staging.lastError}</div>}
+        {staging?.lastError && <div style={{ color: '#f87171' }}>! {staging.lastError}</div>}
       </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14, marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+        <div>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Waiting by source</div>
+          {bySourceRows.length ? bySourceRows.map(([source, count]) => (
+            <div key={source} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, marginBottom: 5 }}>
+              <span style={{ color: '#94a3b8' }}>{source}</span>
+              <strong style={{ color: '#e2e8f0' }}>{Number(count || 0).toLocaleString()}</strong>
+            </div>
+          )) : <div style={{ fontSize: 11, color: '#475569' }}>No staged backlog.</div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Last moved by source</div>
+          {movedRows.length ? movedRows.map(([source, count]) => (
+            <div key={source} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, marginBottom: 5 }}>
+              <span style={{ color: '#94a3b8' }}>{source}</span>
+              <strong style={{ color: '#e2e8f0' }}>{Number(count || 0).toLocaleString()}</strong>
+            </div>
+          )) : <div style={{ fontSize: 11, color: '#475569' }}>No completed transfer yet.</div>}
+        </div>
+      </div>
+
+      {recentRuns.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Recent transfer runs</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {recentRuns.map((run) => (
+              <div key={run.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <span style={{ color: run.status === 'error' ? '#f87171' : '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {run.reason || 'scheduled'} · {run.finishedAt ? fmtAgo(run.finishedAt) : 'running'}
+                </span>
+                <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{(run.movedCount || 0).toLocaleString()} moved</span>
+                <span style={{ color: '#64748b' }}>{formatMs(run.durationMs)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -2225,7 +2338,7 @@ function TopicFilterDetailCard({ topicFilterAgent }) {
 
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10 }}>
         Last viewer's topics: <span style={{ color: '#94a3b8' }}>{topicFilterAgent?.lastTopics?.length ? topicFilterAgent.lastTopics.join(', ') : '—'}</span>
-        {topicFilterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>⚠ {topicFilterAgent.lastError}</div>}
+        {topicFilterAgent?.lastError && <div style={{ color: '#f87171', marginTop: 4 }}>! {topicFilterAgent.lastError}</div>}
       </div>
 
       {byTopic.length > 0 && (
@@ -2508,12 +2621,12 @@ function TopicsView() {
         background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)',
         fontSize: 12.5, color: '#94a3b8',
       }}>
-        <span>📥 <strong style={{ color: '#e2e8f0' }}>{grandTotal.toLocaleString()}</strong> posts in</span>
+        <span>In <strong style={{ color: '#e2e8f0' }}>{grandTotal.toLocaleString()}</strong> posts</span>
         <span style={{ color: '#475569' }}>from</span>
         <strong style={{ color: '#e2e8f0' }}>{bySourceTotal.length}</strong> sources
         <span style={{ color: '#475569' }}>→</span>
         <span>sorted into</span>
-        <strong style={{ color: '#e2e8f0' }}>{filledTopics}</strong> of {topics.length} topics 🎯
+        <strong style={{ color: '#e2e8f0' }}>{filledTopics}</strong> of {topics.length} topics
       </div>
 
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 18 }}>
@@ -2735,19 +2848,62 @@ export default function App() {
   };
 
   const nav = [
-    { id: 'overview', label: 'Overview',     icon: '◉' },
-    { id: 'sources',  label: 'Live Sources', icon: '🌐' },
-    { id: 'pipeline', label: 'Pipeline',      icon: '⚡' },
-    { id: 'topics',   label: 'Topics',        icon: '🏷️' },
-    { id: 'agents',   label: 'Agents',        icon: '⬡' },
-    { id: 'feed',     label: 'Feed Manager', icon: '🧮' },
-    { id: 'analytics',label: 'Analytics',    icon: '📈' },
-    { id: 'deploy',   label: 'Deploy Center', icon: '↑' },
-    { id: 'autofix',  label: 'Autofix',       icon: '🩹' },
-    { id: 'versions', label: 'Versions',      icon: '≡' },
+    { id: 'overview', label: 'Overview',      icon: 'OV' },
+    { id: 'sources',  label: 'Live Sources',  icon: 'LS' },
+    { id: 'pipeline', label: 'Pipeline',      icon: 'PL' },
+    { id: 'topics',   label: 'Topics',        icon: 'TP' },
+    { id: 'agents',   label: 'Agents',        icon: 'AG' },
+    { id: 'feed',     label: 'Feed Manager',  icon: 'FM' },
+    { id: 'analytics',label: 'Analytics',     icon: 'AN' },
+    { id: 'deploy',   label: 'Deploy Center', icon: 'DP' },
+    { id: 'autofix',  label: 'Autofix',       icon: 'AF' },
+    { id: 'versions', label: 'Versions',      icon: 'VR' },
   ];
   const apiDbFailover = !!status?.server?.dbReadFailoverActive;
   const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
+  const isMobile = useMediaQuery('(max-width: 760px)');
+  const shellStyle = {
+    display: 'flex',
+    flexDirection: isMobile ? 'column' : 'row',
+    minHeight: '100vh',
+    background: '#080810',
+    color: '#e2e8f0',
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  };
+  const asideStyle = {
+    width: isMobile ? '100%' : 224,
+    flexShrink: 0,
+    background: '#08080f',
+    borderRight: isMobile ? 'none' : '1px solid rgba(255,255,255,.06)',
+    borderBottom: isMobile ? '1px solid rgba(255,255,255,.08)' : 'none',
+    display: 'flex',
+    flexDirection: 'column',
+    position: isMobile ? 'sticky' : 'static',
+    top: 0,
+    zIndex: 20,
+  };
+  const navStyle = {
+    flex: isMobile ? '0 0 auto' : 1,
+    display: isMobile ? 'flex' : 'block',
+    gap: isMobile ? 8 : 0,
+    overflowX: isMobile ? 'auto' : 'visible',
+    padding: isMobile ? '0 14px 12px' : 0,
+    scrollbarWidth: 'thin',
+  };
+  const statusRowsStyle = {
+    display: isMobile ? 'grid' : 'flex',
+    gridTemplateColumns: isMobile ? 'repeat(auto-fit, minmax(142px, 1fr))' : undefined,
+    flexDirection: isMobile ? undefined : 'column',
+    gap: isMobile ? 6 : 4,
+    marginBottom: 8,
+  };
+  const mainStyle = {
+    flex: 1,
+    minWidth: 0,
+    padding: isMobile ? '20px 14px 32px' : '36px 40px',
+    overflowY: 'auto',
+    maxHeight: isMobile ? 'none' : '100vh',
+  };
 
   return (
     <>
@@ -2764,19 +2920,10 @@ export default function App() {
         a { text-decoration: none; }
       `}</style>
 
-      <div style={{
-        display: 'flex', minHeight: '100vh',
-        background: '#080810', color: '#e2e8f0',
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-      }}>
+      <div style={shellStyle}>
         {/* ── Sidebar ── */}
-        <aside style={{
-          width: 224, flexShrink: 0,
-          background: '#08080f',
-          borderRight: '1px solid rgba(255,255,255,.06)',
-          display: 'flex', flexDirection: 'column',
-        }}>
-          <div style={{ padding: '26px 20px 18px' }}>
+        <aside style={asideStyle}>
+          <div style={{ padding: isMobile ? '16px 14px 12px' : '26px 20px 18px' }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
               UFconnect
             </div>
@@ -2785,7 +2932,7 @@ export default function App() {
             </div>
           </div>
 
-          <nav style={{ flex: 1 }}>
+          <nav style={navStyle}>
             {nav.map(({ id, label, icon }) => {
               const active = view === id;
               return (
@@ -2793,23 +2940,28 @@ export default function App() {
                   key={id}
                   onClick={() => setView(id)}
                   style={{
-                    display: 'flex', alignItems: 'center', gap: 10, width: '100%',
-                    padding: '11px 20px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                    display: 'flex', alignItems: 'center', gap: 8, width: isMobile ? 'auto' : '100%',
+                    flex: isMobile ? '0 0 auto' : undefined,
+                    padding: isMobile ? '9px 11px' : '11px 20px',
+                    border: 'none', cursor: 'pointer', textAlign: 'left',
+                    borderRadius: isMobile ? 8 : 0,
                     fontSize: 13, fontWeight: active ? 700 : 400,
                     background: active ? 'rgba(59,130,246,.1)' : 'transparent',
                     color: active ? '#60a5fa' : '#64748b',
-                    borderRight: `2px solid ${active ? '#3b82f6' : 'transparent'}`,
+                    borderRight: isMobile ? 'none' : `2px solid ${active ? '#3b82f6' : 'transparent'}`,
+                    borderBottom: isMobile ? `2px solid ${active ? '#3b82f6' : 'transparent'}` : 'none',
                     transition: 'color .15s, background .15s',
+                    whiteSpace: 'nowrap',
                   }}
                 >
-                  <span style={{ fontSize: 16, opacity: active ? 1 : 0.7 }}>{icon}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, opacity: active ? 1 : 0.7, minWidth: isMobile ? 'auto' : 22 }}>{icon}</span>
                   {label}
                 </button>
               );
             })}
           </nav>
 
-          <div style={{ padding: '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
+          <div style={{ padding: isMobile ? '10px 14px 12px' : '16px 20px', borderTop: '1px solid rgba(255,255,255,.05)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
               <Dot ok={connected} pulse={connected} />
               <span style={{ fontSize: 11, color: '#475569' }}>
@@ -2821,7 +2973,7 @@ export default function App() {
                 an 8+ day stale build with nothing surfacing that anywhere;
                 its uptime reads here now specifically so that's obvious at
                 a glance next time, not just in the Pipeline detail view. */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+            <div style={statusRowsStyle}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Dot ok={!!status?.server} pulse={false} />
                 <span style={{ fontSize: 10.5, color: apiDbFailover ? '#fbbf24' : '#64748b' }}>
@@ -2837,7 +2989,7 @@ export default function App() {
               {status?.staging && (
                 <div style={{ fontSize: 10.5, color: (status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? '#f87171' : '#64748b' }}>
                   Staging · {status.staging.pendingCount ?? '—'} pending
-                  {(status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? ' ⚠' : ''}
+                  {(status.staging.pendingCount ?? 0) > STAGING_BACKLOG_WARN ? ' !' : ''}
                 </div>
               )}
               {status?.dbSize && (
@@ -2850,31 +3002,31 @@ export default function App() {
               href="https://uficonnect.org"
               target="_blank"
               rel="noreferrer"
-              style={{ fontSize: 10, color: '#334155', display: 'block', marginBottom: 2 }}
+              style={{ fontSize: 10, color: '#334155', display: isMobile ? 'inline-block' : 'block', marginRight: isMobile ? 10 : 0, marginBottom: 2 }}
             >
-              uficonnect.org ↗
+              uficonnect.org open
             </a>
             <a
               href="https://uficonnect-api-708r.onrender.com/health"
               target="_blank"
               rel="noreferrer"
-              style={{ fontSize: 10, color: '#334155', display: 'block', marginBottom: 2 }}
+              style={{ fontSize: 10, color: '#334155', display: isMobile ? 'inline-block' : 'block', marginRight: isMobile ? 10 : 0, marginBottom: 2 }}
             >
-              api health ↗
+              api health open
             </a>
             <a
               href="https://uficonnect-pipeline-708r.onrender.com/health"
               target="_blank"
               rel="noreferrer"
-              style={{ fontSize: 10, color: '#334155', display: 'block' }}
+              style={{ fontSize: 10, color: '#334155', display: isMobile ? 'inline-block' : 'block' }}
             >
-              pipeline health ↗
+              pipeline health open
             </a>
           </div>
         </aside>
 
         {/* ── Main content ── */}
-        <main style={{ flex: 1, padding: '36px 40px', overflowY: 'auto', maxHeight: '100vh' }}>
+        <main style={mainStyle}>
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
@@ -2884,7 +3036,7 @@ export default function App() {
               from which status object (Sources/Equalizer/Filter/Sort&Rank/
               Refetch Queue from pipelineStatus; the new Staging→Cache stage
               and Topic Filter from status). */}
-          {view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} />}
+          {view === 'pipeline' && <PipelineView status={status} pipelineStatus={pipelineStatus} compact={isMobile} />}
           {view === 'topics'   && <TopicsView />}
           {view === 'agents'   && <AgentsView agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {/* Sort/refetch-queue state is pipeline-only real data (see

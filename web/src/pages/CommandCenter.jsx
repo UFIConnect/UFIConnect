@@ -17,15 +17,14 @@ const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch'
 // REAL_PUBLISH_PLATFORMS server-side) — every other connected platform can
 // still be selected in Cross-Post, it just gets queued instead of posted.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit'];
-const OFFICE_APP_URL = import.meta.env.VITE_OFFICE_URL || 'https://office.uficonnect.org';
 
 const SECTIONS = [
-  { key: 'feed',      label: 'Connected Feed', icon: '📡' },
-  { key: 'yourfeed',  label: 'Your Feed',      icon: '🗂️' },
-  { key: 'automation', label: 'Automation',     icon: '⚙️' },
-  { key: 'content',   label: 'AI Content Hub', icon: '✨' },
-  { key: 'jobs',      label: 'Job Tracker',    icon: '💼' },
-  { key: 'crosspost', label: 'Cross-Post',     icon: '📤' },
+  { key: 'automation', label: 'Automation' },
+  { key: 'yourfeed',   label: 'Your Feed' },
+  { key: 'feed',       label: 'Following Feed' },
+  { key: 'content',    label: 'AI Content Hub' },
+  { key: 'jobs',       label: 'Job Tracker' },
+  { key: 'crosspost',  label: 'Cross-Post' },
 ];
 
 function timeAgo(iso) {
@@ -49,14 +48,14 @@ function StatChip({ label, value }) {
 function LockedState({ onUpgrade }) {
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
-      <div style={{ fontSize: '2.4rem', marginBottom: 12 }}>🧭</div>
+      <div style={{ fontSize: '.8rem', fontWeight: 900, letterSpacing: '.08em', color: 'var(--primary)', marginBottom: 12 }}>COMMAND CENTER</div>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Unlock the Command Center</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         See everything from your connected accounts in one place, draft social
         content with AI, and track your job search — all with a Pro or
         Business plan.
       </p>
-      <button className="btn btn-primary" type="button" onClick={onUpgrade}>Upgrade to unlock →</button>
+      <button className="btn btn-primary" type="button" onClick={onUpgrade}>Upgrade to unlock</button>
     </div>
   );
 }
@@ -79,7 +78,7 @@ function PostRow({ post, onOpen }) {
           width: 52, height: 52, borderRadius: 8, flexShrink: 0, background: 'var(--bg-secondary)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
         }}>
-          {post.mediaType === 'video' ? '🎬' : '📝'}
+          {post.mediaType === 'video' ? 'Video' : 'Post'}
         </div>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -115,7 +114,7 @@ function PostDetailModal({ post, onClose }) {
           <div style={{ fontWeight: 700, fontSize: '.75rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.4px' }}>
             {post.sourceLabel || post.source}
           </div>
-          <button onClick={onClose} aria-label="Close" style={{ all: 'unset', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)' }}>✕</button>
+          <button onClick={onClose} aria-label="Close" style={{ all: 'unset', cursor: 'pointer', fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)' }}>Close</button>
         </div>
         {post.mediaUrl && post.mediaType === 'image' && (
           <img src={post.mediaUrl} alt="" style={{ width: '100%', borderRadius: 10, marginBottom: 12, maxHeight: 280, objectFit: 'cover' }} />
@@ -125,14 +124,14 @@ function PostDetailModal({ post, onClose }) {
           <p style={{ fontSize: '.85rem', lineHeight: 1.6, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{post.content}</p>
         )}
         <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: '.78rem', color: 'var(--muted)', margin: '12px 0' }}>
-          {post.author?.name && <span>👤 {post.author.name}</span>}
-          <span>🕒 {timeAgo(post.createdAt)}</span>
-          {post.likesCount > 0 && <span>❤️ {post.likesCount}</span>}
-          {post.commentsCount > 0 && <span>💬 {post.commentsCount}</span>}
+          {post.author?.name && <span>{post.author.name}</span>}
+          <span>{timeAgo(post.createdAt)}</span>
+          {post.likesCount > 0 && <span>{post.likesCount} likes</span>}
+          {post.commentsCount > 0 && <span>{post.commentsCount} comments</span>}
         </div>
         {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ marginTop: 8 }}>
-            View original post ↗
+            View original post
           </a>
         )}
       </div>
@@ -175,9 +174,8 @@ function ConnectedFeedSection() {
   if (!posts.length) {
     return (
       <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-        <div style={{ fontSize: '2rem', marginBottom: 8 }}>👥</div>
         <div style={{ fontWeight: 700, marginBottom: 4 }}>Nothing here yet</div>
-        <div style={{ color: 'var(--muted)', fontSize: '.85rem' }}>Follow people or connect an account to see their posts here.</div>
+        <div style={{ color: 'var(--muted)', fontSize: '.85rem' }}>Follow people on UFIconnect to see their posts here.</div>
       </div>
     );
   }
@@ -243,12 +241,12 @@ function ConnectedFeedSection() {
 }
 
 const DRAFT_PLATFORMS = [
-  { value: 'tiktok',    label: 'TikTok',      icon: '🎵' },
-  { value: 'instagram', label: 'Instagram',   icon: '📸' },
-  { value: 'linkedin',  label: 'LinkedIn',    icon: '💼' },
-  { value: 'twitter',   label: 'X / Twitter', icon: '𝕏' },
-  { value: 'threads',   label: 'Threads',     icon: '🧵' },
-  { value: 'general',   label: 'General',     icon: '🌐' },
+  { value: 'tiktok',    label: 'TikTok',      icon: 'TT' },
+  { value: 'instagram', label: 'Instagram',   icon: 'IG' },
+  { value: 'linkedin',  label: 'LinkedIn',    icon: 'in' },
+  { value: 'twitter',   label: 'X / Twitter', icon: 'X' },
+  { value: 'threads',   label: 'Threads',     icon: 'TH' },
+  { value: 'general',   label: 'General',     icon: 'GEN' },
 ];
 
 // AI drafting only — the member still posts it themselves on the platform's
@@ -290,7 +288,7 @@ function ContentHubSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>✨ Draft new content</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           AI-drafted captions for the platform you post to — copy, tweak, and post it yourself.
         </p>
@@ -326,7 +324,7 @@ function ContentHubSection() {
             />
           </div>
           <button className="btn btn-primary" type="submit" disabled={drafting || !topic.trim()} style={{ alignSelf: 'flex-start' }}>
-            {drafting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Draft with AI ✨'}
+            {drafting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Draft with AI'}
           </button>
         </form>
       </div>
@@ -343,7 +341,7 @@ function ContentHubSection() {
             <div key={i} className="card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                 <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '.86rem', lineHeight: 1.6, flex: 1 }}>{d}</p>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyDraft(d)} style={{ flexShrink: 0 }}>📋 Copy</button>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyDraft(d)} style={{ flexShrink: 0 }}>Copy</button>
               </div>
             </div>
           ))}
@@ -411,12 +409,12 @@ function YourFeedSection() {
   const liveFeedButton = (
     <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
       <div style={{ flex: 1, minWidth: 220 }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>🫵 Live You Feed</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Live Your Feed</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.5 }}>
-          Open the live equalizer feed for the accounts and people you follow.
+          Open one equalized scroll of posts from your connected accounts.
         </p>
       </div>
-      <Link to="/you" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>Open You Feed →</Link>
+      <Link to="/you" className="btn btn-primary btn-sm" style={{ flexShrink: 0 }}>Open Your Feed</Link>
     </div>
   );
 
@@ -425,10 +423,9 @@ function YourFeedSection() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {liveFeedButton}
         <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-          <div style={{ fontSize: '2rem', marginBottom: 8 }}>🔗</div>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>No connected accounts yet</div>
           <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect a platform to review and download your own posts from it here.</div>
-          <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+          <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account</Link>
         </div>
       </div>
     );
@@ -452,7 +449,7 @@ function YourFeedSection() {
                 color: active ? '#fff' : (supported ? 'var(--text)' : 'var(--muted)'),
                 border: 'none', opacity: supported ? 1 : 0.6,
               }}
-              title={supported ? undefined : 'Coming soon — pending platform API approval'}
+              title={supported ? undefined : 'Coming soon - pending platform API approval'}
             >
               {meta.icon} {meta.label}{!supported && ' · Coming soon'}
             </button>
@@ -485,15 +482,15 @@ function YourFeedSection() {
                 <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>{timeAgo(post.createdAt)}</div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>📋 Text</button>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>Text</button>
                 {post.mediaType === 'image' && post.mediaUrl && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadImage(post)}>🖼 Image</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadImage(post)}>Image</button>
                 )}
                 {post.mediaType === 'video_thumbnail_only' && post.sourceUrl && (
-                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">▶ View original ↗</a>
+                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View original</a>
                 )}
                 {!post.mediaType && post.sourceUrl && (
-                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View ↗</a>
+                  <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
                 )}
               </div>
             </div>
@@ -585,7 +582,7 @@ function JobTrackerSection() {
           type="button" onClick={handleRefresh} disabled={refreshing}
           className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}
         >
-          {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🔄 Refresh'}
+          {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Refresh'}
         </button>
       </div>
 
@@ -608,7 +605,7 @@ function JobTrackerSection() {
                   background: strong ? '#ECFDF5' : 'var(--bg-secondary)',
                   padding: '3px 9px', borderRadius: 10,
                 }}>
-                  {strong ? '✓ Strong match' : `Match ${job.matchScore}`}
+                  {strong ? 'Strong match' : `Match ${job.matchScore}`}
                 </span>
               )}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -623,12 +620,12 @@ function JobTrackerSection() {
                       border: 'none', textTransform: 'capitalize',
                     }}
                   >
-                    {t?.status === s ? '✓ ' : ''}{s}
+                    {t?.status === s ? `Selected ${s}` : s}
                   </button>
                 ))}
               </div>
               {job.sourceUrl && (
-                <a href={job.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View →</a>
+                <a href={job.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
               )}
             </div>
           );
@@ -644,9 +641,9 @@ function JobTrackerSection() {
 }
 
 const PLATFORM_RESULT_META = {
-  posted: { icon: '✅', label: 'Posted' },
-  queued: { icon: '🕒', label: 'Queued — pending platform approval' },
-  failed: { icon: '❌', label: 'Failed' },
+  posted: { icon: 'OK', label: 'Posted' },
+  queued: { icon: 'Queued', label: 'Queued - pending platform approval' },
+  failed: { icon: 'Failed', label: 'Failed' },
 };
 
 // Real publishing only for Bluesky/Reddit (see REAL_PUBLISH_PLATFORMS both
@@ -699,13 +696,13 @@ function CrossPostSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="card">
-        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>📤 Post to multiple platforms</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Post to multiple platforms</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           Bluesky and Reddit post for real. Every other platform saves your post as queued until its publishing API is available.
         </p>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
-            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account →</Link>
+            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account</Link>
           </div>
         ) : (
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
@@ -752,7 +749,7 @@ function CrossPostSection() {
                   <span>{resultMeta.icon}</span>
                   <span style={{ fontWeight: 600 }}>{meta.icon} {meta.label}</span>
                   <span style={{ color: 'var(--muted)' }}>
-                    {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post ↗</a> : (t.error || resultMeta.label)}
+                    {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>
                 </div>
               );
@@ -811,7 +808,7 @@ function AutomationToolCard({ icon, title, description, status, actionLabel, to,
     <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 164 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 style={{ margin: 0, fontSize: '.95rem', lineHeight: 1.25 }}>{icon} {title}</h3>
+          <h3 style={{ margin: 0, fontSize: '.95rem', lineHeight: 1.25 }}>{icon ? `${icon} ` : ''}{title}</h3>
           <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
             {description}
           </p>
@@ -839,12 +836,11 @@ function AutomationSection({ onSelectSection }) {
 
     async function loadSnapshot() {
       setChecking(true);
-      const [socialRes, feedRes, historyRes, jobsRes, hqRes] = await Promise.allSettled([
+      const [socialRes, feedRes, historyRes, jobsRes] = await Promise.allSettled([
         client.get('/social/platforms'),
-        client.get('/office/feed', { params: { mode: 'following', limit: 1, sort: 'newest', seed: 'command-center-automation' } }),
+        client.get('/command-center/your-content/feed', { params: { limit: 1 } }),
         client.get('/command-center/cross-post/history'),
         client.get('/jobs/tracking'),
-        client.get('/hq/status'),
       ]);
       if (cancelled) return;
 
@@ -852,7 +848,6 @@ function AutomationSection({ onSelectSection }) {
       const feedPosts = feedRes.status === 'fulfilled' ? (feedRes.value.data.posts || []) : [];
       const history = historyRes.status === 'fulfilled' ? (historyRes.value.data.posts || []) : [];
       const jobs = jobsRes.status === 'fulfilled' ? (jobsRes.value.data.jobs || []) : [];
-      const hq = hqRes.status === 'fulfilled' ? hqRes.value.data : {};
       const connected = social.connected || {};
 
       setSnapshot({
@@ -865,10 +860,6 @@ function AutomationSection({ onSelectSection }) {
         trackedJobs: jobs.length,
         savedJobs: jobs.filter(j => j.status === 'saved').length,
         appliedJobs: jobs.filter(j => j.status === 'applied').length,
-        hqHealthy: hq.agentHealth?.healthy ?? null,
-        hqTotal: hq.agentHealth?.total ?? null,
-        hqFeedPosts: hq.feedPostCount ?? null,
-        queuePending: hq.refreshQueue?.pending ?? null,
         refreshedAt: new Date().toISOString(),
       });
       setChecking(false);
@@ -882,9 +873,6 @@ function AutomationSection({ onSelectSection }) {
   const feedStatus = snapshot.newestFeedAt ? `Latest ${timeAgo(snapshot.newestFeedAt)}` : 'Live route ready';
   const crossPostStatus = snapshot.lastCrossPostAt ? `Last ${timeAgo(snapshot.lastCrossPostAt)}` : `${metricValue(snapshot.crossPostRuns)} saved`;
   const jobsStatus = `${metricValue(snapshot.trackedJobs)} tracked`;
-  const hqStatus = Number.isFinite(snapshot.hqHealthy) && Number.isFinite(snapshot.hqTotal)
-    ? `${snapshot.hqHealthy}/${snapshot.hqTotal} healthy`
-    : 'Ops console';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -892,37 +880,34 @@ function AutomationSection({ onSelectSection }) {
         <StatChip label="Accounts" value={snapshot.loading ? '...' : metricValue(snapshot.connectedPlatforms)} />
         <StatChip label="Tracked Jobs" value={snapshot.loading ? '...' : metricValue(snapshot.trackedJobs)} />
         <StatChip label="Cross-Posts" value={snapshot.loading ? '...' : metricValue(snapshot.crossPostRuns)} />
-        <StatChip label="HQ Posts" value={snapshot.loading ? '...' : metricValue(snapshot.hqFeedPosts)} />
+        <StatChip label="Your Posts" value={snapshot.loading ? '...' : metricValue(snapshot.feedPosts)} />
         <button
           type="button"
           className="btn btn-ghost btn-sm"
           onClick={() => setRefreshKey(k => k + 1)}
           style={{ marginLeft: 'auto' }}
         >
-          {checking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🔄 Refresh'}
+          {checking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Refresh'}
         </button>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
         <AutomationToolCard
-          icon="🫵"
           title="You Feed"
-          description="Open the live equalizer feed for followed people and connected platform activity."
+          description="Open the live equalizer feed of posts from your connected accounts."
           status={feedStatus}
-          actionLabel="Open You Feed →"
+          actionLabel="Open Your Feed"
           to="/you"
           primary
         />
         <AutomationToolCard
-          icon="📡"
-          title="Connected Feed"
+          title="Following Feed"
           description="Review the live following pool grouped by source and refresh status."
           status={feedStatus}
-          actionLabel="Open Connected Feed"
+          actionLabel="Open Following Feed"
           onClick={() => onSelectSection('feed')}
         />
         <AutomationToolCard
-          icon="🗂️"
           title="Your Content"
           description="Review and download your own connected-platform posts where the API supports it."
           status={`${metricValue(snapshot.connectedPlatforms)} connected`}
@@ -930,7 +915,6 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('yourfeed')}
         />
         <AutomationToolCard
-          icon="✨"
           title="AI Drafts"
           description="Generate captions and post drafts for the platform you plan to publish on."
           status="Ready"
@@ -938,7 +922,6 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('content')}
         />
         <AutomationToolCard
-          icon="📤"
           title="Cross-Post Queue"
           description="Post to supported platforms and keep pending-platform posts saved in history."
           status={crossPostStatus}
@@ -946,7 +929,6 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('crosspost')}
         />
         <AutomationToolCard
-          icon="💼"
           title="Job Tracker"
           description="Track saved, viewed, and applied opportunities from the live listings system."
           status={jobsStatus}
@@ -954,27 +936,17 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('jobs')}
         />
         <AutomationToolCard
-          icon="🏢"
-          title="Automation HQ"
-          description="Open the data/ops agents console for live source, deploy, autofix, and activity tools."
-          status={hqStatus}
-          actionLabel="Open HQ →"
-          href={OFFICE_APP_URL}
-        />
-        <AutomationToolCard
-          icon="🔗"
           title="Connected Accounts"
           description="Manage OAuth connections that power the personalized feed and content tools."
           status={`${metricValue(snapshot.connectedPlatforms)} connected`}
-          actionLabel="Manage Accounts →"
+          actionLabel="Manage Accounts"
           to="/connected-accounts"
         />
         <AutomationToolCard
-          icon="📄"
           title="Resume Builder"
           description="Maintain your resume draft and feed it into the ATS/job matching workflow."
           status="Add-on"
-          actionLabel="Open Resume Builder →"
+          actionLabel="Open Resume Builder"
           to="/resume-builder"
         />
       </div>
@@ -985,7 +957,7 @@ function AutomationSection({ onSelectSection }) {
 export default function CommandCenter() {
   const { profile } = useAuth();
   const { showToast } = useToast();
-  const [section, setSection] = useState('feed');
+  const [section, setSection] = useState('automation');
   const [pricingOpen, setPricingOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(null);
 
@@ -1010,7 +982,7 @@ export default function CommandCenter() {
     <Layout>
       <div style={{ marginBottom: 20 }}>
         <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-          🧭 Command Center
+          Command Center
         </h1>
         <p style={{ color: 'var(--muted)', fontSize: '.85rem', margin: '4px 0 0' }}>
           Every connected account, organized. AI drafts. Job tracking.
@@ -1036,7 +1008,7 @@ export default function CommandCenter() {
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}
               >
-                {s.icon} {s.label}
+                {s.icon ? `${s.icon} ` : ''}{s.label}
               </button>
             ))}
           </div>

@@ -22,12 +22,12 @@ const PROMPTS = [
 ];
 
 const COMMUNITY_ICONS = {
-  'ufi-general':  '🌐',
-  'ufi-tech':     '💻',
-  'ufi-business': '🚀',
-  'ufi-creative': '🎨',
-  'ufi-career':   '💼',
-  'ufi-wellness': '🌿',
+  'ufi-general':  'GEN',
+  'ufi-tech':     'TECH',
+  'ufi-business': 'BIZ',
+  'ufi-creative': 'CRT',
+  'ufi-career':   'JOB',
+  'ufi-wellness': 'WELL',
 };
 
 export default function Post() {
@@ -210,7 +210,7 @@ export default function Post() {
               {placeholder}
             </div>
             <button className="btn btn-primary btn-sm" style={{ minWidth: 80 }}>
-              ✏️ Post
+              Post
             </button>
           </div>
         ) : (
@@ -282,7 +282,7 @@ export default function Post() {
                         color: sel ? '#fff' : 'var(--text)', cursor: 'pointer',
                       }}
                     >
-                      {COMMUNITY_ICONS[g.id] || '💬'} {g.name}
+                      {COMMUNITY_ICONS[g.id] || 'GR'} {g.name}
                     </button>
                   );
                 })}
@@ -296,7 +296,7 @@ export default function Post() {
                   accept="image/*,video/*"
                   disabled={!!mediaFile}
                   className="btn btn-ghost btn-sm"
-                  label="📷 Photo/Video"
+                  label="Photo/Video"
                 />
                 <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
                 <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
@@ -313,7 +313,7 @@ export default function Post() {
                   disabled={loading || uploading || (!content.trim() && !uploadedMedia) || !groupId}
                   style={{ minWidth: 90 }}
                 >
-                  {loading ? <span className="spinner" /> : uploading ? 'Uploading…' : '✏️ Publish'}
+                  {loading ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
                 </button>
               </div>
             </div>

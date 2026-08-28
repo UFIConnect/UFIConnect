@@ -155,7 +155,7 @@ export default function Conversation() {
         )}
         {!loading && error && (
           <div style={{ textAlign:'center', color:'var(--muted)', marginTop:48, fontSize:'.875rem' }}>
-            <div style={{ fontSize:'1.5rem', marginBottom:8 }}>⚠️</div>
+            <div style={{ fontSize:'.82rem', fontWeight:800, marginBottom:8 }}>!</div>
             Couldn't load messages.{' '}
             <button style={{ background:'none', border:'none', cursor:'pointer', color:'var(--primary)', textDecoration:'underline', fontSize:'.875rem' }} onClick={loadConversation}>
               Try again
@@ -210,8 +210,8 @@ export default function Conversation() {
             </div>
           ) : attachError ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.8rem', color: 'var(--danger, #DC2626)' }}>
-              ⚠️ {attachError}
-              <button type="button" onClick={() => setAttachError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)' }}>✕</button>
+              ! {attachError}
+              <button type="button" onClick={() => setAttachError('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontWeight: 700 }}>Close</button>
             </div>
           ) : attachment && (
             <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -229,7 +229,7 @@ export default function Conversation() {
                   background: 'rgba(0,0,0,.65)', color: '#fff', border: 'none', cursor: 'pointer',
                   fontSize: '.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-              >✕</button>
+              >Remove</button>
             </div>
           )}
         </div>
@@ -275,7 +275,7 @@ export default function Conversation() {
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
-                📷 Photo or video
+                Photo or video
               </button>
               <button
                 type="button"
@@ -289,7 +289,7 @@ export default function Conversation() {
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--surface)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
-                📸 Take a photo
+                Take a photo
               </button>
               {/* Renders its own trigger button + popover — dropped in as a
                   menu row rather than reimplementing a picker, same

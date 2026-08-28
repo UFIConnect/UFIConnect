@@ -210,13 +210,13 @@ export default function GroupDetail() {
       {/* Group header */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-          <div style={{ fontSize: '2.5rem' }}>📌</div>
+          <div style={{ fontSize: '.9rem', fontWeight: 800, color: 'var(--primary)' }}>GR</div>
           <div style={{ flex: 1 }}>
             <h1 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: 4 }}>{group.name}</h1>
             <p style={{ fontSize: '.85rem', color: 'var(--muted)', marginBottom: 12 }}>{group.description}</p>
             <div style={{ display: 'flex', gap: 16, fontSize: '.82rem', color: 'var(--muted)' }}>
-              <span>👥 {group.members?.toLocaleString()} members</span>
-              <span>📂 {group.category}</span>
+              <span>{group.members?.toLocaleString()} members</span>
+              <span>{group.category}</span>
             </div>
           </div>
           <button className={`btn ${joined ? 'btn-ghost' : 'btn-primary'}`} onClick={handleJoin} disabled={joining} style={{ minWidth: 104 }}>
@@ -244,7 +244,7 @@ export default function GroupDetail() {
       {deleteModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
-            <div style={{ fontSize: '2rem', marginBottom: 12, textAlign: 'center' }}>⚠️</div>
+            <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>!</div>
             <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete {group.name}?</h3>
             <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
               This will permanently delete the group and remove it from every member's joined groups. This action <strong>cannot be undone</strong>.
@@ -280,7 +280,7 @@ export default function GroupDetail() {
                 Share something with {group.name}…
               </div>
               <button className="btn btn-primary btn-sm" style={{ minWidth: 80 }}>
-                ✏️ Post
+                Post
               </button>
             </div>
           ) : (
@@ -328,7 +328,7 @@ export default function GroupDetail() {
                     accept="image/*,video/*"
                     disabled={!!mediaFile}
                     className="btn btn-ghost btn-sm"
-                    label="📷 Photo/Video"
+                    label="Photo/Video"
                   />
                   <EmojiPicker textareaRef={textareaRef} value={content} onChange={setContent} />
                   <span style={{ fontSize: '.72rem', color: content.length > 1800 ? '#DC2626' : 'var(--muted)' }}>
@@ -340,7 +340,7 @@ export default function GroupDetail() {
                     Cancel
                   </button>
                   <button type="submit" className="btn btn-primary btn-sm" disabled={posting || uploading || (!content.trim() && !uploadedMedia)} style={{ minWidth: 90 }}>
-                    {posting ? <span className="spinner" /> : uploading ? 'Uploading…' : '✏️ Publish'}
+                    {posting ? <span className="spinner" /> : uploading ? 'Uploading...' : 'Publish'}
                   </button>
                 </div>
               </div>

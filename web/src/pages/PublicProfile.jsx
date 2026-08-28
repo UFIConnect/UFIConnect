@@ -13,30 +13,30 @@ function initials(name = '') {
 }
 
 const ROLE_META = {
-  'Engineer / Developer':    { icon: '💻', color: '#2563EB', bg: '#EFF6FF' },
-  'Designer / Creative':     { icon: '🎨', color: '#7C3AED', bg: '#F3EEFF' },
-  'Product Manager':         { icon: '📋', color: '#0284C7', bg: '#F0F9FF' },
-  'Marketer / Growth':       { icon: '📈', color: '#059669', bg: '#ECFDF5' },
-  'Founder / Entrepreneur':  { icon: '🚀', color: '#D97706', bg: '#FFFBEB' },
-  'Investor / VC':           { icon: '💰', color: '#DB2777', bg: '#FDF2F8' },
-  'Data / Analytics':        { icon: '📊', color: '#EA580C', bg: '#FFF7ED' },
-  'Student / Learner':       { icon: '🎓', color: '#7C3AED', bg: '#F3EEFF' },
-  'Sales / Business Dev':    { icon: '🤝', color: '#2563EB', bg: '#EFF6FF' },
-  'Operations / Finance':    { icon: '⚙️', color: '#059669', bg: '#ECFDF5' },
-  'Content Creator':         { icon: '🎬', color: '#D97706', bg: '#FFFBEB' },
-  'Community Manager':       { icon: '🌐', color: '#0284C7', bg: '#F0F9FF' },
-  'Researcher / Academic':   { icon: '🔬', color: '#7C3AED', bg: '#F3EEFF' },
-  'HR / People Ops':         { icon: '👥', color: '#DB2777', bg: '#FDF2F8' },
+  'Engineer / Developer':    { icon: 'ED', color: '#2563EB', bg: '#EFF6FF' },
+  'Designer / Creative':     { icon: 'DC', color: '#7C3AED', bg: '#F3EEFF' },
+  'Product Manager':         { icon: 'PM', color: '#0284C7', bg: '#F0F9FF' },
+  'Marketer / Growth':       { icon: 'MG', color: '#059669', bg: '#ECFDF5' },
+  'Founder / Entrepreneur':  { icon: 'FE', color: '#D97706', bg: '#FFFBEB' },
+  'Investor / VC':           { icon: 'VC', color: '#DB2777', bg: '#FDF2F8' },
+  'Data / Analytics':        { icon: 'DA', color: '#EA580C', bg: '#FFF7ED' },
+  'Student / Learner':       { icon: 'SL', color: '#7C3AED', bg: '#F3EEFF' },
+  'Sales / Business Dev':    { icon: 'BD', color: '#2563EB', bg: '#EFF6FF' },
+  'Operations / Finance':    { icon: 'OF', color: '#059669', bg: '#ECFDF5' },
+  'Content Creator':         { icon: 'CC', color: '#D97706', bg: '#FFFBEB' },
+  'Community Manager':       { icon: 'CM', color: '#0284C7', bg: '#F0F9FF' },
+  'Researcher / Academic':   { icon: 'RA', color: '#7C3AED', bg: '#F3EEFF' },
+  'HR / People Ops':         { icon: 'HR', color: '#DB2777', bg: '#FDF2F8' },
 };
 
 const LINK_ICONS = {
-  linkedin:  { icon: '🔷', label: 'LinkedIn' },
-  github:    { icon: '🐙', label: 'GitHub' },
+  linkedin:  { icon: 'in', label: 'LinkedIn' },
+  github:    { icon: 'GH', label: 'GitHub' },
   gitlab:    { icon: 'GL', label: 'GitLab' },
-  portfolio: { icon: '🌐', label: 'Portfolio' },
-  resume:    { icon: '📄', label: 'Resume' },
-  twitter:   { icon: '🐦', label: 'X / Twitter' },
-  other:     { icon: '🔗', label: 'Link' },
+  portfolio: { icon: 'URL', label: 'Portfolio' },
+  resume:    { icon: 'CV', label: 'Resume' },
+  twitter:   { icon: 'X', label: 'X / Twitter' },
+  other:     { icon: 'URL', label: 'Link' },
 };
 
 // Role-specific fields to display on public profile
@@ -235,7 +235,7 @@ export default function PublicProfile() {
   if (error || !user) return (
     <Layout>
       <div className="card" style={{ textAlign: 'center', padding: '40px 24px' }}>
-        <div style={{ fontSize: '2.5rem', marginBottom: 12 }}>{error === 'hidden' ? '🔒' : '👤'}</div>
+        <div style={{ fontSize: '2.5rem', marginBottom: 12, fontWeight: 800 }}>{error === 'hidden' ? 'Private' : 'Profile'}</div>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>
           {error === 'hidden' ? 'This profile is private' : 'User not found'}
         </div>
@@ -250,7 +250,7 @@ export default function PublicProfile() {
   );
 
   const isOwn  = myProfile?.id === user.id;
-  const meta   = ROLE_META[user.role] || { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)' };
+  const meta   = ROLE_META[user.role] || { icon: 'ME', color: 'var(--primary)', bg: 'var(--primary-light)' };
   const roleFields = ROLE_PUBLIC_FIELDS[user.role] || [];
   const hasLinks = user.links && Object.values(user.links).some(Boolean);
 
@@ -292,7 +292,7 @@ export default function PublicProfile() {
         </div>
 
         {user.title && <div className="profile-title">{user.title}</div>}
-        {user.organization && <div className="profile-org">🏢 {user.organization}</div>}
+        {user.organization && <div className="profile-org">{user.organization}</div>}
 
         {/* Role badge */}
         {user.role && (
@@ -333,7 +333,7 @@ export default function PublicProfile() {
               disabled={toggling}
               style={{ minWidth: 110 }}
             >
-              {toggling ? <span className="spinner" /> : user.isFollowing ? '✓ Following' : '+ Follow'}
+              {toggling ? <span className="spinner" /> : user.isFollowing ? 'Following' : '+ Follow'}
             </button>
             {user.connectionStatus === 'pending_received' ? (
               <>
@@ -362,14 +362,14 @@ export default function PublicProfile() {
                 style={{ minWidth: 110 }}
               >
                 {connecting ? <span className="spinner" /> : {
-                  none: '🤝 Connect',
-                  pending_sent: 'Pending ✕',
-                  connected: '✓ Connected',
+                  none: 'Connect',
+                  pending_sent: 'Pending',
+                  connected: 'Connected',
                 }[user.connectionStatus || 'none']}
               </button>
             )}
             <Link to={`/messages/${user.id}`} className="btn btn-ghost" style={{ minWidth: 110, textAlign: 'center' }}>
-              💬 Message
+              Message
             </Link>
 
             {/* Rare/high-consequence actions (just Block for now) live behind
@@ -411,7 +411,7 @@ export default function PublicProfile() {
                     onMouseOver={e => e.currentTarget.style.background = 'var(--hover, rgba(0,0,0,.04))'}
                     onMouseOut={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    🚩 Report {user.name}
+                    Report {user.name}
                   </button>
                   <button
                     role="menuitem"
@@ -425,7 +425,7 @@ export default function PublicProfile() {
                     onMouseOver={e => e.currentTarget.style.background = '#FEE2E2'}
                     onMouseOut={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    {blocking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '🚫'} Block {user.name}
+                    {blocking ? <span className="spinner" style={{ width: 12, height: 12 }} /> : null} Block {user.name}
                   </button>
                 </div>
               )}
@@ -508,10 +508,10 @@ export default function PublicProfile() {
             {/* Open-to toggles */}
             {['openToWork', 'openToFunding', 'openToDeals', 'openToCollabs', 'openToCollab'].some(k => user.roleSettings[k]) && (
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 14 }}>
-                {user.roleSettings.openToWork    && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '3px 10px', borderRadius: 10 }}>✦ Open to work</span>}
-                {user.roleSettings.openToFunding && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#D97706', background: '#FFFBEB', padding: '3px 10px', borderRadius: 10 }}>✦ Open to investment</span>}
-                {user.roleSettings.openToDeals   && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#DB2777', background: '#FDF2F8', padding: '3px 10px', borderRadius: 10 }}>✦ Actively seeking deals</span>}
-                {(user.roleSettings.openToCollabs || user.roleSettings.openToCollab) && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#0284C7', background: '#F0F9FF', padding: '3px 10px', borderRadius: 10 }}>✦ Open to collabs</span>}
+                {user.roleSettings.openToWork    && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '3px 10px', borderRadius: 10 }}>Open to work</span>}
+                {user.roleSettings.openToFunding && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#D97706', background: '#FFFBEB', padding: '3px 10px', borderRadius: 10 }}>Open to investment</span>}
+                {user.roleSettings.openToDeals   && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#DB2777', background: '#FDF2F8', padding: '3px 10px', borderRadius: 10 }}>Actively seeking deals</span>}
+                {(user.roleSettings.openToCollabs || user.roleSettings.openToCollab) && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#0284C7', background: '#F0F9FF', padding: '3px 10px', borderRadius: 10 }}>Open to collabs</span>}
               </div>
             )}
           </div>

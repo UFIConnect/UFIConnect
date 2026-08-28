@@ -6,14 +6,14 @@ export const TIERS = [
     name: 'Pro',
     price: '19.94',
     tagline: 'For individuals',
-    icon: '⭐',
+    icon: 'Pro',
   },
   {
     tier: 'business',
     name: 'Business',
     price: '199.94',
     tagline: 'For teams',
-    icon: '🏢',
+    icon: 'Biz',
     locked: true,
     note: 'Final pricing is based on how many employers your business has logged.',
   },
@@ -44,7 +44,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
             onClick={onClose}
             aria-label="Close"
             style={{ all: 'unset', cursor: 'pointer', fontSize: '1.1rem', color: 'var(--muted)', padding: 4 }}
-          >✕</button>
+          >Close</button>
         </div>
         <p style={{ margin: '0 0 20px', fontSize: '.85rem', color: 'var(--muted)' }}>
           Choose a plan to support UFIconnect and unlock what's coming next.
@@ -88,7 +88,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
                 onClick={() => onSelectTier(t.tier)}
                 style={{ flexShrink: 0 }}
               >
-                {t.locked ? 'Locked' : (loadingTier === t.tier ? '…' : 'Choose')}
+                {t.locked ? 'Locked' : (loadingTier === t.tier ? '...' : 'Choose')}
               </button>
             </div>
           ))}

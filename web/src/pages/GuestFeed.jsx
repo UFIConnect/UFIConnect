@@ -132,8 +132,8 @@ function GuestPostCard({ post, active, muted, registerRef }) {
       )}
       {(post.likesCount > 0 || post.commentsCount > 0) && (
         <div style={{ display: 'flex', gap: 14, padding: '10px 14px 14px', fontSize: '.75rem', color: 'var(--muted)' }}>
-          {post.likesCount > 0 && <span>❤️ {post.likesCount.toLocaleString()}</span>}
-          {post.commentsCount > 0 && <span>💬 {post.commentsCount.toLocaleString()}</span>}
+          {post.likesCount > 0 && <span>{post.likesCount.toLocaleString()} likes</span>}
+          {post.commentsCount > 0 && <span>{post.commentsCount.toLocaleString()} comments</span>}
         </div>
       )}
     </div>
@@ -297,14 +297,14 @@ export default function GuestFeed() {
               aria-label="Refresh feed"
               title="Refresh feed"
             >
-              <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }}>🔄</span>
+              <span style={{ display: 'inline-block', animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }}>Refresh</span>
             </button>
             <button
               type="button" onClick={() => toggleMuted()}
               className="btn btn-ghost btn-sm"
               aria-label={muted ? 'Unmute videos' : 'Mute videos'}
             >
-              {muted ? '🔇' : '🔊'}
+              {muted ? 'M' : 'S'}
             </button>
             <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join free</button></Link>
           </div>

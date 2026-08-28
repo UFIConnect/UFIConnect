@@ -16,39 +16,41 @@ function saveDisabled(set) {
 }
 
 const SOURCE_META = {
-  reddit:        { label: 'Reddit',           icon: '🟠', color: '#FF4500', desc: 'Community discussions and threads' },
-  hackernews:    { label: 'Hacker News',       icon: '🗞',  color: '#FF6600', desc: 'Tech links and founder discussions' },
-  devto:         { label: 'DEV Community',     icon: '👩‍💻', color: '#3B49DF', desc: 'Developer articles and tutorials' },
-  github:        { label: 'GitHub',            icon: '🐙', color: '#24292F', desc: 'Open source repos and projects' },
-  gitlab:        { label: 'GitLab',            icon: '🦊', color: '#FC6D26', desc: 'GitLab projects and activity' },
-  youtube:       { label: 'YouTube',           icon: '▶️', color: '#FF0000', desc: 'Tech and creator video content' },
-  medium:        { label: 'Medium',            icon: '📝', color: '#1A8917', desc: 'Long-form articles and essays' },
-  stackoverflow: { label: 'Stack Overflow',    icon: '📚', color: '#F48024', desc: 'Programming Q&A and answers' },
-  mastodon:      { label: 'Mastodon',          icon: '🦣', color: '#6364FF', desc: 'Decentralised social posts' },
-  bluesky:       { label: 'Bluesky',           icon: '🦋', color: '#0085FF', desc: 'Open social network posts' },
-  lobsters:      { label: 'Lobsters',          icon: '🦞', color: '#AC130D', desc: 'Curated tech link aggregator' },
-  arxiv:         { label: 'arXiv',             icon: '🔬', color: '#B31B1B', desc: 'Academic research papers' },
-  producthunt:   { label: 'Product Hunt',      icon: '🚀', color: '#DA552F', desc: 'New product and startup launches' },
-  techcrunch:    { label: 'TechCrunch',        icon: '📰', color: '#0D9F3F', desc: 'Tech and startup news' },
-  theverge:      { label: 'The Verge',         icon: '⬛', color: '#FF3333', desc: 'Tech, science and culture' },
-  indiehackers:  { label: 'Indie Hackers',     icon: '💡', color: '#0E2150', desc: 'Bootstrapper and founder stories' },
-  hashnode:      { label: 'freeCodeCamp',      icon: '🔥', color: '#006400', desc: 'Free coding tutorials and guides' },
-  arstechnica:   { label: 'Ars Technica',      icon: '📡', color: '#FF6600', desc: 'Deep-dive tech and science' },
-  wired:         { label: 'WIRED',             icon: '🔌', color: '#111111', desc: 'Tech, culture and future thinking' },
-  theregister:   { label: 'The Register',      icon: '📋', color: '#CC0000', desc: 'Enterprise IT and open-source news' },
-  venturebeat:   { label: 'VentureBeat',       icon: '💹', color: '#1E6FBF', desc: 'AI, enterprise tech and funding' },
-  smashing:      { label: 'Smashing Magazine', icon: '🎨', color: '#E9620A', desc: 'Web design and frontend dev' },
-  phoronix:      { label: 'Phoronix',          icon: '🐧', color: '#2B7BB9', desc: 'Linux and open-source hardware' },
-  infoq:         { label: 'InfoQ',             icon: '🏗️', color: '#67B346', desc: 'Software architecture and DevOps' },
-  mittr:         { label: 'MIT Tech Review',   icon: '🔬', color: '#A31F34', desc: 'Deep tech and AI policy' },
-  remoteok:      { label: 'Remote OK',         icon: '💻', color: '#10B981', desc: 'Remote job listings' },
-  yc:            { label: 'Y Combinator',      icon: '🦾', color: '#FF6600', desc: 'YC blog and startup essays' },
-  crunchbase:    { label: 'Crunchbase News',   icon: '💰', color: '#146AFF', desc: 'Startup funding and company news' },
-  behance:       { label: 'Behance',           icon: '🖼️', color: '#053EFF', desc: 'Creative portfolio projects' },
-  designweb:     { label: 'Design & Web',      icon: '✏️', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
-  indeed:        { label: 'Indeed',            icon: '💼', color: '#2557A7', desc: 'Remote job listings' },
-  usajobs:       { label: 'USAJobs',           icon: '🏛️', color: '#005EA8', desc: 'U.S. federal government job openings' },
-  uficonnect:    { label: 'UFIconnect',        icon: '🌐', color: '#6366F1', desc: 'Posts from your community' },
+  reddit:        { label: 'Reddit',           icon: 'RD', color: '#FF4500', desc: 'Community discussions and threads' },
+  hackernews:    { label: 'Hacker News',      icon: 'HN', color: '#FF6600', desc: 'Tech links and founder discussions' },
+  devto:         { label: 'DEV Community',    icon: 'DEV', color: '#3B49DF', desc: 'Developer articles and tutorials' },
+  github:        { label: 'GitHub',           icon: 'GH', color: '#24292F', desc: 'Open source repos and projects' },
+  gitlab:        { label: 'GitLab',           icon: 'GL', color: '#FC6D26', desc: 'GitLab projects and activity' },
+  youtube:       { label: 'YouTube',          icon: 'YT', color: '#FF0000', desc: 'Tech and creator video content' },
+  medium:        { label: 'Medium',           icon: 'M', color: '#1A8917', desc: 'Long-form articles and essays' },
+  stackoverflow: { label: 'Stack Overflow',   icon: 'SO', color: '#F48024', desc: 'Programming Q&A and answers' },
+  mastodon:      { label: 'Mastodon',         icon: 'MD', color: '#6364FF', desc: 'Decentralised social posts' },
+  bluesky:       { label: 'Bluesky',          icon: 'BS', color: '#0085FF', desc: 'Open social network posts' },
+  lobsters:      { label: 'Lobsters',         icon: 'LB', color: '#AC130D', desc: 'Curated tech link aggregator' },
+  arxiv:         { label: 'arXiv',            icon: 'arXiv', color: '#B31B1B', desc: 'Academic research papers' },
+  producthunt:   { label: 'Product Hunt',     icon: 'PH', color: '#DA552F', desc: 'New product and startup launches' },
+  techcrunch:    { label: 'TechCrunch',       icon: 'TC', color: '#0D9F3F', desc: 'Tech and startup news' },
+  theverge:      { label: 'The Verge',        icon: 'TV', color: '#FF3333', desc: 'Tech, science and culture' },
+  indiehackers:  { label: 'Indie Hackers',    icon: 'IH', color: '#0E2150', desc: 'Bootstrapper and founder stories' },
+  hashnode:      { label: 'freeCodeCamp',     icon: 'FCC', color: '#006400', desc: 'Free coding tutorials and guides' },
+  arstechnica:   { label: 'Ars Technica',     icon: 'AT', color: '#FF6600', desc: 'Deep-dive tech and science' },
+  wired:         { label: 'WIRED',            icon: 'W', color: '#111111', desc: 'Tech, culture and future thinking' },
+  theregister:   { label: 'The Register',     icon: 'TR', color: '#CC0000', desc: 'Enterprise IT and open-source news' },
+  venturebeat:   { label: 'VentureBeat',      icon: 'VB', color: '#1E6FBF', desc: 'AI, enterprise tech and funding' },
+  smashing:      { label: 'Smashing Magazine', icon: 'SM', color: '#E9620A', desc: 'Web design and frontend dev' },
+  phoronix:      { label: 'Phoronix',         icon: 'PX', color: '#2B7BB9', desc: 'Linux and open-source hardware' },
+  infoq:         { label: 'InfoQ',            icon: 'IQ', color: '#67B346', desc: 'Software architecture and DevOps' },
+  mittr:         { label: 'MIT Tech Review',  icon: 'MIT', color: '#A31F34', desc: 'Deep tech and AI policy' },
+  remoteok:      { label: 'Remote OK',        icon: 'RO', color: '#10B981', desc: 'Remote job listings' },
+  remotive:      { label: 'Remotive',         icon: 'RM', color: '#2563EB', desc: 'Remote job listings' },
+  muse:          { label: 'The Muse',         icon: 'MU', color: '#7C3AED', desc: 'Company job listings and career advice' },
+  yc:            { label: 'Y Combinator',     icon: 'YC', color: '#FF6600', desc: 'YC blog and startup essays' },
+  crunchbase:    { label: 'Crunchbase News',  icon: 'CB', color: '#146AFF', desc: 'Startup funding and company news' },
+  behance:       { label: 'Behance',          icon: 'Be', color: '#053EFF', desc: 'Creative portfolio projects' },
+  designweb:     { label: 'Design & Web',     icon: 'UX', color: '#DB2777', desc: 'CSS, UX and design inspiration' },
+  indeed:        { label: 'Indeed',           icon: 'IN', color: '#2557A7', desc: 'Remote job listings' },
+  usajobs:       { label: 'USAJobs',          icon: 'US', color: '#005EA8', desc: 'U.S. federal government job openings' },
+  uficonnect:    { label: 'UFIconnect',       icon: 'UFI', color: '#6366F1', desc: 'Posts from your community' },
 };
 
 const CATEGORIES = [
@@ -57,7 +59,7 @@ const CATEGORIES = [
   { id: 'social',     label: 'Social & Community',   sources: ['reddit', 'mastodon', 'bluesky', 'indiehackers'] },
   { id: 'content',    label: 'Writing & Video',       sources: ['medium', 'hashnode', 'youtube', 'smashing'] },
   { id: 'startups',   label: 'Startups & Business',  sources: ['producthunt', 'yc', 'crunchbase'] },
-  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'usajobs'] },
+  { id: 'jobs',       label: 'Jobs',                  sources: ['indeed', 'remoteok', 'remotive', 'muse', 'usajobs'] },
   { id: 'design',     label: 'Design & Creative',     sources: ['behance', 'designweb'] },
   { id: 'community',  label: 'UFIconnect',            sources: ['uficonnect'] },
 ];
@@ -121,7 +123,7 @@ function relativeTime(iso) {
 }
 
 function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand }) {
-  const meta = SOURCE_META[sourceId] || { label: sourceId, icon: '📡', color: '#6366F1', desc: '' };
+  const meta = SOURCE_META[sourceId] || { label: sourceId, icon: 'SRC', color: '#6366F1', desc: '' };
   const { postCount = 0, lastFetch, samplePosts = [] } = health || {};
 
   return (
@@ -362,7 +364,7 @@ export default function Sources() {
             <span style={{
               position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
               fontSize: '.85rem', opacity: 0.35, pointerEvents: 'none',
-            }}>🔍</span>
+            }}>Q</span>
             <input
               className="form-input"
               placeholder="Search sources…"
@@ -379,7 +381,7 @@ export default function Sources() {
               background: '#FFF7ED', border: '1px solid #FED7AA',
               fontSize: '.8rem', color: '#92400E', display: 'flex', alignItems: 'center', gap: 8,
             }}>
-              <span>⚠️</span>
+              <span>!</span>
               <span>
                 {disabled.size} source{disabled.size !== 1 ? 's are' : ' is'} hidden from your feed.
               </span>

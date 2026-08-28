@@ -4,31 +4,31 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { ALL_ROLES, EXTRA_INTERESTS } from '../data/roles';
+import { ALL_ROLES, EXTRA_INTERESTS, roleCode } from '../data/roles';
 import { pushSupported, getPushSubscriptionState, enablePush, disablePush } from '../api/push';
 import PricingModal from '../components/PricingModal';
 
 // ── Shared preference constants ───────────────────────────────────────────────
 const GOALS = [
-  { value: 'networking',  icon: '🤝', label: 'Grow my network',       desc: 'Meet peers, collaborators, and mentors' },
-  { value: 'jobs',        icon: '💼', label: 'Find a new role',        desc: 'Discover jobs, gigs, and contracts' },
-  { value: 'learning',    icon: '📚', label: 'Learn new skills',       desc: 'Courses, tutorials, and expert guides' },
-  { value: 'build',       icon: '🛠',  label: 'Build in public',        desc: 'Share work, get feedback, find collaborators' },
-  { value: 'hiring',      icon: '🔍', label: 'Hire great talent',      desc: 'Find exceptional people for your team' },
-  { value: 'funding',     icon: '🏦', label: 'Raise funding',          desc: 'Connect with investors, grants, and VCs' },
-  { value: 'mentorship',  icon: '🧑‍🏫', label: 'Find a mentor',         desc: 'Learn from experienced professionals' },
-  { value: 'events',      icon: '📅', label: 'Attend events',          desc: 'Conferences, meetups, and virtual summits' },
-  { value: 'expertise',   icon: '💡', label: 'Share my expertise',     desc: 'Teach, write, and speak to others' },
-  { value: 'sideproject', icon: '🔨', label: 'Launch a side project',  desc: 'Build something new and find early users' },
+  { value: 'networking',  icon: 'NW', label: 'Grow my network',       desc: 'Meet peers, collaborators, and mentors' },
+  { value: 'jobs',        icon: 'JB', label: 'Find a new role',        desc: 'Discover jobs, gigs, and contracts' },
+  { value: 'learning',    icon: 'LR', label: 'Learn new skills',       desc: 'Courses, tutorials, and expert guides' },
+  { value: 'build',       icon: 'BP', label: 'Build in public',        desc: 'Share work, get feedback, find collaborators' },
+  { value: 'hiring',      icon: 'HT', label: 'Hire great talent',      desc: 'Find exceptional people for your team' },
+  { value: 'funding',     icon: 'FN', label: 'Raise funding',          desc: 'Connect with investors, grants, and VCs' },
+  { value: 'mentorship',  icon: 'MN', label: 'Find a mentor',          desc: 'Learn from experienced professionals' },
+  { value: 'events',      icon: 'EV', label: 'Attend events',          desc: 'Conferences, meetups, and virtual summits' },
+  { value: 'expertise',   icon: 'EX', label: 'Share my expertise',     desc: 'Teach, write, and speak to others' },
+  { value: 'sideproject', icon: 'SP', label: 'Launch a side project',  desc: 'Build something new and find early users' },
 ];
 
 const EXPERIENCE = [
-  { value: 'student',   icon: '🌱', label: 'Early-stage',       desc: 'Student or entry-level, 0–1 year' },
-  { value: 'junior',    icon: '📗', label: 'Junior',             desc: '1–3 years of experience' },
-  { value: 'mid',       icon: '📘', label: 'Mid-level',          desc: '3–6 years of experience' },
-  { value: 'senior',    icon: '📙', label: 'Senior',             desc: '6–10 years of experience' },
-  { value: 'principal', icon: '🏅', label: 'Principal / Staff',  desc: '10+ years, deep expertise' },
-  { value: 'exec',      icon: '🏆', label: 'Executive',          desc: 'C-suite, VP, or Founder' },
+  { value: 'student',   icon: 'ES', label: 'Early-stage',       desc: 'Student or entry-level, 0-1 year' },
+  { value: 'junior',    icon: 'JR', label: 'Junior',             desc: '1-3 years of experience' },
+  { value: 'mid',       icon: 'ML', label: 'Mid-level',          desc: '3-6 years of experience' },
+  { value: 'senior',    icon: 'SR', label: 'Senior',             desc: '6-10 years of experience' },
+  { value: 'principal', icon: 'PS', label: 'Principal / Staff',  desc: '10+ years, deep expertise' },
+  { value: 'exec',      icon: 'EL', label: 'Executive',          desc: 'C-suite, VP, or Founder' },
 ];
 
 const BASE_INTERESTS = [
@@ -65,20 +65,20 @@ const ALL_INTERESTS = [...new Set([...BASE_INTERESTS, ...EXTRA_INTERESTS])];
 
 // ── Role → icon / color metadata (for badge display) ─────────────────────────
 const ROLE_META = {
-  'Engineer / Developer':    { icon: '💻', color: '#2563EB', bg: '#EFF6FF', tagline: 'Software, ML, DevOps',          fields: [{ key: 'primaryStack', label: 'Primary tech stack', placeholder: 'e.g. React, Node.js, Python, Rust' }, { key: 'preferredRole', label: 'Preferred role type', placeholder: 'e.g. Full-stack, Backend, ML, DevOps' }, { key: 'yearsExp', label: 'Years of coding experience', placeholder: 'e.g. 5' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }, { key: 'remoteOnly', label: 'Remote only', type: 'toggle' }] },
-  'Designer / Creative':     { icon: '🎨', color: '#7C3AED', bg: '#F3EEFF', tagline: 'UI/UX, Brand, Motion',          fields: [{ key: 'designTools', label: 'Design tools', placeholder: 'e.g. Figma, Sketch, Adobe XD' }, { key: 'specialization', label: 'Specialization', placeholder: 'e.g. UI/UX, Brand Identity, Motion, 3D' }, { key: 'portfolioUrl', label: 'Portfolio URL', placeholder: 'https://yourportfolio.com' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Product Manager':         { icon: '📋', color: '#0284C7', bg: '#F0F9FF', tagline: 'Strategy & execution',          fields: [{ key: 'domain', label: 'Product domain', placeholder: 'e.g. B2B SaaS, Consumer, FinTech, API' }, { key: 'methodology', label: 'Methodology', placeholder: 'e.g. Agile, Shape Up, OKRs' }, { key: 'teamSize', label: 'Typical team size', placeholder: 'e.g. 5–10 engineers' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Marketer / Growth':       { icon: '📈', color: '#059669', bg: '#ECFDF5', tagline: 'SEO, Content, Ads',             fields: [{ key: 'channels', label: 'Marketing channels', placeholder: 'e.g. SEO, Paid, Content, Email' }, { key: 'tools', label: 'Tools & stack', placeholder: 'e.g. HubSpot, GA4, Segment, Hotjar' }, { key: 'industryFocus', label: 'Industry focus', placeholder: 'e.g. B2B SaaS, E-commerce' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Founder / Entrepreneur':  { icon: '🚀', color: '#D97706', bg: '#FFFBEB', tagline: 'Building something new',        fields: [{ key: 'companyName', label: 'Company / Startup name', placeholder: 'e.g. Acme Inc. (or Stealth)' }, { key: 'stage', label: 'Stage', placeholder: 'e.g. Idea, MVP, Pre-seed, Seed' }, { key: 'industryFocus', label: 'Industry / vertical', placeholder: 'e.g. FinTech, HealthTech' }, { key: 'lookingFor', label: 'Currently looking for', placeholder: 'e.g. Co-founder, Engineers, Investors' }, { key: 'openToFunding', label: 'Open to investment discussions', type: 'toggle' }] },
-  'Investor / VC':           { icon: '💰', color: '#DB2777', bg: '#FDF2F8', tagline: 'VC, Angel, LP',                 fields: [{ key: 'checkSize', label: 'Typical check size', placeholder: 'e.g. $25k–$500k' }, { key: 'stagePreference', label: 'Stage preference', placeholder: 'e.g. Pre-seed, Seed, Series A' }, { key: 'sectors', label: 'Sectors of interest', placeholder: 'e.g. AI, FinTech, Climate' }, { key: 'openToDeals', label: 'Actively looking for deals', type: 'toggle' }] },
-  'Data / Analytics':        { icon: '📊', color: '#EA580C', bg: '#FFF7ED', tagline: 'Data Sci, BI, MLOps',           fields: [{ key: 'tools', label: 'Tools & stack', placeholder: 'e.g. Python, SQL, dbt, Looker' }, { key: 'domain', label: 'Domain', placeholder: 'e.g. Product Analytics, ML Ops, BI' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Student / Learner':       { icon: '🎓', color: '#7C3AED', bg: '#F3EEFF', tagline: 'Growing & exploring',           fields: [{ key: 'school', label: 'School / Bootcamp', placeholder: 'e.g. MIT, General Assembly, Self-taught' }, { key: 'graduationYear', label: 'Graduation year', placeholder: 'e.g. 2025' }, { key: 'targetRole', label: 'Target role', placeholder: 'e.g. Software Engineer, Product Manager' }, { key: 'currentlyLearning', label: 'Currently learning', placeholder: 'e.g. React, Machine Learning' }, { key: 'openToWork', label: 'Open to internships', type: 'toggle' }] },
-  'Sales / Business Dev':    { icon: '🤝', color: '#2563EB', bg: '#EFF6FF', tagline: 'Revenue & partnerships',        fields: [{ key: 'dealType', label: 'Deal type', placeholder: 'e.g. SMB, Mid-market, Enterprise' }, { key: 'industryFocus', label: 'Industry focus', placeholder: 'e.g. SaaS, FinTech, Healthcare' }, { key: 'tools', label: 'CRM & tools', placeholder: 'e.g. Salesforce, HubSpot, Outreach' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Operations / Finance':    { icon: '⚙️', color: '#059669', bg: '#ECFDF5', tagline: 'Ops, accounting, strategy',    fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Finance, RevOps, Legal, Strategy' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Healthcare, Finance' }, { key: 'companyStage', label: 'Company stage preference', placeholder: 'e.g. Startup, Scale-up, Enterprise' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
-  'Content Creator':         { icon: '🎬', color: '#D97706', bg: '#FFFBEB', tagline: 'Video, writing, podcasts',      fields: [{ key: 'platforms', label: 'Platforms', placeholder: 'e.g. YouTube, Newsletter, Podcast, TikTok' }, { key: 'niche', label: 'Niche / topic', placeholder: 'e.g. Tech, Finance, Productivity, Fitness' }, { key: 'audienceSize', label: 'Audience size', placeholder: 'e.g. 10k followers' }, { key: 'openToCollabs', label: 'Open to collaborations', type: 'toggle' }] },
-  'HR / People Ops':         { icon: '👥', color: '#DB2777', bg: '#FDF2F8', tagline: 'Recruiting, culture, L&D',      fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Recruiting, L&D, HRBP, Comp & Ben' }, { key: 'companySize', label: 'Company size focus', placeholder: 'e.g. Startup, Mid-size, Enterprise' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Finance, Healthcare' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Engineer / Developer':    { icon: 'ED', color: '#2563EB', bg: '#EFF6FF', tagline: 'Software, ML, DevOps',          fields: [{ key: 'primaryStack', label: 'Primary tech stack', placeholder: 'e.g. React, Node.js, Python, Rust' }, { key: 'preferredRole', label: 'Preferred role type', placeholder: 'e.g. Full-stack, Backend, ML, DevOps' }, { key: 'yearsExp', label: 'Years of coding experience', placeholder: 'e.g. 5' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }, { key: 'remoteOnly', label: 'Remote only', type: 'toggle' }] },
+  'Designer / Creative':     { icon: 'DC', color: '#7C3AED', bg: '#F3EEFF', tagline: 'UI/UX, Brand, Motion',          fields: [{ key: 'designTools', label: 'Design tools', placeholder: 'e.g. Figma, Sketch, Adobe XD' }, { key: 'specialization', label: 'Specialization', placeholder: 'e.g. UI/UX, Brand Identity, Motion, 3D' }, { key: 'portfolioUrl', label: 'Portfolio URL', placeholder: 'https://yourportfolio.com' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Product Manager':         { icon: 'PM', color: '#0284C7', bg: '#F0F9FF', tagline: 'Strategy & execution',          fields: [{ key: 'domain', label: 'Product domain', placeholder: 'e.g. B2B SaaS, Consumer, FinTech, API' }, { key: 'methodology', label: 'Methodology', placeholder: 'e.g. Agile, Shape Up, OKRs' }, { key: 'teamSize', label: 'Typical team size', placeholder: 'e.g. 5-10 engineers' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Marketer / Growth':       { icon: 'MG', color: '#059669', bg: '#ECFDF5', tagline: 'SEO, Content, Ads',             fields: [{ key: 'channels', label: 'Marketing channels', placeholder: 'e.g. SEO, Paid, Content, Email' }, { key: 'tools', label: 'Tools & stack', placeholder: 'e.g. HubSpot, GA4, Segment, Hotjar' }, { key: 'industryFocus', label: 'Industry focus', placeholder: 'e.g. B2B SaaS, E-commerce' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Founder / Entrepreneur':  { icon: 'FE', color: '#D97706', bg: '#FFFBEB', tagline: 'Building something new',        fields: [{ key: 'companyName', label: 'Company / Startup name', placeholder: 'e.g. Acme Inc. (or Stealth)' }, { key: 'stage', label: 'Stage', placeholder: 'e.g. Idea, MVP, Pre-seed, Seed' }, { key: 'industryFocus', label: 'Industry / vertical', placeholder: 'e.g. FinTech, HealthTech' }, { key: 'lookingFor', label: 'Currently looking for', placeholder: 'e.g. Co-founder, Engineers, Investors' }, { key: 'openToFunding', label: 'Open to investment discussions', type: 'toggle' }] },
+  'Investor / VC':           { icon: 'IV', color: '#DB2777', bg: '#FDF2F8', tagline: 'VC, Angel, LP',                 fields: [{ key: 'checkSize', label: 'Typical check size', placeholder: 'e.g. $25k-$500k' }, { key: 'stagePreference', label: 'Stage preference', placeholder: 'e.g. Pre-seed, Seed, Series A' }, { key: 'sectors', label: 'Sectors of interest', placeholder: 'e.g. AI, FinTech, Climate' }, { key: 'openToDeals', label: 'Actively looking for deals', type: 'toggle' }] },
+  'Data / Analytics':        { icon: 'DA', color: '#EA580C', bg: '#FFF7ED', tagline: 'Data Sci, BI, MLOps',           fields: [{ key: 'tools', label: 'Tools & stack', placeholder: 'e.g. Python, SQL, dbt, Looker' }, { key: 'domain', label: 'Domain', placeholder: 'e.g. Product Analytics, ML Ops, BI' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Student / Learner':       { icon: 'SL', color: '#7C3AED', bg: '#F3EEFF', tagline: 'Growing & exploring',           fields: [{ key: 'school', label: 'School / Bootcamp', placeholder: 'e.g. MIT, General Assembly, Self-taught' }, { key: 'graduationYear', label: 'Graduation year', placeholder: 'e.g. 2025' }, { key: 'targetRole', label: 'Target role', placeholder: 'e.g. Software Engineer, Product Manager' }, { key: 'currentlyLearning', label: 'Currently learning', placeholder: 'e.g. React, Machine Learning' }, { key: 'openToWork', label: 'Open to internships', type: 'toggle' }] },
+  'Sales / Business Dev':    { icon: 'BD', color: '#2563EB', bg: '#EFF6FF', tagline: 'Revenue & partnerships',        fields: [{ key: 'dealType', label: 'Deal type', placeholder: 'e.g. SMB, Mid-market, Enterprise' }, { key: 'industryFocus', label: 'Industry focus', placeholder: 'e.g. SaaS, FinTech, Healthcare' }, { key: 'tools', label: 'CRM & tools', placeholder: 'e.g. Salesforce, HubSpot, Outreach' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Operations / Finance':    { icon: 'OF', color: '#059669', bg: '#ECFDF5', tagline: 'Ops, accounting, strategy',    fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Finance, RevOps, Legal, Strategy' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Healthcare, Finance' }, { key: 'companyStage', label: 'Company stage preference', placeholder: 'e.g. Startup, Scale-up, Enterprise' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
+  'Content Creator':         { icon: 'CC', color: '#D97706', bg: '#FFFBEB', tagline: 'Video, writing, podcasts',      fields: [{ key: 'platforms', label: 'Platforms', placeholder: 'e.g. YouTube, Newsletter, Podcast, TikTok' }, { key: 'niche', label: 'Niche / topic', placeholder: 'e.g. Tech, Finance, Productivity, Fitness' }, { key: 'audienceSize', label: 'Audience size', placeholder: 'e.g. 10k followers' }, { key: 'openToCollabs', label: 'Open to collaborations', type: 'toggle' }] },
+  'HR / People Ops':         { icon: 'HR', color: '#DB2777', bg: '#FDF2F8', tagline: 'Recruiting, culture, L&D',      fields: [{ key: 'specialization', label: 'Specialization', placeholder: 'e.g. Recruiting, L&D, HRBP, Comp & Ben' }, { key: 'companySize', label: 'Company size focus', placeholder: 'e.g. Startup, Mid-size, Enterprise' }, { key: 'industryFocus', label: 'Industry', placeholder: 'e.g. Tech, Finance, Healthcare' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }] },
 };
-const DEFAULT_META = { icon: '👤', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIconnect Member', fields: [] };
+const DEFAULT_META = { icon: 'ME', color: 'var(--primary)', bg: 'var(--primary-light)', tagline: 'UFIconnect Member', fields: [] };
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 function Toggle({ value, onChange }) {
@@ -132,7 +132,7 @@ function PushNotificationsCard() {
 
   return (
     <div className="card">
-      <SectionHeading>📲 Push Notifications</SectionHeading>
+        <SectionHeading>Push Notifications</SectionHeading>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div>
           <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Browser notifications</div>
@@ -400,10 +400,10 @@ export default function Settings() {
 
   const TABS = [
     { key: 'account',       label: 'Account' },
-    { key: 'security',      label: '🔒 Security' },
-    { key: 'privacy',       label: '🛡️ Privacy' },
-    { key: 'notifications', label: '🔔 Notifications' },
-    { key: 'preferences',   label: '🎯 Preferences' },
+    { key: 'security',      label: 'Security' },
+    { key: 'privacy',       label: 'Privacy' },
+    { key: 'notifications', label: 'Notifications' },
+    { key: 'preferences',   label: 'Preferences' },
   ];
 
   // Shared by Account/Privacy/Notifications — all three save through the
@@ -418,7 +418,7 @@ export default function Settings() {
         {error && <div className="auth-error">{error}</div>}
         {saved && (
           <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>
-            ✓ Settings saved
+            Settings saved
           </div>
         )}
         <div style={{ display: 'flex', gap: 10, paddingBottom: 32 }}>
@@ -454,13 +454,13 @@ export default function Settings() {
           {prefError && <div className="auth-error">{prefError}</div>}
           {prefSaved && (
             <div style={{ background: '#ECFDF5', color: '#059669', padding: '10px 14px', borderRadius: 8, fontSize: '.875rem', fontWeight: 600 }}>
-              ✓ Preferences saved — your feed and recommendations will update shortly.
+              Preferences saved - your feed and recommendations will update shortly.
             </div>
           )}
 
           {/* Role */}
           <div className="card">
-            <SectionHeading>🎭 Your Role</SectionHeading>
+            <SectionHeading>Your Role</SectionHeading>
             <input
               className="form-input"
               placeholder="Search roles…"
@@ -474,7 +474,7 @@ export default function Settings() {
                 return (
                   <button key={r.value} type="button" onClick={() => setPrefRole(r.value)}
                     style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: `1.5px solid ${sel ? 'var(--primary)' : 'var(--border)'}`, background: sel ? 'var(--primary-light)' : 'var(--surface)', cursor: 'pointer', textAlign: 'left' }}>
-                    <span style={{ fontSize: '1.2rem', flexShrink: 0 }}>{r.icon}</span>
+                    <span style={{ fontSize: '.82rem', fontWeight: 800, flexShrink: 0 }}>{roleCode(r.value)}</span>
                     <div>
                       <div style={{ fontWeight: 700, fontSize: '.82rem', color: sel ? 'var(--primary)' : 'var(--text)' }}>{r.value}</div>
                       <div style={{ fontSize: '.7rem', color: 'var(--muted)', lineHeight: 1.3 }}>{r.desc}</div>
@@ -493,7 +493,7 @@ export default function Settings() {
 
           {/* Experience */}
           <div className="card">
-            <SectionHeading>📈 Experience Level</SectionHeading>
+            <SectionHeading>Experience Level</SectionHeading>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
               {EXPERIENCE.map(exp => {
                 const sel = prefExperience === exp.value;
@@ -511,7 +511,7 @@ export default function Settings() {
 
           {/* Goals */}
           <div className="card">
-            <SectionHeading>🎯 Goals</SectionHeading>
+            <SectionHeading>Goals</SectionHeading>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
               {GOALS.map(goal => {
                 const sel = prefGoals.includes(goal.value);
@@ -531,7 +531,7 @@ export default function Settings() {
 
           {/* Interests */}
           <div className="card">
-            <SectionHeading>💡 Interests</SectionHeading>
+            <SectionHeading>Interests</SectionHeading>
             <input
               className="form-input"
               placeholder="Search interests…"
@@ -609,7 +609,7 @@ export default function Settings() {
               width: 44, height: 44, borderRadius: 12, flexShrink: 0,
               background: profile.plan === 'free' ? 'var(--bg-secondary)' : '#EDE4FF',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
-            }}>{profile.plan === 'business' ? '🏢' : profile.plan === 'pro' ? '⭐' : '🆓'}</div>
+            }}>{profile.plan === 'business' ? 'BIZ' : profile.plan === 'pro' ? 'PRO' : 'FREE'}</div>
             <div style={{ flex: 1, minWidth: 160 }}>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
                 {profile.plan === 'business' ? 'Business plan' : profile.plan === 'pro' ? 'Pro plan' : 'Free plan'}
@@ -703,7 +703,7 @@ export default function Settings() {
               linkable place ("Your Data") covering both, e.g. for a
               platform's "Data Deletion Instructions URL" requirement. */}
           <div className="card">
-            <SectionHeading>📦 Your Data</SectionHeading>
+            <SectionHeading>Your Data</SectionHeading>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: '.875rem' }}>Download your data</div>
@@ -729,7 +729,7 @@ export default function Settings() {
           {deleteModal && (
             <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
               <div className="card" style={{ width: '100%', maxWidth: 440, padding: 28, borderRadius: 20 }}>
-                <div style={{ fontSize: '2rem', marginBottom: 12, textAlign: 'center' }}>⚠️</div>
+                <div style={{ fontSize: '.9rem', fontWeight: 800, marginBottom: 12, textAlign: 'center' }}>!</div>
                 <h3 style={{ margin: '0 0 8px', textAlign: 'center' }}>Delete your account?</h3>
                 <p style={{ fontSize: '.85rem', color: 'var(--muted)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
                   This will permanently delete your profile, posts, and all account data. This action <strong>cannot be undone</strong>.
@@ -761,7 +761,7 @@ export default function Settings() {
       {activeTab === 'security' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
-            <SectionHeading>🔒 Password</SectionHeading>
+            <SectionHeading>Password</SectionHeading>
             {!isLocalAuth ? (
               <div style={{ fontSize: '.85rem', color: 'var(--muted)' }}>
                 Your password is managed by your sign-in provider, not UFIconnect — there's nothing to change here.
@@ -802,7 +802,7 @@ export default function Settings() {
       {activeTab === 'privacy' && (
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card">
-            <SectionHeading>🔒 Privacy</SectionHeading>
+            <SectionHeading>Privacy</SectionHeading>
             {[
               { key: 'publicProfile',   label: 'Public profile',      desc: 'Allow anyone on UFIconnect to view your profile.' },
               { key: 'showEmail',       label: 'Show email address',  desc: 'Display your email on your public profile.' },
@@ -835,7 +835,7 @@ export default function Settings() {
 
           {/* Blocked users */}
           <div className="card">
-            <SectionHeading>🚫 Blocked Users</SectionHeading>
+            <SectionHeading>Blocked Users</SectionHeading>
             {blockedLoading ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}><span className="spinner spinner-primary" /></div>
             ) : blockedUsers.length === 0 ? (
@@ -871,7 +871,7 @@ export default function Settings() {
         <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <PushNotificationsCard />
           <div className="card">
-            <SectionHeading>🔔 Notifications</SectionHeading>
+            <SectionHeading>Notifications</SectionHeading>
             {[
               { key: 'emailDigest',       label: 'Weekly email digest',     desc: 'A summary of top posts and opportunities in your groups.' },
               { key: 'communityUpdates',  label: 'Community updates',       desc: 'New members, posts, and announcements from your groups.' },

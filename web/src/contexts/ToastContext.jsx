@@ -3,10 +3,10 @@ import { createContext, useContext, useState, useCallback, useRef } from 'react'
 const ToastContext = createContext(null);
 
 const TYPE_STYLE = {
-  success: { icon: '✓', color: 'var(--success)', bg: '#ECFDF5', border: '#A7F3D0' },
-  error:   { icon: '✕', color: 'var(--danger)',  bg: '#FEF2F2', border: '#FECACA' },
-  warning: { icon: '⚠', color: 'var(--warning)', bg: '#FFFBEB', border: '#FDE68A' },
-  info:    { icon: 'ℹ', color: 'var(--primary)', bg: 'var(--primary-light)', border: 'var(--border)' },
+  success: { icon: 'OK', color: 'var(--success)', bg: '#ECFDF5', border: '#A7F3D0' },
+  error:   { icon: '!',  color: 'var(--danger)',  bg: '#FEF2F2', border: '#FECACA' },
+  warning: { icon: '!',  color: 'var(--warning)', bg: '#FFFBEB', border: '#FDE68A' },
+  info:    { icon: 'i',  color: 'var(--primary)', bg: 'var(--primary-light)', border: 'var(--border)' },
 };
 
 export function ToastProvider({ children }) {
@@ -63,7 +63,7 @@ export function ToastProvider({ children }) {
                   all: 'unset', cursor: 'pointer', color: 'var(--muted)', fontSize: '.8rem',
                   padding: '0 2px', lineHeight: 1.4, flexShrink: 0,
                 }}
-              >✕</button>
+              >x</button>
             </div>
           );
         })}

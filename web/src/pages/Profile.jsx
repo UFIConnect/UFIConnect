@@ -14,14 +14,22 @@ function initials(name = '') {
 }
 
 const LINK_FIELDS = [
-  { key: 'linkedin',  label: 'LinkedIn',       icon: '🔷', placeholder: 'https://linkedin.com/in/yourname' },
-  { key: 'github',    label: 'GitHub',         icon: '🐙', placeholder: 'https://github.com/yourname' },
+  { key: 'linkedin',  label: 'LinkedIn',       icon: 'in', placeholder: 'https://linkedin.com/in/yourname' },
+  { key: 'github',    label: 'GitHub',         icon: 'GH', placeholder: 'https://github.com/yourname' },
   { key: 'gitlab',    label: 'GitLab',         icon: 'GL', placeholder: 'https://gitlab.com/yourname' },
-  { key: 'portfolio', label: 'Portfolio',      icon: '🌐', placeholder: 'https://yourwebsite.com' },
-  { key: 'resume',    label: 'Resume / CV',    icon: '📄', placeholder: 'https://drive.google.com/...' },
-  { key: 'twitter',   label: 'X / Twitter',   icon: '🐦', placeholder: 'https://x.com/yourhandle' },
-  { key: 'other',     label: 'Other link',     icon: '🔗', placeholder: 'https://...' },
+  { key: 'portfolio', label: 'Portfolio',      icon: 'URL', placeholder: 'https://yourwebsite.com' },
+  { key: 'resume',    label: 'Resume / CV',    icon: 'CV', placeholder: 'https://drive.google.com/...' },
+  { key: 'twitter',   label: 'X / Twitter',   icon: 'X', placeholder: 'https://x.com/yourhandle' },
+  { key: 'other',     label: 'Other link',     icon: 'Link', placeholder: 'https://...' },
 ];
+
+const PROFILE_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+function validateProfileImage(file) {
+  if (!file) return 'No file selected.';
+  if (!file.type?.startsWith('image/')) return 'Please choose an image file.';
+  if (file.size > PROFILE_IMAGE_MAX_BYTES) return 'Profile photos must be 10MB or smaller.';
+  return null;
+}
 
 const TABS = ['Overview', 'Connected Accounts', 'Sources', 'Posts', 'Skills', 'Attachments'];
 // These two navigate to their existing standalone pages instead of rendering inline.
@@ -124,14 +132,19 @@ export default function Profile() {
 
   async function handleAvatarUpload(file) {
     if (!file) return;
+    const validationError = validateProfileImage(file);
+    if (validationError) {
+      showToast(validationError, 'error');
+      return;
+    }
     setUploadingAvatar(true);
     try {
       const { url } = await uploadMedia(file, null, 'avatars');
       const { data } = await client.patch('/profile', { avatarUrl: url });
       updateProfileLocally(data.profile || data);
       showToast('Profile photo updated', 'success');
-    } catch {
-      showToast('Failed to upload photo — please try again.', 'error');
+    } catch (err) {
+      showToast(err?.message || 'Failed to upload photo - please try again.', 'error');
     } finally {
       setUploadingAvatar(false);
     }
@@ -139,14 +152,19 @@ export default function Profile() {
 
   async function handleCoverUpload(file) {
     if (!file) return;
+    const validationError = validateProfileImage(file);
+    if (validationError) {
+      showToast(validationError, 'error');
+      return;
+    }
     setUploadingCover(true);
     try {
       const { url } = await uploadMedia(file, null, 'covers');
       const { data } = await client.patch('/profile', { coverUrl: url });
       updateProfileLocally(data.profile || data);
       showToast('Cover photo updated', 'success');
-    } catch {
-      showToast('Failed to upload cover photo — please try again.', 'error');
+    } catch (err) {
+      showToast(err?.message || 'Failed to upload cover photo - please try again.', 'error');
     } finally {
       setUploadingCover(false);
     }
@@ -308,7 +326,7 @@ export default function Profile() {
         <PhotoPickerButton
           onFileSelected={handleCoverUpload}
           disabled={uploadingCover}
-          label={<>{uploadingCover ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'} {uploadingCover ? 'Uploading…' : 'Change cover'}</>}
+          label={<>{uploadingCover && <span className="spinner" style={{ width: 12, height: 12 }} />} {uploadingCover ? 'Uploading...' : 'Change cover'}</>}
           style={{
             position: 'absolute', right: 10, bottom: 10, cursor: uploadingCover ? 'default' : 'pointer',
             display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20,
@@ -329,7 +347,7 @@ export default function Profile() {
           <PhotoPickerButton
             onFileSelected={handleAvatarUpload}
             disabled={uploadingAvatar}
-            label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : '📷'}
+            label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'P'}
             style={{
               position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: '50%',
               display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingAvatar ? 'default' : 'pointer',
@@ -340,7 +358,7 @@ export default function Profile() {
         </div>
         <div className="profile-name">{profile.name}</div>
         <div className="profile-title">{profile.title || 'UFIconnect Member'}</div>
-        {profile.organization && <div className="profile-org">🏢 {profile.organization}</div>}
+        {profile.organization && <div className="profile-org">{profile.organization}</div>}
 
         {/* Follow stats */}
         <div style={{ display: 'flex', gap: 20, marginTop: 14, justifyContent: 'center' }}>
@@ -364,7 +382,7 @@ export default function Profile() {
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
           <Link to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">
-            <button className="btn btn-ghost btn-sm">👁 Preview as public</button>
+            <button className="btn btn-ghost btn-sm">Preview as public</button>
           </Link>
         </div>
 
@@ -374,7 +392,7 @@ export default function Profile() {
             it's the fallback entry point for both on small screens. */}
         <div className="profile-mobile-account-actions">
           <Link to="/settings">
-            <button className="btn btn-ghost btn-sm">⚙️ Settings</button>
+            <button className="btn btn-ghost btn-sm">Settings</button>
           </Link>
           <button className="btn btn-ghost btn-sm profile-mobile-logout" onClick={handleLogout}>⎋ Log out</button>
         </div>
@@ -394,7 +412,7 @@ export default function Profile() {
       {/* Tabs */}
       <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
         {TABS.map((t) => {
-          const icons = { Overview: '👤', 'Connected Accounts': '🔗', Sources: '📡', Posts: '✏️', Skills: '🛠', Attachments: '📎' };
+          const icons = { Overview: 'Profile', 'Connected Accounts': 'Links', Sources: 'Sources', Posts: 'Posts', Skills: 'Skills', Attachments: 'Files' };
           return (
             <button key={t} onClick={() => {
               if (NAV_TABS[t]) { navigate(NAV_TABS[t]); return; }
@@ -421,7 +439,7 @@ export default function Profile() {
           <div className="card">
             <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:10 }}>About</h3>
             <p style={{ fontSize:'.9rem', lineHeight:1.7, color: profile.bio ? 'var(--text)' : 'var(--muted)' }}>
-              {profile.bio || 'No bio yet — click Edit profile to add one.'}
+              {profile.bio || 'No bio yet - click Edit profile to add one.'}
             </p>
           </div>
 
@@ -441,7 +459,7 @@ export default function Profile() {
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:16 }}>
               <div>
                 <div style={{ fontWeight:600, fontSize:'.9rem', marginBottom:3 }}>
-                  🌐 Profile visible to members
+                  Profile visible to members
                 </div>
                 <div style={{ fontSize:'.8rem', color:'var(--muted)', lineHeight:1.5 }}>
                   Everyone with an account can find your profile, follow you, view your posts, and message you.
@@ -466,7 +484,7 @@ export default function Profile() {
               <div>
                 <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
                   <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'#6D28D9', textTransform:'uppercase', letterSpacing:'.5px', margin:0 }}>
-                    🧭 Command Center
+                    Command Center
                   </h3>
                   {profile.plan === 'free' && (
                     <span style={{ fontSize:'.62rem', fontWeight:800, color:'#fff', background:'#7C3AED', padding:'2px 7px', borderRadius:8, letterSpacing:'.4px' }}>
@@ -475,7 +493,7 @@ export default function Profile() {
                   )}
                 </div>
                 <p style={{ fontSize:'.78rem', color:'#5B21B6', margin:0, lineHeight:1.5 }}>
-                  Every connected account in one place — organized by source, AI content drafts, and job tracking.
+                  Every connected account in one place - organized by source, AI content drafts, and job tracking.
                 </p>
               </div>
               <button
@@ -562,11 +580,11 @@ export default function Profile() {
           </div>
           <div className="form-group">
             <label className="form-label">Bio</label>
-            <textarea className="form-textarea" name="bio" value={form.bio} onChange={handleChange} placeholder="Tell people what you're working on…" />
+            <textarea className="form-textarea" name="bio" value={form.bio} onChange={handleChange} placeholder="Tell people what you're working on..." />
           </div>
           <div className="form-group">
             <label className="form-label">Skills <span style={{ color:'var(--muted)', fontWeight:400 }}>(comma-separated)</span></label>
-            <input className="form-input" name="skills" value={form.skills} onChange={handleChange} placeholder="React, Python, Product Strategy…" />
+            <input className="form-input" name="skills" value={form.skills} onChange={handleChange} placeholder="React, Python, Product Strategy..." />
           </div>
           <div style={{ display:'flex', gap:10, marginTop:4 }}>
             <button className="btn btn-primary" type="submit" disabled={saving}>
@@ -634,7 +652,7 @@ export default function Profile() {
             <div style={{ display: 'flex', gap: 8 }}>
               <input
                 className="form-input"
-                placeholder="Add a skill (e.g. React, Python, UX Design)…"
+                placeholder="Add a skill (e.g. React, Python, UX Design)..."
                 value={skillInput}
                 onChange={e => setSkillInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }}
@@ -669,8 +687,8 @@ export default function Profile() {
               border:'2px dashed var(--border)', borderRadius:8, cursor: uploading ? 'default' : 'pointer',
               fontSize:'.875rem', color:'var(--muted)', opacity: uploading ? 0.6 : 1, marginBottom: uploadError ? 8 : 0,
             }}>
-              {uploading ? <span className="spinner" style={{ width:16, height:16 }} /> : <span>📤</span>}
-              {uploading ? 'Uploading and scoring…' : 'Click to upload a resume (PDF, DOCX, or TXT — 8MB max)'}
+              {uploading && <span className="spinner" style={{ width:16, height:16 }} />}
+              {uploading ? 'Uploading and scoring...' : 'Click to upload a resume (PDF, DOCX, or TXT - 8MB max)'}
               <input type="file" accept=".pdf,.docx,.txt" style={{ display:'none' }} disabled={uploading}
                 onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleAttachmentUpload(file); }} />
             </label>
@@ -681,7 +699,7 @@ export default function Profile() {
                 <div style={{ display:'flex', justifyContent:'center', padding:'16px 0' }}><span className="spinner spinner-primary" /></div>
               ) : attachments.length === 0 ? (
                 <div className="empty-state" style={{ padding:'20px 0' }}>
-                  <div className="empty-icon">📄</div>
+                  <div className="empty-icon">CV</div>
                   <div className="empty-title">No resume uploaded yet</div>
                   <div className="empty-desc">Upload one to get an ATS-style score and see which opportunities best match it.</div>
                 </div>
@@ -694,7 +712,7 @@ export default function Profile() {
                       onClick={() => setExpandedAttachment(isExpanded ? null : a.id)}
                       style={{ all:'unset', display:'flex', alignItems:'center', gap:12, padding:'12px 14px', width:'100%', boxSizing:'border-box', cursor:'pointer' }}
                     >
-                      <span style={{ fontSize:'1.2rem' }}>📄</span>
+                      <span style={{ fontSize:'.8rem', fontWeight:800 }}>CV</span>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontWeight:600, fontSize:'.875rem', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{a.filename}</div>
                         <div style={{ fontSize:'.72rem', color:'var(--muted)' }}>
@@ -719,7 +737,7 @@ export default function Profile() {
                             opacity: selectingAttachment === a.id ? 0.6 : 1,
                           }}
                         >
-                          {selectingAttachment === a.id ? '…' : 'Use for matching'}
+                          {selectingAttachment === a.id ? '...' : 'Use for matching'}
                         </button>
                       )}
                       {/* Score next to the attachment, as asked */}
@@ -737,7 +755,7 @@ export default function Profile() {
                         <div style={{ display:'flex', flexDirection:'column', gap:6, marginTop:12 }}>
                           {(a.atsChecks || []).map((c, i) => (
                             <div key={i} style={{ display:'flex', gap:8, fontSize:'.8rem', lineHeight:1.5 }}>
-                              <span style={{ color: c.passed ? '#059669' : '#DC2626', flexShrink:0 }}>{c.passed ? '✓' : '✕'}</span>
+                              <span style={{ color: c.passed ? '#059669' : '#DC2626', flexShrink:0, fontWeight: 800 }}>{c.passed ? 'OK' : 'Fix'}</span>
                               <div>
                                 <span style={{ fontWeight:600 }}>{c.label}</span>
                                 {c.detail && <div style={{ color:'var(--muted)' }}>{c.detail}</div>}
@@ -789,7 +807,7 @@ export default function Profile() {
               </div>
             ) : (
               <div className="empty-state" style={{ padding:'32px 0' }}>
-                <div className="empty-icon">📎</div>
+                <div className="empty-icon">Files</div>
                 <div className="empty-title">No files or links yet</div>
                 <div className="empty-desc" style={{ marginBottom:14 }}>Upload your resume or add links to your portfolio, GitHub, and LinkedIn.</div>
                 <button className="btn btn-primary btn-sm" onClick={startEdit}>Add files</button>
@@ -807,7 +825,7 @@ export default function Profile() {
 
           {/* Resume link (file uploads + ATS scoring happen from the Attachments tab directly) */}
           <div className="form-group">
-            <label className="form-label">📄 Resume / CV link <span style={{ color:'var(--muted)', fontWeight:400 }}>(optional, e.g. Google Drive)</span></label>
+            <label className="form-label">Resume / CV link <span style={{ color:'var(--muted)', fontWeight:400 }}>(optional, e.g. Google Drive)</span></label>
             <input className="form-input" type="url" name="resume"
               value={links?.resume?.startsWith('[') ? '' : (links?.resume || '')}
               onChange={handleLinkChange} placeholder="https://drive.google.com/..." />

@@ -104,6 +104,12 @@ export function extractYouTubeId(url) {
   return m ? m[1] : null;
 }
 
+export function youTubePosterUrl(videoId, quality = 'hqdefault') {
+  if (!videoId) return null;
+  const safeId = String(videoId).match(/^[\w-]{11}$/) ? videoId : null;
+  return safeId ? `https://i.ytimg.com/vi/${safeId}/${quality}.jpg` : null;
+}
+
 // Real Shorts (server-verified by actual video duration — see
 // fetchYouTubeShortsByKeyword backend-side) are persisted with a
 // youtube.com/shorts/... sourceUrl specifically so this classification
@@ -282,7 +288,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
   if (errored) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 240, background: '#000', color: '#fff', fontSize: '.85rem', ...style }}>
-        🎬 Video unavailable
+        Video unavailable
       </div>
     );
   }

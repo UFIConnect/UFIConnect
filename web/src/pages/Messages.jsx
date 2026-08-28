@@ -67,7 +67,7 @@ function NewMessageModal({ onClose, onSelect }) {
         {/* Search input */}
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.4, fontSize: '.85rem', pointerEvents: 'none' }}>🔍</span>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.4, fontSize: '.85rem', pointerEvents: 'none' }}>Q</span>
             <input
               ref={inputRef}
               className="form-input"
@@ -176,7 +176,7 @@ export default function Messages() {
         <div>
           <h1 className="page-title">Messages</h1>
           <p className="page-subtitle">
-            {totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'All caught up ✓'}
+            {totalUnread > 0 ? `${totalUnread} unread message${totalUnread > 1 ? 's' : ''}` : 'All caught up'}
           </p>
         </div>
         <button
@@ -184,7 +184,7 @@ export default function Messages() {
           onClick={() => setShowModal(true)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
         >
-          ✏️ New Message
+          New Message
         </button>
       </div>
 
@@ -194,14 +194,14 @@ export default function Messages() {
         </div>
       ) : error ? (
         <div className="empty-state">
-          <div className="empty-icon">⚠️</div>
+          <div className="empty-icon">!</div>
           <div className="empty-title">Couldn't load messages</div>
           <div className="empty-desc">Check your connection and try again.</div>
           <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={loadMessages}>Try again</button>
         </div>
       ) : convs.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">✉️</div>
+          <div className="empty-icon">MSG</div>
           <div className="empty-title">No conversations yet</div>
           <div className="empty-desc">Start a conversation with someone in your network.</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
@@ -228,7 +228,7 @@ export default function Messages() {
                 <div className="conv-name">{conv.participant?.name || 'Unknown'}</div>
                 <div className="conv-last">
                   {conv.lastMessage?.isMe && '↑ '}
-                  {conv.lastMessage?.content || (conv.lastMessage?.hasAttachment ? '📷 Photo' : 'No messages yet')}
+                  {conv.lastMessage?.content || (conv.lastMessage?.hasAttachment ? 'Photo' : 'No messages yet')}
                 </div>
               </div>
               <div className="conv-right">

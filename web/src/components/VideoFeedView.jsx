@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
@@ -85,7 +85,7 @@ function resolveVideoSource(post) {
     // 16:9 container renders squeezed, with the video's own thumbnail/
     // title cropped, confirmed live as a Short looking visibly cut off.
     const vertical = isYouTubeShortsUrl(post.source === 'youtube' ? post.sourceUrl : post.mediaUrl);
-    return { kind: 'youtube', id: ytId, poster: `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`, vertical };
+    return { kind: 'youtube', id: ytId, poster: post.mediaPoster || youTubePosterUrl(ytId), vertical };
   }
   // Same idea for an article embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
@@ -223,7 +223,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   useEffect(() => {
     if (!active || !post?.id) return;
     if (effectiveCurrentTime >= VIDEO_ENGAGED_SECONDS || (effectiveDuration > 0 && effectiveCurrentTime / effectiveDuration >= VIDEO_ENGAGED_FRACTION)) {
-      reportEngaged(post.id);
+      reportEngaged(post.id, 'videos');
     }
   }, [active, post?.id, effectiveCurrentTime, effectiveDuration]);
 
@@ -471,7 +471,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         }} />
       ); })()}
       {!src ? (
-        <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Video unavailable</div>
+        <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
       ) : src.kind === 'youtube' ? (
         active ? (
           // The actual video pixels render via VideoFeedView's own shared
@@ -516,7 +516,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         ) : vimeoPoster ? (
           <img src={vimeoPoster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
         ) : (
-          <div style={{ color: '#888', fontSize: '.85rem' }}>🎬 Vimeo video</div>
+          <div style={{ color: '#888', fontSize: '.85rem' }}>Vimeo video</div>
         )
       ) : src.kind === 'hls' ? (
         active ? (
@@ -525,7 +525,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
-            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id })}
+            onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
           <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
@@ -566,7 +566,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
-          onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id })}
+          onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
           style={{ width: '100%', height: '100%', objectFit: 'contain' }}
         />
       )}
@@ -764,12 +764,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
           }}
         >
-          <span style={{ fontSize: '1.3rem' }}>💬</span>
+          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comment</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
         </button>
         {post.likesCount > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-            <span style={{ fontSize: '1.3rem' }}>🤍</span>
+            <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
             <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
           </div>
         )}
@@ -2057,7 +2057,7 @@ export default function VideoFeedView({ onExit }) {
             ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, fontSize: '1rem',
             opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
           }}
-        >{muted ? '🔇' : '🔊'}</button>
+        >{muted ? 'M' : 'S'}</button>
       </div>
 
       {searchOpen && (
@@ -2262,7 +2262,7 @@ export default function VideoFeedView({ onExit }) {
                         color: '#fff',
                       }}
                     >
-                      {active ? '✓ ' : ''}{topic}
+                      {active ? 'Selected: ' : ''}{topic}
                     </button>
                   );
                 })}
@@ -2295,11 +2295,11 @@ export default function VideoFeedView({ onExit }) {
 
       {loading && videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
-          Loading videos…
+          Loading videos...
         </div>
       ) : error || videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', gap: 14, padding: 24, textAlign: 'center' }}>
-          <div style={{ fontSize: '2.2rem' }}>🎬</div>
+          <div style={{ fontSize: '2.2rem', fontWeight: 800 }}>Video</div>
           <div style={{ fontSize: '.9rem', opacity: 0.85, maxWidth: 280 }}>
             {error
               ? "Couldn't load videos right now."

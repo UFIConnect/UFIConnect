@@ -251,7 +251,7 @@ export default function PostList({
                       title="Delete post"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
                     >
-                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '🗑'}
+                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : 'Delete'}
                     </button>
                   )}
                 </span>
@@ -273,7 +273,7 @@ export default function PostList({
                       title="Delete post"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: '.85rem', padding: 0, lineHeight: 1 }}
                     >
-                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : '🗑'}
+                      {deleteBusy[post.id] ? <span className="spinner" style={{ width: 10, height: 10 }} /> : 'Delete'}
                     </button>
                   )}
                 </span>

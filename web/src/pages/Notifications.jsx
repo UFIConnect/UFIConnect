@@ -86,7 +86,7 @@ export default function Notifications() {
         <div>
           <h1 className="page-title">Notifications</h1>
           <p className="page-subtitle">
-            {items.length > 0 ? `${items.length} update${items.length > 1 ? 's' : ''}` : 'All caught up ✓'}
+            {items.length > 0 ? `${items.length} update${items.length > 1 ? 's' : ''}` : 'All caught up'}
           </p>
         </div>
         <button
@@ -94,7 +94,7 @@ export default function Notifications() {
           onClick={() => navigate('/messages')}
           style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
         >
-          💬 Messages
+          Messages
         </button>
       </div>
 
@@ -104,14 +104,14 @@ export default function Notifications() {
         </div>
       ) : error ? (
         <div className="empty-state">
-          <div className="empty-icon">⚠️</div>
+          <div className="empty-icon">!</div>
           <div className="empty-title">Couldn't load notifications</div>
           <div className="empty-desc">Check your connection and try again.</div>
           <button className="btn btn-primary btn-sm" style={{ marginTop: 14 }} onClick={load}>Try again</button>
         </div>
       ) : items.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">🔔</div>
+          <div className="empty-icon">NTF</div>
           <div className="empty-title">No notifications yet</div>
           <div className="empty-desc">Likes, comments, follows, and connection requests will show up here.</div>
           <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'center' }}>
@@ -162,7 +162,7 @@ export default function Notifications() {
                   )}
                   {isRequest && (
                     isAccepted ? (
-                      <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)' }}>✓ Connected</span>
+                      <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--primary)' }}>Connected</span>
                     ) : isDeclined ? (
                       <span style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)' }}>Declined</span>
                     ) : (
