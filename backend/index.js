@@ -15500,8 +15500,25 @@ const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
   // Independent $5/mo add-on, not a plan — see resume_builder_addon.
-  resume_builder: () => process.env.STRIPE_PRICE_ID_RESUME_BUILDER,
+  resume_builder: () => (
+    process.env.STRIPE_PRICE_ID_RESUME_BUILDER ||
+    process.env.STRIPE_RESUME_BUILDER_PRICE_ID ||
+    process.env.RESUME_BUILDER_PRICE_ID ||
+    process.env.STRIPE_PRICE_ID_RESUME
+  ),
 };
+
+app.get('/billing/config', (_req, res) => {
+  res.json({
+    stripeConfigured: !!stripe,
+    tiers: {
+      pro: !!TIER_PRICE_IDS.pro(),
+      business: !!TIER_PRICE_IDS.business(),
+      resume_builder: !!TIER_PRICE_IDS.resume_builder(),
+    },
+  });
+});
+
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   const tier = ['pro', 'business', 'resume_builder'].includes(req.body?.tier) ? req.body.tier : 'pro';
   // Business is locked in the UI (not yet ready to sell) — reject it
@@ -15543,8 +15560,8 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email,
       client_reference_id: user.id,
-      success_url: `${FRONTEND_BASE}/settings?upgrade=success`,
-      cancel_url: `${FRONTEND_BASE}/settings?upgrade=cancelled`,
+      success_url: `${FRONTEND_BASE}/${tier === 'resume_builder' ? 'resume-builder' : 'settings'}?upgrade=success`,
+      cancel_url: `${FRONTEND_BASE}/${tier === 'resume_builder' ? 'resume-builder' : 'settings'}?upgrade=cancelled`,
     });
     res.json({ url: session.url });
   } catch (e) {

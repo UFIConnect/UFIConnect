@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
@@ -69,8 +70,9 @@ function Field({ label, ...props }) {
 }
 
 export default function ResumeBuilder() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
+  const [searchParams] = useSearchParams();
   const [upgrading, setUpgrading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [template, setTemplate] = useState('modern');
@@ -80,6 +82,29 @@ export default function ResumeBuilder() {
   const [exportResult, setExportResult] = useState(null);
 
   const unlocked = !!profile?.resumeBuilderAddon;
+
+  useEffect(() => {
+    if (searchParams.get('upgrade') !== 'success' || unlocked || !refreshProfile) return;
+    let cancelled = false;
+    let attempts = 0;
+    async function refreshUntilUnlocked() {
+      attempts += 1;
+      try {
+        const freshProfile = await refreshProfile();
+        if (freshProfile?.resumeBuilderAddon) {
+          showToast('Resume Builder is unlocked. Time to make the resume behave.', 'success');
+          return;
+        }
+      } catch {
+        // Stripe webhooks can land a beat after the browser returns.
+      }
+      if (!cancelled && attempts < 6) {
+        window.setTimeout(refreshUntilUnlocked, 1500);
+      }
+    }
+    refreshUntilUnlocked();
+    return () => { cancelled = true; };
+  }, [refreshProfile, searchParams, showToast, unlocked]);
 
   useEffect(() => {
     if (!unlocked) return;

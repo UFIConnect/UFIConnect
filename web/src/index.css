@@ -474,7 +474,7 @@ input, textarea, select { font-family: inherit; }
   align-items: center;
   background:
     linear-gradient(90deg, rgba(15,23,42,.82), rgba(15,23,42,.42), rgba(15,23,42,.12)),
-    url('/hero-feed-screenshot.png') center / cover no-repeat;
+    url('/homepage-feed-photo.png') center / cover no-repeat;
 }
 .landing-hero-inner {
   width: 100%;
@@ -736,11 +736,25 @@ input, textarea, select { font-family: inherit; }
   font-weight: 700;
 }
 .landing-plan-card.is-muted,
-.landing-resume-soon {
+.landing-resume-soon,
+.landing-resume-live {
   background: #f8fafc;
 }
 .landing-resume-soon .landing-plan-price {
   display: none;
+}
+.landing-plan-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 16px;
+  min-height: 38px;
+  padding: 9px 13px;
+  border-radius: 8px;
+  background: #20157b;
+  color: #fff;
+  font-size: .82rem;
+  font-weight: 900;
 }
 .landing-share-section {
   display: grid;

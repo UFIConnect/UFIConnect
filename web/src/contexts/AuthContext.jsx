@@ -33,6 +33,17 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, [token]);
 
+  const refreshProfile = useCallback(async () => {
+    if (!token) {
+      setProfile(null);
+      return null;
+    }
+    const { data } = await client.get('/profile');
+    if (data?.error || !data?.id) throw new Error('Profile unavailable');
+    setProfile(data);
+    return data;
+  }, [token]);
+
   // Re-hydrate profile on mount / token change. Auth0 is optional: if it is not
   // configured, the original local JWT flow remains the only active path.
   useEffect(() => {
@@ -121,6 +132,7 @@ export function AuthProvider({ children }) {
       register,
       logout,
       updateProfileLocally,
+      refreshProfile,
       auth0Enabled,
       loginWithAuth0,
       registerWithAuth0,

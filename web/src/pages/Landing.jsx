@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: 'What is happening with Resume Builder?',
-    a: 'Resume Builder is marked coming soon on the homepage while the public offer is finalized.',
+    a: 'Resume Builder is available as a paid add-on for signed-in members. The homepage keeps the price off the public card, and checkout handles the live billing.',
   },
 ];
 
@@ -197,7 +197,7 @@ export default function Landing() {
             </SectionHeading>
             <div className="landing-product-grid">
               <div className="landing-product-shot">
-                <img src="/hero-feed-screenshot.png" alt="UFIconnect feed preview" />
+                <img src="/homepage-feed-photo.png" alt="UFIconnect home feed preview" />
               </div>
               <div className="landing-product-copy">
                 {FEATURES.map(({ label, title, desc }) => (
@@ -239,7 +239,7 @@ export default function Landing() {
 
           <section id="pricing" className="landing-section landing-pricing-section">
             <SectionHeading eyebrow="Plans" title="Free to begin, clear when you upgrade">
-              Resume Builder is coming soon on the homepage while the public offer is finalized.
+              The main feed stays free. Resume Builder unlocks from inside the app when you are ready to build.
             </SectionHeading>
             <div className="landing-plan-grid">
               <div className="landing-plan-card">
@@ -258,12 +258,13 @@ export default function Landing() {
                   locked={t.locked}
                 />
               ))}
-              <div className="landing-plan-card landing-resume-soon">
+              <div className="landing-plan-card landing-resume-live">
                 <div className="landing-plan-top">
                   <h3>Resume Builder</h3>
-                  <span>Coming soon</span>
+                  <span>Billing active</span>
                 </div>
-                <p>Resume drafting, export, and ATS-ready review tools are being prepared for a public launch.</p>
+                <p>Draft, polish, export, and save an ATS-scored resume to your profile.</p>
+                <Link to="/resume-builder" className="landing-plan-link">Open Resume Builder</Link>
               </div>
             </div>
           </section>
