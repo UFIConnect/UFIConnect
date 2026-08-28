@@ -13431,7 +13431,7 @@ async function archiveAgeCappedRows() {
            OR
            ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
          )
-       RETURNING ${ARCHIVE_COLUMNS}
+       RETURNING ${ARCHIVE_RETURNING_COLUMNS}
      ),
      inserted AS (
        INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
