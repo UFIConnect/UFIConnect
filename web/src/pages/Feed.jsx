@@ -6,6 +6,7 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, youTubePosterUrl } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
@@ -36,6 +37,33 @@ function timeAgo(iso) {
 
 function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function SourceMark({ source, label, size = 15, active = false }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span style={{
+        width: size + 8, height: size + 8, borderRadius: '50%',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: '#fff', border: active ? 'none' : '1px solid var(--border)', flexShrink: 0,
+      }}>
+        <BrandIcon platform={source} size={size} />
+      </span>
+    );
+  }
+  const text = label || meta.icon || meta.label || source || 'UFI';
+  return (
+    <span style={{
+      width: size + 8, height: size + 8, borderRadius: '50%',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      background: active ? 'rgba(255,255,255,.22)' : `${meta.color || 'var(--primary)'}18`,
+      color: active ? '#fff' : (meta.color || 'var(--primary)'),
+      fontSize: Math.max(8, size - 7), fontWeight: 800, lineHeight: 1, flexShrink: 0,
+    }}>
+      {String(text).slice(0, 3).toUpperCase()}
+    </span>
+  );
 }
 
 function feedPostTime(post) {
@@ -114,15 +142,16 @@ const SOURCE_TABS = [
   { key: 'all' },
   { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
   { key: 'linkedin' }, { key: 'twitter' }, { key: 'instagram' }, { key: 'facebook' },
-  { key: 'mastodon' }, { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
+  { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
+  { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
   { key: 'gitlab' }, { key: 'medium' }, { key: 'hashnode' }, { key: 'lobsters' },
   { key: 'arxiv' }, { key: 'producthunt' }, { key: 'indiehackers' }, { key: 'yc' },
   { key: 'crunchbase' }, { key: 'techcrunch' }, { key: 'theverge' }, { key: 'arstechnica' },
   { key: 'wired' }, { key: 'theregister' }, { key: 'venturebeat' }, { key: 'infoq' },
   { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
-  { key: 'designweb' }, { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
+  { key: 'designweb' }, { key: 'mastodon' },
 ].map(({ key }) => key === 'all'
-  ? { key: 'all', label: 'All', icon: '' }
+  ? { key: 'all', label: 'All', icon: 'All' }
   : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' });
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
@@ -186,12 +215,13 @@ function saveFeedState(filters, activeTabs, search, viewMode) {
 // (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
 // path above, not this multi-select one.
 const ALL_FILTER_SOURCES = [
-  'reddit', 'github', 'gitlab', 'devto', 'medium', 'youtube', 'hackernews',
-  'bluesky', 'linkedin', 'twitter', 'instagram', 'facebook',
-  'stackoverflow', 'mastodon', 'lobsters', 'arxiv',
-  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'reddit', 'github', 'youtube', 'hackernews',
+  'linkedin', 'twitter', 'instagram', 'facebook',
+  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
+  'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
+  'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
   'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
-  'yc', 'crunchbase', 'behance', 'designweb',
+  'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
 ];
 
 // Following's filter-panel options — native UFIconnect posts from people you
@@ -389,7 +419,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
                   color: active ? meta.color : 'var(--muted)', cursor: 'pointer',
                 }}
               >
-                <span style={{ fontSize: '.8rem' }}>{meta.icon}</span>
+                <SourceMark source={s} label={meta.icon} size={13} active={active} />
                 {meta.label}
               </button>
             );
@@ -458,7 +488,7 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
         justifyContent: 'center', fontSize: '2rem',
         border: `2px solid ${meta.color}30`,
       }}>
-        {meta.icon}
+        <SourceMark source={platform} label={meta.icon} size={30} />
       </div>
       <h2 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: 10, color: 'var(--text)' }}>
         Connect your {meta.label} account
@@ -476,7 +506,7 @@ function SocialConnectGate({ platform, onConnect, connecting }) {
           transition: 'opacity .15s',
         }}
       >
-        {connecting ? <span className="spinner" style={{ borderTopColor: '#fff', width: 16, height: 16 }} /> : meta.icon}
+        {connecting ? <span className="spinner" style={{ borderTopColor: '#fff', width: 16, height: 16 }} /> : <SourceMark source={platform} label={meta.icon} size={13} active />}
         {connecting ? 'Redirecting…' : `Connect ${meta.label}`}
       </button>
       <p style={{ marginTop: 16, fontSize: '.78rem', color: 'var(--muted)' }}>
@@ -724,7 +754,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: '1rem', color: src.color }}>{src.icon}</span>
+        <SourceMark source="youtube" label={src.icon} size={14} />
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
@@ -758,7 +788,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
       {post.sourceUrl && (
         <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
-            <span style={{ fontSize: '.75rem' }}>{src.icon}</span>
+            <SourceMark source="youtube" label={src.icon} size={11} />
             <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>Watch</span>
           </a>
@@ -1099,7 +1129,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-        <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
+        <SourceMark source={post.source} label={src.icon} size={13} />
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
         {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
@@ -1171,7 +1201,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       )}
       {isExternal && post.author?.name && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <div style={{ width: 30, height: 30, borderRadius: '50%', background: `${src.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.85rem', flexShrink: 0 }}>{src.icon}</div>
+          <SourceMark source={post.source} label={src.icon} size={17} />
           <div>
             <div style={{ fontWeight: 700, fontSize: '.82rem' }}>{post.author.name}</div>
             <div style={{ fontSize: '.7rem', color: 'var(--muted)' }}>{src.label}</div>
@@ -1234,7 +1264,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             forcePause={isMediaOpen}
           />
           <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
-            {src.icon} {src.label}
+            <SourceMark source={post.source} label={src.icon} size={12} />
+            {src.label}
           </span>
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
@@ -1252,7 +1283,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             forcePause={isMediaOpen}
           />
           <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4, pointerEvents: 'none' }}>
-            {src.icon} {src.label}
+            <SourceMark source={post.source} label={src.icon} size={12} />
+            {src.label}
           </span>
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
@@ -1297,7 +1329,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
               </>
             )}
             <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4 }}>
-              {src.icon} {src.label}
+              <SourceMark source={post.source} label={src.icon} size={12} />
+              {src.label}
             </span>
           </div>
         </button>
@@ -1472,7 +1505,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
               }}
             >
               <span style={{ fontSize: '.82rem', fontWeight: 700, color: src.color }}>
-                {src.icon} {isArticle ? 'Read all ' : 'View all '}
+                <SourceMark source={post.source} label={src.icon} size={12} />
+                {isArticle ? 'Read all ' : 'View all '}
                 {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}
                 {sectionLabel.toLowerCase()} on {src.label}
               </span>
@@ -2269,14 +2303,14 @@ export default function Feed({ forcedMode } = {}) {
   return (
     <Layout>
       <Helmet>
-        <title>{forcedMode ? 'You | UFIconnect' : 'Professional News Feed | News & Updates for Your Career | UFIconnect'}</title>
-        <meta name="description" content="Your personalized professional news feed. Get news and updates from Reddit, Hacker News, GitHub, Medium, DEV.to, plus search news on LinkedIn, Twitter, Facebook, YouTube, and more — all tailored to your role and interests." />
+        <title>{forcedMode ? 'You | UFIconnect' : 'Home | UFIconnect'}</title>
+        <meta name="description" content="Your live UFIconnect home: posts, videos, jobs, communities, and connected-account updates balanced into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className="page-header">
         <h1 className="page-title">
-          {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Your Feed')}
+          {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Home')}
           <span style={{
             marginLeft: 10, display: 'inline-flex', alignItems: 'center', gap: 4,
             fontSize: '.65rem', fontWeight: 700, padding: '3px 9px', borderRadius: 20,
@@ -2289,7 +2323,7 @@ export default function Feed({ forcedMode } = {}) {
           </span>
         </h1>
         <p className="page-subtitle">
-          Good to see you. Posts, videos, and job listings stay mixed in one live scroll so the feed keeps moving without one source taking over.
+          Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.
         </p>
       </div>
 
@@ -2391,7 +2425,7 @@ export default function Feed({ forcedMode } = {}) {
       {!forcedMode && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
           {[
-            { key: 'feed',      label: 'Feed' },
+            { key: 'feed',      label: 'Home' },
             { key: 'following', label: 'Following' },
           ].map(({ key, label }) => {
             const active = viewMode === key;
@@ -2440,7 +2474,7 @@ export default function Feed({ forcedMode } = {}) {
                 fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
               }}
             >
-              <span style={{ fontSize: '.85rem' }}>{tab.icon}</span>
+              {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
               {tab.label}
             </button>
           );
@@ -2461,7 +2495,8 @@ export default function Feed({ forcedMode } = {}) {
                 background: `${color}18`, color, fontWeight: 600,
                 border: `1px solid ${color}44`,
               }}>
-                {meta.icon || ''} {meta.label || key}
+                <SourceMark source={key} label={meta.icon} size={12} />
+                {meta.label || key}
                 <button onClick={() => toggleTab(key)} style={{
                   marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                   color, fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
@@ -2589,7 +2624,7 @@ export default function Feed({ forcedMode } = {}) {
           <div>
             {activeTabs.length > 0 && (
               <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 8 }}>
-                {activeTabs.map(k => `${SOURCE_META[k]?.icon || ''} ${SOURCE_META[k]?.label || k}`.trim()).join(', ')}
+                {activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ')}
               </span>
             )}
             <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
@@ -2625,7 +2660,7 @@ export default function Feed({ forcedMode } = {}) {
             gap: 8
           }}>
             <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
-            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading your feed...'}
+            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
           </div>
           <PostCardSkeleton />
           <PostCardSkeleton />
@@ -2645,9 +2680,13 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       ) : displayed.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">{search ? 'Search' : viewMode === 'following' ? 'Following' : (activeTabs.length === 1 ? SOURCE_META[activeTabs[0]]?.icon : null) || 'Feed'}</div>
+          <div className="empty-icon">
+            {activeTabs.length === 1
+              ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : 'Home')}
+          </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Your feed is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2684,7 +2723,7 @@ export default function Feed({ forcedMode } = {}) {
               </>
             ) : activeTabs.length > 0 ? (
               <>
-                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or explore other sources.</p>
+                <p style={{ marginBottom: 12 }}>No posts from {selectedSourceLabel} yet. Check back soon or try the wider mix while this source makes coffee.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
@@ -2700,15 +2739,15 @@ export default function Feed({ forcedMode } = {}) {
                       leave the URL saying /you while showing Feed content,
                       so this navigates to the real Feed page instead. */}
                   {forcedMode ? (
-                    <Link to="/" className="btn btn-ghost btn-sm">Back to Feed</Link>
+                    <Link to="/" className="btn btn-ghost btn-sm">Back to Home</Link>
                   ) : (
-                    <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Feed</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => switchViewMode('feed')}>Back to Home</button>
                   )}
                 </div>
               </>
             ) : (
               <>
-                <p style={{ marginBottom: 12 }}>Your feed is ready. Connect accounts when you want a more personal mix.</p>
+                <p style={{ marginBottom: 12 }}>Home is ready. Connect accounts when you want the scroll to feel more like yours.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect accounts</Link>
                   <Link to="/groups" className="btn btn-ghost btn-sm">Join communities</Link>

@@ -1,6 +1,6 @@
 export const SOURCE_META = {
   reddit:        { label: 'Reddit',        color: '#FF4500', icon: 'RD' },
-  hackernews:    { label: 'News',          color: '#FF6600', icon: 'HN' },
+  hackernews:    { label: 'Hacker News',   color: '#FF6600', icon: 'HN' },
   devto:         { label: 'DEV Community', color: '#3B49DF', icon: 'DEV' },
   linkedin:      { label: 'LinkedIn',      color: '#0A66C2', icon: 'in' },
   twitter:       { label: 'X (Twitter)',   color: '#000000', icon: 'X' },
@@ -48,7 +48,7 @@ export const SOURCE_META = {
 // "following timeline" fetcher wired up yet; platforms without one simply
 // show the existing empty/coming-soon states.
 export const CONNECTED_SOCIAL_PLATFORMS = [
-  'linkedin', 'twitter', 'facebook',
+  'linkedin', 'twitter', 'instagram', 'facebook',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ];

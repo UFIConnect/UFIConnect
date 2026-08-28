@@ -118,6 +118,7 @@ function buildHealthPayload() {
     payload.feedStorage = {
       cache: feedStorageFreshnessState?.cache || null,
       staging: feedStorageFreshnessState?.staging || null,
+      retention: feedRetentionState || null,
     };
   } catch {
     payload.feedStorage = null;
@@ -2733,15 +2734,16 @@ async function fetchRedditByKeyword(keyword) {
 // itself is still what lets a genuinely quiet home feed reach that same
 // window on the other end.
 const REDDIT_HOME_MAX_PAGES = 8;
-async function fetchRedditHomeFeed(token, { bust = false } = {}) {
+async function fetchRedditHomeFeed(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `reddit_home_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('reddit_home', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
     const posts = [];
     let after = null;
-    const lookbackCutoff = Date.now() - FOLLOWING_LOOKBACK_MS;
+    const window = connectedSourceWindow(connectedAt);
+    const lookbackCutoff = window.startMs;
     for (let page = 0; page < REDDIT_HOME_MAX_PAGES; page++) {
       const url = `https://oauth.reddit.com/.json?limit=100&raw_json=1${after ? `&after=${after}` : ''}`;
       const data = await fetchJSON(url, { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' });
@@ -2753,8 +2755,9 @@ async function fetchRedditHomeFeed(token, { bust = false } = {}) {
       if (oldestTime && oldestTime < lookbackCutoff) break;
       if (!after) break; // genuinely out of history, not just out of pages
     }
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: lookbackCutoff, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
   } catch (e) {
     console.warn('Reddit home feed fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -3003,9 +3006,9 @@ async function fetchGitHubByKeyword(keyword) {
 // here. Two calls: /user resolves the token owner's login (received_events
 // is keyed by username, not directly available from the token alone), then
 // /users/{login}/received_events for the actual feed.
-async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
+async function fetchGitHubFollowingActivity(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `github_following_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('github_following', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   if (githubBlocked()) {
@@ -3023,6 +3026,7 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
     // — 3 pages of 100 reaches that ceiling instead of stopping at the
     // first page's worth.
     const events = [];
+    const window = connectedSourceWindow(connectedAt);
     for (let page = 1; page <= 3; page++) {
       const { data: pageEvents, headers: evHeaders } = await fetchJSONWithHeaders(
         `https://api.github.com/users/${encodeURIComponent(me.login)}/received_events?per_page=100&page=${page}`,
@@ -3031,7 +3035,7 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
       recordGitHubRateLimitHeaders(evHeaders);
       if (!Array.isArray(pageEvents) || !pageEvents.length) break;
       events.push(...pageEvents);
-      if (pageEvents.length < 100) break; // fewer than a full page — genuinely out of events
+      if (pageEvents.length < 100 || pageReachedConnectedStart(pageEvents.map(e => ({ createdAt: e.created_at })), connectedAt)) break;
     }
 
     // Only the event types that actually read as a real feed item — GitHub's
@@ -3092,8 +3096,9 @@ async function fetchGitHubFollowingActivity(token, { bust = false } = {}) {
           group:       { id: 'ext_github', name: 'GitHub', category: 'Engineering' },
         };
       });
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
   } catch (e) {
     recordGitHubRateLimitHeaders(e.headers);
     console.warn('GitHub following activity fetch:', e.message);
@@ -5186,9 +5191,9 @@ async function fetchGitLabByKeyword(keyword) {
 // — the same "list who they follow, then read each one's own feed" shape
 // GitHub's API gives for free via received_events, GitLab just doesn't
 // offer as a single call.
-async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
+async function fetchGitLabFollowingActivity(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `gitlab_following_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('gitlab_following', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
@@ -5214,9 +5219,10 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
     // time-window cut). One failed/private account's events call shouldn't
     // drop everyone else's, same resilience pattern the YouTube
     // per-channel fetch above already uses.
+    const window = connectedSourceWindow(connectedAt);
     const perUserEvents = await Promise.all(
       followedIds.map(id =>
-        fetchJSON(`https://gitlab.com/api/v4/users/${id}/events?per_page=20&sort=desc`, auth).catch(() => [])
+        fetchJSON(`https://gitlab.com/api/v4/users/${id}/events?per_page=50&sort=desc`, auth).catch(() => [])
       )
     );
     const events = perUserEvents.flat().filter(e => e?.id);
@@ -5244,8 +5250,9 @@ async function fetchGitLabFollowingActivity(token, { bust = false } = {}) {
         };
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
   } catch (e) {
     console.warn('GitLab following activity fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -5774,13 +5781,13 @@ async function fetchBlueskyByKeyword(keyword) {
 // token is the JSON blob saveSocialToken stored at connect time (see the
 // OAuth callback's own comment) — accessToken/did/pdsUrl, not a bare
 // bearer string like every other platform here.
-async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
+async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   let session;
   try { session = JSON.parse(token); } catch { return []; }
   if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
 
-  const key = `bluesky_following_${session.did}`;
+  const key = connectedSourceCacheKey('bluesky_following', session.did, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
 
@@ -5794,7 +5801,8 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
     // capFollowingPosts would just discard anyway.
     const feed = [];
     let cursor = null;
-    const lookbackCutoff = Date.now() - FOLLOWING_LOOKBACK_MS;
+    const window = connectedSourceWindow(connectedAt);
+    const lookbackCutoff = window.startMs;
     for (let page = 0; page < 8; page++) {
       const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getTimeline?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
       const result = await atprotoGet(url, { accessToken: session.accessToken });
@@ -5842,8 +5850,9 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
           group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
         };
       });
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: lookbackCutoff, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
   } catch (e) {
     console.warn('Bluesky following timeline fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -5856,13 +5865,13 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false } = {}) {
 async function fetchLinkedIn(keyword, userToken = null) {
   const token = userToken || process.env.LINKEDIN_TOKEN;
   if (!token) return [];
-  const key = `linkedin_kw_${keyword}`;
+  const key = tokenScopedCacheKey('linkedin_kw', keyword, userToken);
   const cached = getCached(key);
   if (cached) return cached;
   try {
     const q = encodeURIComponent(keyword);
     const raw = await new Promise((resolve, reject) => {
-      https.get(`https://api.linkedin.com/v2/ugcPosts?q=keywords&keywords=${q}&count=10`, {
+      https.get(`https://api.linkedin.com/v2/ugcPosts?q=keywords&keywords=${q}&count=25`, {
         headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0' },
       }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); })
         .on('error', reject).setTimeout(9000, function() { this.destroy(); reject(new Error('timeout')); });
@@ -5883,7 +5892,7 @@ async function fetchLinkedIn(keyword, userToken = null) {
       isExternal:  true,
       group:       { id: 'ext_linkedin', name: 'LinkedIn', category: 'Startups' },
     }));
-    setCached(key, posts);
+    setCached(key, posts, userToken ? CONNECTED_ACCOUNT_CACHE_TTL_MS : undefined);
     return posts;
   } catch (e) {
     console.warn(`LinkedIn "${keyword}":`, e.message);
@@ -5909,13 +5918,13 @@ async function fetchLinkedIn(keyword, userToken = null) {
 async function fetchTwitter(keyword, userToken = null) {
   const token = userToken || process.env.TWITTER_BEARER_TOKEN;
   if (!token) return [];
-  const key = `twitter_kw_${keyword}`;
+  const key = tokenScopedCacheKey('twitter_kw', keyword, userToken);
   const cached = getCached(key);
   if (cached) return cached;
   try {
     const q = encodeURIComponent(`${keyword} -is:retweet lang:en`);
     const raw = await new Promise((resolve, reject) => {
-      https.get(`https://api.twitter.com/2/tweets/search/recent?query=${q}&max_results=10&tweet.fields=created_at,text`, {
+      https.get(`https://api.twitter.com/2/tweets/search/recent?query=${q}&max_results=50&tweet.fields=created_at,text`, {
         headers: { Authorization: `Bearer ${token}` },
       }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); })
         .on('error', reject).setTimeout(9000, function() { this.destroy(); reject(new Error('timeout')); });
@@ -5936,7 +5945,7 @@ async function fetchTwitter(keyword, userToken = null) {
       isExternal:  true,
       group:       { id: 'ext_twitter', name: 'X (Twitter)', category: 'Marketing' },
     }));
-    setCached(key, posts);
+    setCached(key, posts, userToken ? CONNECTED_ACCOUNT_CACHE_TTL_MS : undefined);
     return posts;
   } catch (e) {
     console.warn(`Twitter "${keyword}":`, e.message);
@@ -5962,7 +5971,7 @@ async function fetchTwitter(keyword, userToken = null) {
 async function fetchInstagram(keyword, userToken = null) {
   const token = userToken || process.env.INSTAGRAM_TOKEN;
   if (!token) return [];
-  const key = `instagram_kw_${keyword}`;
+  const key = tokenScopedCacheKey('instagram_kw', keyword, userToken);
   const cached = getCached(key);
   if (cached) return cached;
   try {
@@ -5988,7 +5997,7 @@ async function fetchInstagram(keyword, userToken = null) {
       isExternal:  true,
       group:       { id: 'ext_instagram', name: 'Instagram', category: 'Marketing' },
     }));
-    setCached(key, posts);
+    setCached(key, posts, userToken ? CONNECTED_ACCOUNT_CACHE_TTL_MS : undefined);
     return posts;
   } catch (e) {
     console.warn(`Instagram "${keyword}":`, e.message);
@@ -6014,13 +6023,13 @@ async function fetchInstagram(keyword, userToken = null) {
 async function fetchFacebook(keyword, userToken = null) {
   const token = userToken || process.env.FACEBOOK_TOKEN;
   if (!token) return [];
-  const key = `facebook_kw_${keyword}`;
+  const key = tokenScopedCacheKey('facebook_kw', keyword, userToken);
   const cached = getCached(key);
   if (cached) return cached;
   try {
     const q = encodeURIComponent(keyword);
     const raw = await new Promise((resolve, reject) => {
-      https.get(`https://graph.facebook.com/v19.0/search?type=post&q=${q}&access_token=${token}&fields=id,message,created_time,permalink_url`,
+      https.get(`https://graph.facebook.com/v19.0/search?type=post&q=${q}&access_token=${token}&fields=id,message,created_time,permalink_url&limit=25`,
         res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); })
         .on('error', reject).setTimeout(9000, function() { this.destroy(); reject(new Error('timeout')); });
     });
@@ -6040,7 +6049,7 @@ async function fetchFacebook(keyword, userToken = null) {
       isExternal:  true,
       group:       { id: 'ext_facebook', name: 'Facebook', category: 'Marketing' },
     }));
-    setCached(key, posts);
+    setCached(key, posts, userToken ? CONNECTED_ACCOUNT_CACHE_TTL_MS : undefined);
     return posts;
   } catch (e) {
     console.warn(`Facebook "${keyword}":`, e.message);
@@ -6079,7 +6088,7 @@ async function fetchFacebook(keyword, userToken = null) {
 // avoiding search.list entirely (100 quota units per call against a 10,000/
 // day default project quota — genuinely not viable per-member, per-channel)
 // in favor of list endpoints that cost ~1 unit each: ~52 units for a
-// 50-subscription member fetching 10 videos each, not ~5,000.
+// 50-subscription member fetching a bounded page of videos each, not ~5,000.
 //
 // Was 15 channels / 3 videos each (~45 videos, hard ceiling) — confirmed
 // live as the reason the Following tab's YouTube videos ran out of scroll
@@ -6087,13 +6096,13 @@ async function fetchFacebook(keyword, userToken = null) {
 // regardless of how many channels the member actually subscribes to. 50 is
 // subscriptions.list's own per-call maximum (still one page, no pageToken
 // pagination — a member with more than 50 subscriptions only gets their
-// first 50 alphabetically for now), and 10 videos/channel gives a much
-// deeper pool (up to 500) while staying trivially inside quota.
+// first 50 alphabetically for now), and the per-channel page size below gives
+// a much deeper pool while staying inside quota.
 const YOUTUBE_SUB_FEED_CHANNEL_LIMIT = 50;
-const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = 10;
-async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null, _retried = false } = {}) {
+const YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL = envNumber('YOUTUBE_SUB_FEED_VIDEOS_PER_CHANNEL', 25, 5, 50);
+async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null, connectedAt = null, _retried = false } = {}) {
   if (!token) return [];
-  const key = `youtube_subfeed_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('youtube_subfeed', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
@@ -6156,6 +6165,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
       console.warn('YouTube subscription feed stats fetch:', e.message);
     }
 
+    const window = connectedSourceWindow(connectedAt);
     const posts = rawVideos
       .map(({ item, channelTitle }) => {
         const videoId = item.snippet.resourceId.videoId;
@@ -6185,8 +6195,9 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
       })
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, FOLLOWING_SOURCE_REFRESH_MS);
+    return scoped;
   } catch (e) {
     // A 401 here means the access token itself has expired — Google's own
     // tokens last ~1 hour, so any connection older than that would fail
@@ -6198,7 +6209,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     // the refresh token was itself revoked).
     if (/HTTP 401/.test(e.message) && userId && !_retried) {
       const newToken = await refreshGoogleAccessToken(userId);
-      if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, _retried: true });
+      if (newToken) return fetchYouTubeSubscriptionFeed(newToken, { bust: true, userId, connectedAt, _retried: true });
     }
     console.warn('YouTube subscription feed fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -8557,28 +8568,92 @@ function buildEqualizedFeedPool(posts, totalLimit) {
 //      instead of fixed map-iteration order, so a page that just posted
 //      surfaces ahead of one whose "next" post is a day old even though
 //      both are technically the same round.
-const FOLLOWING_LOOKBACK_DAYS = 10;
+const FOLLOWING_LOOKBACK_DAYS = 30;
 const FOLLOWING_LOOKBACK_MS = FOLLOWING_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
-const FOLLOWING_PER_SOURCE_SAFETY_CAP = 150;
+const FOLLOWING_PER_SOURCE_SAFETY_CAP = 300;
+const CONNECTED_ACCOUNT_CACHE_TTL_MS = envNumber('CONNECTED_ACCOUNT_CACHE_TTL_MS', 60 * 1000, 15 * 1000, 5 * 60 * 1000);
+const CONNECTED_ACCOUNT_HISTORY_MAX_POSTS = envNumber('CONNECTED_ACCOUNT_HISTORY_MAX_POSTS', 600, 100, 2500);
+const CONNECTED_ACCOUNT_HISTORY_MAX_PAGES = envNumber('CONNECTED_ACCOUNT_HISTORY_MAX_PAGES', 8, 1, 25);
 // Shared by every place a followed page/source's raw fetch result gets
 // cached or merged (refreshFollowingSourceCaches, getFollowingFeedPosts'
 // own live-fetch fallback, and the per-platform manual-refresh path) so the
 // lookback window is applied once, consistently, at the point content
-// enters the cache — not re-derived differently at each call site. A post
-// with no resolvable createdAt is kept rather than dropped — several
+// enters the cache - not re-derived differently at each call site. A post
+// with no resolvable createdAt is kept rather than dropped - several
 // fetchers construct posts from data that doesn't always carry a reliable
 // timestamp, and silently discarding those reads as "following lost
 // content" rather than "we couldn't tell how old this was."
-function capFollowingPosts(list, days = FOLLOWING_LOOKBACK_DAYS) {
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+function capFollowingPosts(list, options = FOLLOWING_LOOKBACK_DAYS) {
+  const opts = typeof options === 'object' && options !== null ? options : { days: options };
+  const days = Object.prototype.hasOwnProperty.call(opts, 'days')
+    ? (opts.days === null ? null : (Number.isFinite(opts.days) ? opts.days : FOLLOWING_LOOKBACK_DAYS))
+    : FOLLOWING_LOOKBACK_DAYS;
+  const cutoff = opts.sinceMs != null
+    ? opts.sinceMs
+    : days === null
+      ? 0
+      : Date.now() - days * 24 * 60 * 60 * 1000;
+  const until = opts.untilMs || Date.now() + SOURCE_TIME_FUTURE_SKEW_MS;
+  const maxPosts = Number.isFinite(opts.limit) ? opts.limit : FOLLOWING_PER_SOURCE_SAFETY_CAP;
   const sorted = [...list].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   const withinWindow = sorted.filter(p => {
-    const t = new Date(p.createdAt || 0).getTime();
-    return !Number.isFinite(t) || t <= 0 || t >= cutoff;
+    const t = postTimestamp(p);
+    return !Number.isFinite(t) || t <= 0 || (t >= cutoff && t <= until);
   });
-  return withinWindow.slice(0, FOLLOWING_PER_SOURCE_SAFETY_CAP);
+  return withinWindow.slice(0, maxPosts);
 }
-function buildEqualizedFollowingPool(posts) {
+
+function startOfUtcDayMs(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+function userSocialConnectedAt(user, platform) {
+  const fromMap = parseTimestampMs(user?.socialConnectedAt?.[platform]);
+  const fromProfile = parseTimestampMs(user?.createdAt);
+  return fromMap || fromProfile || (Date.now() - FOLLOWING_LOOKBACK_MS);
+}
+
+function connectedSourceWindow(userOrConnectedAt, platform = null) {
+  const anchor = platform
+    ? userSocialConnectedAt(userOrConnectedAt, platform)
+    : (parseTimestampMs(userOrConnectedAt) || Date.now());
+  const startMs = startOfUtcDayMs(anchor);
+  return {
+    connectedAt: new Date(anchor).toISOString(),
+    startMs,
+    startAt: new Date(startMs).toISOString(),
+    untilMs: Date.now() + SOURCE_TIME_FUTURE_SKEW_MS,
+  };
+}
+
+function connectedSourceCacheKey(prefix, token, connectedAt) {
+  const fingerprint = crypto.createHash('sha256').update(String(token || '')).digest('hex').slice(0, 16);
+  const day = connectedSourceWindow(connectedAt).startAt.slice(0, 10);
+  return `${prefix}_${fingerprint}_${day}`;
+}
+
+function tokenScopedCacheKey(prefix, keyword, token) {
+  const scope = token
+    ? crypto.createHash('sha256').update(String(token)).digest('hex').slice(0, 12)
+    : 'app';
+  return `${prefix}_${keyword}_${scope}`;
+}
+
+function capConnectedSourcePosts(list, user, source, limit = CONNECTED_ACCOUNT_HISTORY_MAX_POSTS) {
+  const window = connectedSourceWindow(user, source);
+  return capFollowingPosts(list, { sinceMs: window.startMs, untilMs: window.untilMs, limit });
+}
+
+function pageReachedConnectedStart(posts, connectedAt) {
+  if (!posts?.length) return true;
+  const window = connectedSourceWindow(connectedAt);
+  const times = posts.map(postTimestamp).filter(t => Number.isFinite(t) && t > 0);
+  if (!times.length) return false;
+  return Math.min(...times) < window.startMs;
+}
+
+function buildEqualizedFollowingPool(posts, options = {}) {
   const bySource = new Map();
   for (const p of posts) {
     const src = p?.source || 'unknown';
@@ -8586,7 +8661,10 @@ function buildEqualizedFollowingPool(posts) {
     bySource.get(src).push(p);
   }
   if (!bySource.size) return [];
-  const queues = [...bySource.values()].map(list => capFollowingPosts(list));
+  const queues = [...bySource.values()].map(list => capFollowingPosts(list, {
+    days: options.recencyDays === undefined ? FOLLOWING_LOOKBACK_DAYS : options.recencyDays,
+    limit: options.limitPerSource || FOLLOWING_PER_SOURCE_SAFETY_CAP,
+  }));
   const result = [];
   for (let round = 0; ; round++) {
     const picks = [];
@@ -10982,7 +11060,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin']);
 // further down) — that personal-OAuth path is unrelated to whether these
 // platforms join the general aggregate pool, so this set is kept separate
 // from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
-const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
+const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
 // (see getCursorFeedPage) and any other caller that needs "every real
@@ -11486,9 +11564,9 @@ const FOLLOWING_SOURCE_FETCHERS = {
 // up yet, pending verifying their exact response shapes against a real
 // connected account; they render "Coming soon" in Your Feed for now rather
 // than shipping an unverified integration.
-async function fetchGitHubOwnActivity(token, { bust = false } = {}) {
+async function fetchGitHubOwnActivity(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `github_own_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('github_own', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   if (githubBlocked()) { const stale = postCache.get(key)?.v; return stale || []; }
@@ -11501,12 +11579,19 @@ async function fetchGitHubOwnActivity(token, { bust = false } = {}) {
     // activity, the same endpoint the removed comment above confirms is
     // "the AUTHENTICATED member's own personal activity feed" for GitLab;
     // GitHub's equivalent own-activity endpoint is this one.
-    const { data: events, headers: evHeaders } = await fetchJSONWithHeaders(
-      `https://api.github.com/users/${encodeURIComponent(me.login)}/events?per_page=100`,
-      auth
-    );
-    recordGitHubRateLimitHeaders(evHeaders);
-    const posts = (Array.isArray(events) ? events : [])
+    const window = connectedSourceWindow(connectedAt);
+    const events = [];
+    for (let page = 1; page <= Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_PAGES, 3); page++) {
+      const { data: pageEvents, headers: evHeaders } = await fetchJSONWithHeaders(
+        `https://api.github.com/users/${encodeURIComponent(me.login)}/events?per_page=100&page=${page}`,
+        auth
+      );
+      recordGitHubRateLimitHeaders(evHeaders);
+      if (!Array.isArray(pageEvents) || !pageEvents.length) break;
+      events.push(...pageEvents);
+      if (pageEvents.length < 100 || pageReachedConnectedStart(pageEvents.map(e => ({ createdAt: e.created_at })), connectedAt)) break;
+    }
+    const posts = events
       .filter(e => ['PushEvent', 'CreateEvent', 'PullRequestEvent', 'IssuesEvent'].includes(e.type))
       .map(e => {
         const repoName = e.repo?.name || 'unknown/unknown';
@@ -11540,8 +11625,9 @@ async function fetchGitHubOwnActivity(token, { bust = false } = {}) {
           createdAt: normalizeTimestamp(e.created_at),
         };
       });
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
     console.warn('GitHub own activity fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -11550,9 +11636,9 @@ async function fetchGitHubOwnActivity(token, { bust = false } = {}) {
   }
 }
 
-async function fetchGitLabOwnActivity(token, { bust = false } = {}) {
+async function fetchGitLabOwnActivity(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `gitlab_own_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('gitlab_own', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
@@ -11560,8 +11646,15 @@ async function fetchGitLabOwnActivity(token, { bust = false } = {}) {
     // GET /events with no :id is this member's OWN activity feed (see
     // fetchGitLabFollowingActivity's own comment, which confirmed this
     // directly against GitLab's docs) — no separate "who am I" call needed.
-    const events = await fetchJSON('https://gitlab.com/api/v4/events?per_page=50', auth);
-    const posts = (Array.isArray(events) ? events : [])
+    const window = connectedSourceWindow(connectedAt);
+    const events = [];
+    for (let page = 1; page <= CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const pageEvents = await fetchJSON(`https://gitlab.com/api/v4/events?per_page=100&page=${page}&sort=desc`, auth);
+      if (!Array.isArray(pageEvents) || !pageEvents.length) break;
+      events.push(...pageEvents);
+      if (pageEvents.length < 100 || pageReachedConnectedStart(pageEvents.map(e => ({ createdAt: e.created_at })), connectedAt)) break;
+    }
+    const posts = events
       .filter(e => e?.id && e?.action_name)
       .map(e => {
         const target = e.target_title ? ` "${e.target_title}"` : '';
@@ -11575,8 +11668,9 @@ async function fetchGitLabOwnActivity(token, { bust = false } = {}) {
           createdAt: normalizeTimestamp(e.created_at),
         };
       });
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
     console.warn('GitLab own activity fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -11585,9 +11679,9 @@ async function fetchGitLabOwnActivity(token, { bust = false } = {}) {
   }
 }
 
-async function fetchYouTubeOwnUploads(token, { bust = false } = {}) {
+async function fetchYouTubeOwnUploads(token, { bust = false, userId = null, connectedAt = null, _retried = false } = {}) {
   if (!token) return [];
-  const key = `youtube_own_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('youtube_own', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
@@ -11600,26 +11694,43 @@ async function fetchYouTubeOwnUploads(token, { bust = false } = {}) {
     const playlistId = own?.contentDetails?.relatedPlaylists?.uploads;
     if (!playlistId) { setCached(key, []); return []; }
     const channelTitle = own?.snippet?.title || 'YouTube';
-    const items = await fetchJSON(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=25`, auth);
-    const posts = (items?.items || [])
-      .filter(item => item.snippet?.resourceId?.videoId)
-      .map(item => {
-        const videoId = item.snippet.resourceId.videoId;
-        return {
-          id: `youtube_own_${videoId}`, source: 'youtube', sourceLabel: channelTitle,
-          title: item.snippet.title || 'YouTube video', content: item.snippet.description || '',
-          sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
-          // Video files themselves are never downloadable here (YouTube's ToS
-          // prohibits third-party video downloading) — only the thumbnail
-          // image and a "view on YouTube" link are ever offered client-side.
-          mediaUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
-          mediaType: 'video_thumbnail_only',
-          createdAt: normalizeTimestamp(item.snippet.publishedAt),
-        };
-      });
-    setCached(key, posts);
-    return posts;
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let pageToken = '';
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const items = await fetchJSON(
+        `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${playlistId}&maxResults=50${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`,
+        auth
+      );
+      const pagePosts = (items?.items || [])
+        .filter(item => item.snippet?.resourceId?.videoId)
+        .map(item => {
+          const videoId = item.snippet.resourceId.videoId;
+          return {
+            id: `youtube_own_${videoId}`, source: 'youtube', sourceLabel: channelTitle,
+            title: item.snippet.title || 'YouTube video', content: item.snippet.description || '',
+            sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+            // Video files themselves are never downloadable here (YouTube's ToS
+            // prohibits third-party video downloading) - only the thumbnail
+            // image and a "view on YouTube" link are ever offered client-side.
+            mediaUrl: item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
+            mediaType: 'video_thumbnail_only',
+            createdAt: normalizeTimestamp(item.snippet.publishedAt),
+          };
+        });
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt)) break;
+      pageToken = items?.nextPageToken || '';
+      if (!pageToken) break;
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
+    if (/HTTP 401/.test(e.message) && userId && !_retried) {
+      const newToken = await refreshGoogleAccessToken(userId);
+      if (newToken) return fetchYouTubeOwnUploads(newToken, { bust: true, userId, connectedAt, _retried: true });
+    }
     console.warn('YouTube own uploads fetch:', e.message);
     const stale = postCache.get(key)?.v;
     if (stale) return stale;
@@ -11627,25 +11738,35 @@ async function fetchYouTubeOwnUploads(token, { bust = false } = {}) {
   }
 }
 
-async function fetchRedditOwnPosts(token, { bust = false } = {}) {
+async function fetchRedditOwnPosts(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `reddit_own_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('reddit_own', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
     const auth = { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' };
     const me = await fetchJSON('https://oauth.reddit.com/api/v1/me', auth);
     if (!me?.name) return [];
-    const data = await fetchJSON(`https://oauth.reddit.com/user/${encodeURIComponent(me.name)}/submitted?limit=100&raw_json=1`, auth);
-    // Same Listing shape fetchRedditHomeFeed already parses — reused as-is.
-    const posts = parseRedditJSON(data, null).map(p => ({
-      id: `reddit_own_${p.id}`, source: 'reddit', sourceLabel: 'Reddit',
-      title: p.title, content: p.content, sourceUrl: p.sourceUrl,
-      mediaUrl: p.mediaUrl || null, mediaType: p.mediaType || null,
-      createdAt: p.createdAt,
-    }));
-    setCached(key, posts);
-    return posts;
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let after = null;
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const data = await fetchJSON(`https://oauth.reddit.com/user/${encodeURIComponent(me.name)}/submitted?limit=100&raw_json=1${after ? `&after=${encodeURIComponent(after)}` : ''}`, auth);
+      // Same Listing shape fetchRedditHomeFeed already parses - reused as-is.
+      const pagePosts = parseRedditJSON(data, null).map(p => ({
+        id: `reddit_own_${p.id}`, source: 'reddit', sourceLabel: 'Reddit',
+        title: p.title, content: p.content, sourceUrl: p.sourceUrl,
+        mediaUrl: p.mediaUrl || null, mediaType: p.mediaType || null,
+        createdAt: p.createdAt,
+      }));
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt)) break;
+      after = data?.data?.after || null;
+      if (!after) break;
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
     console.warn('Reddit own posts fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -11654,9 +11775,9 @@ async function fetchRedditOwnPosts(token, { bust = false } = {}) {
   }
 }
 
-async function fetchTwitchOwnVideos(token, { bust = false } = {}) {
+async function fetchTwitchOwnVideos(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
-  const key = `twitch_own_${token.slice(-12)}`;
+  const key = connectedSourceCacheKey('twitch_own', token, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   const headers = { Authorization: `Bearer ${token}`, 'Client-Id': SOCIAL_CFG.twitch.clientId() };
@@ -11665,20 +11786,30 @@ async function fetchTwitchOwnVideos(token, { bust = false } = {}) {
     const userId = me?.data?.[0]?.id;
     const userLogin = me?.data?.[0]?.login;
     if (!userId) return [];
-    // This member's own past broadcasts/highlights — the closest Twitch
+    // This member's own past broadcasts/highlights - the closest Twitch
     // equivalent of "my own posts" (Twitch has no generic text-post concept).
-    const data = await fetchJSON(`https://api.twitch.tv/helix/videos?user_id=${userId}&first=20`, headers);
-    const posts = (Array.isArray(data?.data) ? data.data : []).map(v => ({
-      id: `twitch_own_${v.id}`, source: 'twitch', sourceLabel: 'Twitch',
-      title: v.title || 'Twitch video', content: v.description || v.title || '',
-      sourceUrl: v.url || `https://www.twitch.tv/${userLogin}/videos`,
-      // Same ToS guardrail as YouTube — thumbnail + link out, never the video file.
-      mediaUrl: (v.thumbnail_url || '').replace('%{width}', '440').replace('%{height}', '248') || null,
-      mediaType: 'video_thumbnail_only',
-      createdAt: normalizeTimestamp(v.created_at),
-    }));
-    setCached(key, posts);
-    return posts;
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let after = '';
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const data = await fetchJSON(`https://api.twitch.tv/helix/videos?user_id=${userId}&first=100${after ? `&after=${encodeURIComponent(after)}` : ''}`, headers);
+      const pagePosts = (Array.isArray(data?.data) ? data.data : []).map(v => ({
+        id: `twitch_own_${v.id}`, source: 'twitch', sourceLabel: 'Twitch',
+        title: v.title || 'Twitch video', content: v.description || v.title || '',
+        sourceUrl: v.url || `https://www.twitch.tv/${userLogin}/videos`,
+        // Same ToS guardrail as YouTube - thumbnail + link out, never the video file.
+        mediaUrl: (v.thumbnail_url || '').replace('%{width}', '440').replace('%{height}', '248') || null,
+        mediaType: 'video_thumbnail_only',
+        createdAt: normalizeTimestamp(v.created_at),
+      }));
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt)) break;
+      after = data?.pagination?.cursor || '';
+      if (!after) break;
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
     console.warn('Twitch own videos fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -11687,22 +11818,35 @@ async function fetchTwitchOwnVideos(token, { bust = false } = {}) {
   }
 }
 
-async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
+async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   let session;
   try { session = JSON.parse(token); } catch { return []; }
   if (!session?.accessToken || !session?.did || !session?.pdsUrl) return [];
-  const key = `bluesky_own_${session.did}`;
+  const key = connectedSourceCacheKey('bluesky_own', session.did, connectedAt);
   const cached = !bust && getCached(key);
   if (cached) return cached;
   try {
     // getAuthorFeed for the member's own DID — their own posts, same call
     // fetchBlueskyFollowingTimeline's own comment says this app used to
     // (incorrectly) use for "Following" before switching to getTimeline.
-    const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=50`;
-    const result = await atprotoGet(url, { accessToken: session.accessToken });
-    if (result?.status >= 400) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
-    const feed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+    const window = connectedSourceWindow(connectedAt);
+    const feed = [];
+    let cursor = null;
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const url = `${session.pdsUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(session.did)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+      const result = await atprotoGet(url, { accessToken: session.accessToken });
+      if (result?.status >= 400) {
+        if (page === 0) throw new Error(`HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
+        break;
+      }
+      const pageFeed = Array.isArray(result?.data?.feed) ? result.data.feed : [];
+      if (!pageFeed.length) break;
+      feed.push(...pageFeed);
+      if (pageReachedConnectedStart(pageFeed.map(item => ({ createdAt: item?.post?.record?.createdAt || item?.post?.indexedAt })), connectedAt)) break;
+      cursor = result?.data?.cursor || null;
+      if (!cursor) break;
+    }
     const posts = feed
       .filter(item => item.post?.cid)
       .map(({ post: p }) => {
@@ -11720,8 +11864,9 @@ async function fetchBlueskyOwnPosts(token, { bust = false } = {}) {
           createdAt: normalizeTimestamp(p.record?.createdAt || p.indexedAt),
         };
       });
-    setCached(key, posts);
-    return posts;
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
   } catch (e) {
     console.warn('Bluesky own posts fetch:', e.message);
     const stale = postCache.get(key)?.v;
@@ -11786,9 +11931,9 @@ async function refreshFollowingSourceCaches() {
       const token = tokens[source];
       if (!token) continue;
       try {
-        const raw = await fetcher(token, { userId: user.id });
+        const raw = await fetcher(token, { userId: user.id, connectedAt: connectedSourceWindow(user, source).connectedAt });
         followingSourceCache.set(`${user.id}::${source}`, {
-          posts: capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source }))),
+          posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source),
           fetchedAt: Date.now(),
         });
       } catch (e) {
@@ -11820,6 +11965,7 @@ async function refreshFollowingSourceCaches() {
 const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   linkedin:  fetchLinkedIn,
   twitter:   fetchTwitter,
+  instagram: fetchInstagram,
   facebook:  fetchFacebook,
 };
 
@@ -11908,8 +12054,8 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         continue;
       }
       try {
-        const raw = await fetcher(token, { bust, userId });
-        const fresh = capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })));
+        const raw = await fetcher(token, { bust, userId, connectedAt: connectedSourceWindow(user, source).connectedAt });
+        const fresh = capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source })), user, source);
         followingSourceCache.set(`${userId}::${source}`, { posts: fresh, fetchedAt: Date.now() });
         externalPosts.push(...fresh);
       } catch (e) {
@@ -11928,17 +12074,26 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
         if (!wantsSource(source)) continue;
         const token = user.socialTokens[source];
         if (!token) continue;
-        socialKws.forEach(kw => fetches.push(
+        fetches.push(Promise.allSettled(socialKws.map(kw =>
           fetcher(kw, token).then(raw => realFeedPosts(raw).map(p => ({
             ...normalizeFeedPost({ ...p, source }),
             authorId: `${source}_${userId}`,
             matchedByInterest: true,
-          }))).catch(() => [])
-        ));
+          })))
+        )).then(results => {
+          const posts = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+          if (!posts.length) {
+            const failure = results.find(r => r.status === 'rejected')?.reason;
+            if (failure) sourceErrors[source] = String(failure?.message || failure || 'Fetch failed').slice(0, 200);
+          }
+          return { source, posts };
+        }));
       }
       if (fetches.length > 0) {
         const results = await Promise.all(fetches);
-        externalPosts.push(...results.flat());
+        for (const result of results) {
+          externalPosts.push(...capConnectedSourcePosts(result.posts, user, result.source));
+        }
       }
     }
   }
@@ -12170,6 +12325,7 @@ function fullProfile(user) {
     connectedGroupsByPlatform,
     connectedPlatforms,
     connectedSocial: Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(platform => [platform, connectedPlatforms.includes(platform)])),
+    socialConnectedAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).connectedAt])),
     plan: user.plan || 'free',
     // Business is a superset tier, not a separate track — isPro true for
     // either paid plan so any future Pro-gated feature doesn't also need
@@ -12213,6 +12369,7 @@ function dbRowToMemUser(row) {
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
     socialRefreshTokens: row.social_refresh_tokens || {},
+    socialConnectedAt: row.social_connected_at || {},
     plan: row.plan || 'free',
     stripeCustomerId: row.stripe_customer_id || null,
     stripeSubscriptionId: row.stripe_subscription_id || null,
@@ -12357,6 +12514,8 @@ async function provisionAuth0User(payload) {
     socialAccounts: {},
     links: {},
     socialTokens: {},
+    socialRefreshTokens: {},
+    socialConnectedAt: {},
     plan: 'free',
   };
   users.push(newUser);
@@ -12392,6 +12551,7 @@ async function migrateDB() {
         role_settings       JSONB DEFAULT '{}',
         social_tokens          JSONB DEFAULT '{}',
         social_refresh_tokens  JSONB DEFAULT '{}',
+        social_connected_at    JSONB DEFAULT '{}',
         plan                VARCHAR(20) DEFAULT 'free',
         created_at          TIMESTAMPTZ DEFAULT NOW()
       )
@@ -12412,6 +12572,19 @@ async function migrateDB() {
     // YouTube/Google — see SOCIAL_CFG.youtube's access_type:'offline') ever
     // populate this; everyone else's entry stays absent.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_refresh_tokens JSONB DEFAULT '{}'`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_connected_at JSONB DEFAULT '{}'`);
+    await db.query(`
+      UPDATE users u
+      SET social_connected_at = COALESCE(u.social_connected_at, '{}'::jsonb) || missing.connected_at
+      FROM (
+        SELECT id, jsonb_object_agg(key, to_jsonb(COALESCE(created_at, NOW()))) AS connected_at
+        FROM users
+        CROSS JOIN LATERAL jsonb_object_keys(COALESCE(social_tokens, '{}'::jsonb)) AS token_keys(key)
+        WHERE NOT (COALESCE(social_connected_at, '{}'::jsonb) ? key)
+        GROUP BY id
+      ) missing
+      WHERE u.id = missing.id
+    `);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
@@ -13192,6 +13365,89 @@ const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, me
 // while leaving real headroom; raise it back via the env var if the DB
 // plan is upgraded, ideally alongside actually watching dbSizeState.
 const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 20000000);
+const feedRetentionState = {
+  status: 'idle',
+  inFlight: false,
+  lastRun: null,
+  lastStartedAt: null,
+  lastDurationMs: null,
+  lastError: null,
+  lastDeletedCount: 0,
+  lastArchivedCount: 0,
+  lastArchivePrunedCount: 0,
+  totalDeletedCount: 0,
+  totalArchivedCount: 0,
+  totalArchivePrunedCount: 0,
+  lastBreakdown: {},
+  policy: {
+    maxLivePosts: MAX_CACHED_DB_POSTS,
+    sourceKeepFloor: SOURCE_KEEP_FLOOR,
+    stalePostDays: Math.round(STALE_POST_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+    highVolumePostDays: Math.round(HIGH_VOLUME_SOURCE_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+    highVolumeShareThreshold: HIGH_VOLUME_SOURCE_SHARE_THRESHOLD,
+    unseenPostDays: Math.round(UNSEEN_POST_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+    maxArchivePosts: MAX_ARCHIVE_POSTS,
+  },
+};
+let feedRetentionInFlight = false;
+
+async function archiveThenDelete(sql, params = []) {
+  const { rows } = await db.query(
+    `WITH moved AS (
+       ${sql}
+       RETURNING ${ARCHIVE_COLUMNS}
+     ),
+     inserted AS (
+       INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
+       SELECT ${ARCHIVE_COLUMNS} FROM moved
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id
+     )
+     SELECT
+       (SELECT COUNT(*)::int FROM moved) AS deleted,
+       (SELECT COUNT(*)::int FROM inserted) AS archived`,
+    params
+  );
+  return {
+    deleted: Number(rows?.[0]?.deleted || 0),
+    archived: Number(rows?.[0]?.archived || 0),
+  };
+}
+
+async function archiveAgeCappedRows() {
+  const { rows } = await db.query(
+    `WITH source_counts AS (
+       SELECT source, COUNT(*)::float / NULLIF(SUM(COUNT(*)) OVER (), 0) AS share
+       FROM feed_posts_cache
+       GROUP BY source
+     ),
+     moved AS (
+       DELETE FROM feed_posts_cache fp
+       USING source_counts sc
+       WHERE fp.source = sc.source
+         AND (
+           (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+           OR
+           ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+         )
+       RETURNING ${ARCHIVE_COLUMNS}
+     ),
+     inserted AS (
+       INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
+       SELECT ${ARCHIVE_COLUMNS} FROM moved
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id
+     )
+     SELECT
+       (SELECT COUNT(*)::int FROM moved) AS deleted,
+       (SELECT COUNT(*)::int FROM inserted) AS archived`,
+    [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES]
+  );
+  return {
+    deleted: Number(rows?.[0]?.deleted || 0),
+    archived: Number(rows?.[0]?.archived || 0),
+  };
+}
 // force skips the normal 10-minute throttle (used by checkDatabaseSize's
 // critical-path response, where waiting up to 10 minutes to actually free
 // space isn't acceptable) and archiveCapOverride lets that same critical
@@ -13200,6 +13456,7 @@ const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 2000000
 // already wasn't enough to prevent the critical state in the first place.
 function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
   if (!force && Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
+  if (feedRetentionInFlight) return;
   lastFeedPostsTrimAt = Date.now();
   db.query(
     `WITH moved AS (
@@ -13278,6 +13535,71 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
        SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
      )`, [archiveCapOverride ?? MAX_ARCHIVE_POSTS]
   ).catch(() => {});
+}
+
+// Active retention pass. Kept below the legacy body so this definition wins
+// at runtime while preserving the older comments above for history.
+function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
+  if (!force && Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
+  if (feedRetentionInFlight) return;
+  lastFeedPostsTrimAt = Date.now();
+  feedRetentionInFlight = true;
+  feedRetentionState.inFlight = true;
+  feedRetentionState.status = 'running';
+  feedRetentionState.lastStartedAt = new Date().toISOString();
+  feedRetentionState.lastError = null;
+  const started = Date.now();
+
+  (async () => {
+    const breakdown = {};
+    breakdown.countCap = await archiveThenDelete(
+      `DELETE FROM feed_posts_cache WHERE id IN (
+         SELECT id FROM (
+           SELECT id,
+                  ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
+                  ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
+           FROM feed_posts_cache
+         ) ranked
+         WHERE global_rank > $1 AND source_rank > $2
+       )`,
+      [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
+    );
+    breakdown.ageCap = await archiveAgeCappedRows();
+    breakdown.unseenCap = await archiveThenDelete(
+      `DELETE FROM feed_posts_cache fp
+       WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
+         AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
+    );
+    const pruned = await db.query(
+      `DELETE FROM feed_posts_archive WHERE id IN (
+         SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
+       )`,
+      [archiveCapOverride ?? MAX_ARCHIVE_POSTS]
+    );
+    breakdown.archiveCap = { deleted: Number(pruned.rowCount || 0), archived: 0 };
+
+    const deleted = Object.values(breakdown).reduce((sum, item) => sum + Number(item.deleted || 0), 0);
+    const archived = Object.values(breakdown).reduce((sum, item) => sum + Number(item.archived || 0), 0);
+    feedRetentionState.lastDeletedCount = deleted;
+    feedRetentionState.lastArchivedCount = archived;
+    feedRetentionState.lastArchivePrunedCount = breakdown.archiveCap.deleted;
+    feedRetentionState.totalDeletedCount += deleted;
+    feedRetentionState.totalArchivedCount += archived;
+    feedRetentionState.totalArchivePrunedCount += breakdown.archiveCap.deleted;
+    feedRetentionState.lastBreakdown = breakdown;
+    feedRetentionState.lastDurationMs = Date.now() - started;
+    feedRetentionState.lastRun = new Date().toISOString();
+    feedRetentionState.status = 'ready';
+  })().catch((e) => {
+    feedRetentionState.lastError = e.message;
+    feedRetentionState.lastDurationMs = Date.now() - started;
+    feedRetentionState.lastRun = new Date().toISOString();
+    feedRetentionState.status = 'degraded';
+    console.warn('[trimFeedPostsCache] failed:', e.message);
+  }).finally(() => {
+    feedRetentionInFlight = false;
+    feedRetentionState.inFlight = false;
+  });
 }
 
 // --- Database size guard ----------------------------------------------------
@@ -14676,18 +14998,22 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
 // requests offline access (see SOCIAL_CFG.youtube), so every other provider
 // calls this with refreshToken undefined and socialRefreshTokens[platform]
 // simply never gets set for them, same as today.
-async function saveSocialToken(userId, platform, token, refreshToken) {
+async function saveSocialToken(userId, platform, token, refreshToken, connectedAt = null) {
   const user = await getUser(userId);
   if (!user) throw new Error('User not found');
   if (!user.socialTokens) user.socialTokens = {};
   user.socialTokens[platform] = token;
+  if (!user.socialConnectedAt) user.socialConnectedAt = {};
+  if (!user.socialConnectedAt[platform]) {
+    user.socialConnectedAt[platform] = normalizeTimestamp(connectedAt || Date.now());
+  }
   if (refreshToken) {
     if (!user.socialRefreshTokens) user.socialRefreshTokens = {};
     user.socialRefreshTokens[platform] = refreshToken;
   }
   if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2 WHERE id=$3',
-      [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), userId]);
+    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
+      [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
   } else {
     filestore.saveUsers(users);
   }
@@ -14732,9 +15058,10 @@ async function removeSocialToken(userId, platform) {
   if (!user) return;
   if (user.socialTokens) delete user.socialTokens[platform];
   if (user.socialRefreshTokens) delete user.socialRefreshTokens[platform];
+  if (user.socialConnectedAt) delete user.socialConnectedAt[platform];
   if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2 WHERE id=$3',
-      [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), userId]);
+    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
+      [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
   } else {
     filestore.saveUsers(users);
   }
@@ -14910,6 +15237,8 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // provider's raw.refresh_token is simply undefined, so this is a no-op
     // for them, same as before.
     await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token);
+    const connectedUser = await getUser(entry.userId);
+    const connectedAt = connectedSourceWindow(connectedUser, platform).connectedAt;
 
     // Fire the first pull immediately instead of waiting on the next
     // 5-minute refreshFollowingSourceCaches sweep (or the member happening
@@ -14922,10 +15251,10 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // next Following visit will pick it up regardless).
     const followingFetcher = FOLLOWING_SOURCE_FETCHERS[platform];
     if (followingFetcher) {
-      followingFetcher(accessToken, { userId: entry.userId })
+      followingFetcher(accessToken, { userId: entry.userId, connectedAt })
         .then(raw => {
           followingSourceCache.set(`${entry.userId}::${platform}`, {
-            posts: capFollowingPosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform }))),
+            posts: capConnectedSourcePosts(realFeedPosts(raw).map(p => normalizeFeedPost({ ...p, source: platform })), connectedUser, platform),
             fetchedAt: Date.now(),
           });
         })
@@ -14950,9 +15279,12 @@ app.get('/social/platforms', authenticate, async (req, res) => {
   }));
   const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => {
     const status = socialCredentialStatus(key);
+    const token = user?.socialTokens?.[key];
     return [key, {
       ...PLATFORMS[key],
       connected: connected[key],
+      connectedAt: token ? connectedSourceWindow(user, key).connectedAt : null,
+      syncStartAt: token ? connectedSourceWindow(user, key).startAt : null,
       configured: status.configured,
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
@@ -14963,6 +15295,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     platforms,
     connected,
     connectedPlatforms: Object.keys(connected).filter(key => connected[key]),
+    connectedAt: Object.fromEntries(Object.keys(connected).filter(key => connected[key]).map(key => [key, connectedSourceWindow(user, key).connectedAt])),
   });
 });
 
@@ -14973,7 +15306,10 @@ app.get('/profile/social', authenticate, async (req, res) => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
   }));
-  res.json({ connected });
+  res.json({
+    connected,
+    connectedAt: Object.fromEntries(platforms.filter(p => connected[p]).map(p => [p, connectedSourceWindow(user, p).connectedAt])),
+  });
 });
 
 app.post('/social/connect/handle', authenticate, async (req, res) => {
@@ -15815,7 +16151,7 @@ async function handleFeedRequest(req, res) {
     // truly dead-end" philosophy as the main Feed's own paging. Confirmed
     // live as the Following feed's actual complaint: hasMore going flat
     // false the instant a thin pool ran out, not a genuine content shortage.
-    const equalized = buildEqualizedFollowingPool(rawFollowing);
+    const equalized = buildEqualizedFollowingPool(rawFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
     markPostsSeen(req.user.id, pageRows);
@@ -16308,7 +16644,7 @@ async function handleFeedRequest(req, res) {
     if (!token) {
       return res.json({ locked: true, reason: 'connect', source: sourceFilter, posts: [] });
     }
-    const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, facebook: fetchFacebook }[sourceFilter];
+    const socialFetchFn = { twitter: fetchTwitter, linkedin: fetchLinkedIn, instagram: fetchInstagram, facebook: fetchFacebook }[sourceFilter];
     const socialKws = (prefs.interests || []).map(interestKeyword).filter(Boolean).slice(0, 5);
     const kwList = socialKws.length > 0 ? socialKws : ['technology', 'programming', 'startup'];
     const liveFetches = Promise.allSettled(kwList.map(kw => socialFetchFn(kw, token).catch(() => [])));
@@ -17077,7 +17413,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
-    const equalized = personalizeAuthenticatedFeedPosts(buildEqualizedFollowingPool(videos), user, prefs, userAffinity);
+    const equalized = personalizeAuthenticatedFeedPosts(buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }), user, prefs, userAffinity);
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
@@ -18978,6 +19314,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     feedStorage: {
       cache: feedStorageFreshnessState.cache,
       staging: feedStorageFreshnessState.staging,
+      retention: feedRetentionState,
     },
     // See "Database size guard" (checkDatabaseSize) — status is 'ok' /
     // 'warn' / 'critical' against DB_SIZE_WARN_MB/DB_SIZE_CRITICAL_MB.
@@ -22332,8 +22669,16 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
   const token = user.socialTokens?.[platform];
   if (!token) return res.status(400).json({ message: `Connect ${platform} first.` });
   try {
-    const posts = await fetcher(token, { bust: req.query.bust === '1' });
-    res.json({ posts });
+    const window = connectedSourceWindow(user, platform);
+    const raw = await fetcher(token, { bust: req.query.bust === '1', userId: req.user.id, connectedAt: window.connectedAt });
+    const posts = capConnectedSourcePosts(realFeedPosts(raw).map(post => normalizeFeedPost({
+      ...post,
+      source: post.source || platform,
+      sourceLabel: post.sourceLabel || platform,
+      authorId: `${platform}_${req.user.id}`,
+      author: post.author || { name: post.sourceLabel || user.name || 'Your account' },
+    })), user, platform);
+    res.json({ posts, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: posts.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
     res.status(502).json({ message: `Could not load your ${platform} content right now.` });
@@ -22359,15 +22704,16 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
 
   const settled = await Promise.allSettled(connectedPlatforms.map(async (platform) => {
     const fetcher = OWN_CONTENT_FETCHERS[platform];
-    const raw = await fetcher(user.socialTokens[platform], { bust, userId: req.user.id });
-    const normalized = capFollowingPosts(realFeedPosts(raw).map(post => normalizeFeedPost({
+    const window = connectedSourceWindow(user, platform);
+    const raw = await fetcher(user.socialTokens[platform], { bust, userId: req.user.id, connectedAt: window.connectedAt });
+    const normalized = capConnectedSourcePosts(realFeedPosts(raw).map(post => normalizeFeedPost({
       ...post,
       source: post.source || platform,
       sourceLabel: post.sourceLabel || platform,
       authorId: `${platform}_${req.user.id}`,
       author: post.author || { name: post.sourceLabel || user.name || 'Your account' },
-    })), 30);
-    return { platform, posts: normalized };
+    })), user, platform);
+    return { platform, posts: normalized, window };
   }));
 
   const allPosts = [];
@@ -22383,7 +22729,7 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
     }
   }
 
-  const equalized = buildEqualizedFollowingPool(allPosts);
+  const equalized = buildEqualizedFollowingPool(allPosts, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
   const pageRows = equalized.slice(offset, offset + limit);
   res.json({
     posts: pageRows,
@@ -22393,6 +22739,8 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
     totalAvailable: equalized.length,
     connectedPlatforms,
     sources: sourceCounts,
+    connectedAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).connectedAt])),
+    syncStartAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).startAt])),
     sourceErrors,
     refreshedAt: new Date().toISOString(),
   });

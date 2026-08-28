@@ -4,6 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import GuestShell from '../components/GuestShell';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted } from '../components/videoMedia';
 
@@ -19,6 +20,22 @@ function timeAgo(iso) {
 const GUEST_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const GUEST_DEDUP_WINDOW = 500;
 const GUEST_EMPTY_STREAK_LIMIT = 6;
+
+function SourceMark({ source, label }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
+        <BrandIcon platform={source} size={14} />
+      </span>
+    );
+  }
+  return (
+    <span style={{ width: 22, height: 22, borderRadius: '50%', background: `${meta.color || 'var(--primary)'}18`, color: meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, flexShrink: 0 }}>
+      {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
 
 function guestPostIdentity(post) {
   return post?.id || `${post?.source || 'feed'}:${post?.sourceUrl || post?.title || ''}:${post?.createdAt || ''}`;
@@ -106,7 +123,7 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         style={{ display: 'block', padding: '14px 14px 0', textDecoration: 'none', color: 'inherit' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-          <span style={{ fontSize: '.85rem' }}>{src.icon}</span>
+          <SourceMark source={post.source} label={src.icon} />
           <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
           <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
         </div>
@@ -288,7 +305,7 @@ export default function GuestFeed() {
           borderRadius: 12, padding: '12px 16px', marginBottom: 18,
         }}>
           <span style={{ fontSize: '.82rem', color: 'var(--text)' }}>
-            {refreshing ? 'Refreshing…' : "You're browsing as a guest — sign in or join to like, comment, and personalize your feed."}
+            {refreshing ? 'Refreshing...' : "You're browsing as a guest. Scroll around; sign in when you want the feed to remember your taste."}
           </span>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <button
@@ -304,7 +321,7 @@ export default function GuestFeed() {
               className="btn btn-ghost btn-sm"
               aria-label={muted ? 'Unmute videos' : 'Mute videos'}
             >
-              {muted ? 'M' : 'S'}
+              {muted ? 'Muted' : 'Sound on'}
             </button>
             <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join free</button></Link>
           </div>
@@ -330,7 +347,7 @@ export default function GuestFeed() {
 
         {!loading && !posts.length && (
           <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>
-            Nothing to show right now — check back soon.
+            Nothing to show right now. The feed is taking a dramatic pause.
           </div>
         )}
 

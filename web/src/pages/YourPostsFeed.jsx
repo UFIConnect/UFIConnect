@@ -4,6 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 
 const PAGE_SIZE = 40;
 const AUTO_REFRESH_MS = 45 * 1000;
@@ -30,6 +31,15 @@ function mergePosts(existing, incoming) {
 
 function SourceBadge({ source }) {
   const meta = SOURCE_META[source] || SOURCE_META.uficonnect;
+  const mark = hasBrandIcon(source) ? (
+    <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      <BrandIcon platform={source} size={13} />
+    </span>
+  ) : (
+    <span style={{ width: 20, height: 20, borderRadius: '50%', background: `${meta.color}20`, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, lineHeight: 1, flexShrink: 0 }}>
+      {String(meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
+    </span>
+  );
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6,
@@ -37,7 +47,7 @@ function SourceBadge({ source }) {
       border: `1px solid ${meta.color}33`, borderRadius: 999,
       padding: '3px 8px', fontSize: '.72rem', fontWeight: 800,
     }}>
-      <span>{meta.icon}</span>
+      {mark}
       {meta.label}
     </span>
   );
@@ -158,14 +168,14 @@ export default function YourPostsFeed() {
   return (
     <>
       <Helmet>
-        <title>Your Feed | UFIconnect</title>
+        <title>Your Connected Posts | UFIconnect</title>
         <meta name="robots" content="noindex" />
       </Helmet>
       <Layout>
         <div style={{ marginBottom: 20 }}>
-          <h1 className="page-title">Your Feed</h1>
+          <h1 className="page-title">Your Connected Posts</h1>
           <p className="page-subtitle">
-            A live, equalized scroll of posts from the accounts you connected to UFIconnect.
+            A live, equalized scroll from your connected accounts. Same you, tidier timeline, fewer tabs to babysit.
           </p>
         </div>
 
@@ -188,7 +198,8 @@ export default function YourPostsFeed() {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
             {activeSources.map(([source, count]) => (
               <span key={source} className="tag" style={{ gap: 6 }}>
-                {(SOURCE_META[source] || SOURCE_META.uficonnect).label}: {count}
+                <SourceBadge source={source} />
+                {count}
               </span>
             ))}
           </div>

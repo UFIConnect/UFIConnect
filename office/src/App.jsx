@@ -1599,6 +1599,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
   const staging      = status?.staging;
   const dbSize       = status?.dbSize;
   const cacheFreshness = status?.feedStorage?.cache || {};
+  const retention    = status?.feedStorage?.retention || {};
   const topicFilterAgent = status?.topicFilterAgent;
   // Computed from globalFeedCache.posts server-side (see its own comment) —
   // only real on the pipeline role, same as composition/sortAgent above,
@@ -1626,7 +1627,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
       </p>
 
       <Card style={{ overflowX: 'auto', padding: compact ? 12 : 20 }}>
-        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: compact ? 1250 : 1400 }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', minWidth: compact ? 1430 : 1600 }}>
           {/* Stage 1 — Sources */}
           <PipelineNode style={{ flex: '1 1 360px', minWidth: 320, ...wideNode }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1809,7 +1810,27 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
             </div>
           </PipelineNode>
 
-          <FlowConnector colors={['#00d4aa', '#f472b6']} compact={compact} />
+          <FlowConnector colors={['#00d4aa', '#22c55e']} compact={compact} />
+
+          <PipelineNode glow={retention?.inFlight ? '#22c55e' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
+            <div><Label color="#22c55e">After Transfer</Label><SvcTag svc="api" /></div>
+            <div style={{
+              width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
+              background: 'radial-gradient(circle, rgba(34,197,94,.24), rgba(34,197,94,.03))',
+              border: '1px solid rgba(34,197,94,.4)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
+              animation: retention?.inFlight ? 'glowPulse 1.8s ease-in-out infinite' : 'none',
+            }}><span style={{ fontSize: 12, fontWeight: 800 }}>RT</span></div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: retention?.status === 'degraded' ? '#f87171' : '#e2e8f0', marginBottom: 4 }}>
+              {retention?.inFlight ? 'Cleaning now' : retention?.lastRun ? `Cleaned ${fmtAgo(retention.lastRun)}` : 'Ready'}
+            </div>
+            <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
+              {(retention?.lastArchivedCount ?? 0).toLocaleString()} archived
+              {retention?.lastArchivePrunedCount ? ` · ${retention.lastArchivePrunedCount.toLocaleString()} pruned` : ''}
+            </div>
+          </PipelineNode>
+
+          <FlowConnector colors={['#22c55e', '#f472b6']} compact={compact} />
 
           {/* Stage 5 — Topic Filter: the one genuinely per-user step in this
               pipeline — every stage before this is shared/global, the same
@@ -1878,6 +1899,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
         <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} workers={workers} dbSize={dbSize} cacheFreshness={cacheFreshness} />
         <StagingTransferDetailCard staging={staging} />
+        <AfterTransferDetailCard retention={retention} cacheFreshness={cacheFreshness} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <TransferByTopicCard topicComposition={topicComposition} />
         <ViewedDetailCard pageviews={pageviews} />
@@ -2281,6 +2303,63 @@ function StagingTransferDetailCard({ staging }) {
                 </span>
                 <span style={{ color: '#e2e8f0', fontWeight: 700 }}>{(run.movedCount || 0).toLocaleString()} moved</span>
                 <span style={{ color: '#64748b' }}>{formatMs(run.durationMs)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function AfterTransferDetailCard({ retention, cacheFreshness }) {
+  const policy = retention?.policy || {};
+  const breakdown = retention?.lastBreakdown || {};
+  const rows = [
+    ['Count cap', breakdown.countCap],
+    ['Age cap', breakdown.ageCap],
+    ['Unseen cap', breakdown.unseenCap],
+    ['Archive cap', breakdown.archiveCap],
+  ].filter(([, item]) => item);
+  const formatMs = (ms) => {
+    if (ms == null) return '-';
+    return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+  };
+
+  return (
+    <Card>
+      <Label color="#22c55e">After Transfer - detail</Label>
+      <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
+        Runs after staged posts become live: old or over-cap feed rows are archived first, then the archive trims only
+        when it crosses its own ceiling. This is the long-term safety pass that keeps traffic and history from filling storage.
+      </p>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
+        <DetailStat label="state" value={retention?.inFlight ? 'running' : (retention?.status || 'idle')} color={retention?.status === 'degraded' ? '#f87171' : '#22c55e'} />
+        <DetailStat label="live cache" value={cacheFreshness?.count != null ? cacheFreshness.count.toLocaleString() : '-'} />
+        <DetailStat label="last archived" value={(retention?.lastArchivedCount ?? 0).toLocaleString()} color="#22c55e" />
+        <DetailStat label="last pruned" value={(retention?.lastArchivePrunedCount ?? 0).toLocaleString()} />
+        <DetailStat label="last duration" value={formatMs(retention?.lastDurationMs)} />
+        <DetailStat label="last run" value={retention?.lastRun ? fmtAgo(retention.lastRun) : '-'} />
+      </div>
+
+      <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
+        <div>Live cap: <span style={{ color: '#94a3b8' }}>{policy.maxLivePosts?.toLocaleString?.() || '-'}</span></div>
+        <div>Source floor: <span style={{ color: '#94a3b8' }}>{policy.sourceKeepFloor?.toLocaleString?.() || '-'} newest/source</span></div>
+        <div>Retention: <span style={{ color: '#94a3b8' }}>{policy.highVolumePostDays || '-'}d high-volume, {policy.stalePostDays || '-'}d standard</span></div>
+        <div>Archive cap: <span style={{ color: '#94a3b8' }}>{policy.maxArchivePosts?.toLocaleString?.() || '-'}</span></div>
+        {retention?.lastError && <div style={{ color: '#f87171' }}>! {retention.lastError}</div>}
+      </div>
+
+      {rows.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Last cleanup breakdown</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {rows.map(([label, item]) => (
+              <div key={label} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <span style={{ color: '#94a3b8' }}>{label}</span>
+                <strong style={{ color: '#e2e8f0' }}>{Number(item.deleted || 0).toLocaleString()} removed</strong>
+                <span style={{ color: '#22c55e' }}>{Number(item.archived || 0).toLocaleString()} archived</span>
               </div>
             ))}
           </div>
@@ -2848,16 +2927,16 @@ export default function App() {
   };
 
   const nav = [
-    { id: 'overview', label: 'Overview',      icon: 'OV' },
-    { id: 'sources',  label: 'Live Sources',  icon: 'LS' },
-    { id: 'pipeline', label: 'Pipeline',      icon: 'PL' },
-    { id: 'topics',   label: 'Topics',        icon: 'TP' },
-    { id: 'agents',   label: 'Agents',        icon: 'AG' },
-    { id: 'feed',     label: 'Feed Manager',  icon: 'FM' },
-    { id: 'analytics',label: 'Analytics',     icon: 'AN' },
-    { id: 'deploy',   label: 'Deploy Center', icon: 'DP' },
-    { id: 'autofix',  label: 'Autofix',       icon: 'AF' },
-    { id: 'versions', label: 'Versions',      icon: 'VR' },
+    { id: 'overview', label: 'Overview' },
+    { id: 'sources',  label: 'Live Sources' },
+    { id: 'pipeline', label: 'Pipeline' },
+    { id: 'topics',   label: 'Topics' },
+    { id: 'agents',   label: 'Agents' },
+    { id: 'feed',     label: 'Feed Manager' },
+    { id: 'analytics',label: 'Analytics' },
+    { id: 'deploy',   label: 'Deploy Center' },
+    { id: 'autofix',  label: 'Autofix' },
+    { id: 'versions', label: 'Versions' },
   ];
   const apiDbFailover = !!status?.server?.dbReadFailoverActive;
   const pipelineDbFailover = !!pipelineStatus?.server?.dbReadFailoverActive;
@@ -2933,7 +3012,7 @@ export default function App() {
           </div>
 
           <nav style={navStyle}>
-            {nav.map(({ id, label, icon }) => {
+          {nav.map(({ id, label }) => {
               const active = view === id;
               return (
                 <button
@@ -2954,7 +3033,6 @@ export default function App() {
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  <span style={{ fontSize: 12, fontWeight: 800, opacity: active ? 1 : 0.7, minWidth: isMobile ? 'auto' : 22 }}>{icon}</span>
                   {label}
                 </button>
               );

@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -17,6 +18,22 @@ const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch'
 // REAL_PUBLISH_PLATFORMS server-side) — every other connected platform can
 // still be selected in Cross-Post, it just gets queued instead of posted.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit'];
+
+function SourceMark({ source, label, active = false }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span style={{ width: 22, height: 22, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
+        <BrandIcon platform={source} size={14} />
+      </span>
+    );
+  }
+  return (
+    <span style={{ width: 22, height: 22, borderRadius: '50%', background: active ? 'rgba(255,255,255,.22)' : `${meta.color || 'var(--primary)'}18`, color: active ? '#fff' : meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 900, flexShrink: 0 }}>
+      {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
 
 const SECTIONS = [
   { key: 'automation', label: 'Automation' },
@@ -213,7 +230,7 @@ function ConnectedFeedSection() {
               className="btn btn-sm"
               style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
             >
-              {meta.icon} {meta.label} · {bySource.get(src).length}
+              <SourceMark source={src} label={meta.icon} active={active} /> {meta.label} · {bySource.get(src).length}
             </button>
           );
         })}
@@ -224,7 +241,7 @@ function ConnectedFeedSection() {
         return (
           <div key={src} style={{ marginBottom: 26 }}>
             <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>
-              {meta.icon} {meta.label} <span style={{ fontWeight: 500 }}>· {bySource.get(src).length}</span>
+              <SourceMark source={src} label={meta.icon} /> {meta.label} <span style={{ fontWeight: 500 }}>· {bySource.get(src).length}</span>
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {bySource.get(src).map((p, i) => (
@@ -451,7 +468,7 @@ function YourFeedSection() {
               }}
               title={supported ? undefined : 'Coming soon - pending platform API approval'}
             >
-              {meta.icon} {meta.label}{!supported && ' · Coming soon'}
+              <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!supported && ' · Coming soon'}
             </button>
           );
         })}
@@ -724,7 +741,7 @@ function CrossPostSection() {
                       className="btn btn-sm"
                       style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
                     >
-                      {meta.icon} {meta.label}{!real && ' · queued'}
+                      <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!real && ' · queued'}
                     </button>
                   );
                 })}
@@ -747,7 +764,7 @@ function CrossPostSection() {
               return (
                 <div key={t.platform} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '.85rem' }}>
                   <span>{resultMeta.icon}</span>
-                  <span style={{ fontWeight: 600 }}>{meta.icon} {meta.label}</span>
+                  <span style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 6 }}><SourceMark source={t.platform} label={meta.icon} /> {meta.label}</span>
                   <span style={{ color: 'var(--muted)' }}>
                     {t.status === 'posted' && t.postedUrl ? <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View post</a> : (t.error || resultMeta.label)}
                   </span>

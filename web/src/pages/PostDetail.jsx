@@ -7,6 +7,7 @@ import GuestShell from '../components/GuestShell';
 import FollowListModal from '../components/FollowListModal';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, useGlobalMuted } from '../components/videoMedia';
 
 function timeAgo(iso) {
@@ -20,6 +21,22 @@ function timeAgo(iso) {
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function SourceMark({ source, label }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span style={{ width: 26, height: 26, borderRadius: '50%', background: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', flexShrink: 0 }}>
+        <BrandIcon platform={source} size={16} />
+      </span>
+    );
+  }
+  return (
+    <span style={{ width: 26, height: 26, borderRadius: '50%', background: `${meta.color || 'var(--primary)'}18`, color: meta.color || 'var(--primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 900, flexShrink: 0 }}>
+      {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
+    </span>
+  );
 }
 
 // A page dedicated to a single post — the "View on UFIconnect" button in the
@@ -197,7 +214,7 @@ export default function PostDetail() {
           <p style={{ color: 'var(--muted)', marginBottom: 20 }}>
             It may have aged out of the feed, or the link is no longer valid.
           </p>
-          <button className="btn btn-primary" onClick={() => navigate('/')}>Back to Feed</button>
+          <button className="btn btn-primary" onClick={() => navigate('/')}>Back to Home</button>
         </div>
       </Shell>
     );
@@ -232,7 +249,7 @@ export default function PostDetail() {
               </Link>
             ) : (
               <>
-                <span style={{ fontSize: '1rem' }}>{src.icon}</span>
+                <SourceMark source={post.source} label={src.icon} />
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '.82rem', color: src.color }}>{post.sourceLabel || src.label}</div>
                   <div style={{ fontSize: '.72rem', color: 'var(--muted)' }}>

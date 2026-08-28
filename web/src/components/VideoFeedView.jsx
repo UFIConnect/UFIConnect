@@ -2,6 +2,7 @@
 import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
+import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { reportEngaged, reportEngagementSignal } from '../api/engagement';
@@ -52,7 +53,16 @@ const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'dribbble', 'instagram'];
 // UFIconnect posts + connected-account platforms with no aggregate
 // fetcher), which have their own separate filter row below with a
 // different pool entirely.
-const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(k => !FEED_ONLY_EXCLUDED_SOURCES.includes(k));
+const FEED_VIDEO_SOURCE_ORDER = [
+  'reddit', 'github', 'youtube', 'hackernews',
+  'linkedin', 'twitter', 'instagram', 'facebook',
+  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
+  'bluesky', 'devto', 'stackoverflow', 'gitlab', 'medium', 'hashnode', 'lobsters',
+  'arxiv', 'producthunt', 'indiehackers', 'yc', 'crunchbase', 'techcrunch', 'theverge',
+  'arstechnica', 'wired', 'theregister', 'venturebeat', 'infoq', 'mittr', 'phoronix',
+  'smashing', 'behance', 'designweb', 'mastodon',
+];
+const FEED_VIDEO_SOURCES = FEED_VIDEO_SOURCE_ORDER.filter(k => SOURCE_META[k] && !FEED_ONLY_EXCLUDED_SOURCES.includes(k));
 // Following mode's own filter set — every platform Connected Accounts
 // offers (CONNECTED_SOCIAL_PLATFORMS), plus native UFIconnect, an entirely
 // different pool from FEED_VIDEO_SOURCES above (see getFollowingFeedPosts
@@ -64,6 +74,32 @@ const FEED_VIDEO_SOURCES = Object.keys(SOURCE_META).filter(k => !FEED_ONLY_EXCLU
 // just shows the existing "no videos yet" empty state once selected,
 // rather than being left off the picker entirely.
 const FOLLOWING_VIDEO_SOURCES = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
+
+function SourceMark({ source, label, size = 14, active = false }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span style={{
+        width: size + 8, height: size + 8, borderRadius: '50%',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: '#fff', flexShrink: 0,
+      }}>
+        <BrandIcon platform={source} size={size} />
+      </span>
+    );
+  }
+  return (
+    <span style={{
+      width: size + 8, height: size + 8, borderRadius: '50%',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.12)',
+      color: '#fff', fontSize: Math.max(8, size - 7), fontWeight: 800, lineHeight: 1,
+      flexShrink: 0,
+    }}>
+      {String(label || meta.icon || source || 'UFI').slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
 
 // Figures out how a given post's video can actually be played in-app, per
 // platform — the same Bluesky-playlist/direct-file detection ImageLightbox
@@ -649,7 +685,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       }}>
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700 }}>
-            <span>{meta.icon}</span>
+            <SourceMark source={post.source} label={meta.icon} size={13} />
             <span>{post.sourceLabel || meta.label}</span>
           </div>
           {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85, marginTop: 2 }}>{post.author.name}</div>}
@@ -1135,7 +1171,7 @@ export default function VideoFeedView({ onExit }) {
         endpoint = '/office/feed/videos';
       }
       const { data } = await client.get(`${endpoint}?${params}`);
-      const incoming = (data.posts || []).filter(p => p?.mediaUrl);
+      const incoming = (data.posts || []).filter(p => p && resolveVideoSource(p));
       if (reset) {
         // A reset (initial mount, mode/filter switch, or a user-initiated
         // refresh) needs the dedup window to reset with it, otherwise
@@ -1961,7 +1997,7 @@ export default function VideoFeedView({ onExit }) {
         position: 'absolute', top: topSafe, left: 12, right: 12,
         zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
       }}>
-        <button onClick={onExit} aria-label="Back to Feed" style={{ ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0 }}>
+        <button onClick={onExit} aria-label="Back to Home" style={{ ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
             <path d="M15 18l-6-6 6-6" />
           </svg>
@@ -1975,7 +2011,7 @@ export default function VideoFeedView({ onExit }) {
           background: 'rgba(0,0,0,.4)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
           border: '1px solid rgba(255,255,255,.18)', borderRadius: 18, padding: 3,
         }}>
-          {[{ key: 'feed', label: 'Feed' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
+          {[{ key: 'feed', label: 'Home' }, { key: 'following', label: 'Following' }].map(({ key, label }) => {
             const active = viewMode === key;
             return (
               <button
@@ -2240,7 +2276,7 @@ export default function VideoFeedView({ onExit }) {
                         color: '#fff',
                       }}
                     >
-                      <span>{meta.icon}</span>{meta.label || key}
+                      <SourceMark source={key} label={meta.icon} size={13} active={active} />{meta.label || key}
                     </button>
                   );
                 })}
@@ -2307,7 +2343,7 @@ export default function VideoFeedView({ onExit }) {
                 ? 'No videos yet from people you follow — try a different platform filter, or check back once they post.'
                 : 'No videos yet — check back soon as more platforms post video content.'}
           </div>
-          <button onClick={onExit} className="btn btn-primary btn-sm">Back to Feed</button>
+          <button onClick={onExit} className="btn btn-primary btn-sm">Back to Home</button>
         </div>
       ) : (
         <>

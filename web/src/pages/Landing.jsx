@@ -2,18 +2,20 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { TIERS } from '../components/PricingModal';
+import { SOURCE_META } from '../components/sourceMeta';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 
 const SOURCES = [
-  'Reddit', 'YouTube', 'GitHub', 'Hacker News', 'Stack Overflow',
-  'DEV Community', 'Medium', 'Product Hunt', 'USAJobs', 'Indeed',
-  'Remote OK', 'Remotive', 'The Muse',
+  'reddit', 'youtube', 'github', 'hackernews', 'linkedin', 'instagram', 'facebook',
+  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs', 'stackoverflow',
+  'devto', 'medium', 'producthunt',
 ];
 
 const FEATURES = [
   {
     label: 'Feed',
     title: 'A live feed with range',
-    desc: 'Follow real conversations, videos, member posts, and source updates without one platform crowding out the rest.',
+    desc: 'Follow real conversations, videos, member posts, jobs, and source updates without one platform crowding out the rest.',
   },
   {
     label: 'People',
@@ -23,7 +25,7 @@ const FEATURES = [
   {
     label: 'Work',
     title: 'Opportunities beside the feed',
-    desc: 'Browse jobs, gigs, grants, events, and learning resources matched to the background you choose.',
+    desc: 'Browse jobs, gigs, grants, events, and learning resources without leaving the scroll.',
   },
   {
     label: 'Center',
@@ -58,7 +60,7 @@ const FAQS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'Welcome to UFIconnect - a live professional network for feeds, communities, messaging, and real opportunities.';
+const SHARE_TEXT = 'Welcome to UFIconnect - a live place for feeds, communities, messaging, videos, and real opportunities.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -99,6 +101,24 @@ function PlanCard({ title, price, tagline, locked }) {
   );
 }
 
+function SourceChip({ source }) {
+  const meta = SOURCE_META[source] || { label: source, color: 'var(--primary)', icon: source };
+  return (
+    <span>
+      {hasBrandIcon(source) ? (
+        <span className="landing-source-mark">
+          <BrandIcon platform={source} size={14} />
+        </span>
+      ) : (
+        <span className="landing-source-fallback" style={{ color: meta.color }}>
+          {String(meta.icon || source).slice(0, 3).toUpperCase()}
+        </span>
+      )}
+      {meta.label}
+    </span>
+  );
+}
+
 export default function Landing() {
   const [shareCopied, setShareCopied] = useState(false);
 
@@ -120,8 +140,8 @@ export default function Landing() {
     <>
       <Helmet>
         <title>UFIconnect - Official Home</title>
-        <meta name="description" content="Welcome to UFIconnect, a live professional network for personalized feeds, communities, messaging, and real opportunities." />
-        <meta name="keywords" content="professional network, live feed, global feed, communities, messaging, jobs, opportunities, UFIconnect, ufi connect" />
+        <meta name="description" content="Welcome to UFIconnect, a live home for personalized feeds, communities, messaging, videos, and real opportunities." />
+        <meta name="keywords" content="live feed, global feed, communities, messaging, jobs, opportunities, videos, UFIconnect, ufi connect" />
         <meta name="author" content="UFIconnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -151,8 +171,8 @@ export default function Landing() {
                 <div className="landing-eyebrow">Official home</div>
                 <h1>UFIconnect</h1>
                 <p>
-                  Welcome to a calmer professional network: a live feed, useful communities,
-                  direct messaging, and real opportunities in one place.
+                  Welcome to a calmer place to scroll: live posts, useful communities,
+                  direct messaging, videos, and real opportunities in one place.
                 </p>
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>
@@ -172,8 +192,8 @@ export default function Landing() {
           </section>
 
           <section className="landing-section landing-product-section">
-            <SectionHeading eyebrow="Product" title="Built around the feed, not a sales page">
-              The first thing people see should feel like the app they are about to use.
+            <SectionHeading eyebrow="Inside" title="Built around the feed, not a pitch deck">
+              The first thing people see should feel like the place they are about to use.
             </SectionHeading>
             <div className="landing-product-grid">
               <div className="landing-product-shot">
@@ -198,13 +218,13 @@ export default function Landing() {
               Public sources, connected accounts, and UFIconnect posts are balanced into one scrolling experience.
             </SectionHeading>
             <div className="landing-source-row">
-              {SOURCES.map(source => <span key={source}>{source}</span>)}
+              {SOURCES.map(source => <SourceChip key={source} source={source} />)}
             </div>
           </section>
 
           <section className="landing-section landing-start-section">
             <SectionHeading eyebrow="Start" title="A welcoming path in">
-              Browse first, or create an account and let UFIconnect shape itself around your work.
+              Browse first, or create an account and let UFIconnect shape itself around what you like to read.
             </SectionHeading>
             <div className="landing-step-grid">
               {STEPS.map(([title, desc], index) => (
