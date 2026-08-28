@@ -13353,6 +13353,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
 const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
 // backstopped by any check of the database's actual size (see
@@ -13395,7 +13396,7 @@ async function archiveThenDelete(sql, params = []) {
   const { rows } = await db.query(
     `WITH moved AS (
        ${sql}
-       RETURNING ${ARCHIVE_COLUMNS}
+       RETURNING ${ARCHIVE_RETURNING_COLUMNS}
      ),
      inserted AS (
        INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
@@ -13553,7 +13554,7 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
   (async () => {
     const breakdown = {};
     breakdown.countCap = await archiveThenDelete(
-      `DELETE FROM feed_posts_cache WHERE id IN (
+      `DELETE FROM feed_posts_cache fp WHERE fp.id IN (
          SELECT id FROM (
            SELECT id,
                   ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
