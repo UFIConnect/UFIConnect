@@ -154,7 +154,9 @@ export function extractVimeoId(url) {
 // column it persists through already existed; a separate stream-url column
 // didn't), so the playlist URL is recovered by swapping the filename.
 export function deriveBlueskyPlaylistUrl(thumbnailUrl) {
-  if (!thumbnailUrl || !thumbnailUrl.includes('/thumbnail.')) return null;
+  if (!thumbnailUrl) return null;
+  if (/\.m3u8(\?|$)/i.test(thumbnailUrl)) return thumbnailUrl;
+  if (!thumbnailUrl.includes('/thumbnail.')) return null;
   return thumbnailUrl.replace(/\/thumbnail\.[a-z0-9]+(\?.*)?$/i, '/playlist.m3u8');
 }
 

@@ -131,7 +131,7 @@ function resolveVideoSource(post) {
   if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
   if (post.source === 'bluesky') {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
-    return playlist ? { kind: 'hls', src: playlist, poster: post.mediaUrl } : null;
+    return playlist ? { kind: 'hls', src: playlist, poster: post.mediaPoster || null } : null;
   }
   if (isDirectVideoUrl(post.mediaUrl)) {
     // mediaPoster is a real static preview frame server-side extracts

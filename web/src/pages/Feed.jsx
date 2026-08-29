@@ -1294,7 +1294,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
                 kind={videoPlaylistUrl ? 'hls' : 'file'}
                 src={videoPlaylistUrl || post.mediaUrl}
                 videoKey={post.id}
-                poster={videoPlaylistUrl ? post.mediaUrl : undefined}
+                poster={videoPlaylistUrl ? post.mediaPoster : undefined}
                 style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
                 forcePause={isMediaOpen}
               />

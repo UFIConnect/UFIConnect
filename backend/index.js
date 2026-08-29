@@ -5687,8 +5687,9 @@ async function fetchBlueskyByKeyword(keyword) {
       likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
       createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
       isExternal:  true,
-      mediaUrl:    isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].thumb : null),
+      mediaUrl:    isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].thumb : null),
       mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
+      mediaPoster: isVideo ? p.embed.thumbnail : null,
       group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
     };
   };
@@ -5845,8 +5846,9 @@ async function fetchBlueskyFollowingTimeline(token, { bust = false, connectedAt 
           likes: [], likesCount: p.likeCount || 0, commentsCount: p.replyCount || 0,
           createdAt:   normalizeTimestamp(p.record?.createdAt || p.indexedAt),
           isExternal:  true,
-          mediaUrl:    isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].thumb : null),
+          mediaUrl:    isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].thumb : null),
           mediaType:   isVideo ? 'video' : (isImage ? 'image' : null),
+          mediaPoster: isVideo ? p.embed.thumbnail : null,
           group:       { id: 'ext_bluesky', name: 'Bluesky', category: 'Social', externalUrl: 'https://bsky.app' },
         };
       });
@@ -11859,8 +11861,9 @@ async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } 
           source: 'bluesky', sourceLabel: `@${handle}`,
           title: text.slice(0, 120), content: text,
           sourceUrl: `https://bsky.app/profile/${handle}/post/${(p.uri || '').split('/').pop()}`,
-          mediaUrl: isVideo ? p.embed.thumbnail : (isImage ? p.embed.images[0].fullsize : null),
-          mediaType: isVideo ? 'video_thumbnail_only' : (isImage ? 'image' : null),
+          mediaUrl: isVideo ? (p.embed.playlist || null) : (isImage ? p.embed.images[0].fullsize : null),
+          mediaType: isVideo ? 'video' : (isImage ? 'image' : null),
+          mediaPoster: isVideo ? p.embed.thumbnail : null,
           createdAt: normalizeTimestamp(p.record?.createdAt || p.indexedAt),
         };
       });
@@ -17139,7 +17142,7 @@ app.get('/feed/guest', async (req, res) => {
 // up in the cache.
 function isPlayableVideoPost(p) {
   if (!p || p.mediaType !== 'video') return false;
-  if (p.source === 'bluesky') return !!(p.mediaUrl && p.mediaUrl.includes('/thumbnail.'));
+  if (p.source === 'bluesky') return !!(p.mediaUrl && /\.m3u8(\?|$)/i.test(p.mediaUrl));
   if (p.source === 'youtube') {
     return !!(p.embedId || /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.sourceUrl || ''));
   }
