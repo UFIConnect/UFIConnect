@@ -6,7 +6,7 @@ import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted } from '../components/videoMedia';
+import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -62,12 +62,25 @@ function mergeGuestPosts(primary = [], secondary = []) {
 // whether anything actually plays, so scrolling past a video stops it the
 // same way it does everywhere else in the app.
 function GuestVideoPlayer({ post, active, muted }) {
+  const directVideoRef = useRef(null);
   const youtubeId = post.source === 'youtube'
     ? (post.embedId || extractYouTubeId(post.sourceUrl))
     : extractYouTubeId(post.mediaUrl);
   const playlistUrl = !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const directUrl = !youtubeId && !playlistUrl && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
-  const poster = post.mediaPoster || (youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : post.mediaUrl);
+
+  useEffect(() => {
+    const video = directVideoRef.current;
+    if (!video || !directUrl) return;
+    video.muted = muted;
+    video.playsInline = true;
+    if (active) {
+      video.play().catch(() => {});
+      requestAnimationFrame(() => video.play().catch(() => {}));
+    } else {
+      video.pause();
+    }
+  }, [active, directUrl, muted]);
 
   if (youtubeId) {
     return (
@@ -81,23 +94,28 @@ function GuestVideoPlayer({ post, active, muted }) {
             title={post.title}
           />
         ) : (
-          <img src={poster} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', background: 'linear-gradient(135deg, #111827, #020617)', fontSize: '.82rem', fontWeight: 800 }}>
+            Video wakes up when you scroll here
+          </div>
         )}
       </div>
     );
   }
   if (playlistUrl) {
     return active ? (
-      <HlsVideoPlayer src={playlistUrl} poster={post.mediaUrl} autoPlay muted={muted} loop
+      <HlsVideoPlayer src={playlistUrl} poster={null} autoPlay muted={muted} loop
         style={{ width: '100%', display: 'block', maxHeight: 400 }} />
     ) : (
-      <img src={post.mediaUrl} alt="" style={{ width: '100%', display: 'block', maxHeight: 400, objectFit: 'cover' }} />
+      <div style={{ height: 240, background: '#000', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '.82rem', fontWeight: 800 }}>
+        Video wakes up when you scroll here
+      </div>
     );
   }
   if (directUrl) {
     return (
       <video
-        src={directUrl} poster={poster || undefined}
+        ref={directVideoRef}
+        src={directUrl}
         autoPlay={active} muted={muted} loop playsInline
         preload={active ? 'auto' : 'metadata'}
         style={{ width: '100%', display: 'block', maxHeight: 400, background: '#000' }}
@@ -293,6 +311,12 @@ export default function GuestFeed() {
     return () => observer.disconnect();
   }, [posts]);
 
+  useEffect(() => {
+    if (activePostId || posts.length === 0) return;
+    const firstVideo = posts.find(post => post.mediaType === 'video');
+    if (firstVideo) setActivePostId(firstVideo.id);
+  }, [activePostId, posts]);
+
   return (
     <GuestShell>
       <Helmet>
@@ -320,8 +344,9 @@ export default function GuestFeed() {
               type="button" onClick={() => toggleMuted()}
               className="btn btn-ghost btn-sm"
               aria-label={muted ? 'Unmute videos' : 'Mute videos'}
+              title={muted ? 'Unmute videos' : 'Mute videos'}
             >
-              {muted ? 'Muted' : 'Sound on'}
+              <SoundIcon muted={muted} size={15} />
             </button>
             <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join free</button></Link>
           </div>

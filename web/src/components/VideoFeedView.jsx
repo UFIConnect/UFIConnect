@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl } from './videoMedia';
+import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, isYouTubeShortsUrl, HlsVideoPlayer, loadYouTubeIframeApi, userWantsSound, useGlobalMuted, fetchVimeoThumbnail, youTubePosterUrl, SoundIcon } from './videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
@@ -401,9 +401,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   useEffect(() => {
     if (!active || src?.kind === 'youtube') return;
     const v = getNativeEl();
-    if (!v) return;
-    if (isScrolling) v.pause();
-    else v.play().catch(() => {});
+    if (v && v.paused) v.play().catch(() => {});
   }, [isScrolling, active, src?.kind, getNativeEl]);
 
   function togglePlay() {
@@ -498,7 +496,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           for vimeo (see vimeoPoster's own comment above), so without this
           override every Vimeo post would permanently skip this backdrop
           and the inactive-state preview image below. */}
-      {(() => { const effectivePoster = src?.kind === 'vimeo' ? vimeoPoster : src?.poster; return effectivePoster && (
+      {(() => { const effectivePoster = !active && (src?.kind === 'vimeo' ? vimeoPoster : src?.poster); return effectivePoster && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: -1,
           backgroundImage: `url(${effectivePoster})`,
@@ -520,7 +518,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           // itself isn't owned per-slide anymore.
           null
         ) : (
-          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <div style={{ width: '100%', height: '100%', background: '#000' }} />
         )
       ) : src.kind === 'vimeo' ? (
         // Play/pause/duration/currentTime now come from Vimeo's postMessage
@@ -556,7 +554,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         )
       ) : src.kind === 'hls' ? (
         active ? (
-          <HlsVideoPlayer src={src.src} poster={src.poster} autoPlay muted={muted} loop
+          <HlsVideoPlayer src={src.src} poster={null} autoPlay muted={muted} loop
             videoRef={hlsVideoRef} onClick={togglePlay}
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
@@ -564,7 +562,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
             style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
         ) : (
-          <img src={src.poster} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: 0.85 }} />
+          <div style={{ width: '100%', height: '100%', background: '#000' }} />
         )
       ) : (
         // contain, not cover: 'file' is the catch-all for an arbitrary
@@ -586,7 +584,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         <video
           ref={fileVideoRef}
           src={src.src}
-          poster={src.poster || undefined}
+          poster={undefined}
           // Only the active slide needs to actually buffer video data ahead
           // of play() — a neighbor within VIDEO_MOUNT_RADIUS (mounted so
           // it's instant if scrolled to, see the render loop above) only
@@ -793,6 +791,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
       {/* Right-side action rail */}
       <div style={{ position: 'absolute', zIndex: 2, right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
+          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
+          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.likesCount || 0).toLocaleString()}</span>
+        </div>
         <button
           onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
           style={{
@@ -800,15 +802,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
           }}
         >
-          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comment</span>
-          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.commentsCount > 0 ? post.commentsCount.toLocaleString() : 'Comments'}</span>
+          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comments</span>
+          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.commentsCount || 0).toLocaleString()}</span>
         </button>
-        {post.likesCount > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-            <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
-            <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{post.likesCount.toLocaleString()}</span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -2093,7 +2089,7 @@ export default function VideoFeedView({ onExit }) {
             ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, fontSize: '1rem',
             opacity: muteControllable ? 1 : 0.35, cursor: muteControllable ? 'pointer' : 'default',
           }}
-        >{muted ? 'M' : 'S'}</button>
+        ><SoundIcon muted={muted} size={16} /></button>
       </div>
 
       {searchOpen && (
@@ -2331,7 +2327,7 @@ export default function VideoFeedView({ onExit }) {
 
       {loading && videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
-          Loading videos...
+          Loading videos... lining up the good stuff.
         </div>
       ) : error || videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', gap: 14, padding: 24, textAlign: 'center' }}>
@@ -2340,8 +2336,8 @@ export default function VideoFeedView({ onExit }) {
             {error
               ? "Couldn't load videos right now."
               : viewMode === 'following'
-                ? 'No videos yet from people you follow — try a different platform filter, or check back once they post.'
-                : 'No videos yet — check back soon as more platforms post video content.'}
+                ? 'No videos yet from your connected world. Try another platform filter while the popcorn regroups.'
+                : 'No videos yet. The scroll is warming up and trying not to trip over its own shoelaces.'}
           </div>
           <button onClick={onExit} className="btn btn-primary btn-sm">Back to Home</button>
         </div>
@@ -2513,7 +2509,7 @@ export default function VideoFeedView({ onExit }) {
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
-          opacity: (activeSrc?.kind === 'youtube' && !isScrolling) ? 1 : 0,
+          opacity: activeSrc?.kind === 'youtube' ? 1 : 0,
           transition: 'opacity .15s ease-out',
         }}>
           <div

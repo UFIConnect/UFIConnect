@@ -4,7 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, youTubePosterUrl } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import ImageLightbox from '../components/ImageLightbox';
@@ -555,7 +555,6 @@ function MaximizeButton({ onClick }) {
 
 function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
   const [inView, setInView] = useState(false);
-  const posterUrl = poster || youTubePosterUrl(embedId);
   // Whether the real YT.Player has actually been constructed yet — separate
   // from `playing`/`effectivelyPlaying` (see below) because construction
   // happens at most once per embedId and is never redone just because
@@ -673,13 +672,13 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
   }, [muted]);
 
-  const showPoster = !playerReady;
+  const showPlayerHint = !playerReady && !effectivelyPlaying;
 
   return (
     <div
       ref={containerRef}
-      style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: 'var(--border)', cursor: showPoster ? 'pointer' : 'default' }}
-      onClick={showPoster ? () => setInView(true) : undefined}
+      style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', cursor: showPlayerHint ? 'pointer' : 'default' }}
+      onClick={showPlayerHint ? () => setInView(true) : undefined}
     >
       {/* Always in the DOM once rendered, and — critically — always
           display:'block' from the very first render, never toggled by
@@ -705,29 +704,23 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           of the iframe's own document swallowing it — same fix
           VideoFeedView and ImageLightbox's own YouTube mounts already use. */}
       <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none' }} />
-      {showPoster && (
-        <div style={{ position: 'absolute', inset: 0 }}>
-          {posterUrl && <img src={posterUrl} alt={title} style={{ width: '100%', height: '100%', display: 'block', objectFit: 'cover' }}
-            onError={e => {
-              e.currentTarget.style.display = 'none';
-              const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-fallback]');
-              if (fallback) fallback.style.display = 'flex';
-            }} />}
-          <div data-youtube-fallback style={{
-            display: posterUrl ? 'none' : 'flex', position: 'absolute', inset: 0,
-            alignItems: 'center', justifyContent: 'center',
-            background: 'var(--border)', color: 'var(--muted)', fontSize: '.85rem',
-          }}>
-            Thumbnail unavailable
-          </div>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#FF0000', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.4)' }}>
-              <span style={{ color: '#fff', fontSize: '1.7rem', marginLeft: 4 }}>▶</span>
-            </div>
+      {showPlayerHint && (
+        <div style={{
+          position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: '#fff', background: 'linear-gradient(135deg, #111827, #020617)',
+          pointerEvents: 'none',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontWeight: 800, fontSize: '.85rem' }}>
+            <span style={{
+              width: 42, height: 42, borderRadius: '50%', background: '#FF0000',
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(0,0,0,.35)', fontSize: '1.15rem',
+            }}>▶</span>
+            <span>{autoPlayOnVisible ? 'Playing when it hits the sweet spot' : 'Tap to play'}</span>
           </div>
         </div>
       )}
-      {!showPoster && (
+      {playerReady && (
         <button
           onClick={e => { e.stopPropagation(); toggleMuted(); }}
           aria-label={muted ? 'Unmute' : 'Mute'}
@@ -741,7 +734,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
             border: '1px solid rgba(255,255,255,.25)', color: '#fff', cursor: 'pointer', fontSize: '.9rem',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
-        >{muted ? 'M' : 'S'}</button>
+        ><SoundIcon muted={muted} size={15} /></button>
       )}
     </div>
   );

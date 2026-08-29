@@ -947,6 +947,16 @@ function AnalyticsView() {
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} unique IP{data.last30Visitors === 1 ? '' : 's'}</div>
             </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Signed-in today</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{data.signedInTodayViews ?? 0}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.signedInTodayUsers ?? 0} registered user{(data.signedInTodayUsers ?? 0) === 1 ? '' : 's'}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Signed-in 30d</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#f0abfc', marginTop: 6 }}>{data.signedInLast30Views ?? 0}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.signedInLast30Users ?? 0} registered user{(data.signedInLast30Users ?? 0) === 1 ? '' : 's'}</div>
+            </Card>
           </div>
 
           <Label color="#475569">Top Pages (30d)</Label>
@@ -2523,13 +2533,15 @@ function ViewedDetailCard({ pageviews }) {
       <Label color="#4ade80">Viewed — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
         First-party pageview log, one row per route change on the live site. Unique counts are grouped by
-        salted IP key, so guest traffic is counted even when nobody signs up.
+        salted IP key for guests, and signed-in views are tied to registered user IDs when a member has a session.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
         <DetailStat label="last 24h views" value={pageviews.today.toLocaleString()} color="#4ade80" />
         <DetailStat label="24h unique IPs" value={(pageviews.todayVisitors ?? 0).toLocaleString()} />
         <DetailStat label="30d unique IPs" value={(pageviews.last30Visitors ?? 0).toLocaleString()} />
+        <DetailStat label="signed-in 24h" value={(pageviews.signedInTodayViews ?? 0).toLocaleString()} color="#c084fc" />
+        <DetailStat label="registered 30d" value={(pageviews.signedInLast30Users ?? 0).toLocaleString()} />
       </div>
 
       {daily.length > 0 && (

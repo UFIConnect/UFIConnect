@@ -2,16 +2,9 @@ databases:
   - name: uficonnect-db
     databaseName: uficonnect
     user: ufi_admin
-    # Was 'free' here — stale relative to reality. The live database has
-    # been on Basic 4gb for a while (upgraded directly in the Render
-    # dashboard at some point, never reflected back into this file), and
-    # Blueprint sync refuses to apply a plan value here that would mean
-    # downgrading a live database. This just matches what's already true in
-    # production so the sync stops trying to change it — not requesting an
-    # actual plan change. Review the sync's own preview before confirming;
-    # I can't see the Render dashboard directly, so if this exact string is
-    # off, the preview (or another sync error) is the way to catch it.
-    plan: basic-4gb
+    # 5 GB database storage. Render's database plan is compute; storage is
+    # tracked separately as diskSizeGB.
+    diskSizeGB: 5
 
 services:
   # ── Backend (Node.js API) ───────────────────────────────────
@@ -46,9 +39,9 @@ services:
       - key: RSS_CRITICAL_MB
         value: '430'
       - key: DB_SIZE_LIMIT_MB
-        value: '4096'
+        value: '5120'
       - key: RENDER_DB_PLAN
-        value: basic-4gb
+        value: disk-5gb
       # 'api' (the default if unset) serves real user traffic and never
       # fetches external sources on its own — see the SERVICE_ROLE gates in
       # backend/index.js. uficonnect-pipeline below sets this to 'pipeline'
@@ -148,6 +141,10 @@ services:
       # backend/index.js). Until this is set, /billing/create-checkout-session
       # returns 503 for tier:'resume_builder' same as the other two do.
       - key: STRIPE_PRICE_ID_RESUME_BUILDER
+        sync: false
+      - key: STRIPE_RESUME_BUILDER_PRICE_ID
+        sync: false
+      - key: RESUME_BUILDER_PRICE_ID
         sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and
       # createNotification/sendPushToUser silently skip the push step — the
@@ -295,9 +292,9 @@ services:
       - key: RSS_CRITICAL_MB
         value: '430'
       - key: DB_SIZE_LIMIT_MB
-        value: '4096'
+        value: '5120'
       - key: RENDER_DB_PLAN
-        value: basic-4gb
+        value: disk-5gb
       - key: SERVICE_ROLE
         value: pipeline
       - key: JWT_SECRET

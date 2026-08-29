@@ -25,9 +25,14 @@ export function trackPageview(path) {
     window.gtag('event', 'page_view', { page_path: path });
   }
   const apiBase = import.meta.env.VITE_API_URL || '/api';
+  let token = null;
+  try { token = localStorage.getItem('pc_token'); } catch {}
   fetch(`${apiBase}/analytics/pageview`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ path, referrer: document.referrer || null }),
     keepalive: true,
   }).catch(() => {});

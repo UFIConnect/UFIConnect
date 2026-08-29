@@ -13166,9 +13166,11 @@ async function migrateDB() {
     `);
     await db.query(`ALTER TABLE page_views ADD COLUMN IF NOT EXISTS ip_key TEXT`);
     await db.query(`ALTER TABLE page_views ADD COLUMN IF NOT EXISTS client_visitor_id TEXT`);
+    await db.query(`ALTER TABLE page_views ADD COLUMN IF NOT EXISTS user_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_created_idx ON page_views(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_path_idx    ON page_views(path)`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_ip_created_idx ON page_views(ip_key, created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS pv_user_created_idx ON page_views(user_id, created_at DESC) WHERE user_id IS NOT NULL`);
 
     // Cross-service activity heartbeat. API receives real web traffic, while
     // the pipeline service is the only process running source fetchers; an
@@ -14681,7 +14683,7 @@ function isLikelyBotRequest(req) {
 // Distinct visitor counts are IP-derived server-side, not client-generated,
 // because the public "skip sign up" flow means many real visitors never
 // create an account. The IP is stored only as a salted hash key.
-app.post('/analytics/pageview', async (req, res) => {
+app.post('/analytics/pageview', authenticateOptional, async (req, res) => {
   try {
     if (isLikelyBotRequest(req)) return res.status(204).end();
     const path      = String(req.body?.path || '').slice(0, 300);
@@ -14692,8 +14694,8 @@ app.post('/analytics/pageview', async (req, res) => {
     recordRealUserActivity(req, 'pageview');
     if (db.isConnected()) {
       await db.query(
-        `INSERT INTO page_views (path, referrer, visitor_id, ip_key, client_visitor_id) VALUES ($1,$2,$3,$4,$5)`,
-        [path, referrer, ipKey || clientVisitorId, ipKey, clientVisitorId]
+        `INSERT INTO page_views (path, referrer, visitor_id, ip_key, client_visitor_id, user_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [path, referrer, ipKey || clientVisitorId, ipKey, clientVisitorId, req.user?.id || null]
       );
     }
     res.status(204).end();
@@ -14752,7 +14754,7 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     // all). Distinct visitors next to it gives the actually-meaningful
     // number for "how many separate people were here."
     const visitorSql = `COUNT(DISTINCT ip_key) FILTER (WHERE ip_key IS NOT NULL)`;
-    const [today, last7, last30, topPaths, daily] = await Promise.all([
+    const [today, last7, last30, topPaths, daily, signedIn] = await Promise.all([
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '30 days'`),
@@ -14769,6 +14771,14 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
         WHERE created_at >= NOW() - INTERVAL '30 days'
         GROUP BY day ORDER BY day ASC
       `),
+      db.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day' AND user_id IS NOT NULL) AS today_views,
+          COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day' AND user_id IS NOT NULL) AS today_users,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days' AND user_id IS NOT NULL) AS last30_views,
+          COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days' AND user_id IS NOT NULL) AS last30_users
+        FROM page_views
+      `),
     ]);
     res.json({
       available: true,
@@ -14778,6 +14788,10 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
       last7Visitors:  Number(last7.rows[0].visitors),
       last30: Number(last30.rows[0].count),
       last30Visitors: Number(last30.rows[0].visitors),
+      signedInTodayViews: Number(signedIn.rows[0].today_views),
+      signedInTodayUsers: Number(signedIn.rows[0].today_users),
+      signedInLast30Views: Number(signedIn.rows[0].last30_views),
+      signedInLast30Users: Number(signedIn.rows[0].last30_users),
       topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views), visitors: Number(r.visitors) })),
       daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
     });
@@ -15504,7 +15518,15 @@ const TIER_PRICE_IDS = {
     process.env.STRIPE_PRICE_ID_RESUME_BUILDER ||
     process.env.STRIPE_RESUME_BUILDER_PRICE_ID ||
     process.env.RESUME_BUILDER_PRICE_ID ||
-    process.env.STRIPE_PRICE_ID_RESUME
+    process.env.STRIPE_PRICE_ID_RESUME ||
+    process.env.STRIPE_RESUME_PRICE_ID ||
+    process.env.RESUME_BUILDER_STRIPE_PRICE_ID ||
+    process.env.STRIPE_PRICE_RESUME_BUILDER ||
+    Object.entries(process.env).find(([key, value]) => (
+      /^price_[A-Za-z0-9_]+$/.test(String(value || '')) &&
+      /RESUME/i.test(key) &&
+      /PRICE/i.test(key)
+    ))?.[1]
   ),
 };
 

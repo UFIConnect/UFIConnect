@@ -53,6 +53,22 @@ export function useGlobalMuted() {
   return [muted, toggleMuted];
 }
 
+export function SoundIcon({ muted, size = 16 }) {
+  return muted ? (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="m22 9-6 6" />
+      <path d="m16 9 6 6" />
+    </svg>
+  ) : (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  );
+}
+
 // Feed cards (YouTube/Vimeo embeds, inline autoplay previews) each
 // run their own IntersectionObserver to know when they've scrolled into
 // view, but did so entirely independently of one another. On a normal card
@@ -370,9 +386,9 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
     <div ref={containerRef}>
       {kind === 'hls' ? (
         shouldPlay ? (
-          <HlsVideoPlayer src={src} poster={poster} autoPlay muted loop style={style} />
+          <HlsVideoPlayer src={src} poster={null} autoPlay muted loop style={style} />
         ) : (
-          <img src={poster} alt="" style={style} />
+          <div style={{ minHeight: 220, background: '#000', ...style }} />
         )
       ) : (
         <video ref={fileRef} src={src} muted loop playsInline preload="metadata" style={style} />
