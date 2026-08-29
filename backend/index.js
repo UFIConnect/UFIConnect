@@ -15529,6 +15529,10 @@ const TIER_PRICE_IDS = {
       /^price_[A-Za-z0-9_]+$/.test(String(value || '')) &&
       /RESUME/i.test(key) &&
       /PRICE/i.test(key)
+    ))?.[1] ||
+    Object.entries(process.env).find(([key, value]) => (
+      /^price_[A-Za-z0-9_]+$/.test(String(value || '')) &&
+      /RESUME/i.test(key)
     ))?.[1]
   ),
 };
