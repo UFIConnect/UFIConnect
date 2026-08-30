@@ -63,11 +63,10 @@ function mergeGuestPosts(primary = [], secondary = []) {
 // same way it does everywhere else in the app.
 function GuestVideoPlayer({ post, active, muted }) {
   const directVideoRef = useRef(null);
-  const youtubeId = post.source === 'youtube'
-    ? (post.embedId || extractYouTubeId(post.sourceUrl))
-    : extractYouTubeId(post.mediaUrl);
+  const videoUrl = post.source === 'youtube' ? (post.sourceUrl || post.mediaUrl) : (post.mediaUrl || post.sourceUrl);
+  const youtubeId = post.embedId || extractYouTubeId(videoUrl);
   const playlistUrl = !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
-  const directUrl = !youtubeId && !playlistUrl && post.mediaUrl && isDirectVideoUrl(post.mediaUrl) ? post.mediaUrl : null;
+  const directUrl = !youtubeId && !playlistUrl && videoUrl && isDirectVideoUrl(videoUrl) ? videoUrl : null;
 
   useEffect(() => {
     const video = directVideoRef.current;
@@ -88,8 +87,8 @@ function GuestVideoPlayer({ post, active, muted }) {
         {active ? (
           <iframe
             key={muted ? 'muted' : 'unmuted'}
-            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&playsinline=1&modestbranding=1&rel=0`}
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+            src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${muted ? 1 : 0}&playsinline=1&controls=0&modestbranding=1&rel=0`}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', pointerEvents: 'none' }}
             allow="autoplay; encrypted-media"
             title={post.title}
           />
@@ -118,6 +117,7 @@ function GuestVideoPlayer({ post, active, muted }) {
         src={directUrl}
         autoPlay={active} muted={muted} loop playsInline
         preload={active ? 'auto' : 'metadata'}
+        draggable={false}
         style={{ width: '100%', display: 'block', maxHeight: 400, background: '#000' }}
       />
     );

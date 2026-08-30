@@ -42,6 +42,20 @@ services:
         value: '5120'
       - key: RENDER_DB_PLAN
         value: disk-5gb
+      - key: FEED_COUNT_CAP_INTERVAL_MS
+        value: '300000'
+      - key: FEED_UNSEEN_CAP_INTERVAL_MS
+        value: '900000'
+      - key: ARCHIVE_MAX_AGE_MS
+        value: '2592000000'
+      - key: ARCHIVE_AGE_PRUNE_INTERVAL_MS
+        value: '3600000'
+      - key: ARCHIVE_PRUNE_BATCH_SIZE
+        value: '10000'
+      - key: FEED_SNAPSHOT_CACHE_SWEEP_MS
+        value: '300000'
+      - key: FEED_SNAPSHOT_MAX_IDLE_MS
+        value: '5400000'
       # 'api' (the default if unset) serves real user traffic and never
       # fetches external sources on its own — see the SERVICE_ROLE gates in
       # backend/index.js. uficonnect-pipeline below sets this to 'pipeline'
@@ -135,16 +149,6 @@ services:
       - key: STRIPE_PRICE_ID
         sync: false
       - key: STRIPE_PRICE_ID_BUSINESS
-        sync: false
-      # Resume Builder — a separate $5/mo recurring Price object, independent
-      # of the Pro/Business Prices above (see resume_builder_addon in
-      # backend/index.js). Until this is set, /billing/create-checkout-session
-      # returns 503 for tier:'resume_builder' same as the other two do.
-      - key: STRIPE_PRICE_ID_RESUME_BUILDER
-        sync: false
-      - key: STRIPE_RESUME_BUILDER_PRICE_ID
-        sync: false
-      - key: RESUME_BUILDER_PRICE_ID
         sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and
       # createNotification/sendPushToUser silently skip the push step — the
@@ -295,6 +299,20 @@ services:
         value: '5120'
       - key: RENDER_DB_PLAN
         value: disk-5gb
+      - key: FEED_COUNT_CAP_INTERVAL_MS
+        value: '300000'
+      - key: FEED_UNSEEN_CAP_INTERVAL_MS
+        value: '900000'
+      - key: ARCHIVE_MAX_AGE_MS
+        value: '2592000000'
+      - key: ARCHIVE_AGE_PRUNE_INTERVAL_MS
+        value: '3600000'
+      - key: ARCHIVE_PRUNE_BATCH_SIZE
+        value: '10000'
+      - key: FEED_SNAPSHOT_CACHE_SWEEP_MS
+        value: '300000'
+      - key: FEED_SNAPSHOT_MAX_IDLE_MS
+        value: '5400000'
       - key: SERVICE_ROLE
         value: pipeline
       - key: JWT_SECRET

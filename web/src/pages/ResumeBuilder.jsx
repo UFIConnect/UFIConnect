@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,16 +20,16 @@ function emptyDraft() {
   };
 }
 
-function LockedState({ onUnlock, unlocking }) {
+function LockedState() {
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         Build an ATS-friendly resume from scratch with original templates, AI-assisted writing help,
-        and a one-click PDF export that's automatically scored and saved to your profile.
+        and a one-click PDF export that's automatically scored and saved to your profile. This workspace is coming soon.
       </p>
-      <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking}>
-        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Unlock Resume Builder'}
+      <button className="btn btn-primary" type="button" disabled>
+        Coming soon
       </button>
     </div>
   );
@@ -70,10 +69,8 @@ function Field({ label, ...props }) {
 }
 
 export default function ResumeBuilder() {
-  const { profile, refreshProfile } = useAuth();
+  const { profile } = useAuth();
   const { showToast } = useToast();
-  const [searchParams] = useSearchParams();
-  const [upgrading, setUpgrading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [template, setTemplate] = useState('modern');
   const [data, setData] = useState(emptyDraft());
@@ -82,29 +79,6 @@ export default function ResumeBuilder() {
   const [exportResult, setExportResult] = useState(null);
 
   const unlocked = !!profile?.resumeBuilderAddon;
-
-  useEffect(() => {
-    if (searchParams.get('upgrade') !== 'success' || unlocked || !refreshProfile) return;
-    let cancelled = false;
-    let attempts = 0;
-    async function refreshUntilUnlocked() {
-      attempts += 1;
-      try {
-        const freshProfile = await refreshProfile();
-        if (freshProfile?.resumeBuilderAddon) {
-          showToast('Resume Builder is unlocked. Time to make the resume behave.', 'success');
-          return;
-        }
-      } catch {
-        // Stripe webhooks can land a beat after the browser returns.
-      }
-      if (!cancelled && attempts < 6) {
-        window.setTimeout(refreshUntilUnlocked, 1500);
-      }
-    }
-    refreshUntilUnlocked();
-    return () => { cancelled = true; };
-  }, [refreshProfile, searchParams, showToast, unlocked]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -116,17 +90,6 @@ export default function ResumeBuilder() {
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, [unlocked]);
-
-  async function handleUnlock() {
-    setUpgrading(true);
-    try {
-      const { data: res } = await client.post('/billing/create-checkout-session', { tier: 'resume_builder' });
-      window.location.href = res.url;
-    } catch (err) {
-      showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
-      setUpgrading(false);
-    }
-  }
 
   async function saveDraft() {
     setSaving(true);
@@ -203,7 +166,7 @@ export default function ResumeBuilder() {
         {!profile ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
-          <LockedState onUnlock={handleUnlock} unlocking={upgrading} />
+          <LockedState />
         ) : !loaded ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (

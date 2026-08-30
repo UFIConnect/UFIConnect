@@ -7213,6 +7213,8 @@ const MAIN_FEED_SNAPSHOT_POOL_SIZE = 1000;
 // costly per entry given the 3x+ pool-size increase above. Bounded here
 // the same way filteredFeedSnapshots already is.
 const MAIN_FEED_SNAPSHOT_MAX_KEYS = 4000;
+const FEED_SNAPSHOT_CACHE_SWEEP_MS = envNumber('FEED_SNAPSHOT_CACHE_SWEEP_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const FEED_SNAPSHOT_MAX_IDLE_MS = envNumber('FEED_SNAPSHOT_MAX_IDLE_MS', MAIN_FEED_SNAPSHOT_TTL * 2, MAIN_FEED_SNAPSHOT_TTL, 24 * 60 * 60 * 1000);
 const mainFeedSnapshots = new Map();
 // Keyed by userId first (was sortMode/timeRange alone, shared by every
 // user) — the default "Personal Feed" view used to read one pool computed
@@ -9190,6 +9192,29 @@ function trimOldestSetEntries(set, maxSize) {
   }
 }
 
+function pruneExpiredFeedSnapshotCaches(now = Date.now()) {
+  let removed = 0;
+  const pruneComputedAtMap = (map, maxAgeMs) => {
+    for (const [key, snap] of map.entries()) {
+      if (!snap?.computedAt || now - snap.computedAt > maxAgeMs) {
+        map.delete(key);
+        removed += 1;
+      }
+    }
+  };
+  pruneComputedAtMap(mainFeedSnapshots, FEED_SNAPSHOT_MAX_IDLE_MS);
+  pruneComputedAtMap(filteredFeedSnapshots, FEED_SNAPSHOT_MAX_IDLE_MS);
+  for (const [key, ts] of lastPersonalFeedComputeAt.entries()) {
+    if (!ts || now - ts > FEED_SNAPSHOT_MAX_IDLE_MS) {
+      lastPersonalFeedComputeAt.delete(key);
+      removed += 1;
+    }
+  }
+  trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
+  trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
+  return removed;
+}
+
 function trimRuntimeCaches(level = 'pressure') {
   const critical = level === 'critical';
   const globalLimit   = critical ? Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.5) : Math.floor(GLOBAL_FEED_CACHE_LIMIT * 0.75);
@@ -9202,6 +9227,9 @@ function trimRuntimeCaches(level = 'pressure') {
     if (Array.isArray(cache.posts)) cache.posts = realFeedPosts(cache.posts).slice(0, sourceLimit);
   }
   trimOldestMapEntries(postCache, postCacheLimit);
+  trimOldestMapEntries(mainFeedSnapshots, critical ? Math.floor(MAIN_FEED_SNAPSHOT_MAX_KEYS * 0.25) : Math.floor(MAIN_FEED_SNAPSHOT_MAX_KEYS * 0.5));
+  trimOldestMapEntries(filteredFeedSnapshots, critical ? Math.floor(FILTERED_FEED_SNAPSHOT_MAX_KEYS * 0.25) : Math.floor(FILTERED_FEED_SNAPSHOT_MAX_KEYS * 0.5));
+  pruneExpiredFeedSnapshotCaches();
   // Trim the rolling seenPostIds set + its queue together
   while (seenPostIdQueue.length > seenLimit) {
     seenPostIds.delete(seenPostIdQueue.shift());
@@ -10859,6 +10887,10 @@ setInterval(refreshSharedUserActivity, SHARED_ACTIVITY_REFRESH_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
+setInterval(() => {
+  const removed = pruneExpiredFeedSnapshotCaches();
+  if (removed) logAgentAction('cache_helper', 'trim', `Cleared ${removed.toLocaleString()} stale feed snapshot cache entr${removed === 1 ? 'y' : 'ies'}`, '#38BDF8');
+}, FEED_SNAPSHOT_CACHE_SWEEP_MS);
 // Sort agent — re-sorts the global + per-source caches at SORT_AGENT_INTERVAL_MS
 // (was previously hardcoded to 3min and ignoring this constant — now wired in).
 setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 2 * 60 * 1000);
@@ -13371,20 +13403,30 @@ const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `f
 // while leaving real headroom; raise it back via the env var if the DB
 // plan is upgraded, ideally alongside actually watching dbSizeState.
 const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 20000000);
+const FEED_COUNT_CAP_INTERVAL_MS = envNumber('FEED_COUNT_CAP_INTERVAL_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const FEED_UNSEEN_CAP_INTERVAL_MS = envNumber('FEED_UNSEEN_CAP_INTERVAL_MS', 15 * 60 * 1000, 5 * 60 * 1000, 6 * 60 * 60 * 1000);
+const ARCHIVE_MAX_AGE_MS = envNumber('ARCHIVE_MAX_AGE_MS', 30 * 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000, 365 * 24 * 60 * 60 * 1000);
+const ARCHIVE_AGE_PRUNE_INTERVAL_MS = envNumber('ARCHIVE_AGE_PRUNE_INTERVAL_MS', 60 * 60 * 1000, 10 * 60 * 1000, 24 * 60 * 60 * 1000);
+const ARCHIVE_PRUNE_BATCH_SIZE = envNumber('ARCHIVE_PRUNE_BATCH_SIZE', 10000, 100, 50000);
 const feedRetentionState = {
   status: 'idle',
   inFlight: false,
+  lastReason: null,
+  lastSkippedReason: null,
   lastRun: null,
   lastStartedAt: null,
   lastDurationMs: null,
   lastError: null,
   lastDeletedCount: 0,
+  lastLiveDeletedCount: 0,
   lastArchivedCount: 0,
   lastArchivePrunedCount: 0,
   totalDeletedCount: 0,
+  totalLiveDeletedCount: 0,
   totalArchivedCount: 0,
   totalArchivePrunedCount: 0,
   lastBreakdown: {},
+  timers: {},
   policy: {
     maxLivePosts: MAX_CACHED_DB_POSTS,
     sourceKeepFloor: SOURCE_KEEP_FLOOR,
@@ -13393,6 +13435,11 @@ const feedRetentionState = {
     highVolumeShareThreshold: HIGH_VOLUME_SOURCE_SHARE_THRESHOLD,
     unseenPostDays: Math.round(UNSEEN_POST_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
     maxArchivePosts: MAX_ARCHIVE_POSTS,
+    countCapIntervalSec: Math.round(FEED_COUNT_CAP_INTERVAL_MS / 1000),
+    unseenCapIntervalSec: Math.round(FEED_UNSEEN_CAP_INTERVAL_MS / 1000),
+    archivePostDays: Math.round(ARCHIVE_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
+    archiveAgePruneIntervalSec: Math.round(ARCHIVE_AGE_PRUNE_INTERVAL_MS / 1000),
+    archivePruneBatchSize: ARCHIVE_PRUNE_BATCH_SIZE,
   },
 };
 let feedRetentionInFlight = false;
@@ -13453,6 +13500,64 @@ async function archiveAgeCappedRows() {
     deleted: Number(rows?.[0]?.deleted || 0),
     archived: Number(rows?.[0]?.archived || 0),
   };
+}
+
+async function archiveCountCappedRows() {
+  return archiveThenDelete(
+    `DELETE FROM feed_posts_cache fp WHERE fp.id IN (
+       SELECT id FROM (
+         SELECT id,
+                ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
+                ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
+         FROM feed_posts_cache
+       ) ranked
+       WHERE global_rank > $1 AND source_rank > $2
+     )`,
+    [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
+  );
+}
+
+async function archiveUnseenExpiredRows() {
+  return archiveThenDelete(
+    `DELETE FROM feed_posts_cache fp
+     WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
+       AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
+  );
+}
+
+async function pruneArchiveByCount(limit = MAX_ARCHIVE_POSTS) {
+  const safeLimit = Math.max(0, Math.floor(Number(limit) || 0));
+  const pruned = await db.query(
+    `DELETE FROM feed_posts_archive WHERE id IN (
+       SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
+     )`,
+    [safeLimit]
+  );
+  return { deleted: Number(pruned.rowCount || 0), archived: 0 };
+}
+
+async function pruneArchiveByAge() {
+  const pruned = await db.query(
+    `DELETE FROM feed_posts_archive WHERE id IN (
+       SELECT id
+       FROM feed_posts_archive
+       WHERE archived_at < NOW() - INTERVAL '${ARCHIVE_MAX_AGE_MS / 1000} seconds'
+       ORDER BY archived_at ASC
+       LIMIT $1
+     )`,
+    [ARCHIVE_PRUNE_BATCH_SIZE]
+  );
+  return { deleted: Number(pruned.rowCount || 0), archived: 0 };
+}
+
+const FEED_RETENTION_ALL_STEPS = ['countCap', 'ageCap', 'unseenCap', 'archiveAgeCap', 'archiveCap'];
+
+function retentionStepDeleted(breakdown, keys) {
+  return keys.reduce((sum, key) => sum + Number(breakdown[key]?.deleted || 0), 0);
+}
+
+function retentionStepArchived(breakdown, keys) {
+  return keys.reduce((sum, key) => sum + Number(breakdown[key]?.archived || 0), 0);
 }
 // force skips the normal 10-minute throttle (used by checkDatabaseSize's
 // critical-path response, where waiting up to 10 minutes to actually free
@@ -13545,57 +13650,53 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
 
 // Active retention pass. Kept below the legacy body so this definition wins
 // at runtime while preserving the older comments above for history.
-function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
-  if (!force && Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return;
-  if (feedRetentionInFlight) return;
-  lastFeedPostsTrimAt = Date.now();
+function runFeedRetentionPass({ reason = 'scheduled', steps = FEED_RETENTION_ALL_STEPS, archiveCapOverride = null } = {}) {
+  if (!db.isConnected()) return false;
+  if (feedRetentionInFlight) {
+    feedRetentionState.lastSkippedReason = reason;
+    return false;
+  }
+  const selectedSteps = new Set(Array.isArray(steps) && steps.length ? steps : FEED_RETENTION_ALL_STEPS);
   feedRetentionInFlight = true;
   feedRetentionState.inFlight = true;
   feedRetentionState.status = 'running';
+  feedRetentionState.lastReason = reason;
+  feedRetentionState.lastSkippedReason = null;
   feedRetentionState.lastStartedAt = new Date().toISOString();
   feedRetentionState.lastError = null;
   const started = Date.now();
 
   (async () => {
     const breakdown = {};
-    breakdown.countCap = await archiveThenDelete(
-      `DELETE FROM feed_posts_cache fp WHERE fp.id IN (
-         SELECT id FROM (
-           SELECT id,
-                  ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
-                  ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
-           FROM feed_posts_cache
-         ) ranked
-         WHERE global_rank > $1 AND source_rank > $2
-       )`,
-      [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
-    );
-    breakdown.ageCap = await archiveAgeCappedRows();
-    breakdown.unseenCap = await archiveThenDelete(
-      `DELETE FROM feed_posts_cache fp
-       WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
-         AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
-    );
-    const pruned = await db.query(
-      `DELETE FROM feed_posts_archive WHERE id IN (
-         SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
-       )`,
-      [archiveCapOverride ?? MAX_ARCHIVE_POSTS]
-    );
-    breakdown.archiveCap = { deleted: Number(pruned.rowCount || 0), archived: 0 };
+    if (selectedSteps.has('countCap')) breakdown.countCap = await archiveCountCappedRows();
+    if (selectedSteps.has('ageCap')) breakdown.ageCap = await archiveAgeCappedRows();
+    if (selectedSteps.has('unseenCap')) breakdown.unseenCap = await archiveUnseenExpiredRows();
+    if (selectedSteps.has('archiveAgeCap')) breakdown.archiveAgeCap = await pruneArchiveByAge();
+    if (selectedSteps.has('archiveCap')) breakdown.archiveCap = await pruneArchiveByCount(archiveCapOverride ?? MAX_ARCHIVE_POSTS);
 
-    const deleted = Object.values(breakdown).reduce((sum, item) => sum + Number(item.deleted || 0), 0);
-    const archived = Object.values(breakdown).reduce((sum, item) => sum + Number(item.archived || 0), 0);
-    feedRetentionState.lastDeletedCount = deleted;
+    const liveDeleted = retentionStepDeleted(breakdown, ['countCap', 'ageCap', 'unseenCap']);
+    const archivePruned = retentionStepDeleted(breakdown, ['archiveAgeCap', 'archiveCap']);
+    const archived = retentionStepArchived(breakdown, ['countCap', 'ageCap', 'unseenCap']);
+    feedRetentionState.lastDeletedCount = liveDeleted + archivePruned;
+    feedRetentionState.lastLiveDeletedCount = liveDeleted;
     feedRetentionState.lastArchivedCount = archived;
-    feedRetentionState.lastArchivePrunedCount = breakdown.archiveCap.deleted;
-    feedRetentionState.totalDeletedCount += deleted;
+    feedRetentionState.lastArchivePrunedCount = archivePruned;
+    feedRetentionState.totalDeletedCount += liveDeleted + archivePruned;
+    feedRetentionState.totalLiveDeletedCount += liveDeleted;
     feedRetentionState.totalArchivedCount += archived;
-    feedRetentionState.totalArchivePrunedCount += breakdown.archiveCap.deleted;
+    feedRetentionState.totalArchivePrunedCount += archivePruned;
     feedRetentionState.lastBreakdown = breakdown;
     feedRetentionState.lastDurationMs = Date.now() - started;
     feedRetentionState.lastRun = new Date().toISOString();
     feedRetentionState.status = 'ready';
+    if (liveDeleted || archivePruned) {
+      logAgentAction(
+        'data',
+        'trim',
+        `Feed retention (${reason}) moved ${liveDeleted.toLocaleString()} live row(s) to archive and removed ${archivePruned.toLocaleString()} archived row(s)`,
+        '#38BDF8'
+      );
+    }
   })().catch((e) => {
     feedRetentionState.lastError = e.message;
     feedRetentionState.lastDurationMs = Date.now() - started;
@@ -13606,6 +13707,33 @@ function trimFeedPostsCache({ force = false, archiveCapOverride = null } = {}) {
     feedRetentionInFlight = false;
     feedRetentionState.inFlight = false;
   });
+  return true;
+}
+
+function trimFeedPostsCache({ force = false, archiveCapOverride = null, reason = 'trim' } = {}) {
+  if (!force && Date.now() - lastFeedPostsTrimAt < FEED_POSTS_TRIM_INTERVAL_MS) return false;
+  const started = runFeedRetentionPass({ reason, steps: FEED_RETENTION_ALL_STEPS, archiveCapOverride });
+  if (started) lastFeedPostsTrimAt = Date.now();
+  return started;
+}
+
+function scheduleFeedRetentionTimer(reason, intervalMs, steps, initialDelayMs) {
+  if (IS_PIPELINE_ROLE) return null;
+  const stepList = Array.isArray(steps) ? steps.slice() : FEED_RETENTION_ALL_STEPS.slice();
+  const recordNextRun = (delayMs) => {
+    feedRetentionState.timers[reason] = {
+      intervalSec: Math.round(intervalMs / 1000),
+      steps: stepList,
+      nextRunAt: new Date(Date.now() + delayMs).toISOString(),
+    };
+  };
+  const run = () => {
+    recordNextRun(intervalMs);
+    runFeedRetentionPass({ reason, steps: stepList });
+  };
+  recordNextRun(initialDelayMs);
+  setTimeout(run, initialDelayMs);
+  return setInterval(run, intervalMs);
 }
 
 // --- Database size guard ----------------------------------------------------
@@ -13653,7 +13781,7 @@ async function checkDatabaseSize() {
       // A quarter of the configured archive cap — meaningfully more
       // aggressive than the steady-state pass that already wasn't enough
       // to prevent reaching critical, not just a repeat of it.
-      trimFeedPostsCache({ force: true, archiveCapOverride: Math.floor(MAX_ARCHIVE_POSTS / 4) });
+      trimFeedPostsCache({ force: true, archiveCapOverride: Math.floor(MAX_ARCHIVE_POSTS / 4), reason: 'db-size-critical' });
     }
   } catch (e) {
     dbSizeState.lastError = e.message;
@@ -13743,7 +13871,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     } catch (e) { lastRowError = e.message; /* keep going — one bad row shouldn't drop the rest of the batch */ }
   }
   recordFeedWriteOutcome(targetTable, realPosts.length, saved, lastRowError);
-  trimFeedPostsCache();
+  if (targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return saved;
 }
 
@@ -13822,7 +13950,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        fetched_at     = NOW()`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
-  if (!options.skipTrim) trimFeedPostsCache();
+  if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
   return result.rowCount || rows.length;
 }
 
@@ -15516,25 +15644,6 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
-  // Independent $5/mo add-on, not a plan — see resume_builder_addon.
-  resume_builder: () => (
-    process.env.STRIPE_PRICE_ID_RESUME_BUILDER ||
-    process.env.STRIPE_RESUME_BUILDER_PRICE_ID ||
-    process.env.RESUME_BUILDER_PRICE_ID ||
-    process.env.STRIPE_PRICE_ID_RESUME ||
-    process.env.STRIPE_RESUME_PRICE_ID ||
-    process.env.RESUME_BUILDER_STRIPE_PRICE_ID ||
-    process.env.STRIPE_PRICE_RESUME_BUILDER ||
-    Object.entries(process.env).find(([key, value]) => (
-      /^price_[A-Za-z0-9_]+$/.test(String(value || '')) &&
-      /RESUME/i.test(key) &&
-      /PRICE/i.test(key)
-    ))?.[1] ||
-    Object.entries(process.env).find(([key, value]) => (
-      /^price_[A-Za-z0-9_]+$/.test(String(value || '')) &&
-      /RESUME/i.test(key)
-    ))?.[1]
-  ),
 };
 
 app.get('/billing/config', (_req, res) => {
@@ -15543,13 +15652,17 @@ app.get('/billing/config', (_req, res) => {
     tiers: {
       pro: !!TIER_PRICE_IDS.pro(),
       business: !!TIER_PRICE_IDS.business(),
-      resume_builder: !!TIER_PRICE_IDS.resume_builder(),
+      resume_builder: false,
     },
   });
 });
 
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
-  const tier = ['pro', 'business', 'resume_builder'].includes(req.body?.tier) ? req.body.tier : 'pro';
+  const requestedTier = req.body?.tier;
+  if (requestedTier === 'resume_builder') {
+    return res.status(400).json({ message: 'Resume Builder payments are not active yet.' });
+  }
+  const tier = ['pro', 'business'].includes(requestedTier) ? requestedTier : 'pro';
   // Business is locked in the UI (not yet ready to sell) — reject it
   // server-side too so it can't be reached by POSTing directly.
   if (tier === 'business') {
@@ -15561,13 +15674,7 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  if (tier === 'resume_builder') {
-    // Its own independent subscription — a free or paid-plan user alike can
-    // buy it, so this only guards against double-buying the addon itself.
-    if (user.resumeBuilderAddon) {
-      return res.status(400).json({ message: 'Resume Builder is already unlocked on your account.' });
-    }
-  } else if (user.plan === 'pro' || user.plan === 'business') {
+  if (user.plan === 'pro' || user.plan === 'business') {
     // Blocks starting a second checkout on top of an existing paid plan
     // rather than allowing a tier switch this way — a fresh checkout session
     // creates a brand new subscription without touching the old one, which
@@ -15589,8 +15696,8 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email,
       client_reference_id: user.id,
-      success_url: `${FRONTEND_BASE}/${tier === 'resume_builder' ? 'resume-builder' : 'settings'}?upgrade=success`,
-      cancel_url: `${FRONTEND_BASE}/${tier === 'resume_builder' ? 'resume-builder' : 'settings'}?upgrade=cancelled`,
+      success_url: `${FRONTEND_BASE}/settings?upgrade=success`,
+      cancel_url: `${FRONTEND_BASE}/settings?upgrade=cancelled`,
     });
     res.json({ url: session.url });
   } catch (e) {
@@ -19864,7 +19971,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
       if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
-    trimFeedPostsCache();
+    trimFeedPostsCache({ reason: 'after-transfer' });
     await refreshStagingPostCount();
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
     rememberTransferRun({
@@ -19934,6 +20041,10 @@ setInterval(() => {
 }, AUTO_TRANSFER_INTERVAL_MS);
 refreshDbFeedPostCount();
 refreshStagingPostCount();
+
+scheduleFeedRetentionTimer('count-cap-timer', FEED_COUNT_CAP_INTERVAL_MS, ['countCap'], 2 * 60 * 1000);
+scheduleFeedRetentionTimer('unseen-cap-timer', FEED_UNSEEN_CAP_INTERVAL_MS, ['unseenCap'], 4 * 60 * 1000);
+scheduleFeedRetentionTimer('archive-age-timer', ARCHIVE_AGE_PRUNE_INTERVAL_MS, ['archiveAgeCap', 'archiveCap'], 6 * 60 * 1000);
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
 // per-user-connected-account equivalent of the app-level transfer just

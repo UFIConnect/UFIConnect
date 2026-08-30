@@ -472,6 +472,8 @@ input, textarea, select { font-family: inherit; }
   min-height: min(620px, calc(100vh - 72px));
   display: flex;
   align-items: center;
+  position: relative;
+  overflow: hidden;
   background:
     linear-gradient(90deg, rgba(15,23,42,.82), rgba(15,23,42,.42), rgba(15,23,42,.12)),
     url('/homepage-feed-photo.png') center / cover no-repeat;
@@ -1144,9 +1146,17 @@ input, textarea, select { font-family: inherit; }
   .landing-header-inner { padding: 12px 16px; }
   .landing-nav-actions { gap: 10px; font-size: .8rem; }
   .landing-nav-actions a:first-child { display: none; }
-  .landing-hero-refined { min-height: 560px; }
-  .landing-hero-inner { padding: 56px 16px 76px; }
+  .landing-hero-refined {
+    min-height: 640px;
+    align-items: flex-start;
+    background:
+      linear-gradient(180deg, rgba(15,23,42,.92) 0%, rgba(15,23,42,.8) 38%, rgba(15,23,42,.18) 100%),
+      url('/homepage-feed-photo.png') center bottom / min(94vw, 430px) auto no-repeat,
+      #0f172a;
+  }
+  .landing-hero-inner { padding: 48px 16px 330px; }
   .landing-hero-copy h1 { font-size: 3rem; }
+  .landing-hero-copy p { font-size: 1rem; }
   .landing-proof-strip { margin-top: -28px; padding: 0 16px; }
   .landing-proof-inner { grid-template-columns: repeat(2, 1fr); }
   .landing-proof-inner div:nth-child(2) { border-right: 0; }

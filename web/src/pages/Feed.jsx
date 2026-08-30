@@ -638,6 +638,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           onReady: (e) => {
             if (cancelled) return;
             ytPlayerRef.current = e.target;
+            try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
             if (startUnmuted) e.target.unMute();
             setPlayerReady(true);
           },
@@ -743,7 +744,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
-  const embedId = post.embedId || extractYouTubeId(post.sourceUrl);
+  const embedId = post.embedId || extractYouTubeId(post.sourceUrl || post.mediaUrl);
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1050,15 +1051,16 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const isJob          = JOB_SOURCES.has(post.source);
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
   const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
+  const videoLinkUrl = post.mediaUrl || post.sourceUrl;
   // Articles from any RSS source can embed a real YouTube video (see
   // parseRSSItems' video detection backend-side — mediaUrl is a plain watch
   // URL in that case, same as a dedicated YouTube post's). Checked before
   // isDirectVideoUrl since a watch URL is never a direct file.
-  const videoYouTubeId = hasVideo ? extractYouTubeId(post.mediaUrl) : null;
+  const videoYouTubeId = hasVideo ? extractYouTubeId(videoLinkUrl) : null;
   // Same idea, for RSS articles embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side).
-  const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(post.mediaUrl) : null;
-  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(post.mediaUrl);
+  const videoVimeoId = hasVideo && !videoYouTubeId ? extractVimeoId(videoLinkUrl) : null;
+  const videoIsDirectFile = hasVideo && !videoPlaylistUrl && !videoYouTubeId && !videoVimeoId && isDirectVideoUrl(videoLinkUrl);
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
@@ -1292,7 +1294,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
               // still opens ImageLightbox for sound, seeking, and next/prev.
               <InlineAutoplayVideo
                 kind={videoPlaylistUrl ? 'hls' : 'file'}
-                src={videoPlaylistUrl || post.mediaUrl}
+                src={videoPlaylistUrl || videoLinkUrl}
                 videoKey={post.id}
                 poster={videoPlaylistUrl ? post.mediaPoster : undefined}
                 style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}

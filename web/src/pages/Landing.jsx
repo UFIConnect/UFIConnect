@@ -55,7 +55,7 @@ const FAQS = [
   },
   {
     q: 'What is happening with Resume Builder?',
-    a: 'Resume Builder is available as a paid add-on for signed-in members. The homepage keeps the price off the public card, and checkout handles the live billing.',
+    a: 'Resume Builder is coming soon. The homepage keeps pricing hidden until the payment method is ready.',
   },
 ];
 
@@ -239,7 +239,7 @@ export default function Landing() {
 
           <section id="pricing" className="landing-section landing-pricing-section">
             <SectionHeading eyebrow="Plans" title="Free to begin, clear when you upgrade">
-              The main feed stays free. Resume Builder unlocks from inside the app when you are ready to build.
+              The main feed stays free. Resume Builder is coming soon, with pricing hidden until it is ready.
             </SectionHeading>
             <div className="landing-plan-grid">
               <div className="landing-plan-card">
@@ -258,13 +258,13 @@ export default function Landing() {
                   locked={t.locked}
                 />
               ))}
-              <div className="landing-plan-card landing-resume-live">
+              <div className="landing-plan-card landing-resume-soon">
                 <div className="landing-plan-top">
                   <h3>Resume Builder</h3>
-                  <span>Billing active</span>
+                  <span>Coming soon</span>
                 </div>
                 <p>Draft, polish, export, and save an ATS-scored resume to your profile.</p>
-                <Link to="/resume-builder" className="landing-plan-link">Open Resume Builder</Link>
+                <Link to="/resume-builder" className="landing-plan-link">Preview in app</Link>
               </div>
             </div>
           </section>

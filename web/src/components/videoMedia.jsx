@@ -312,7 +312,7 @@ export function HlsVideoPlayer({ src, poster, autoPlay = true, muted = false, lo
   }
   return (
     <video ref={setRef} controls={!onClick} autoPlay={autoPlay} muted={muted} loop={loop}
-      playsInline draggable={true} poster={poster} onClick={onClick}
+      playsInline draggable={false} poster={poster} onClick={onClick}
       onTimeUpdate={onTimeUpdate} onLoadedMetadata={onLoadedMetadata} onPlay={onPlay} onPause={onPause}
       // Catches the Safari-native path (no hls.js involved at all — see the
       // canPlayType branch above) plus any real network/decode error hls.js

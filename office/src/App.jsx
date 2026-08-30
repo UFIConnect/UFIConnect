@@ -98,6 +98,14 @@ function fmtAgo(ts) {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
+function fmtUntil(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.ceil((new Date(ts).getTime() - Date.now()) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
 // ─── shared style constants ───────────────────────────────────────────────────
 
 function fmtStorage(dbSize) {
@@ -2329,8 +2337,10 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
     ['Count cap', breakdown.countCap],
     ['Age cap', breakdown.ageCap],
     ['Unseen cap', breakdown.unseenCap],
+    ['Archive age', breakdown.archiveAgeCap],
     ['Archive cap', breakdown.archiveCap],
   ].filter(([, item]) => item);
+  const timers = Object.entries(retention?.timers || {});
   const formatMs = (ms) => {
     if (ms == null) return '-';
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
@@ -2340,13 +2350,15 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
     <Card>
       <Label color="#22c55e">After Transfer - detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Runs after staged posts become live: old or over-cap feed rows are archived first, then the archive trims only
-        when it crosses its own ceiling. This is the long-term safety pass that keeps traffic and history from filling storage.
+        Runs after staged posts become live, plus scheduled count/unseen/archive passes. Old or over-cap feed rows are
+        archived first; archived rows are then pruned by age and by count so storage does not build up forever.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="state" value={retention?.inFlight ? 'running' : (retention?.status || 'idle')} color={retention?.status === 'degraded' ? '#f87171' : '#22c55e'} />
         <DetailStat label="live cache" value={cacheFreshness?.count != null ? cacheFreshness.count.toLocaleString() : '-'} />
+        <DetailStat label="last reason" value={retention?.lastReason || '-'} color="#38bdf8" />
+        <DetailStat label="live removed" value={(retention?.lastLiveDeletedCount ?? 0).toLocaleString()} />
         <DetailStat label="last archived" value={(retention?.lastArchivedCount ?? 0).toLocaleString()} color="#22c55e" />
         <DetailStat label="last pruned" value={(retention?.lastArchivePrunedCount ?? 0).toLocaleString()} />
         <DetailStat label="last duration" value={formatMs(retention?.lastDurationMs)} />
@@ -2357,9 +2369,28 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
         <div>Live cap: <span style={{ color: '#94a3b8' }}>{policy.maxLivePosts?.toLocaleString?.() || '-'}</span></div>
         <div>Source floor: <span style={{ color: '#94a3b8' }}>{policy.sourceKeepFloor?.toLocaleString?.() || '-'} newest/source</span></div>
         <div>Retention: <span style={{ color: '#94a3b8' }}>{policy.highVolumePostDays || '-'}d high-volume, {policy.stalePostDays || '-'}d standard</span></div>
-        <div>Archive cap: <span style={{ color: '#94a3b8' }}>{policy.maxArchivePosts?.toLocaleString?.() || '-'}</span></div>
+        <div>Unseen cap: <span style={{ color: '#94a3b8' }}>{policy.unseenPostDays || '-'}d unseen posts, every {policy.unseenCapIntervalSec || '-'}s</span></div>
+        <div>Count timer: <span style={{ color: '#94a3b8' }}>every {policy.countCapIntervalSec || '-'}s</span></div>
+        <div>Archive cap: <span style={{ color: '#94a3b8' }}>{policy.maxArchivePosts?.toLocaleString?.() || '-'} rows, {policy.archivePostDays || '-'}d max age</span></div>
         {retention?.lastError && <div style={{ color: '#f87171' }}>! {retention.lastError}</div>}
+        {retention?.lastSkippedReason && <div style={{ color: '#fbbf24' }}>Skipped overlapping pass: {retention.lastSkippedReason}</div>}
       </div>
+
+      {timers.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Scheduled cleanup timers</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {timers.map(([name, timer]) => (
+              <div key={name} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <span style={{ color: '#94a3b8' }}>{name.replace(/-/g, ' ')}</span>
+                <span style={{ color: '#e2e8f0', textAlign: 'right' }}>
+                  {timer.nextRunAt ? `next in ${fmtUntil(timer.nextRunAt)}` : `every ${timer.intervalSec || '-'}s`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {rows.length > 0 && (
         <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>

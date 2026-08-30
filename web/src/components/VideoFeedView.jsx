@@ -111,23 +111,22 @@ function resolveVideoSource(post) {
   // parseRSSItems' video detection backend-side), in which case mediaUrl
   // itself is the watch URL — checked as a fallback so e.g. a YC blog post
   // with an embedded video plays the same way a dedicated YouTube post does.
-  const ytId = post.source === 'youtube'
-    ? (post.embedId || extractYouTubeId(post.sourceUrl))
-    : extractYouTubeId(post.mediaUrl);
+  const youtubeUrl = post.source === 'youtube' ? (post.sourceUrl || post.mediaUrl) : (post.mediaUrl || post.sourceUrl);
+  const ytId = post.embedId || extractYouTubeId(youtubeUrl);
   if (ytId) {
     // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
     // this survives the DB round-trip (see isYouTubeShortsUrl's own
     // comment) — a vertical (9:16) video forced into VideoSlide's default
     // 16:9 container renders squeezed, with the video's own thumbnail/
     // title cropped, confirmed live as a Short looking visibly cut off.
-    const vertical = isYouTubeShortsUrl(post.source === 'youtube' ? post.sourceUrl : post.mediaUrl);
+    const vertical = isYouTubeShortsUrl(youtubeUrl);
     return { kind: 'youtube', id: ytId, poster: post.mediaPoster || youTubePosterUrl(ytId), vertical };
   }
   // Same idea for an article embedding a Vimeo player instead (see
   // parseRSSItems' vimeo detection backend-side) — mediaUrl is the
   // vimeo.com/{id} watch URL. No public thumbnail CDN pattern to borrow
   // like YouTube's i.ytimg.com, so poster stays null.
-  const vimeoId = extractVimeoId(post.mediaUrl);
+  const vimeoId = extractVimeoId(post.mediaUrl || post.sourceUrl);
   if (vimeoId) return { kind: 'vimeo', id: vimeoId, poster: null };
   if (post.source === 'bluesky') {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
@@ -471,9 +470,16 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   }
 
   const progressFraction = effectiveDuration > 0 ? Math.min(1, effectiveCurrentTime / effectiveDuration) : 0;
+  function handleSlideClick(e) {
+    if (e.target.closest?.('button, a, [role="button"], .video-caption-scroll, [data-video-scrubber]')) return;
+    togglePlay();
+  }
 
   return (
-    <div style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden' }}>
+    <div
+      onClick={handleSlideClick}
+      style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden' }}
+    >
       {/* Blurred poster backdrop — most video here is landscape (regular
           YouTube uploads, arbitrary hls/file clips), while this view's box
           is portrait. A cross-origin YouTube iframe can't be cropped with
@@ -538,7 +544,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           // click-through technique the shared YouTube overlay already
           // uses, needed here for the same reason: without it, tapping a
           // stalled/blocked Vimeo video to resume it would do nothing.
-          <div onClick={togglePlay} style={{ width: '100%', height: '100%' }}>
+          <div onClick={(e) => { e.stopPropagation(); togglePlay(); }} style={{ width: '100%', height: '100%' }}>
             <iframe
               ref={vimeoIframeRef}
               src={`https://player.vimeo.com/video/${src.id}?autoplay=1&muted=${userWantsSound() ? 0 : 1}&loop=1&title=0&byline=0&portrait=0&api=1`}
@@ -555,12 +561,12 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       ) : src.kind === 'hls' ? (
         active ? (
           <HlsVideoPlayer src={src.src} poster={null} autoPlay muted={muted} loop
-            videoRef={hlsVideoRef} onClick={togglePlay}
+            videoRef={hlsVideoRef} onClick={(e) => { e.stopPropagation(); togglePlay(); }}
             onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
             onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
             onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
             onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
-            style={{ height: '100%', width: '100%', objectFit: 'contain' }} />
+            style={{ height: '100%', width: '100%', objectFit: 'contain', pointerEvents: 'none' }} />
         ) : (
           <div style={{ width: '100%', height: '100%', background: '#000' }} />
         )
@@ -594,14 +600,14 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           muted={muted}
           loop
           playsInline
-          draggable={true}
-          onClick={togglePlay}
+          draggable={false}
+          onClick={(e) => { e.stopPropagation(); togglePlay(); }}
           onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
           onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
           onPlay={() => setPaused(false)}
           onPause={() => setPaused(true)}
           onError={() => reportNegativeSignal({ signalType: 'video_load_fail', source: post.source, topic: post.topic, postId: post.id, context: { surface: 'videos' } })}
-          style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+          style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
         />
       )}
 
@@ -757,6 +763,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           video content, widening along with the dot itself while seeking. */}
       {src && effectiveDuration > 0 && (
         <div
+          data-video-scrubber
           ref={progressBarRef}
           onPointerDown={handleBarPointerDown}
           style={{
@@ -2509,7 +2516,7 @@ export default function VideoFeedView({ onExit }) {
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
-          opacity: activeSrc?.kind === 'youtube' ? 1 : 0,
+          opacity: activeSrc?.kind === 'youtube' && !isScrolling ? 1 : 0,
           transition: 'opacity .15s ease-out',
         }}>
           <div
@@ -2524,9 +2531,8 @@ export default function VideoFeedView({ onExit }) {
             // the brief instant before the very first measurement lands.
             style={{
               width: ytBoxSize.width || '100%', height: ytBoxSize.height || '100%',
-              position: 'relative', pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
+              position: 'relative', pointerEvents: 'none',
             }}
-            onClick={sharedYtTogglePlay}
           >
             <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
             {sharedYt.failed && activeSrc?.kind === 'youtube' && (
@@ -2535,8 +2541,8 @@ export default function VideoFeedView({ onExit }) {
               // slow network) — a plain embed iframe doesn't load that
               // script at all and still autoplays muted on its own.
               <iframe
-                src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=1&modestbranding=1&rel=0`}
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block' }}
+                src={`https://www.youtube.com/embed/${activeSrc.id}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&loop=1&playlist=${activeSrc.id}&controls=0&modestbranding=1&rel=0`}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                 title={videoPosts[activeIndex]?.title}
               />

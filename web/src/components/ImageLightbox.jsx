@@ -286,6 +286,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             if (cancelled) return;
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
+            try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
             setDuration(e.target.getDuration() || 0);
             if (startUnmuted) e.target.unMute();
             // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
@@ -544,8 +545,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                 // all and still autoplays muted on its own, so real
                 // playback survives even where that script doesn't load.
                 <iframe
-                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=1&modestbranding=1&rel=0`}
-                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+                  src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=0&modestbranding=1&rel=0`}
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   title={post.title}
                 />
