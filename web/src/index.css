@@ -1354,10 +1354,12 @@ input, textarea, select { font-family: inherit; }
     margin-bottom: 14px;
   }
   .command-center-tabs {
-    margin-inline: -16px;
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
     margin-bottom: 16px;
-    padding-inline: 16px;
-    scroll-padding-inline: 16px;
+    padding-inline: 0;
+    scroll-padding-inline: 0;
     scroll-snap-type: x proximity;
   }
   .command-center-tab {
