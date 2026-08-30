@@ -66,6 +66,18 @@ function SourceMark({ source, label, size = 15, active = false }) {
   );
 }
 
+function LocationMatchBadge({ post }) {
+  if (!post?.matchedByLocation) return null;
+  return (
+    <span style={{
+      fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5',
+      border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5, whiteSpace: 'nowrap',
+    }}>
+      {post.locationMatchLabel || 'Near you'}
+    </span>
+  );
+}
+
 function feedPostTime(post) {
   const time = new Date(post?.createdAt || post?.time || 0).getTime();
   return Number.isFinite(time) ? time : 0;
@@ -752,6 +764,7 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>YouTube</span>
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 600, background: c.bg, color: c.text, padding: '2px 7px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
+        <LocationMatchBadge post={post} />
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
           {timeAgo(post.createdAt)}
         </Link>
@@ -1129,6 +1142,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
         {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
+        <LocationMatchBadge post={post} />
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
           {timeAgo(post.createdAt)}

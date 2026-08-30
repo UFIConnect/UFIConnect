@@ -688,9 +688,18 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
       }}>
         <div style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '.8rem', fontWeight: 700 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: '.8rem', fontWeight: 700 }}>
             <SourceMark source={post.source} label={meta.icon} size={13} />
             <span>{post.sourceLabel || meta.label}</span>
+            {post.matchedByLocation && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 800, color: '#D1FAE5',
+                border: '1px solid rgba(167,243,208,.7)', background: 'rgba(6,78,59,.72)',
+                padding: '2px 7px', borderRadius: 5, textShadow: 'none', whiteSpace: 'nowrap',
+              }}>
+                {post.locationMatchLabel || 'Near you'}
+              </span>
+            )}
           </div>
           {post.author?.name && <div style={{ fontSize: '.78rem', opacity: 0.85, marginTop: 2 }}>{post.author.name}</div>}
         </div>

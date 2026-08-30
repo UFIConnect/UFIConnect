@@ -140,9 +140,14 @@ function GuestPostCard({ post, active, muted, registerRef }) {
         to={`/p/${encodeURIComponent(post.id)}`}
         style={{ display: 'block', padding: '14px 14px 0', textDecoration: 'none', color: 'inherit' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
           <SourceMark source={post.source} label={src.icon} />
           <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
+          {post.matchedByLocation && (
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5 }}>
+              {post.locationMatchLabel || 'Near you'}
+            </span>
+          )}
           <span style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)' }}>{timeAgo(post.createdAt)}</span>
         </div>
         {post.title && <p style={{ fontWeight: 700, fontSize: '.95rem', margin: '0 0 6px', lineHeight: 1.4 }}>{post.title}</p>}

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import PricingModal from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,6 +43,12 @@ const SECTIONS = [
   { key: 'jobs',       label: 'Job Tracker' },
   { key: 'crosspost',  label: 'Cross-Post' },
 ];
+const SECTION_KEYS = new Set(SECTIONS.map(section => section.key));
+
+function commandCenterSection(search) {
+  const requested = new URLSearchParams(search).get('tab');
+  return SECTION_KEYS.has(requested) ? requested : 'automation';
+}
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -77,6 +83,15 @@ function LockedState({ onUpgrade }) {
   );
 }
 
+function SectionError({ message, onRetry }) {
+  return (
+    <div className="card command-center-error" role="alert">
+      <span>{message}</span>
+      {onRetry && <button type="button" className="btn btn-ghost btn-sm" onClick={onRetry}>Try again</button>}
+    </div>
+  );
+}
+
 function PostRow({ post, onOpen }) {
   return (
     <button
@@ -107,6 +122,11 @@ function PostRow({ post, onOpen }) {
         </div>
         <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>
           {post.author?.name || post.sourceLabel} · {timeAgo(post.createdAt)}
+          {post.matchedByLocation && (
+            <span style={{ marginLeft: 8, color: '#047857', fontWeight: 700 }}>
+              {post.locationMatchLabel || 'Near you'}
+            </span>
+          )}
         </div>
       </div>
     </button>
@@ -162,37 +182,53 @@ function PostDetailModal({ post, onClose }) {
 // detail view, no new server-side data shape needed.
 function ConnectedFeedSection() {
   const [posts, setPosts] = useState(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
   const [activePost, setActivePost] = useState(null);
   const [sourceFilter, setSourceFilter] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const requestInFlight = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    let hasLoaded = false;
-    function loadPosts() {
-      client.get('/office/feed', { params: { mode: 'following', limit: 60, sort: 'newest', seed: 'command-center' } })
-        .then(({ data }) => {
-          if (cancelled) return;
-          hasLoaded = true;
-          setError(false);
-          setPosts((data.posts || []).filter(p => p?.id));
-        })
-        .catch(() => {
-          if (!cancelled && !hasLoaded) setError(true);
-        });
+  const loadPosts = useCallback(async ({ manual = false } = {}) => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    if (manual) setRefreshing(true);
+    try {
+      const { data } = await client.get('/office/feed', {
+        params: {
+          mode: 'following', limit: 60, sort: 'newest', seed: 'command-center',
+          passive: 1,
+        },
+      });
+      setError('');
+      setPosts((data.posts || []).filter(post => post?.id));
+    } catch (err) {
+      setError(err?.response?.data?.message || "Couldn't load your connected feed.");
+    } finally {
+      requestInFlight.current = false;
+      setRefreshing(false);
     }
-    loadPosts();
-    const id = setInterval(loadPosts, 30000);
-    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  useEffect(() => {
+    loadPosts();
+    const id = setInterval(() => loadPosts(), 60000);
+    return () => clearInterval(id);
+  }, [loadPosts]);
+
+  useEffect(() => {
+    if (sourceFilter && posts && !posts.some(post => (post.source || 'uficonnect') === sourceFilter)) {
+      setSourceFilter(null);
+    }
+  }, [posts, sourceFilter]);
+
   if (posts === null && !error) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  if (error) return <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>Couldn't load your connected feed.</div>;
+  if (posts === null && error) return <SectionError message={error} onRetry={() => loadPosts({ manual: true })} />;
   if (!posts.length) {
     return (
       <div className="card" style={{ textAlign: 'center', padding: 32 }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>Nothing here yet</div>
-        <div style={{ color: 'var(--muted)', fontSize: '.85rem' }}>Follow people on UFIconnect to see their posts here.</div>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Your following feed is ready for connections</div>
+        <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect an account to bring its subscriptions and followed accounts into this feed.</div>
+        <Link to="/connected-accounts" className="btn btn-primary btn-sm">Manage accounts</Link>
       </div>
     );
   }
@@ -208,9 +244,13 @@ function ConnectedFeedSection() {
 
   return (
     <div>
+      {error && <SectionError message={error} onRetry={() => loadPosts({ manual: true })} />}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18 }}>
         <StatChip label="Posts" value={posts.length} />
         <StatChip label="Sources" value={sources.length} />
+        <button type="button" className="btn btn-ghost btn-sm" disabled={refreshing} onClick={() => loadPosts({ manual: true })} style={{ marginLeft: 'auto' }}>
+          {refreshing ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Refresh'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
@@ -376,25 +416,49 @@ function ContentHubSection() {
 function YourFeedSection() {
   const { showToast } = useToast();
   const [connected, setConnected] = useState(null);
+  const [connectedError, setConnectedError] = useState('');
   const [activePlatform, setActivePlatform] = useState(null);
   const [posts, setPosts] = useState(null);
   const [loadingPosts, setLoadingPosts] = useState(false);
-  const [postsError, setPostsError] = useState(false);
+  const [postsError, setPostsError] = useState('');
+  const platformRequest = useRef(0);
 
-  useEffect(() => {
-    client.get('/social/platforms').then(({ data }) => setConnected(data.connected || {})).catch(() => setConnected({}));
-  }, []);
-
-  function openPlatform(platform) {
+  const openPlatform = useCallback(async (platform) => {
+    const requestId = ++platformRequest.current;
     setActivePlatform(platform);
     setPosts(null);
-    setPostsError(false);
+    setPostsError('');
     setLoadingPosts(true);
-    client.get('/command-center/your-content', { params: { platform } })
-      .then(({ data }) => setPosts(data.posts || []))
-      .catch(() => setPostsError(true))
-      .finally(() => setLoadingPosts(false));
-  }
+    try {
+      const { data } = await client.get('/command-center/your-content', { params: { platform } });
+      if (requestId !== platformRequest.current) return;
+      setPosts(data.posts || []);
+    } catch (err) {
+      if (requestId !== platformRequest.current) return;
+      setPostsError(err?.response?.data?.message || `Couldn't load your ${platform} content.`);
+    } finally {
+      if (requestId === platformRequest.current) setLoadingPosts(false);
+    }
+  }, []);
+
+  const loadConnections = useCallback(async () => {
+    setConnectedError('');
+    try {
+      const { data } = await client.get('/social/platforms');
+      const nextConnected = data.connected || {};
+      setConnected(nextConnected);
+      const firstSupported = CONNECTED_SOCIAL_PLATFORMS.find(platform => nextConnected[platform] && OWN_CONTENT_PLATFORMS.includes(platform));
+      if (firstSupported) openPlatform(firstSupported);
+    } catch (err) {
+      setConnected({});
+      setConnectedError(err?.response?.data?.message || "Couldn't load your connected accounts.");
+    }
+  }, [openPlatform]);
+
+  useEffect(() => {
+    loadConnections();
+    return () => { platformRequest.current += 1; };
+  }, [loadConnections]);
 
   async function downloadText(post) {
     const blob = new Blob([JSON.stringify({ title: post.title, content: post.content, sourceUrl: post.sourceUrl, createdAt: post.createdAt }, null, 2)], { type: 'application/json' });
@@ -439,6 +503,7 @@ function YourFeedSection() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {liveFeedButton}
+        {connectedError && <SectionError message={connectedError} onRetry={loadConnections} />}
         <div className="card" style={{ textAlign: 'center', padding: 32 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>No connected accounts yet</div>
           <div style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: 16 }}>Connect a platform to review and download your own posts from it here.</div>
@@ -451,6 +516,7 @@ function YourFeedSection() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       {liveFeedButton}
+      {connectedError && <SectionError message={connectedError} onRetry={loadConnections} />}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {connectedPlatforms.map(p => {
           const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
@@ -482,7 +548,7 @@ function YourFeedSection() {
 
       {activePlatform && loadingPosts && <div className="empty-state"><span className="spinner spinner-primary" /></div>}
       {activePlatform && !loadingPosts && postsError && (
-        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)' }}>Couldn't load your {activePlatform} content.</div>
+        <SectionError message={postsError} onRetry={() => openPlatform(activePlatform)} />
       )}
       {activePlatform && !loadingPosts && !postsError && posts && !posts.length && (
         <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)' }}>Nothing found yet.</div>
@@ -490,7 +556,7 @@ function YourFeedSection() {
       {activePlatform && !loadingPosts && posts && posts.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {posts.map(post => (
-            <div key={post.id} className="card" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <div key={post.id} className="card command-center-content-row">
               {post.mediaType === 'image' && post.mediaUrl && (
                 <img src={post.mediaUrl} alt="" style={{ width: 52, height: 52, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }} />
               )}
@@ -498,7 +564,7 @@ function YourFeedSection() {
                 <div style={{ fontWeight: 700, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title}</div>
                 <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4 }}>{timeAgo(post.createdAt)}</div>
               </div>
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <div className="command-center-row-actions">
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadText(post)}>Text</button>
                 {post.mediaType === 'image' && post.mediaUrl && (
                   <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadImage(post)}>Image</button>
@@ -675,11 +741,24 @@ function CrossPostSection() {
   const [posting, setPosting] = useState(false);
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    client.get('/social/platforms').then(({ data }) => setConnected(data.connected || {})).catch(() => setConnected({}));
-    client.get('/command-center/cross-post/history').then(({ data }) => setHistory(data.posts || [])).catch(() => setHistory([]));
+  const loadCrossPostData = useCallback(async () => {
+    setLoadError('');
+    const [socialResult, historyResult] = await Promise.allSettled([
+      client.get('/social/platforms'),
+      client.get('/command-center/cross-post/history'),
+    ]);
+    if (socialResult.status === 'fulfilled') setConnected(socialResult.value.data.connected || {});
+    else setConnected({});
+    if (historyResult.status === 'fulfilled') setHistory(historyResult.value.data.posts || []);
+    else setHistory([]);
+    if (socialResult.status === 'rejected' || historyResult.status === 'rejected') {
+      setLoadError('Some Cross-Post data could not be loaded.');
+    }
   }, []);
+
+  useEffect(() => { loadCrossPostData(); }, [loadCrossPostData]);
 
   function toggle(platform) {
     setSelected(prev => {
@@ -712,6 +791,7 @@ function CrossPostSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {loadError && <SectionError message={loadError} onRetry={loadCrossPostData} />}
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Post to multiple platforms</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
@@ -862,15 +942,18 @@ function AutomationSection({ onSelectSection }) {
       if (cancelled) return;
 
       const social = socialRes.status === 'fulfilled' ? socialRes.value.data : {};
-      const feedPosts = feedRes.status === 'fulfilled' ? (feedRes.value.data.posts || []) : [];
+      const feedData = feedRes.status === 'fulfilled' ? feedRes.value.data : {};
+      const feedPosts = feedData.posts || [];
       const history = historyRes.status === 'fulfilled' ? (historyRes.value.data.posts || []) : [];
       const jobs = jobsRes.status === 'fulfilled' ? (jobsRes.value.data.jobs || []) : [];
       const connected = social.connected || {};
+      const allFailed = [socialRes, feedRes, historyRes, jobsRes].every(result => result.status === 'rejected');
 
       setSnapshot({
         loading: false,
+        error: allFailed ? 'Command Center status could not be loaded.' : '',
         connectedPlatforms: Object.values(connected).filter(Boolean).length,
-        feedPosts: feedPosts.length,
+        feedPosts: Number.isFinite(feedData.totalAvailable) ? feedData.totalAvailable : feedPosts.length,
         newestFeedAt: feedPosts[0]?.createdAt || null,
         crossPostRuns: history.length,
         lastCrossPostAt: history[0]?.createdAt || null,
@@ -883,7 +966,7 @@ function AutomationSection({ onSelectSection }) {
     }
 
     loadSnapshot();
-    const id = setInterval(loadSnapshot, 30000);
+    const id = setInterval(loadSnapshot, 60000);
     return () => { cancelled = true; clearInterval(id); };
   }, [refreshKey]);
 
@@ -893,6 +976,7 @@ function AutomationSection({ onSelectSection }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {snapshot.error && <SectionError message={snapshot.error} onRetry={() => setRefreshKey(key => key + 1)} />}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <StatChip label="Accounts" value={snapshot.loading ? '...' : metricValue(snapshot.connectedPlatforms)} />
         <StatChip label="Tracked Jobs" value={snapshot.loading ? '...' : metricValue(snapshot.trackedJobs)} />
@@ -908,9 +992,9 @@ function AutomationSection({ onSelectSection }) {
         </button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>
+      <div className="command-center-tools-grid">
         <AutomationToolCard
-          title="You Feed"
+          title="Your Feed"
           description="Open the live equalizer feed of posts from your connected accounts."
           status={feedStatus}
           actionLabel="Open Your Feed"
@@ -962,7 +1046,7 @@ function AutomationSection({ onSelectSection }) {
         <AutomationToolCard
           title="Resume Builder"
           description="Maintain your resume draft and feed it into the ATS/job matching workflow."
-          status="Add-on"
+          status="Coming soon"
           actionLabel="Open Resume Builder"
           to="/resume-builder"
         />
@@ -974,9 +1058,31 @@ function AutomationSection({ onSelectSection }) {
 export default function CommandCenter() {
   const { profile } = useAuth();
   const { showToast } = useToast();
-  const [section, setSection] = useState('automation');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const section = commandCenterSection(location.search);
   const [pricingOpen, setPricingOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(null);
+
+  const selectSection = useCallback((nextSection, { replace = false } = {}) => {
+    if (!SECTION_KEYS.has(nextSection)) return;
+    const params = new URLSearchParams(location.search);
+    params.set('tab', nextSection);
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace });
+  }, [location.pathname, location.search, navigate]);
+
+  function handleTabKeyDown(event, index) {
+    let nextIndex = null;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % SECTIONS.length;
+    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + SECTIONS.length) % SECTIONS.length;
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = SECTIONS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    const nextSection = SECTIONS[nextIndex];
+    selectSection(nextSection.key);
+    window.requestAnimationFrame(() => document.getElementById(`command-center-tab-${nextSection.key}`)?.focus());
+  }
 
   async function handleUpgrade(tier) {
     setUpgrading(tier);
@@ -997,7 +1103,7 @@ export default function CommandCenter() {
 
   return (
     <Layout>
-      <div style={{ marginBottom: 20 }}>
+      <div className="command-center-header">
         <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           Command Center
         </h1>
@@ -1010,32 +1116,38 @@ export default function CommandCenter() {
         <LockedState onUpgrade={() => setPricingOpen(true)} />
       ) : (
         <>
-          <div style={{ display: 'flex', gap: 4, marginBottom: 22, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
-            {SECTIONS.map(s => (
+          <div className="command-center-tabs" role="tablist" aria-label="Command Center tools">
+            {SECTIONS.map((s, index) => (
               <button
                 key={s.key}
+                id={`command-center-tab-${s.key}`}
                 type="button"
-                onClick={() => setSection(s.key)}
-                style={{
-                  padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
-                  fontWeight: section === s.key ? 700 : 500,
-                  color: section === s.key ? 'var(--primary)' : 'var(--muted)',
-                  borderBottom: section === s.key ? '2px solid var(--primary)' : '2px solid transparent',
-                  fontSize: '.875rem', marginBottom: '-1px', transition: 'all .15s',
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}
+                role="tab"
+                aria-selected={section === s.key}
+                aria-controls="command-center-panel"
+                tabIndex={section === s.key ? 0 : -1}
+                onClick={() => selectSection(s.key)}
+                onKeyDown={event => handleTabKeyDown(event, index)}
+                className={`command-center-tab${section === s.key ? ' active' : ''}`}
               >
                 {s.icon ? `${s.icon} ` : ''}{s.label}
               </button>
             ))}
           </div>
 
-          {section === 'feed' && <ConnectedFeedSection />}
-          {section === 'content' && <ContentHubSection />}
-          {section === 'yourfeed' && <YourFeedSection />}
-          {section === 'automation' && <AutomationSection onSelectSection={setSection} />}
-          {section === 'jobs' && <JobTrackerSection />}
-          {section === 'crosspost' && <CrossPostSection />}
+          <div
+            id="command-center-panel"
+            role="tabpanel"
+            aria-labelledby={`command-center-tab-${section}`}
+            className="command-center-panel"
+          >
+            {section === 'feed' && <ConnectedFeedSection />}
+            {section === 'content' && <ContentHubSection />}
+            {section === 'yourfeed' && <YourFeedSection />}
+            {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}
+            {section === 'jobs' && <JobTrackerSection />}
+            {section === 'crosspost' && <CrossPostSection />}
+          </div>
         </>
       )}
 

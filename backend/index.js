@@ -8821,8 +8821,64 @@ function getUserCountry(req) {
   // cache doesn't include one at all — confirmed live as an unhandled
   // "Cannot read properties of undefined (reading 'cf-ipcountry')" on every
   // warming cycle.
-  const cc = req.headers?.['cf-ipcountry'];
-  return cc && cc !== 'XX' && cc !== 'T1' ? cc.toUpperCase() : null;
+  const cc = firstHeaderValue(
+    req.headers?.['cf-ipcountry'] ||
+    req.headers?.['x-vercel-ip-country'] ||
+    req.headers?.['cloudfront-viewer-country'] ||
+    req.headers?.['x-appengine-country'] ||
+    req.headers?.['x-country-code']
+  ).toUpperCase();
+  return /^[A-Z]{2}$/.test(cc) && cc !== 'XX' && cc !== 'T1' ? cc : null;
+}
+
+function cleanGeoHeader(req, names) {
+  for (const name of names) {
+    const raw = firstHeaderValue(req.headers?.[name]);
+    if (!raw) continue;
+    try {
+      return decodeURIComponent(raw.replace(/\+/g, ' ')).trim().slice(0, 80) || null;
+    } catch {
+      return raw.trim().slice(0, 80) || null;
+    }
+  }
+  return null;
+}
+
+let countryDisplayNames = null;
+try {
+  countryDisplayNames = new Intl.DisplayNames(['en'], { type: 'region' });
+} catch {}
+
+function countryName(countryCode) {
+  if (!countryCode) return null;
+  try {
+    const name = countryDisplayNames?.of(countryCode);
+    return name && name !== countryCode ? name : countryCode;
+  } catch {
+    return countryCode;
+  }
+}
+
+// Location is a ranking signal, never an access-control decision. Cloudflare
+// supplies country in production; the additional headers keep local/staging
+// proxy setups compatible and let a future edge rule add city/region without
+// changing the feed API again. Missing or invalid location simply disables
+// this signal and leaves the existing feed order untouched.
+function getFeedLocationContext(req, user = null) {
+  const country = getUserCountry(req);
+  const city = cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+  const region = cleanGeoHeader(req, ['cf-region', 'x-vercel-ip-country-region', 'x-appengine-region', 'x-geo-region']);
+  const declared = [user?.location, user?.preferences?.location]
+    .map(value => String(value || '').trim().slice(0, 80))
+    .filter(Boolean);
+  return {
+    country,
+    countryName: countryName(country),
+    city,
+    region,
+    declared,
+    available: !!(country || city || region || declared.length),
+  };
 }
 
 // Job location strings are free text from each platform's own API
@@ -8832,9 +8888,22 @@ function getUserCountry(req) {
 // the job sources this app actually pulls from; unmapped countries simply
 // don't get a location boost rather than a wrong one.
 const COUNTRY_LOCATION_KEYWORDS = {
-  US: ['usa', 'united states', 'u.s.', 'us only', 'america'],
-  GB: ['uk', 'united kingdom', 'britain', 'england', 'scotland', 'wales'],
-  CA: ['canada'],
+  US: [
+    'usa', 'united states', 'u.s.', 'us only', 'america',
+    'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut',
+    'delaware', 'florida', 'georgia', 'hawaii', 'idaho', 'illinois', 'indiana',
+    'iowa', 'kansas', 'kentucky', 'louisiana', 'maine', 'maryland', 'massachusetts',
+    'michigan', 'minnesota', 'mississippi', 'missouri', 'montana', 'nebraska',
+    'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york',
+    'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania',
+    'rhode island', 'south carolina', 'south dakota', 'tennessee', 'texas', 'utah',
+    'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming',
+    'san francisco', 'los angeles', 'seattle', 'chicago', 'boston', 'denver',
+    'atlanta', 'austin', 'dallas', 'houston', 'miami', 'philadelphia', 'phoenix',
+    'portland', 'san diego', 'washington dc', 'washington d.c.',
+  ],
+  GB: ['uk', 'united kingdom', 'britain', 'england', 'scotland', 'wales', 'london', 'manchester', 'birmingham', 'edinburgh', 'glasgow'],
+  CA: ['canada', 'toronto', 'vancouver', 'montreal', 'ottawa', 'calgary', 'edmonton'],
   DE: ['germany', 'deutschland', 'berlin', 'munich'],
   FR: ['france', 'paris'],
   ES: ['spain', 'madrid', 'barcelona'],
@@ -8864,6 +8933,79 @@ function jobMatchesUserLocation(locationStr, countryCode) {
   if (!countryCode) return false;
   const keywords = COUNTRY_LOCATION_KEYWORDS[countryCode];
   return !!keywords && keywords.some(k => loc.includes(k));
+}
+
+function feedPostLocationMatch(post, locationContext) {
+  if (!post || !locationContext?.available) return { score: 0, type: null, label: null };
+
+  const explicitText = normalizePersonalizationTerm([
+    post.location,
+    post.city,
+    post.region,
+    post.country,
+  ].filter(Boolean).join(' '));
+  const contentText = feedPostPersonalizationText(post);
+  const preciseTerms = uniquePersonalizationTerms([
+    locationContext.city,
+    locationContext.region,
+    ...(locationContext.declared || []),
+  ], 8);
+  const countryTerms = uniquePersonalizationTerms([
+    ...(COUNTRY_LOCATION_KEYWORDS[locationContext.country] || []),
+    locationContext.countryName,
+  ], 8);
+  const matchesAny = (text, terms) => !!text && terms.some(term => textMentionsKeyword(text, term));
+
+  if (matchesAny(explicitText, preciseTerms)) {
+    return { score: 24, type: 'local', label: 'Near you' };
+  }
+  if (matchesAny(explicitText, countryTerms)) {
+    return { score: 18, type: 'country', label: 'Near you' };
+  }
+  if (locationContext.country === 'US' && post.source === 'usajobs') {
+    return { score: 12, type: 'country', label: 'Near you' };
+  }
+  if (matchesAny(explicitText, GLOBAL_LOCATION_KEYWORDS) || matchesAny(explicitText, ['online', 'virtual'])) {
+    return { score: 3, type: 'global', label: 'Available anywhere' };
+  }
+  if (matchesAny(contentText, preciseTerms)) {
+    return { score: 9, type: 'local', label: 'Near you' };
+  }
+  if (matchesAny(contentText, countryTerms)) {
+    return { score: 5, type: 'country', label: 'Near you' };
+  }
+  return { score: 0, type: null, label: null };
+}
+
+function withFeedLocationMatch(post, match) {
+  if (!match?.score) return post;
+  return {
+    ...post,
+    matchedByLocation: true,
+    locationMatch: match.type,
+    locationMatchLabel: match.label,
+  };
+}
+
+// Reorders only within short chunks. Local posts can rise into view without
+// destroying source equalization, chronological pagination, or the user's
+// topic/role ranking. No post is removed because geo headers are approximate.
+function rankFeedPostsForLocation(posts, locationContext, options = {}) {
+  const list = Array.isArray(posts) ? posts.filter(Boolean) : [];
+  if (!list.length || !locationContext?.available) return list;
+
+  const preserveFirst = Math.max(0, Math.min(Number(options.preserveFirst) || 0, list.length));
+  const chunkSize = Math.max(4, Math.min(Number(options.chunkSize) || PERSONALIZED_FEED_CHUNK_SIZE, 30));
+  const scored = list.map((post, index) => ({ post, index, match: feedPostLocationMatch(post, locationContext) }));
+  if (!scored.some(item => item.match.score > 0)) return list;
+
+  const ranked = scored.slice(0, preserveFirst).map(item => withFeedLocationMatch(item.post, item.match));
+  for (let i = preserveFirst; i < scored.length; i += chunkSize) {
+    const chunk = scored.slice(i, i + chunkSize)
+      .sort((a, b) => (b.match.score - a.match.score) || (a.index - b.index));
+    ranked.push(...chunk.map(item => withFeedLocationMatch(item.post, item.match)));
+  }
+  return ranked;
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
 // only posts matching one of the viewer's own onboarding-selected
@@ -9076,26 +9218,31 @@ function personalizeAuthenticatedFeedPosts(posts, user, prefs = user?.preference
   const declaredTopics = userDeclaredFeedTopics(user, prefs);
   const roleTerms = userRoleFeedTerms(user, prefs);
   const hasAffinity = (affinity?.source?.size || 0) > 0 || (affinity?.topic?.size || 0) > 0;
-  if (!declaredTopics.length && !roleTerms.length && !hasAffinity) return list;
-
   const preserveFirst = Math.max(0, Math.min(Number(options.preserveFirst) || 0, list.length));
-  const prefix = preserveFirst ? list.slice(0, preserveFirst) : [];
-  const rest = preserveFirst ? list.slice(preserveFirst) : list.slice();
-  const context = { declaredTopics, roleTerms, affinity };
-  const scored = rest.map((post, index) => ({
-    post,
-    index,
-    score: feedPostPersonalizationScore(post, context),
-  }));
-  if (!scored.some(item => item.score > 0)) return list;
+  let personalizedList = list;
 
-  const personalized = [];
-  for (let i = 0; i < scored.length; i += PERSONALIZED_FEED_CHUNK_SIZE) {
-    const chunk = scored.slice(i, i + PERSONALIZED_FEED_CHUNK_SIZE)
-      .sort((a, b) => (b.score - a.score) || (a.index - b.index));
-    personalized.push(...chunk.map(item => item.post));
+  if (declaredTopics.length || roleTerms.length || hasAffinity) {
+    const prefix = preserveFirst ? list.slice(0, preserveFirst) : [];
+    const rest = preserveFirst ? list.slice(preserveFirst) : list.slice();
+    const context = { declaredTopics, roleTerms, affinity };
+    const scored = rest.map((post, index) => ({
+      post,
+      index,
+      score: feedPostPersonalizationScore(post, context),
+    }));
+
+    if (scored.some(item => item.score > 0)) {
+      const personalized = [];
+      for (let i = 0; i < scored.length; i += PERSONALIZED_FEED_CHUNK_SIZE) {
+        const chunk = scored.slice(i, i + PERSONALIZED_FEED_CHUNK_SIZE)
+          .sort((a, b) => (b.score - a.score) || (a.index - b.index));
+        personalized.push(...chunk.map(item => item.post));
+      }
+      personalizedList = [...prefix, ...personalized];
+    }
   }
-  return [...prefix, ...personalized];
+
+  return rankFeedPostsForLocation(personalizedList, options.locationContext, { preserveFirst });
 }
 
 function sortFeedBatch(posts = [], context = 'feed-sort', options = {}) {
@@ -16099,6 +16246,7 @@ async function handleFeedRequest(req, res) {
   const user   = await getUser(req.user.id);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
+  const locationContext = getFeedLocationContext(req, user);
   // Drives filterByUserTopics/buildTwoPhaseMix below, as well as
   // connected-social keyword search further down — moved up here (used to
   // live right before the balanced-query call) so it's available to every
@@ -16110,13 +16258,21 @@ async function handleFeedRequest(req, res) {
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
-  const seenIds = await getUserSeenSet(req.user.id);
+  // Command Center previews use passive=1 so opening a management tab does
+  // not consume posts from the member's real unseen queue. The route stays
+  // authenticated and returns the same content; it simply skips read-state
+  // filtering/writes for that non-scrolling preview request.
+  const passivePreview = req.query.passive === '1';
+  const seenIds = passivePreview ? new Set() : await getUserSeenSet(req.user.id);
+  const trackPostsSeen = (items) => {
+    if (!passivePreview) markPostsSeen(req.user.id, items);
+  };
   // Behavioral affinity (real watch/comment/link time — see
   // recordEngagementSignal) — same "applied fresh per request" treatment as
   // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
   const userAffinity = await getUserAffinity(req.user.id);
   const personalizeForUser = (items, options = {}) => (
-    personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, options)
+    personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
   );
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -16266,7 +16422,7 @@ async function handleFeedRequest(req, res) {
       forYou:          true,
       relevance:       1,
     }));
-    markPostsSeen(req.user.id, result);
+    trackPostsSeen(result);
     return res.json({
       posts: result,
       sort: sortMode,
@@ -16308,7 +16464,7 @@ async function handleFeedRequest(req, res) {
     const equalized = buildEqualizedFollowingPool(rawFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
-    markPostsSeen(req.user.id, pageRows);
+    trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
@@ -16385,7 +16541,7 @@ async function handleFeedRequest(req, res) {
         forYou:          true,
         relevance:       1,
       }));
-      markPostsSeen(req.user.id, result);
+      trackPostsSeen(result);
       return res.json({
         posts: result,
         mode: 'archive',
@@ -16412,7 +16568,7 @@ async function handleFeedRequest(req, res) {
       if (balanced.length > 0) {
         const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
         const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
-        markPostsSeen(req.user.id, pageRows);
+        trackPostsSeen(pageRows);
         return res.json({
           posts: pageRows.map(mapFeedRow),
           page: reqPage,
@@ -16467,7 +16623,7 @@ async function handleFeedRequest(req, res) {
     }
 
     pageRows = personalizeForUser(pageRows);
-    markPostsSeen(req.user.id, pageRows);
+    trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows.map(mapFeedRow),
       page: reqPage,
@@ -16537,7 +16693,7 @@ async function handleFeedRequest(req, res) {
     });
     const merged = enforceFeedDiversity(filterUnseen(personalizeForUser(searchRanked), seenIds), feedLimit + 1, sortMode);
     const searchPageRows = merged.slice(0, feedLimit);
-    markPostsSeen(req.user.id, searchPageRows);
+    trackPostsSeen(searchPageRows);
     return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
   }
 
@@ -16596,7 +16752,7 @@ async function handleFeedRequest(req, res) {
         // cached pool's depth — real content is finite, but infinite scroll
         // shouldn't just stop.
         const pageSlice = sliceCircular(personalized, lo, feedLimit);
-        markPostsSeen(req.user.id, pageSlice);
+        trackPostsSeen(pageSlice);
         return res.json({
           posts: pageSlice.map(p => ({
             ...p,
@@ -16631,7 +16787,7 @@ async function handleFeedRequest(req, res) {
       if (balanced.length > 0) {
         const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
         const hasMore = balanced.length >= perSourcePageSize;
-        markPostsSeen(req.user.id, pageRows);
+        trackPostsSeen(pageRows);
         return res.json({
           posts: pageRows.map(p => ({
             ...p,
@@ -16695,9 +16851,10 @@ async function handleFeedRequest(req, res) {
       };
     }
 
+    pageRows = personalizeForUser(pageRows);
     const result = pageRows.map(mapDbPost);
 
-    markPostsSeen(req.user.id, pageRows);
+    trackPostsSeen(pageRows);
     return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
@@ -16736,17 +16893,14 @@ async function handleFeedRequest(req, res) {
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       personalized = personalizeForUser(personalized);
       const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
-      const finalPosts = [...internal, ...externalPosts].slice(0, feedLimit);
-      // Only what actually survived the feedLimit slice above (it's
-      // [...internal, ...externalPosts] sliced, so internal keeps its own
-      // first N and externalPosts only keeps whatever budget internal left
-      // behind) — marking more than what was truly shown would hide posts
-      // from a later page they never actually saw. externalPosts itself is
-      // always exactly feedLimit long (sliceCircular), so without this cap
-      // every request here over-marked min(internal.length, feedLimit) real
-      // posts as seen despite them being truncated out of finalPosts.
-      markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
-      markPostsSeen(req.user.id, externalPosts.slice(0, Math.max(0, feedLimit - internal.length)));
+      const finalPosts = rankFeedPostsForLocation(
+        [...internal, ...externalPosts],
+        locationContext,
+        { preserveFirst: Math.min(internal.length, 2) }
+      ).slice(0, feedLimit);
+      // Location ranking can move an external row ahead of an internal row,
+      // so persist only the exact final slice returned to this member.
+      trackPostsSeen(finalPosts);
       return res.json({
         posts: finalPosts,
         sort: sortMode,
@@ -16833,7 +16987,7 @@ async function handleFeedRequest(req, res) {
     });
     const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const connectedPageRows = sliceCircular(rotated, 0, feedLimit);
-    markPostsSeen(req.user.id, connectedPageRows);
+    trackPostsSeen(connectedPageRows);
     return res.json({
       posts: connectedPageRows,
       source: sourceFilter,
@@ -16863,7 +17017,7 @@ async function handleFeedRequest(req, res) {
     // way the default aggregate view's filterUnseen already does.
     const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const multiSourcePageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, p.source));
-    markPostsSeen(req.user.id, multiSourcePageRows);
+    trackPostsSeen(multiSourcePageRows);
     return res.json({
       posts: multiSourcePageRows,
       sources: sourcesParam,
@@ -16887,7 +17041,7 @@ async function handleFeedRequest(req, res) {
     // Same fixed-rotation gap as the multi-source branch above.
     const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
     const sourceTabPageRows = sliceCircular(rotated, 0, feedLimit).map(p => mapExternalPost(p, sourceFilter));
-    markPostsSeen(req.user.id, sourceTabPageRows);
+    trackPostsSeen(sourceTabPageRows);
 
     return res.json({
       posts: sourceTabPageRows,
@@ -17109,7 +17263,11 @@ async function handleFeedRequest(req, res) {
     personalizedExternal = applyResumeMatchedJobs(personalizedExternal, resumeKeywords, feedPoolInput.filter(p => JOB_LISTING_SOURCES.includes(p.source)));
   }
   personalizedExternal = personalizeForUser(personalizedExternal);
-  const responsePosts = [...internal, ...personalizedExternal].slice(0, feedLimit);
+  const responsePosts = rankFeedPostsForLocation(
+    [...internal, ...personalizedExternal],
+    locationContext,
+    { preserveFirst: Math.min(internal.length, 2) }
+  ).slice(0, feedLimit);
 
   const sourcesBreakdown = {
     reddit:        redditPosts.length,
@@ -17166,15 +17324,8 @@ async function handleFeedRequest(req, res) {
     trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
   }
 
-  // Same "only what actually survived the feedLimit slice" precision as the
-  // snapshot-read branch above — internal is first in the concat that built
-  // responsePosts, so its own first N is exactly what was shown, and
-  // personalizedExternal only keeps whatever budget internal left behind
-  // (plain `.slice(0, feedLimit)` here over-marked min(internal.length,
-  // feedLimit) posts that got truncated out of responsePosts and were never
-  // actually shown).
-  markPostsSeen(req.user.id, internal.slice(0, Math.min(internal.length, feedLimit)));
-  markPostsSeen(req.user.id, personalizedExternal.slice(0, Math.max(0, feedLimit - internal.length)));
+  // Persist only the final location-ranked slice the client receives.
+  trackPostsSeen(responsePosts);
   res.json({
     posts: responsePosts,
     sort: sortMode,
@@ -17217,7 +17368,9 @@ app.get('/feed/guest', async (req, res) => {
     const { posts, nextCursor, hasMore } = await getCursorFeedPage({
       sources: AGGREGATE_FEED_SOURCES, cursorMap, limit: feedLimit,
     });
-    res.json({ posts: realFeedPosts(posts), cursor: nextCursor, hasMore, guest: true });
+    const locationContext = getFeedLocationContext(req);
+    const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts), locationContext);
+    res.json({ posts: locationRanked, cursor: nextCursor, hasMore, guest: true });
   } catch (e) {
     console.error('[/feed/guest] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -17392,8 +17545,9 @@ async function handleVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
+    const locationContext = getFeedLocationContext(req, user);
     const personalizeVideosForUser = (items, options = {}) => (
-      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, options)
+      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
     );
     const userTopics = [
       ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
@@ -17567,7 +17721,14 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
-    const equalized = personalizeAuthenticatedFeedPosts(buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }), user, prefs, userAffinity);
+    const locationContext = getFeedLocationContext(req, user);
+    const equalized = personalizeAuthenticatedFeedPosts(
+      buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+      user,
+      prefs,
+      userAffinity,
+      { locationContext }
+    );
     const seenIds = await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = sliceCircular(rotated, offset, feedLimit);
@@ -22836,7 +22997,8 @@ app.get('/command-center/your-content', authenticate, async (req, res) => {
       authorId: `${platform}_${req.user.id}`,
       author: post.author || { name: post.sourceLabel || user.name || 'Your account' },
     })), user, platform);
-    res.json({ posts, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: posts.length });
+    const locationRanked = rankFeedPostsForLocation(posts, getFeedLocationContext(req, user));
+    res.json({ posts: locationRanked, connectedAt: window.connectedAt, syncStartAt: window.startAt, totalAvailable: locationRanked.length });
   } catch (e) {
     console.error(`[/command-center/your-content] ${platform}:`, e.message);
     res.status(502).json({ message: `Could not load your ${platform} content right now.` });
@@ -22888,13 +23050,14 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
   }
 
   const equalized = buildEqualizedFollowingPool(allPosts, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
-  const pageRows = equalized.slice(offset, offset + limit);
+  const locationRanked = rankFeedPostsForLocation(equalized, getFeedLocationContext(req, user));
+  const pageRows = locationRanked.slice(offset, offset + limit);
   res.json({
     posts: pageRows,
     page,
     limit,
-    hasMore: offset + limit < equalized.length,
-    totalAvailable: equalized.length,
+    hasMore: offset + limit < locationRanked.length,
+    totalAvailable: locationRanked.length,
     connectedPlatforms,
     sources: sourceCounts,
     connectedAt: Object.fromEntries(connectedPlatforms.map(platform => [platform, connectedSourceWindow(user, platform).connectedAt])),

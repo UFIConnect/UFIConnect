@@ -59,9 +59,16 @@ function OwnPostCard({ post }) {
   const hasVideoPoster = post.mediaType === 'video_thumbnail_only' && post.mediaUrl;
   return (
     <article className="card post-card" style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
         <SourceBadge source={post.source || 'uficonnect'} />
-        <span style={{ color: 'var(--muted)', fontSize: '.72rem', whiteSpace: 'nowrap' }}>{timeAgo(post.createdAt)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {post.matchedByLocation && (
+            <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#047857', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: 5 }}>
+              {post.locationMatchLabel || 'Near you'}
+            </span>
+          )}
+          <span style={{ color: 'var(--muted)', fontSize: '.72rem', whiteSpace: 'nowrap' }}>{timeAgo(post.createdAt)}</span>
+        </div>
       </div>
 
       <h2 style={{ margin: '0 0 8px', fontSize: '.98rem', lineHeight: 1.35 }}>{title}</h2>
