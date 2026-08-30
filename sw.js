@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v4';
+const CACHE_NAME = 'uficonnect-v5';
 const API_ORIGIN = 'https://uficonnect-api-708r.onrender.com';
 
 const SHELL_ASSETS = [
