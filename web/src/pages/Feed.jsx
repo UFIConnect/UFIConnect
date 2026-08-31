@@ -5,7 +5,12 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
+import {
+  SOURCE_META,
+  CONNECTED_SOCIAL_PLATFORMS,
+  HOME_FEED_SOURCE_IDS,
+  FOLLOWING_FEED_SOURCE_IDS,
+} from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
 import { TIERS } from '../components/PricingModal';
@@ -246,15 +251,7 @@ function saveFeedState(userId, filters, activeTabs, search, viewMode, location) 
 // thin), no lock wall in that combined view. The single-source lock wall
 // (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
 // path above, not this multi-select one.
-const ALL_FILTER_SOURCES = [
-  'reddit', 'github', 'youtube', 'hackernews',
-  'linkedin', 'twitter', 'instagram', 'facebook',
-  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
-  'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
-  'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
-  'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
-  'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
-];
+const ALL_FILTER_SOURCES = HOME_FEED_SOURCE_IDS;
 
 // Following's filter-panel options — native UFIconnect posts from people you
 // follow, plus every platform Connected Accounts offers (see
@@ -263,7 +260,7 @@ const ALL_FILTER_SOURCES = [
 // excludes everything in ALL_FILTER_SOURCES above — that content
 // structurally cannot appear in Following, so offering it as a filter here
 // would just be a no-op that always returns nothing.
-const FOLLOWING_FILTER_SOURCES = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
+const FOLLOWING_FILTER_SOURCES = FOLLOWING_FEED_SOURCE_IDS;
 
 const CATEGORY_COLORS = {
   'AI & ML':     { text: '#2563EB', bg: '#EFF6FF' },

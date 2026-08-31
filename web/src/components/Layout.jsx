@@ -3,6 +3,8 @@ import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
+import HomeFeedTools from './HomeFeedTools';
+import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 
 function ShellIcon({ name, size = 20 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': 'true' };
@@ -128,6 +130,13 @@ export default function Layout({ children, wide = false }) {
     }
   }
 
+  const requestedFeed = new URLSearchParams(location.search).get('feed');
+  const mobileFeedMode = requestedFeed === 'local' ? 'countries' : requestedFeed;
+  const mobileUsesSourceControls = !['countries', 'restaurants'].includes(mobileFeedMode);
+  const mobileSourceIds = mobileFeedMode === 'following'
+    ? FOLLOWING_FEED_SOURCE_IDS
+    : HOME_FEED_SOURCE_IDS;
+
   return (
     <div className="shell">
       {/* ── Desktop sidebar ── */}
@@ -228,42 +237,30 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="menu" size={20} />
           </button>
           {mobileMenuOpen && (
-            <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="menu" aria-label="App menu">
+            <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
               <div className="mobile-command-menu-label">Your feed</div>
-              <NavLink to="/?feed=feed" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/?feed=feed" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="home" size={18} />
                 Home
               </NavLink>
-              <NavLink to="/?feed=following" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/?feed=following" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="following" size={18} />
                 Following
               </NavLink>
-              <NavLink to="/?feed=countries" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/?feed=countries" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="countries" size={18} />
                 Countries
               </NavLink>
-              <NavLink to="/?feed=restaurants" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/?feed=restaurants" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="restaurants" size={18} />
                 Restaurants
               </NavLink>
               <div className="mobile-command-menu-label">Your tools</div>
-              <NavLink to="/?feed=feed&amp;panel=sources" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="sources" size={18} />
-                Feed sources
-              </NavLink>
-              <NavLink to="/?feed=feed&amp;panel=accounts" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="groups" size={18} />
-                Connected accounts
-              </NavLink>
-              <NavLink to="/?feed=feed&amp;panel=skills" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="skills" size={18} />
-                Skills
-              </NavLink>
-              <NavLink to="/?feed=feed&amp;panel=files" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="files" size={18} />
-                Files
-              </NavLink>
-              <NavLink to="/command-center" role="menuitem" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
+              <HomeFeedTools
+                showSources={mobileUsesSourceControls}
+                sourceIds={mobileSourceIds}
+              />
+              <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="command" size={18} />
                 Command Center
               </NavLink>

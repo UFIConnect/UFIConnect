@@ -58,3 +58,17 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ];
+
+// Shared by the desktop feed rail and the mobile app menu. Keeping this
+// vocabulary here prevents the two controls from quietly drifting apart.
+export const HOME_FEED_SOURCE_IDS = [
+  'reddit', 'github', 'youtube', 'hackernews',
+  'linkedin', 'twitter', 'instagram', 'facebook',
+  'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
+  'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
+  'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',
+  'arstechnica', 'wired', 'theregister', 'venturebeat', 'smashing', 'phoronix', 'infoq', 'mittr',
+  'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
+];
+
+export const FOLLOWING_FEED_SOURCE_IDS = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];

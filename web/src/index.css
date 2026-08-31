@@ -1365,18 +1365,8 @@ input, textarea, select { font-family: inherit; }
   .main { padding: 64px 12px 76px; }
   .main-wide { max-width: none; }
   .home-feed-layout { display: flex; flex-direction: column; }
-  .home-feed-right-tabs {
-    order: -1;
-    position: static;
-    max-height: none;
-    overflow: visible;
-    padding: 0 0 16px;
-  }
-  /* Feed-mode navigation lives in the top-right app menu on mobile. */
-  .home-feed-view-tabs { display: none; }
-  .home-feed-rail-tab { min-height: 40px; white-space: normal; }
-  .home-feed-command-center-link { display: none; }
-  .home-feed-side-tools { margin-top: 0; }
+  /* Home views and tools live in the top-right app menu on mobile. */
+  .home-feed-right-tabs { display: none; }
   .profile-workspace { grid-template-columns: 1fr; }
   .profile-side-panels { position: static; }
 
@@ -1472,7 +1462,7 @@ input, textarea, select { font-family: inherit; }
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
-    width: min(248px, calc(100vw - 24px));
+    width: min(360px, calc(100vw - 24px));
     max-height: calc(100dvh - 86px);
     overflow-y: auto;
     padding: 6px;
@@ -1481,6 +1471,22 @@ input, textarea, select { font-family: inherit; }
     background: var(--card);
     box-shadow: var(--shadow-md);
   }
+  .mobile-command-menu-panel .home-feed-side-tools {
+    gap: 6px;
+  }
+  .mobile-command-menu-panel .profile-panel,
+  .mobile-command-menu-panel .profile-panel-trigger,
+  .mobile-command-menu-panel .profile-panel-content {
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .mobile-command-menu-panel .profile-panel-trigger {
+    min-height: 42px;
+    padding: 8px 10px;
+  }
+  .mobile-command-menu-panel .profile-panel-summary { display: none; }
+  .mobile-command-menu-panel .profile-panel-content { padding: 0 10px 10px; }
+  .mobile-command-menu-panel .home-feed-source-panel .profile-panel-content { padding: 10px; }
   .mobile-command-menu-label {
     padding: 8px 10px 4px;
     color: var(--muted);
