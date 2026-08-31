@@ -4573,6 +4573,7 @@ function parseRSSItems(xml) {
       desc:    (field('description') || field('summary') || field('content')).slice(0, POST_CONTENT_MAX_CHARS),
       pubDate: field('pubDate') || field('published') || field('updated') || '',
       author:  field('author') || field('dc:creator') || field('name') || '',
+      source:  field('source'),
       image,
       video,
     });
@@ -9308,10 +9309,26 @@ function rankFeedPostsForLocation(posts, locationContext, options = {}) {
 // response across members instead of creating a request burst.
 const locationLiveFeedCache = new Map();
 const LOCATION_LIVE_CACHE_MAX = 160;
-const LOCATION_RESTAURANT_CACHE_MS = 10 * 60 * 1000;
+const RESTAURANT_OPENING_NEWS_CACHE_MS = 10 * 60 * 1000;
 const LOCATION_GEOCODE_CACHE_MS = 24 * 60 * 60 * 1000;
 const LOCATION_PROVIDER_MAX_IN_FLIGHT = 4;
 let locationProviderInFlight = 0;
+
+// Restaurant openings are reported by local outlets first, so one news
+// edition never gives the feed useful worldwide coverage. These editions are
+// intentionally broad and cached as one shared pool; a request never fans
+// out separately per member or city.
+const RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE = 2;
+const RESTAURANT_OPENING_NEWS_MAX_POSTS = 250;
+const RESTAURANT_OPENING_NEWS_EDITIONS = Object.freeze([
+  { label: 'North America', gl: 'US', hl: 'en-US', ceid: 'US:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
+  { label: 'Europe', gl: 'GB', hl: 'en-GB', ceid: 'GB:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
+  { label: 'South Asia', gl: 'IN', hl: 'en-IN', ceid: 'IN:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
+  { label: 'Oceania', gl: 'AU', hl: 'en-AU', ceid: 'AU:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
+  { label: 'Latin America', gl: 'MX', hl: 'es-419', ceid: 'MX:es-419', query: '("nuevo restaurante" OR "apertura de restaurante" OR "restaurante abre") when:30d' },
+  { label: 'Francophone Europe', gl: 'FR', hl: 'fr', ceid: 'FR:fr', query: '("nouveau restaurant" OR "ouverture restaurant" OR "restaurant ouvre") when:30d' },
+  { label: 'Japan', gl: 'JP', hl: 'ja', ceid: 'JP:ja', query: '"restaurant opening" when:30d' },
+]);
 
 const LIVE_CAMERA_SOURCE = 'livecamera';
 const LIVE_CAMERA_CATALOG = Object.freeze([
@@ -9582,15 +9599,94 @@ async function fetchLocalRestaurantPosts(location) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+function restaurantOpeningNewsUrl(edition) {
+  const params = new URLSearchParams({
+    q: edition.query,
+    hl: edition.hl,
+    gl: edition.gl,
+    ceid: edition.ceid,
+  });
+  return `https://news.google.com/rss/search?${params.toString()}`;
+}
+
+function restaurantOpeningStoryKey(item) {
+  const title = String(item?.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return `${title || String(item?.link || '').trim()}|${String(item?.source || '').toLowerCase().trim()}`;
+}
+
+function isRestaurantOpeningNewsItem(item) {
+  const text = `${item?.title || ''} ${item?.desc || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const restaurantTerms = /\b(restaurant|restaurants|restaurante|restaurantes|bistro|brasserie|cafe|eatery|pizzeria|steakhouse)\b/;
+  const openingTerms = /\b(opening|opens?|opened|to open|opening soon|grand opening|new restaurant|newly opened|launch(?:es|ed)?|debut(?:s|ed)?|apertura|abre|abrio|nuevo restaurante|nueva restaurante|nouveau restaurant|nouvelle restaurant|ouverture|ouvre|ouvert)\b/;
+  return restaurantTerms.test(text) && openingTerms.test(text);
+}
+
+function restaurantOpeningNewsPost(item, edition) {
+  const publisher = item.source || 'Google News';
+  const storyKey = restaurantOpeningStoryKey(item) || item.link || `${publisher}:${item.title}`;
+  const articleHash = crypto.createHash('md5').update(storyKey).digest('hex').slice(0, 20);
+  return {
+    id: `restaurant_opening_${articleHash}`,
+    source: 'restaurants',
+    sourceLabel: 'Restaurant Openings',
+    sourceUrl: item.link,
+    title: item.title,
+    content: item.desc || `A new restaurant opening reported by ${publisher}.`,
+    author: { id: `restaurant_news_${articleHash}`, name: publisher, title: 'Restaurant news', organization: publisher },
+    authorName: publisher,
+    createdAt: normalizeTimestamp(item.pubDate),
+    isExternal: true,
+    topic: 'Restaurant Culture',
+    coverageRegion: edition.label,
+    activityScore: parseTimestampMs(item.pubDate) || Date.now(),
+    mediaType: item.video ? 'video' : (item.image ? 'image' : null),
+    mediaUrl: item.video || item.image || null,
+    mediaPoster: item.video ? (item.image || null) : null,
+    group: {
+      id: 'restaurant_openings',
+      name: 'Restaurant Openings Worldwide',
+      category: 'Food',
+      externalUrl: item.link,
+    },
+  };
+}
+
+async function fetchRestaurantOpeningNewsPosts() {
+  const collected = [];
+  for (let start = 0; start < RESTAURANT_OPENING_NEWS_EDITIONS.length; start += RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE) {
+    const editions = RESTAURANT_OPENING_NEWS_EDITIONS.slice(start, start + RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE);
+    const results = await Promise.allSettled(editions.map(async (edition) => {
+      const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl(edition)));
+      return parseRSSItems(xml)
+        .filter(item => item?.title && item?.link && isRestaurantOpeningNewsItem(item))
+        .map(item => restaurantOpeningNewsPost(item, edition));
+    }));
+    for (const result of results) {
+      if (result.status === 'fulfilled') collected.push(...result.value);
+      else console.warn('[Restaurants] opening-news search failed:', result.reason?.message || result.reason);
+    }
+  }
+
+  const deduped = new Map();
+  for (const post of collected) {
+    const previous = deduped.get(post.id);
+    if (!previous || new Date(post.createdAt).getTime() > new Date(previous.createdAt).getTime()) deduped.set(post.id, post);
+  }
+  const posts = [...deduped.values()]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
+  if (!posts.length) throw new Error('No restaurant-opening reports were available from the news search.');
+  return posts;
+}
+
 async function getLocationLiveFeed(kind, location, viewerId = null) {
   if (kind === 'countries') return getCountriesCameraFeed(location, viewerId);
-  const scope = locationScopeLabel(location);
-  if (!scope || !location?.city) {
-    return { posts: [], fetchedAt: null, locationRequired: 'Choose a city to see nearby restaurants.' };
-  }
-  const key = locationCacheKey(kind, location);
-  const entry = await readLocationLiveCache(key, LOCATION_RESTAURANT_CACHE_MS, () => fetchLocalRestaurantPosts(location));
-  return { posts: entry?.posts || [], fetchedAt: entry?.fetchedAt || null, providerError: entry?.error || null };
+  const entry = await readLocationLiveCache('restaurants:worldwide-openings', RESTAURANT_OPENING_NEWS_CACHE_MS, fetchRestaurantOpeningNewsPosts);
+  const posts = rankFeedPostsForLocation(entry?.posts || [], location, { preserveFirst: 0 });
+  return { posts, fetchedAt: entry?.fetchedAt || null, providerError: entry?.error || null };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
 // only posts matching one of the viewer's own onboarding-selected

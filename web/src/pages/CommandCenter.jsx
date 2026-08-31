@@ -1315,9 +1315,9 @@ function AutomationSection({ onSelectSection }) {
           to="/?feed=countries"
         />
         <AutomationToolCard
-          title="Restaurant Finder"
-          description="Review recently updated nearby restaurant listings using your saved city."
-          status="Location aware"
+          title="Restaurant Openings"
+          description="Browse fresh restaurant-opening reports from around the world."
+          status="Worldwide news"
           actionLabel="Open Restaurants"
           to="/?feed=restaurants"
         />

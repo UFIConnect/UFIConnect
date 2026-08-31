@@ -2547,7 +2547,7 @@ export default function Feed({ forcedMode } = {}) {
           {viewMode === 'countries'
             ? 'Live public camera views from around the world, with nearby places gently moved toward the top.'
             : viewMode === 'restaurants'
-              ? 'Recently updated local restaurant listings, ready for the important work of deciding where to eat.'
+              ? 'Fresh restaurant-opening reports from around the world. Add a country or city to gently move familiar places toward the top.'
               : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
         </p>
       </div>
@@ -2643,7 +2643,7 @@ export default function Feed({ forcedMode } = {}) {
 
       {['countries', 'restaurants'].includes(viewMode) && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>{viewMode === 'countries' ? 'Prioritize' : 'Location'}</span>
+          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>Prioritize</span>
           <input
             className="form-input"
             aria-label="Country filter"
@@ -2901,7 +2901,7 @@ export default function Feed({ forcedMode } = {}) {
             {viewMode === 'countries'
               ? 'Loading live cameras...'
               : viewMode === 'restaurants'
-                ? 'Loading nearby restaurants...'
+                ? 'Loading restaurant openings from around the world...'
                 : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
           </div>
           <PostCardSkeleton />
@@ -2928,7 +2928,7 @@ export default function Feed({ forcedMode } = {}) {
               : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Countries' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No live cameras are available yet' : viewMode === 'restaurants' ? 'No nearby restaurants yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No live cameras are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2975,7 +2975,7 @@ export default function Feed({ forcedMode } = {}) {
               <>
                 <p style={{ marginBottom: 12 }}>
                   {locationMessage || (viewMode === 'restaurants'
-                    ? 'Add your city above to see recently updated nearby restaurant listings.'
+                    ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
                     : 'The Countries feed includes every live camera in the catalog. Add a country or city to bring nearby views forward.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
