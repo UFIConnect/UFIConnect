@@ -4,6 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import {
   SOURCE_META,
@@ -2259,14 +2260,16 @@ export default function Feed({ forcedMode } = {}) {
   // SSE: stream new posts from all source workers in real time — with reconnection logic
   useEffect(() => {
     let es = null;
+    let cancelled = false;
     let reconnectAttempt = 0;
     const MAX_RECONNECT_ATTEMPTS = 10;
     const BASE_RECONNECT_DELAY = 1000;
     let reconnectTimeoutId;
 
-    function setupSSE() {
+    async function setupSSE() {
       try {
-        const base = import.meta.env.VITE_API_URL || '/api';
+        const base = await resolveApiBaseUrl();
+        if (cancelled) return;
         const token = localStorage.getItem('pc_token') || '';
         es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
         setLiveActive(false);
@@ -2315,7 +2318,9 @@ export default function Feed({ forcedMode } = {}) {
         };
 
         es.onerror = () => {
+          if (cancelled) return;
           setLiveActive(false);
+          markApiOriginFailure(base);
           es?.close();
           es = null;
           // Exponential backoff reconnection with max attempts
@@ -2336,6 +2341,7 @@ export default function Feed({ forcedMode } = {}) {
     setupSSE();
 
     return () => {
+      cancelled = true;
       if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
       if (liveRefreshTimeoutRef.current) {
         clearTimeout(liveRefreshTimeoutRef.current);

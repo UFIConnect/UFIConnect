@@ -169,9 +169,6 @@ function buildHealthPayload() {
   return payload;
 }
 
-// Health-check endpoint FIRST - before any middleware
-app.get('/health', (_req, res) => res.json(buildHealthPayload()));
-
 // Stripe webhook — registered before express.json() below, with its own raw
 // body parser instead: Stripe's signature verification hashes the exact raw
 // request bytes, and once express.json() has parsed+re-serialized a body
@@ -273,6 +270,12 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : true; // allow all in dev
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
+
+// Keep these lightweight probes ahead of the application's rate limits and
+// database-heavy routes, but after CORS so the web app can use them when it
+// selects a healthy API origin from a different hostname.
+app.get('/readyz', (_req, res) => res.status(200).type('text/plain').send('ok'));
+app.get('/health', (_req, res) => res.json(buildHealthPayload()));
 
 // The office dashboard's "Security Agent" logs a reassuring-looking
 // "Rate-limit monitor" line, but that's display-only — it reads real memory/

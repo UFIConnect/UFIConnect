@@ -8,6 +8,8 @@
 // page_view event on every SPA route change, since gtag's own automatic
 // page_view only fires once, on initial script load.
 
+import { resolveApiBaseUrl } from './api/apiOrigin';
+
 export function getVisitorId() {
   try {
     let id = localStorage.getItem('ufi_visitor_id');
@@ -25,10 +27,11 @@ export function trackPageview(path) {
   if (window.gtag) {
     window.gtag('event', 'page_view', { page_path: path });
   }
-  const apiBase = import.meta.env.VITE_API_URL || '/api';
   let token = null;
   try { token = localStorage.getItem('pc_token'); } catch {}
-  fetch(`${apiBase}/analytics/pageview`, {
+  // Resolve before sending so analytics follows the same DNS fallback as the
+  // rest of the app without delaying the page that triggered it.
+  void resolveApiBaseUrl().then((apiBase) => fetch(`${apiBase}/analytics/pageview`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -36,5 +39,5 @@ export function trackPageview(path) {
     },
     body: JSON.stringify({ path, referrer: document.referrer || null, visitorId: getVisitorId() }),
     keepalive: true,
-  }).catch(() => {});
+  })).catch(() => {});
 }

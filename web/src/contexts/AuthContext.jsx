@@ -5,6 +5,31 @@ import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config
 
 const AuthContext = createContext(null);
 const AUTH_SESSION_KEY = 'ufi_authenticated_session_id';
+const PROFILE_CACHE_KEY = 'ufi_profile_snapshot';
+
+function readCachedProfile() {
+  try {
+    const token = localStorage.getItem('pc_token');
+    const cached = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || 'null');
+    return cached?.token === token && cached?.profile?.id ? cached.profile : null;
+  } catch {
+    return null;
+  }
+}
+
+function cacheProfile(profile, token = localStorage.getItem('pc_token')) {
+  try {
+    if (profile?.id && token) localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify({ token, profile }));
+  } catch {}
+}
+
+function clearCachedProfile() {
+  try { localStorage.removeItem(PROFILE_CACHE_KEY); } catch {}
+}
+
+function isRejectedSession(error) {
+  return [401, 403].includes(error?.response?.status);
+}
 
 function getAuthenticatedSessionId() {
   try {
@@ -21,7 +46,7 @@ function getAuthenticatedSessionId() {
 
 export function AuthProvider({ children }) {
   const [token,   setToken]   = useState(() => localStorage.getItem('pc_token'));
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState(() => readCachedProfile());
   const [loading, setLoading] = useState(true);
   const auth0 = useAuth0();
   const auth0Enabled = isAuth0Configured;
@@ -36,14 +61,21 @@ export function AuthProvider({ children }) {
     client.get('/profile')
       .then(({ data }) => {
         // Guard against stale service-worker offline responses that look like { error: 'offline' }
-        if (data?.error || !data?.id) {
-          localStorage.removeItem('pc_token');
-          setToken(null);
-        } else {
+        if (!data?.error && data?.id) {
           setProfile(data);
+          cacheProfile(data, token);
         }
       })
-      .catch(() => { localStorage.removeItem('pc_token'); setToken(null); })
+      .catch((error) => {
+        // A DNS/edge timeout is not an invalid session. Retaining the token
+        // and last known profile lets the feed's own cache stay usable until
+        // its API fallback reconnects.
+        if (!isRejectedSession(error)) return;
+        localStorage.removeItem('pc_token');
+        clearCachedProfile();
+        setToken(null);
+        setProfile(null);
+      })
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -55,6 +87,7 @@ export function AuthProvider({ children }) {
     const { data } = await client.get('/profile');
     if (data?.error || !data?.id) throw new Error('Profile unavailable');
     setProfile(data);
+    cacheProfile(data, token);
     return data;
   }, [token]);
 
@@ -79,10 +112,15 @@ export function AuthProvider({ children }) {
           setToken(accessToken);
           const { data } = await client.get('/auth/me');
           client.post('/analytics/sign-in', { sessionId: getAuthenticatedSessionId() }).catch(() => {});
-          if (!cancelled) setProfile(data.profile || data);
-        } catch {
           if (!cancelled) {
+            const nextProfile = data.profile || data;
+            setProfile(nextProfile);
+            cacheProfile(nextProfile, accessToken);
+          }
+        } catch (error) {
+          if (!cancelled && isRejectedSession(error)) {
             localStorage.removeItem('pc_token');
+            clearCachedProfile();
             setToken(null);
             setProfile(null);
           }
@@ -102,6 +140,7 @@ export function AuthProvider({ children }) {
   async function login(email, password) {
     const { data } = await client.post('/auth/login', { email, password });
     localStorage.setItem('pc_token', data.token);
+    cacheProfile(data.profile || data.user || null, data.token);
     setToken(data.token);
     setProfile(data.profile || data.user || null);
     return data.profile || data.user;
@@ -110,6 +149,7 @@ export function AuthProvider({ children }) {
   async function register(name, email, password, title) {
     const { data } = await client.post('/auth/register', { name, email, password, title });
     localStorage.setItem('pc_token', data.token);
+    cacheProfile(data.profile || data.user || null, data.token);
     setToken(data.token);
     setProfile(data.profile || data.user || null);
     return data.profile || data.user;
@@ -117,6 +157,7 @@ export function AuthProvider({ children }) {
 
   function logout() {
     localStorage.removeItem('pc_token');
+    clearCachedProfile();
     setToken(null);
     setProfile(null);
     if (auth0Enabled && auth0.isAuthenticated) {
@@ -135,7 +176,11 @@ export function AuthProvider({ children }) {
   }
 
   function updateProfileLocally(updated) {
-    setProfile((prev) => ({ ...prev, ...updated }));
+    setProfile((prev) => {
+      const next = { ...prev, ...updated };
+      cacheProfile(next);
+      return next;
+    });
   }
 
   return (

@@ -10,6 +10,10 @@ services:
   # ── Backend (Node.js API) ───────────────────────────────────
   - type: web
     name: uficonnect-api
+    # First-party API hostname. Once Render verifies it and Cloudflare proxies
+    # the CNAME, visitors get the same global dual-stack edge as the website.
+    domains:
+      - api.uficonnect.org
     runtime: node
     rootDir: backend
     buildCommand: npm install
@@ -456,6 +460,11 @@ services:
         value: camera=(), microphone=(), geolocation=()
     envVars:
       - key: VITE_API_URL
+        value: https://api.uficonnect.org
+      # Keep the Render hostname available during DNS/TLS propagation and a
+      # regional edge failure. The browser chooses it automatically when the
+      # public API host cannot answer its lightweight readiness probe.
+      - key: VITE_API_FALLBACK_URL
         value: https://uficonnect-api-708r.onrender.com
       - key: VITE_MAINTENANCE_MODE
         value: false

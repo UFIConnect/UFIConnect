@@ -1,13 +1,39 @@
 import axios from 'axios';
+import {
+  markApiOriginFailure,
+  markApiOriginHealthy,
+  resolveApiBaseUrl,
+} from './apiOrigin';
 
 // In dev: Vite proxy rewrites /api/* → http://localhost:3000/*
 // In production: VITE_API_URL points directly to the backend (no /api prefix needed)
-const baseURL = import.meta.env.VITE_API_URL || '/api';
+// The origin is selected in the request interceptor below. A public API
+// hostname can briefly fail in one resolver region, so every safe read gets
+// a second route before a user sees a timeout.
+const client = axios.create({ timeout: 15000 });
 
-const client = axios.create({ baseURL, timeout: 30000 });
+const SAFE_FAILOVER_METHODS = new Set(['get', 'head', 'options']);
+const TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
+
+function isRelativeRequest(config) {
+  return !/^https?:\/\//i.test(String(config.url || ''));
+}
+
+function canFailover(config) {
+  return SAFE_FAILOVER_METHODS.has(String(config.method || 'get').toLowerCase());
+}
+
+function pause(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 // Attach JWT token from localStorage on every request
-client.interceptors.request.use((config) => {
+client.interceptors.request.use(async (config) => {
+  if (isRelativeRequest(config)) {
+    const origin = config._ufiApiOrigin || await resolveApiBaseUrl();
+    config.baseURL = origin;
+    config._ufiApiOrigin = origin;
+  }
   const token = localStorage.getItem('pc_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -21,12 +47,31 @@ client.interceptors.request.use((config) => {
 // short delay to actually let the blip clear instead of hammering it
 // immediately.
 client.interceptors.response.use(
-  (res) => res,
+  (res) => {
+    markApiOriginHealthy(res.config?._ufiApiOrigin);
+    return res;
+  },
   async (error) => {
     const { config, response } = error;
-    if (config && !config._retried && config.method === 'get' && response && [502, 503, 504].includes(response.status)) {
-      config._retried = true;
-      await new Promise(resolve => setTimeout(resolve, 900));
+    if (!config || !canFailover(config)) return Promise.reject(error);
+
+    const transient = !response || TRANSIENT_STATUS_CODES.has(response.status);
+    if (!transient) return Promise.reject(error);
+
+    if (!config._ufiFailoverAttempt) {
+      const fallback = markApiOriginFailure(config._ufiApiOrigin);
+      if (fallback) {
+        config._ufiFailoverAttempt = true;
+        config.baseURL = fallback;
+        config._ufiApiOrigin = fallback;
+        await pause(250);
+        return client(config);
+      }
+    }
+
+    if (!config._ufiTransientRetry) {
+      config._ufiTransientRetry = true;
+      await pause(800);
       return client(config);
     }
     return Promise.reject(error);
