@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
-import PricingModal from '../components/PricingModal';
+import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
@@ -80,6 +80,17 @@ function LockedState({ onUpgrade }) {
         content with AI, and track your job search — all with a Pro or
         Business plan.
       </p>
+      <div className="command-center-pricing" aria-label="Command Center plans">
+        {TIERS.map((tier) => (
+          <div className="command-center-price" key={tier.tier}>
+            <span className="command-center-price-name">
+              {tier.name}
+              {tier.locked && <small>Coming soon</small>}
+            </span>
+            <strong>${tier.price}<small>/mo</small></strong>
+          </div>
+        ))}
+      </div>
       <button className="btn btn-primary" type="button" onClick={onUpgrade}>Upgrade to unlock</button>
     </div>
   );

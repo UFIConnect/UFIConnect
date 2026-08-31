@@ -8,6 +8,7 @@ import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlayli
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
+import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
@@ -15,6 +16,8 @@ import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
+
+const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -3009,7 +3012,9 @@ export default function Feed({ forcedMode } = {}) {
             <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
               <span>
                 <span className="home-feed-command-center-title">Command Center</span>
-                <span className="home-feed-command-center-summary">Tools and automation</span>
+                <span className="home-feed-command-center-summary">
+                  Tools and automation - Pro ${COMMAND_CENTER_PRO_TIER?.price}/mo
+                </span>
               </span>
               <span className="home-feed-command-center-arrow" aria-hidden="true">&rarr;</span>
             </Link>

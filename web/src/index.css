@@ -1562,6 +1562,47 @@ input, textarea, select { font-family: inherit; }
 .command-center-header {
   margin-bottom: 20px;
 }
+.command-center-pricing {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 360px;
+  margin: 0 auto 22px;
+  text-align: left;
+}
+.command-center-price {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.command-center-price-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 700;
+}
+.command-center-price-name small {
+  color: var(--primary);
+  font-size: .61rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.command-center-price strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text);
+  font-size: 1.05rem;
+}
+.command-center-price strong small {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 600;
+}
 .command-center-tabs {
   display: flex;
   gap: 4px;
