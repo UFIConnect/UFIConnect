@@ -9117,7 +9117,7 @@ try {
 
 const COUNTRY_INPUT_CODES = {
   'united states': 'US', usa: 'US', us: 'US',
-  'united kingdom': 'GB', uk: 'GB', great_britain: 'GB',
+  'united kingdom': 'GB', uk: 'GB', 'great britain': 'GB',
   canada: 'CA', australia: 'AU', japan: 'JP',
   germany: 'DE', france: 'FR', spain: 'ES', italy: 'IT',
   netherlands: 'NL', ireland: 'IE', india: 'IN',
@@ -9125,11 +9125,50 @@ const COUNTRY_INPUT_CODES = {
   singapore: 'SG', poland: 'PL', portugal: 'PT', sweden: 'SE',
 };
 
+// DisplayNames can resolve the rest of ISO 3166-1 without maintaining a
+// partial hand-written country list. Keep aliases above for the common names
+// people actually type, then lazily build the wider lookup once per process.
+const ISO_COUNTRY_CODES = `
+  AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
+  BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
+  CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+  GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
+  ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
+  LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
+  MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
+  PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
+  SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
+  TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+`.trim().split(/\s+/);
+let countryInputCodesByName = null;
+
+function normalizedCountryInput(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function countryCodeFromInput(value) {
   const input = String(value || '').trim();
   if (!input) return null;
   if (/^[a-z]{2}$/i.test(input)) return input.toUpperCase();
-  return COUNTRY_INPUT_CODES[input.toLowerCase().replace(/\s+/g, ' ')] || null;
+  const normalized = normalizedCountryInput(input);
+  if (COUNTRY_INPUT_CODES[normalized]) return COUNTRY_INPUT_CODES[normalized];
+  if (!countryInputCodesByName) {
+    countryInputCodesByName = new Map(Object.entries(COUNTRY_INPUT_CODES));
+    if (countryDisplayNames) {
+      for (const code of ISO_COUNTRY_CODES) {
+        try {
+          const name = countryDisplayNames.of(code);
+          if (name && name !== code) countryInputCodesByName.set(normalizedCountryInput(name), code);
+        } catch {}
+      }
+    }
+  }
+  return countryInputCodesByName.get(normalized) || null;
 }
 
 function cleanLocationInput(value) {
@@ -9138,6 +9177,14 @@ function cleanLocationInput(value) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
+}
+
+function normalizeFeedLocation(value) {
+  const location = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    country: cleanLocationInput(location.country),
+    city: cleanLocationInput(location.city),
+  };
 }
 
 function countryName(countryCode) {
@@ -9156,24 +9203,35 @@ function countryName(countryCode) {
 // changing the feed API again. Missing or invalid location simply disables
 // this signal and leaves the existing feed order untouched.
 function getFeedLocationContext(req, user = null) {
-  const saved = user?.roleSettings?.feedLocation || {};
+  const saved = normalizeFeedLocation(user?.roleSettings?.feedLocation);
   const requestedCountry = cleanLocationInput(req.query?.country);
   const requestedCity = cleanLocationInput(req.query?.city);
-  const savedCountry = cleanLocationInput(saved.country);
-  const savedCity = cleanLocationInput(saved.city);
-  const selectedCountry = requestedCountry || savedCountry;
-  const country = countryCodeFromInput(selectedCountry) || (selectedCountry ? null : getUserCountry(req));
-  const city = requestedCity || savedCity || cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+  const hasSavedLocation = !!(saved.country || saved.city);
+  // Travel and Restaurants belong to the signed-in member. Once a member
+  // saves a location, query strings, a stale tab, and proxy geo headers must
+  // not silently replace it with somebody else's previous selection.
+  const selectedCountry = hasSavedLocation ? saved.country : requestedCountry;
+  const city = hasSavedLocation
+    ? saved.city
+    : requestedCity || cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+  const country = countryCodeFromInput(selectedCountry) || (!selectedCountry && !hasSavedLocation ? getUserCountry(req) : null);
   const region = cleanGeoHeader(req, ['cf-region', 'x-vercel-ip-country-region', 'x-appengine-region', 'x-geo-region']);
-  const declared = [selectedCountry, city, user?.location, user?.preferences?.location]
+  const resolvedCountryName = countryName(country) || selectedCountry || null;
+  const declared = [
+    selectedCountry,
+    resolvedCountryName,
+    city,
+    ...(hasSavedLocation ? [] : [user?.location, user?.preferences?.location]),
+  ]
     .map(cleanLocationInput)
     .filter(Boolean);
   return {
     country,
-    countryName: selectedCountry || countryName(country),
+    countryName: resolvedCountryName,
     city,
     region,
     declared,
+    source: hasSavedLocation ? 'member' : (requestedCountry || requestedCity ? 'request' : (country || city || region ? 'network' : 'none')),
     available: !!(country || city || region || declared.length),
   };
 }
@@ -9586,6 +9644,7 @@ function liveCameraLocationScore(post, location) {
   const city = String(location.city || '').trim().toLowerCase();
   if (city && city === String(post.city || '').trim().toLowerCase()) return 2;
   if (location.country && location.country === post.countryCode) return 1;
+  if (normalizedCountryInput(location.countryName) && normalizedCountryInput(location.countryName) === normalizedCountryInput(post.country)) return 1;
   return 0;
 }
 
@@ -10091,6 +10150,7 @@ function restaurantOpeningNewsPost(item, edition) {
   const publisher = item.source || 'Google News';
   const storyKey = restaurantOpeningStoryKey(item) || item.link || `${publisher}:${item.title}`;
   const articleHash = crypto.createHash('md5').update(storyKey).digest('hex').slice(0, 20);
+  const location = edition?.location || null;
   return {
     id: `restaurant_opening_${articleHash}`,
     source: 'restaurants',
@@ -10104,6 +10164,10 @@ function restaurantOpeningNewsPost(item, edition) {
     isExternal: true,
     topic: 'Restaurant Culture',
     coverageRegion: edition.label,
+    location: location?.scope || null,
+    city: location?.city || null,
+    country: location?.country || null,
+    countryCode: location?.countryCode || null,
     activityScore: parseTimestampMs(item.pubDate) || Date.now(),
     mediaType: item.video ? 'video' : (item.image ? 'image' : null),
     mediaUrl: item.video || item.image || null,
@@ -10349,6 +10413,36 @@ async function fetchRestaurantOpeningNewsPosts() {
   return hydrateRestaurantOpeningPhotos(posts);
 }
 
+function restaurantLocationNewsEdition(location) {
+  const scope = locationScopeLabel(location);
+  if (!scope) return null;
+  const countryCode = /^[A-Z]{2}$/.test(String(location?.country || '')) ? location.country : 'US';
+  const placeTerms = [location?.city, location?.countryName].filter(Boolean).map(value => `"${value}"`);
+  return {
+    label: `Near ${scope}`,
+    gl: countryCode,
+    hl: 'en',
+    ceid: `${countryCode}:en`,
+    query: `(${placeTerms.join(' OR ')}) ("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d`,
+    location: {
+      scope,
+      city: location?.city || null,
+      country: location?.countryName || null,
+      countryCode: location?.country || null,
+    },
+  };
+}
+
+async function fetchRestaurantLocationNewsPosts(location) {
+  const edition = restaurantLocationNewsEdition(location);
+  if (!edition) return [];
+  const xml = await withLocationProviderSlot(() => fetchText(restaurantOpeningNewsUrl(edition)));
+  const posts = parseRSSItems(xml)
+    .filter(item => item?.title && item?.link && isRestaurantOpeningNewsItem(item))
+    .map(item => restaurantOpeningNewsPost(item, edition));
+  return hydrateRestaurantOpeningPhotos(posts.slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS));
+}
+
 function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
   const nearby = sortDiscoveryPostsNewest(nearbyPosts);
   const worldwideByRegion = roundRobinDiscoveryGroups(
@@ -10375,20 +10469,30 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
       () => fetchLocalRestaurantPosts(location),
     )
     : Promise.resolve(null);
-  const [worldwideEntry, nearbyEntry] = await Promise.all([worldwideRequest, nearbyRequest]);
-  const equalized = equalizeRestaurantDiscoveryPosts(nearbyEntry?.posts || [], worldwideEntry?.posts || []);
+  const locationNewsRequest = location?.available && locationScopeLabel(location)
+    ? readLocationLiveCache(
+      locationCacheKey('restaurants:location-openings', location),
+      RESTAURANT_OPENING_NEWS_CACHE_MS,
+      () => fetchRestaurantLocationNewsPosts(location),
+    )
+    : Promise.resolve(null);
+  const [worldwideEntry, nearbyEntry, locationNewsEntry] = await Promise.all([worldwideRequest, nearbyRequest, locationNewsRequest]);
+  const nearbyPosts = [...(nearbyEntry?.posts || []), ...(locationNewsEntry?.posts || [])];
+  const equalized = equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwideEntry?.posts || []);
   const posts = rankFeedPostsForLocation(equalized, location, { preserveFirst: 0 });
   return {
     posts,
-    fetchedAt: [worldwideEntry?.fetchedAt, nearbyEntry?.fetchedAt].filter(Boolean).sort().at(-1) || null,
+    fetchedAt: [worldwideEntry?.fetchedAt, nearbyEntry?.fetchedAt, locationNewsEntry?.fetchedAt].filter(Boolean).sort().at(-1) || null,
     equalizer: {
       mode: 'regional-round-robin',
-      nearby: (nearbyEntry?.posts || []).length,
+      nearby: nearbyPosts.length,
+      localPlaces: (nearbyEntry?.posts || []).length,
+      localOpenings: (locationNewsEntry?.posts || []).length,
       worldwide: (worldwideEntry?.posts || []).length,
     },
     // Nearby OpenStreetMap lookup is an optional local boost. A timeout there
     // must not present the otherwise healthy worldwide opening feed as failed.
-    providerError: worldwideEntry?.error || (!worldwideEntry?.posts?.length ? nearbyEntry?.error || null : null),
+    providerError: worldwideEntry?.error || (!worldwideEntry?.posts?.length ? nearbyEntry?.error || locationNewsEntry?.error || null : null),
   };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
@@ -17707,7 +17811,15 @@ app.patch('/profile', authenticate, async (req, res) => {
   if (skills !== undefined) user.skills = asArray(skills).filter(s => typeof s === 'string');
   if (organization !== undefined) user.organization = organization;
   if (links !== undefined) user.links = links;
-  if (roleSettings !== undefined) user.roleSettings = roleSettings;
+  if (roleSettings !== undefined) {
+    const nextRoleSettings = roleSettings && typeof roleSettings === 'object' && !Array.isArray(roleSettings)
+      ? { ...roleSettings }
+      : {};
+    if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLocation')) {
+      nextRoleSettings.feedLocation = normalizeFeedLocation(nextRoleSettings.feedLocation);
+    }
+    user.roleSettings = nextRoleSettings;
+  }
   // Trusts the URL as given rather than re-validating it points at our own
   // Cloudinary account — same trust boundary as mediaUrl on regular posts
   // (see POST /groups/:id/posts), which takes Cloudinary's signed-upload
@@ -18501,7 +18613,12 @@ async function handleFeedRequest(req, res) {
       totalAvailable: available.length,
       fetchedAt: localFeed.fetchedAt,
       equalizer: localFeed.equalizer || null,
-      location: { country: locationContext.countryName || null, city: locationContext.city || null },
+      location: {
+        country: locationContext.countryName || null,
+        city: locationContext.city || null,
+        source: locationContext.source,
+        savedForMember: locationContext.source === 'member',
+      },
       locationRequired: localFeed.locationRequired || null,
       providerError: localFeed.providerError || null,
     });

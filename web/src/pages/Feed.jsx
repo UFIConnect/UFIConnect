@@ -1754,7 +1754,7 @@ export default function Feed({ forcedMode } = {}) {
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(forcedMode || _saved?.viewMode || 'feed');
-  const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(_saved?.location));
+  const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const [locationSaving, setLocationSaving] = useState(false);
   const [locationMessage, setLocationMessage] = useState('');
   const disabledSourceKey = useMemo(() => (
@@ -1785,7 +1785,7 @@ export default function Feed({ forcedMode } = {}) {
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
   const viewModeRef   = useRef(forcedMode || _saved?.viewMode || 'feed');
-  const locationFiltersRef = useRef(normalizeLocationFilters(_saved?.location));
+  const locationFiltersRef = useRef(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -1855,10 +1855,6 @@ export default function Feed({ forcedMode } = {}) {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (['countries', 'restaurants'].includes(activeMode)) {
-        if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
-        if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
-      }
       if (bust) {
         params.set('bust', '1');
       }
@@ -2009,7 +2005,7 @@ export default function Feed({ forcedMode } = {}) {
     const nextTabs = saved?.activeTabs || [];
     const nextSearch = saved?.search || '';
     const nextMode = saved?.viewMode || 'feed';
-    const nextLocation = saved?.location || normalizeLocationFilters(profile.roleSettings?.feedLocation);
+    const nextLocation = normalizeLocationFilters(profile.roleSettings?.feedLocation);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
     searchRef.current = nextSearch;
@@ -2261,10 +2257,6 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (['countries', 'restaurants'].includes(viewModeRef.current)) {
-        if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
-        if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
-      }
       const { data } = await client.get(`/office/feed?${params.toString()}`);
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
