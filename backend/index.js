@@ -16272,6 +16272,7 @@ async function handleFeedRequest(req, res) {
   // live right before the balanced-query call) so it's available to every
   // branch that reads the shared snapshot, not just the one that builds it.
   const userTopics = userDeclaredFeedTopics(user, prefs);
+  const hasSavedFeedScope = userTopics.length > 0;
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -16293,17 +16294,17 @@ async function handleFeedRequest(req, res) {
     ...jobRoleValues,
     ...jobRoleValues.flatMap(value => normalizePersonalizationTerm(value).split(/\s+/).filter(term => term.length >= 3)),
   ], 16);
-  const wantsMusic = asArray(prefs.interests).some(interest => /music/i.test(String(interest)));
-  const isMusicPost = (post) => /\b(?:music|musician|song|album|playlist)\b/i.test(`${post?.topic || ''} ${post?.title || ''}`);
   const matchesMemberJob = (post) => {
-    if (!JOB_LISTING_SOURCES.includes(post?.source) || !jobRoleTerms.length) return true;
+    if (!JOB_LISTING_SOURCES.includes(post?.source)) return true;
+    if (!jobRoleTerms.length) return false;
     const text = feedPostPersonalizationText(post);
     return jobRoleTerms.some(term => textMatchesPersonalizationTerm(text, term));
   };
   const filterForUser = (items) => {
     const list = Array.isArray(items) ? items.filter(matchesTopic) : [];
+    if (!topicsFilter.length && !hasSavedFeedScope) return [];
     const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
-    return scoped.filter(post => (wantsMusic || !isMusicPost(post)) && matchesMemberJob(post));
+    return scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => (
     personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext })
@@ -17588,14 +17589,13 @@ async function handleVideoFeedRequest(req, res) {
       personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
     );
     const userTopics = userDeclaredFeedTopics(user, prefs);
+    const hasSavedVideoScope = userTopics.length > 0;
     const scopedVideoTopics = topicsFilter.length ? topicsFilter : (userTopics.length ? userTopics : null);
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '7d' : videoTimeRange;
-    const wantsMusic = asArray(prefs.interests).some(interest => /music/i.test(String(interest)));
-    const isMusicPost = (post) => /\b(?:music|musician|song|album|playlist)\b/i.test(`${post?.topic || ''} ${post?.title || ''}`);
-    const applyPersonalTopicFilter = (items) => (
-      (topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false }))
-        .filter(post => wantsMusic || !isMusicPost(post))
-    );
+    const applyPersonalTopicFilter = (items) => {
+      if (!topicsFilter.length && !hasSavedVideoScope) return [];
+      return topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false });
+    };
 
     // -- Full-text search across every cached video post, not just whatever
     // a single getCursorFeedPage page happened to return — the comment
@@ -17751,8 +17751,17 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // nothing here ever read them until now: Search and Topic silently
     // filtered nothing while in Following mode even though the controls
     // looked identical to Feed mode's working ones.
-    const { matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const { topicsFilter, matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const user = await getUser(req.user.id);
+    const prefs = user?.preferences || {};
+    const userTopics = userDeclaredFeedTopics(user, prefs);
+    const hasSavedVideoScope = userTopics.length > 0;
     const videos = all.filter(isPlayableVideoPost).filter(matchesSearch).filter(matchesTopic);
+    const scopedVideos = topicsFilter.length
+      ? videos
+      : hasSavedVideoScope
+        ? filterByUserTopics(videos, userTopics, { fallbackToInput: false })
+        : [];
     const offset = (reqPage - 1) * feedLimit;
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
@@ -17760,12 +17769,10 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // here anyway) — time-aware equalize by source so one connected platform
     // with a lot of video content doesn't crowd out a thinner one, then
     // wraparound instead of hard-stopping once a small connected pool runs out.
-    const user = await getUser(req.user.id);
-    const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
     const equalized = personalizeAuthenticatedFeedPosts(
-      buildEqualizedFollowingPool(videos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+      buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
       user,
       prefs,
       userAffinity,
