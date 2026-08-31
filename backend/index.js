@@ -865,7 +865,10 @@ const SAFE_PUBLIC_API_HOST = new URL(SAFE_PUBLIC_API_BASE).host.toLowerCase();
 // here; accepting arbitrary forwarded-host headers would let a caller choose a
 // redirect URI for an OAuth flow.
 function apiBaseForRequest(req) {
-  const requestHost = String(req?.headers?.host || '').trim().toLowerCase();
+  const requestHost = String(req?.headers?.host || '')
+    .trim()
+    .toLowerCase()
+    .replace(/:\d+$/, '');
   return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : API_BASE;
 }
 
