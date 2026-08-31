@@ -9456,6 +9456,87 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
     country: 'Japan', countryCode: 'JP', city: 'Tokyo',
     createdAt: '2024-01-12T12:00:00.000Z',
   },
+  {
+    id: 'camera_fremont_street_las_vegas',
+    title: 'Fremont Street, Las Vegas',
+    content: 'Live public camera from EarthCam on Fremont Street. The neon has its own weather system.',
+    sourceUrl: 'https://www.youtube.com/watch?v=2-WiWMLgfBs',
+    mediaUrl: 'https://www.youtube.com/watch?v=2-WiWMLgfBs',
+    country: 'United States', countryCode: 'US', city: 'Las Vegas',
+    createdAt: '2024-02-09T12:00:00.000Z',
+  },
+  {
+    id: 'camera_dubai_downtown',
+    title: 'Dubai Live View',
+    content: 'Live public camera from Dubai. The skyline is doing its usual impossible thing.',
+    sourceUrl: 'https://www.youtube.com/watch?v=MgqAn_JYqDQ',
+    mediaUrl: 'https://www.youtube.com/watch?v=MgqAn_JYqDQ',
+    country: 'United Arab Emirates', countryCode: 'AE', city: 'Dubai',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_dubai_marina',
+    title: 'Dubai Marina Live View',
+    content: 'Live public camera from Dubai Marina. Boats, towers, and committed sunshine.',
+    sourceUrl: 'https://www.youtube.com/watch?v=ka9MsehA8I4',
+    mediaUrl: 'https://www.youtube.com/watch?v=ka9MsehA8I4',
+    country: 'United Arab Emirates', countryCode: 'AE', city: 'Dubai',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_rome_italy',
+    title: 'Rome Live View',
+    content: 'Live public camera from Rome. A small window onto a city that has been photogenic for a while.',
+    sourceUrl: 'https://www.youtube.com/watch?v=CMyRFwZGko4',
+    mediaUrl: 'https://www.youtube.com/watch?v=CMyRFwZGko4',
+    country: 'Italy', countryCode: 'IT', city: 'Rome',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_manhattan_new_york',
+    title: 'Manhattan, New York',
+    content: 'Live public camera from Manhattan. The sidewalks have opinions and they are moving quickly.',
+    sourceUrl: 'https://www.youtube.com/watch?v=EAgNxa6yw94',
+    mediaUrl: 'https://www.youtube.com/watch?v=EAgNxa6yw94',
+    country: 'United States', countryCode: 'US', city: 'New York',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_bourbon_street_new_orleans',
+    title: 'Bourbon Street, New Orleans',
+    content: 'Live public camera on Bourbon Street. The block rarely runs out of stories.',
+    sourceUrl: 'https://www.youtube.com/watch?v=ryyC8t-mxyQ',
+    mediaUrl: 'https://www.youtube.com/watch?v=ryyC8t-mxyQ',
+    country: 'United States', countryCode: 'US', city: 'New Orleans',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_siesta_key_beach',
+    title: 'Siesta Key Beach, Florida',
+    content: 'Live public camera from Siesta Key Beach. A beach break with no sand in the keyboard.',
+    sourceUrl: 'https://www.youtube.com/watch?v=NLhxcyzXQxM',
+    mediaUrl: 'https://www.youtube.com/watch?v=NLhxcyzXQxM',
+    country: 'United States', countryCode: 'US', city: 'Siesta Key',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_rio_copacabana',
+    title: 'Copacabana Beach, Rio de Janeiro',
+    content: 'Live public camera from Copacabana. The view does not need a filter.',
+    sourceUrl: 'https://www.youtube.com/watch?v=bwQyNMjsG3k',
+    mediaUrl: 'https://www.youtube.com/watch?v=bwQyNMjsG3k',
+    country: 'Brazil', countryCode: 'BR', city: 'Rio de Janeiro',
+    createdAt: '2024-09-06T12:00:00.000Z',
+  },
+  {
+    id: 'camera_table_mountain_cape_town',
+    title: 'Table Mountain, Cape Town',
+    content: 'Live public camera from Table Mountain. The clouds came dressed for the occasion.',
+    sourceUrl: 'https://www.youtube.com/watch?v=i5R4ZlVLzLI',
+    mediaUrl: 'https://www.youtube.com/watch?v=i5R4ZlVLzLI',
+    country: 'South Africa', countryCode: 'ZA', city: 'Cape Town',
+    createdAt: '2024-02-01T12:00:00.000Z',
+  },
 ]);
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
 let liveCameraPostsSeeded = false;
@@ -9511,7 +9592,7 @@ function currentLiveCameraPosts() {
 }
 
 // oEmbed is a lightweight public check that rejects deleted, private, and
-// embedding-disabled YouTube streams before they are put in Countries. It is
+// embedding-disabled YouTube streams before they are put in Travel. It is
 // intentionally shared for six hours so this quality check cannot become a
 // per-visitor request fan-out.
 async function isLiveCameraEmbeddable(camera) {
@@ -9542,7 +9623,7 @@ async function verifiedLiveCameraPosts() {
   })));
   const valid = checks.filter(check => check.valid).map(check => check.post);
   if (valid.length < candidates.length) {
-    console.warn(`[Countries] omitted ${candidates.length - valid.length} unavailable live camera(s).`);
+    console.warn(`[Travel] omitted ${candidates.length - valid.length} unavailable live camera(s).`);
   }
   return valid;
 }
@@ -9707,15 +9788,66 @@ async function fetchCountryDiscoveryNewsPosts() {
     .slice(0, COUNTRIES_DISCOVERY_NEWS_MAX_POSTS);
 }
 
-function interleaveCountryDiscoveryPosts(cameras, guides, news) {
-  const queues = [cameras, guides, news].filter(queue => Array.isArray(queue) && queue.length);
+function sortDiscoveryPostsNewest(posts) {
+  return [...(Array.isArray(posts) ? posts : [])]
+    .filter(Boolean)
+    .sort((a, b) => (parseTimestampMs(b?.createdAt) || 0) - (parseTimestampMs(a?.createdAt) || 0));
+}
+
+// Equalize a discovery stream by geography before it joins another stream.
+// A deep North America queue, for example, must not hide every other region.
+function roundRobinDiscoveryGroups(posts, groupForPost) {
+  const groups = new Map();
+  for (const post of Array.isArray(posts) ? posts : []) {
+    if (!post) continue;
+    const group = String(groupForPost(post) || post.source || post.id || 'other').trim().toLowerCase();
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(post);
+  }
+  return roundRobinMerge([...groups.values()].map(sortDiscoveryPostsNewest));
+}
+
+// The location-feed equalizer is intentionally weighted, not a flat sort:
+// every active queue gets a turn, while Travel gets two verified live-camera
+// cards per cycle so a live feed still feels genuinely live.
+function weightedRoundRobinDiscoveryQueues(weightedQueues) {
+  const queues = (Array.isArray(weightedQueues) ? weightedQueues : [])
+    .map(({ posts: queuePosts, weight }) => ({
+      posts: Array.isArray(queuePosts) ? queuePosts.filter(Boolean) : [],
+      weight: Math.max(1, Math.min(Math.floor(Number(weight) || 1), 4)),
+      index: 0,
+    }))
+    .filter(queue => queue.posts.length);
+  const emittedIds = new Set();
   const result = [];
-  for (let index = 0; queues.some(queue => index < queue.length); index += 1) {
+
+  while (queues.some(queue => queue.index < queue.posts.length)) {
+    let addedAny = false;
     for (const queue of queues) {
-      if (queue[index]) result.push(queue[index]);
+      let turns = 0;
+      while (turns < queue.weight && queue.index < queue.posts.length) {
+        const post = queue.posts[queue.index++];
+        if (!post || (post.id && emittedIds.has(post.id))) continue;
+        if (post.id) emittedIds.add(post.id);
+        result.push(post);
+        turns += 1;
+        addedAny = true;
+      }
     }
+    if (!addedAny) break;
   }
   return result;
+}
+
+function interleaveCountryDiscoveryPosts(cameras, guides, news) {
+  const liveCameras = roundRobinDiscoveryGroups(cameras, post => `camera:${post.countryCode || post.country || post.id}`);
+  const destinationGuides = roundRobinDiscoveryGroups(guides, post => `guide:${post.countryCode || post.country || post.id}`);
+  const travelNews = roundRobinDiscoveryGroups(news, post => `news:${post.coverageRegion || post.sourceLabel || post.id}`);
+  return weightedRoundRobinDiscoveryQueues([
+    { posts: liveCameras, weight: 2 },
+    { posts: destinationGuides, weight: 1 },
+    { posts: travelNews, weight: 1 },
+  ]);
 }
 
 async function getCountriesCameraFeed(location, viewerId = null) {
@@ -9728,9 +9860,9 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     const cameras = cameraResult.status === 'fulfilled' ? cameraResult.value : [];
     const guides = guideResult.status === 'fulfilled' ? guideResult.value : [];
     const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
-    if (cameraResult.status === 'rejected') console.warn('[Countries] live-camera verification failed:', cameraResult.reason?.message || cameraResult.reason);
-    if (guideResult.status === 'rejected') console.warn('[Countries] guide search failed:', guideResult.reason?.message || guideResult.reason);
-    if (newsResult.status === 'rejected') console.warn('[Countries] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
+    if (cameraResult.status === 'rejected') console.warn('[Travel] live-camera verification failed:', cameraResult.reason?.message || cameraResult.reason);
+    if (guideResult.status === 'rejected') console.warn('[Travel] guide search failed:', guideResult.reason?.message || guideResult.reason);
+    if (newsResult.status === 'rejected') console.warn('[Travel] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
     return interleaveCountryDiscoveryPosts(cameras, guides, news);
   });
 
@@ -9754,6 +9886,12 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     posts: ranked.map(post => post?.source === LIVE_CAMERA_SOURCE ? serializeCommunityPost(post, viewerId) : post),
     fetchedAt: entry?.fetchedAt || new Date().toISOString(),
     catalogSize: ranked.length,
+    equalizer: {
+      mode: 'live-weighted-round-robin',
+      liveCameras: ranked.filter(post => post?.isLiveCamera).length,
+      destinationGuides: ranked.filter(post => post?.source === 'wikivoyage').length,
+      travelNews: ranked.filter(post => post?.source === 'travelnews').length,
+    },
     providerError: entry?.error || null,
   };
 }
@@ -9990,11 +10128,46 @@ async function fetchRestaurantOpeningNewsPosts() {
   return posts;
 }
 
+function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
+  const nearby = sortDiscoveryPostsNewest(nearbyPosts);
+  const worldwideByRegion = roundRobinDiscoveryGroups(
+    worldwidePosts,
+    post => `region:${post.coverageRegion || post.country || post.sourceLabel || post.id}`,
+  );
+  return weightedRoundRobinDiscoveryQueues([
+    { posts: nearby, weight: 1 },
+    { posts: worldwideByRegion, weight: 1 },
+  ]);
+}
+
 async function getLocationLiveFeed(kind, location, viewerId = null) {
   if (kind === 'countries') return getCountriesCameraFeed(location, viewerId);
-  const entry = await readLocationLiveCache('restaurants:worldwide-openings', RESTAURANT_OPENING_NEWS_CACHE_MS, fetchRestaurantOpeningNewsPosts);
-  const posts = rankFeedPostsForLocation(entry?.posts || [], location, { preserveFirst: 0 });
-  return { posts, fetchedAt: entry?.fetchedAt || null, providerError: entry?.error || null };
+  const worldwideRequest = readLocationLiveCache(
+    'restaurants:worldwide-openings',
+    RESTAURANT_OPENING_NEWS_CACHE_MS,
+    fetchRestaurantOpeningNewsPosts,
+  );
+  const nearbyRequest = location?.available && location?.city
+    ? readLocationLiveCache(
+      locationCacheKey('restaurants:nearby', location),
+      RESTAURANT_OPENING_NEWS_CACHE_MS,
+      () => fetchLocalRestaurantPosts(location),
+    )
+    : Promise.resolve(null);
+  const [worldwideEntry, nearbyEntry] = await Promise.all([worldwideRequest, nearbyRequest]);
+  const equalized = equalizeRestaurantDiscoveryPosts(nearbyEntry?.posts || [], worldwideEntry?.posts || []);
+  const posts = rankFeedPostsForLocation(equalized, location, { preserveFirst: 0 });
+  const providerErrors = [worldwideEntry?.error, nearbyEntry?.error].filter(Boolean);
+  return {
+    posts,
+    fetchedAt: [worldwideEntry?.fetchedAt, nearbyEntry?.fetchedAt].filter(Boolean).sort().at(-1) || null,
+    equalizer: {
+      mode: 'regional-round-robin',
+      nearby: (nearbyEntry?.posts || []).length,
+      worldwide: (worldwideEntry?.posts || []).length,
+    },
+    providerError: providerErrors.length ? providerErrors.join('; ') : null,
+  };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
 // only posts matching one of the viewer's own onboarding-selected
@@ -17981,6 +18154,7 @@ async function handleFeedRequest(req, res) {
       hasMore: offset + pageRows.length < available.length,
       totalAvailable: available.length,
       fetchedAt: localFeed.fetchedAt,
+      equalizer: localFeed.equalizer || null,
       location: { country: locationContext.countryName || null, city: locationContext.city || null },
       locationRequired: localFeed.locationRequired || null,
       providerError: localFeed.providerError || null,

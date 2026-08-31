@@ -1171,7 +1171,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
         <LocationMatchBadge post={post} />
         {post.fromJoinedGroup && <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>· your group</span>}
         <Link to={`/p/${encodeURIComponent(post.id)}`} style={{ marginLeft: 'auto', fontSize: '.7rem', color: 'var(--muted)', textDecoration: 'none' }}>
-          {timeAgo(post.createdAt)}
+          {post.isLiveCamera ? 'Live feed' : timeAgo(post.createdAt)}
         </Link>
         <div style={{ position: 'relative' }}>
           <button
