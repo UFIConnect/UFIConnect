@@ -909,7 +909,10 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientId:     () => process.env.YOUTUBE_CLIENT_ID,
     clientSecret: () => process.env.YOUTUBE_CLIENT_SECRET,
-    scope: 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload',
+    // A connected account currently powers the member's YouTube feed only.
+    // Do not ask every member for upload access before an upload workflow
+    // exists; Google recommends requesting elevated scopes in context.
+    scope: 'https://www.googleapis.com/auth/youtube.readonly',
     pkce: true,
     extraAuthParams: { access_type: 'offline', prompt: 'consent' },
   },
@@ -12621,7 +12624,7 @@ const PLATFORMS = {
   youtube: {
     name: 'YouTube', color: '#FF0000', icon: 'youtube',
     description: 'Follow channels and surface video content in your areas.',
-    scopes: ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/youtube.upload'],
+    scopes: ['https://www.googleapis.com/auth/youtube.readonly'],
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube',
     setupUrl: 'https://console.cloud.google.com/apis',
