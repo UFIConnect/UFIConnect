@@ -10206,7 +10206,7 @@ function fetchRestaurantArticleHtml(rawUrl, { redirectsRemaining = 3, visited = 
           'Accept-Language': 'en-US,en;q=0.9',
           'Accept-Encoding': 'identity',
         },
-        lookup: (_hostname, _options, callback) => callback(null, resolvedAddress.address, resolvedAddress.family),
+        lookup: pinnedPublicLookup(resolvedAddress),
       }, (response) => {
         const statusCode = Number(response.statusCode || 0);
         const location = response.headers.location;
@@ -15611,6 +15611,21 @@ async function resolvePublicSourceCheckAddress(hostname) {
   return addresses[0];
 }
 
+// Node's request stack may ask a custom DNS resolver for `all: true` even
+// when the request ultimately needs one pinned address. In that mode it
+// requires an array of { address, family } records; returning the ordinary
+// three-argument lookup shape produced "Invalid IP address: undefined" and
+// made safe source checks (and restaurant photo lookups) fail before connect.
+function pinnedPublicLookup(resolvedAddress) {
+  return (_hostname, options, callback) => {
+    if (options?.all) {
+      callback(null, [{ address: resolvedAddress.address, family: resolvedAddress.family }]);
+      return;
+    }
+    callback(null, resolvedAddress.address, resolvedAddress.family);
+  };
+}
+
 function requestSourcePresence(rawUrl, { method = 'HEAD', redirectsRemaining = 3, visited = new Set() } = {}) {
   return new Promise(async (resolve, reject) => {
     let target;
@@ -15639,7 +15654,7 @@ function requestSourcePresence(rawUrl, { method = 'HEAD', redirectsRemaining = 3
         'Accept-Encoding': 'identity',
         ...(method === 'GET' ? { Range: 'bytes=0-0' } : {}),
       },
-      lookup: (_hostname, _options, callback) => callback(null, resolvedAddress.address, resolvedAddress.family),
+      lookup: pinnedPublicLookup(resolvedAddress),
     }, (response) => {
       const statusCode = Number(response.statusCode || 0);
       const location = response.headers.location;
