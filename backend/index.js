@@ -12844,7 +12844,14 @@ function dbRowToMemUser(row) {
     // on every process restart, since preloadUsersFromDB() rehydrates the
     // entire users[] cache through this function on startup.
     profileHidden: !!row.profile_hidden,
-    preferences: row.role ? { role: row.role, goals: asArray(row.goals), interests: asArray(row.interests), experience: row.experience } : null,
+    // Role can be intentionally blank while a member still selects interests
+    // and goals, so it cannot be the sole flag for persisted preferences.
+    preferences: {
+      role: row.role || '',
+      goals: asArray(row.goals),
+      interests: asArray(row.interests),
+      experience: row.experience || '',
+    },
     links: row.links || {},
     roleSettings: row.role_settings || {},
     socialTokens: row.social_tokens || {},
@@ -15653,6 +15660,12 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
 async function saveSocialToken(userId, platform, token, refreshToken, connectedAt = null) {
   const user = await getUser(userId);
   if (!user) throw new Error('User not found');
+  if (isDBId(userId) && !db.isConnected()) throw new Error('Account storage is temporarily unavailable');
+  const prev = {
+    socialTokens: { ...(user.socialTokens || {}) },
+    socialRefreshTokens: { ...(user.socialRefreshTokens || {}) },
+    socialConnectedAt: { ...(user.socialConnectedAt || {}) },
+  };
   if (!user.socialTokens) user.socialTokens = {};
   user.socialTokens[platform] = token;
   if (!user.socialConnectedAt) user.socialConnectedAt = {};
@@ -15663,11 +15676,16 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
     if (!user.socialRefreshTokens) user.socialRefreshTokens = {};
     user.socialRefreshTokens[platform] = refreshToken;
   }
-  if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-      [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
-  } else {
-    filestore.saveUsers(users);
+  try {
+    if (isDBId(userId)) {
+      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
+        [JSON.stringify(user.socialTokens), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
+    } else {
+      filestore.saveUsers(users);
+    }
+  } catch (err) {
+    Object.assign(user, prev);
+    throw err;
   }
 }
 
@@ -15708,14 +15726,25 @@ async function refreshGoogleAccessToken(userId) {
 async function removeSocialToken(userId, platform) {
   const user = await getUser(userId);
   if (!user) return;
+  if (isDBId(userId) && !db.isConnected()) throw new Error('Account storage is temporarily unavailable');
+  const prev = {
+    socialTokens: { ...(user.socialTokens || {}) },
+    socialRefreshTokens: { ...(user.socialRefreshTokens || {}) },
+    socialConnectedAt: { ...(user.socialConnectedAt || {}) },
+  };
   if (user.socialTokens) delete user.socialTokens[platform];
   if (user.socialRefreshTokens) delete user.socialRefreshTokens[platform];
   if (user.socialConnectedAt) delete user.socialConnectedAt[platform];
-  if (db.isConnected() && isDBId(userId)) {
-    await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
-      [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
-  } else {
-    filestore.saveUsers(users);
+  try {
+    if (isDBId(userId)) {
+      await db.query('UPDATE users SET social_tokens=$1, social_refresh_tokens=$2, social_connected_at=$3 WHERE id=$4',
+        [JSON.stringify(user.socialTokens || {}), JSON.stringify(user.socialRefreshTokens || {}), JSON.stringify(user.socialConnectedAt || {}), userId]);
+    } else {
+      filestore.saveUsers(users);
+    }
+  } catch (err) {
+    Object.assign(user, prev);
+    throw err;
   }
 }
 
@@ -16023,6 +16052,9 @@ app.get('/profile', authenticate, async (req, res) => {
 app.patch('/profile', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
+  if (isDBId(user.id) && !db.isConnected()) {
+    return res.status(503).json({ message: 'Saving is temporarily unavailable. Please try again in a moment.' });
+  }
   const { name, title, bio, skills, organization, links, roleSettings, profileHidden, avatarUrl, coverUrl } = req.body;
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
@@ -16051,16 +16083,19 @@ app.patch('/profile', authenticate, async (req, res) => {
   // durably set it to true at all.
   if (profileHidden !== undefined) user.profileHidden = !!profileHidden;
   try {
-    if (db.isConnected() && isDBId(user.id)) {
-      await db.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10 WHERE id=$11`,
+    if (isDBId(user.id)) {
+      const { rows } = await db.query(
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10 WHERE id=$11 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
          JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false,
          user.avatarUrl || '', user.coverUrl || '', user.id]
       );
+      if (!rows[0]) throw new Error('Profile record was not found after save');
+      Object.assign(user, dbRowToMemUser(rows[0]));
     } else {
       filestore.saveUsers(users);
     }
+    invalidateUserFeedSnapshots(user.id);
     res.json(fullProfile(user));
   } catch (e) {
     console.error('PATCH /profile DB:', e.message);
@@ -16076,6 +16111,9 @@ app.patch('/profile', authenticate, async (req, res) => {
 app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
+  if (isDBId(user.id) && !db.isConnected()) {
+    return res.status(503).json({ message: 'Saving is temporarily unavailable. Please try again in a moment.' });
+  }
   if (user.authProvider === 'auth0') {
     return res.status(400).json({ message: 'Your password is managed by your sign-in provider, not UFIconnect.' });
   }
@@ -16088,7 +16126,7 @@ app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
   const hash = bcrypt.hashSync(newPassword, 10);
   const prevHash = user.passwordHash;
   try {
-    if (db.isConnected() && isDBId(user.id)) {
+    if (isDBId(user.id)) {
       await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [hash, user.id]);
     } else {
       filestore.saveUsers(users);
@@ -16105,42 +16143,63 @@ app.post('/profile/password', authenticate, authLimiter, async (req, res) => {
 app.post('/profile/onboarding', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  const prefs = req.body.preferences || {
+  if (isDBId(user.id) && !db.isConnected()) {
+    return res.status(503).json({ message: 'Saving preferences is temporarily unavailable. Please try again in a moment.' });
+  }
+  const submitted = req.body.preferences || {
     role: req.body.role, goals: req.body.goals,
     interests: req.body.interests, experience: req.body.experience,
   };
-  prefs.goals = asArray(prefs.goals);
-  prefs.interests = asArray(prefs.interests);
+  const preferenceList = (value) => asArray(value)
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, 40);
+  const prefs = {
+    role: typeof submitted.role === 'string' ? submitted.role.trim().slice(0, 120) : '',
+    goals: preferenceList(submitted.goals),
+    interests: preferenceList(submitted.interests),
+    experience: typeof submitted.experience === 'string' ? submitted.experience.trim().slice(0, 80) : '',
+  };
+  const prev = {
+    preferences: user.preferences,
+    onboardingComplete: user.onboardingComplete,
+    joinedGroups: [...(user.joinedGroups || [])],
+    bio: user.bio,
+    title: user.title,
+  };
   user.preferences = prefs;
   user.onboardingComplete = true;
   // Optional fields carried from registration context
   if (req.body.bio  && !user.bio)   user.bio   = req.body.bio;
   if (req.body.title && !user.title) user.title = req.body.title;
   const suggested = pickOnboardingGroups(prefs);
-  suggested.forEach((gid) => {
+  const autoJoined = suggested.filter((gid) => !user.joinedGroups.includes(gid));
+  autoJoined.forEach((gid) => {
     if (!user.joinedGroups.includes(gid)) {
       user.joinedGroups.push(gid);
-      const g = groups.find((gr) => gr.id === gid);
-      if (g) g.members += 1;
     }
   });
   try {
-    if (db.isConnected() && isDBId(user.id)) {
-      await db.query(
-        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8`,
+    if (isDBId(user.id)) {
+      const { rows } = await db.query(
+        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8 RETURNING *`,
         [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', user.id]
       );
+      if (!rows[0]) throw new Error('Profile record was not found after preference save');
+      Object.assign(user, dbRowToMemUser(rows[0]));
     } else {
       filestore.saveUsers(users);
     }
+    autoJoined.forEach((gid) => {
+      const group = groups.find((candidate) => candidate.id === gid);
+      if (group) group.members += 1;
+    });
     invalidateUserFeedSnapshots(user.id);
-    res.json({ profile: fullProfile(user), autoJoined: suggested });
+    res.json({ profile: fullProfile(user), autoJoined });
   } catch (e) {
     console.error('POST /profile/onboarding DB:', e.message);
-    // Leave the in-memory state as-is (still onboarded for this session) but
-    // tell the client the save didn't durably land, since onboardingComplete
-    // getting silently lost on the next restart would trap the user in a
-    // re-onboarding loop with no explanation.
+    Object.assign(user, prev);
     res.status(500).json({ message: 'Onboarding was not saved — please try again.' });
   }
 });

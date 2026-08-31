@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import Layout from '../components/Layout';
@@ -269,7 +270,14 @@ export default function Settings() {
       };
       const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean), roleSettings: merged };
       const { data } = await client.patch('/profile', payload);
-      updateProfileLocally(data.profile || data);
+      const persisted = data.profile || data;
+      updateProfileLocally(persisted);
+      setForm({
+        name: persisted.name || '', title: persisted.title || '', bio: persisted.bio || '',
+        organization: persisted.organization || '',
+        skills: (Array.isArray(persisted.skills) ? persisted.skills : []).join(', '),
+      });
+      setRoleSettings({ ...(persisted.roleSettings || {}) });
       setSaved(true);
       showToast('Settings saved', 'success');
       setTimeout(() => setSaved(false), 3000);
@@ -360,6 +368,43 @@ export default function Settings() {
   const [prefSaving,     setPrefSaving]     = useState(false);
   const [prefSaved,      setPrefSaved]      = useState(false);
   const [prefError,      setPrefError]      = useState('');
+  const hydratedProfileId = useRef(null);
+
+  // Settings may mount before AuthContext finishes loading the member. Copy
+  // persisted state once per account so a later save cannot submit the empty
+  // values from the first render over real saved preferences.
+  useEffect(() => {
+    if (!profile?.id || hydratedProfileId.current === profile.id) return;
+    hydratedProfileId.current = profile.id;
+    const savedSettings = profile.roleSettings || {};
+    const savedPreferences = profile.preferences || {};
+    setForm({
+      name: profile.name || '',
+      title: profile.title || '',
+      bio: profile.bio || '',
+      organization: profile.organization || '',
+      skills: (Array.isArray(profile.skills) ? profile.skills : []).join(', '),
+    });
+    setRoleSettings({ ...savedSettings });
+    setNotifs({
+      emailDigest: savedSettings.notifs_emailDigest ?? true,
+      communityUpdates: savedSettings.notifs_communityUpdates ?? true,
+      newOpportunities: savedSettings.notifs_newOpportunities ?? true,
+      mentions: savedSettings.notifs_mentions ?? true,
+    });
+    setPrivacy({
+      publicProfile: savedSettings.privacy_publicProfile ?? true,
+      showEmail: savedSettings.privacy_showEmail ?? false,
+      showSkills: savedSettings.privacy_showSkills ?? true,
+      showGroups: savedSettings.privacy_showGroups ?? true,
+      showConnections: savedSettings.privacy_showConnections ?? true,
+    });
+    setMessagePermission(savedSettings.privacy_messagePermission || 'everyone');
+    setPrefRole(savedPreferences.role || '');
+    setPrefExperience(savedPreferences.experience || '');
+    setPrefGoals(Array.isArray(savedPreferences.goals) ? savedPreferences.goals : []);
+    setPrefInterests(Array.isArray(savedPreferences.interests) ? savedPreferences.interests : []);
+  }, [profile?.id]);
 
   function toggleGoal(v)     { setPrefGoals(g => g.includes(v) ? g.filter(x => x !== v) : [...g, v]); }
   function toggleInterest(v) { setPrefInterests(i => i.includes(v) ? i.filter(x => x !== v) : [...i, v]); }
@@ -385,7 +430,13 @@ export default function Settings() {
         goals: prefGoals, interests: prefInterests,
       });
       try { localStorage.removeItem('ufi_feed_v1'); } catch {}
-      updateProfileLocally(data.profile || data);
+      const persisted = data.profile || data;
+      const persistedPreferences = persisted.preferences || {};
+      updateProfileLocally(persisted);
+      setPrefRole(persistedPreferences.role || '');
+      setPrefExperience(persistedPreferences.experience || '');
+      setPrefGoals(Array.isArray(persistedPreferences.goals) ? persistedPreferences.goals : []);
+      setPrefInterests(Array.isArray(persistedPreferences.interests) ? persistedPreferences.interests : []);
       setPrefSaved(true);
       showToast('Preferences saved', 'success');
       setTimeout(() => setPrefSaved(false), 3000);
