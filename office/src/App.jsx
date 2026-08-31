@@ -583,8 +583,8 @@ function DeployView({ triggerDeploy, deploying, log }) {
       slug: 'api',
       name: 'Backend API',
       desc: 'Node.js Express — REST API + agent system',
-      url: 'https://uficonnect-api-708r.onrender.com',
-      health: 'https://uficonnect-api-708r.onrender.com/health',
+      url: 'https://api.uficonnect.org',
+      health: 'https://api.uficonnect.org/health',
       icon: 'API',
       hook: 'RENDER_HOOK_API',
     },
@@ -3224,7 +3224,7 @@ export default function App() {
               uficonnect.org open
             </a>
             <a
-              href="https://uficonnect-api-708r.onrender.com/health"
+              href="https://api.uficonnect.org/health"
               target="_blank"
               rel="noreferrer"
               style={{ fontSize: 10, color: '#334155', display: isMobile ? 'inline-block' : 'block', marginRight: isMobile ? 10 : 0, marginBottom: 2 }}

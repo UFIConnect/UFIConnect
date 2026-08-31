@@ -845,6 +845,7 @@ function fetchJSONWithHeaders(url, extraHeaders = {}) {
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
+const FALLBACK_API_BASE = process.env.FALLBACK_API_BASE_URL || API_BASE;
 const PUBLIC_API_BASE = process.env.PUBLIC_API_URL || 'https://api.uficonnect.org';
 
 function normalizedOrigin(value, fallback) {
@@ -865,11 +866,12 @@ const SAFE_PUBLIC_API_HOST = new URL(SAFE_PUBLIC_API_BASE).host.toLowerCase();
 // here; accepting arbitrary forwarded-host headers would let a caller choose a
 // redirect URI for an OAuth flow.
 function apiBaseForRequest(req) {
+  if (!req) return API_BASE;
   const requestHost = String(req?.headers?.host || '')
     .trim()
     .toLowerCase()
     .replace(/:\d+$/, '');
-  return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : API_BASE;
+  return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : FALLBACK_API_BASE;
 }
 
 const SOCIAL_CFG = {
@@ -25248,42 +25250,60 @@ app.delete('/jobs/tracking/:jobId', authenticate, async (req, res) => {
 // the member still posts it themselves; there is no publishing API wired up
 // here (TikTok/Instagram both require a business/creator-app-review process
 // this app hasn't gone through, see FOLLOWING_SOURCE_FETCHERS' own comment
-// for the same constraint on the read side). Requires ANTHROPIC_API_KEY —
-// no LLM integration existed anywhere in this app before this endpoint, so
-// this is a genuinely new dependency, not a rewire of something existing.
-function callAnthropic(apiKey, prompt) {
+// for the same constraint on the read side). Text is generated server-side
+// through OpenAI, so the provider key is never exposed to the browser.
+
+function callOpenAIText(apiKey, prompt, model) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 700,
-      messages: [{ role: 'user', content: prompt }],
+      model,
+      input: prompt,
+      max_output_tokens: 700,
+      // Drafts contain member-entered content. They do not need to be
+      // retained by the provider after the response is returned.
+      store: false,
     });
-    const req = https.request('https://api.anthropic.com/v1/messages', {
+    const request = https.request('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
+        Authorization: 'Bearer ' + apiKey,
         'Content-Length': Buffer.byteLength(body),
       },
-    }, (res) => {
+    }, response => {
       let data = '';
-      res.on('data', (c) => { data += c; });
-      res.on('end', () => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          return reject(new Error(`Anthropic HTTP ${res.statusCode}: ${data.slice(0, 300)}`));
+      response.on('data', chunk => { data += chunk; });
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return reject(new Error('OpenAI HTTP ' + response.statusCode + ': ' + data.slice(0, 300)));
         }
         try {
           const parsed = JSON.parse(data);
-          resolve(parsed?.content?.[0]?.text || '');
+          const outputText = typeof parsed?.output_text === 'string'
+            ? parsed.output_text
+            : (parsed?.output || [])
+              .flatMap(item => item?.content || [])
+              .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
+              .map(item => item.text)
+              .join('');
+          if (!outputText.trim()) throw new Error('OpenAI did not return draft text.');
+          resolve(outputText);
         } catch (e) { reject(e); }
       });
     });
-    req.on('error', reject);
-    req.setTimeout(20000, function () { this.destroy(); reject(new Error('Anthropic request timeout')); });
-    req.write(body);
-    req.end();
+    request.on('error', reject);
+    request.setTimeout(20000, () => request.destroy(new Error('OpenAI request timeout')));
+    request.write(body);
+    request.end();
   });
+}
+
+function configuredOpenAITextProvider() {
+  const openaiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  return openaiKey ? {
+    apiKey: openaiKey,
+    model: String(process.env.AI_CONTENT_OPENAI_MODEL || 'gpt-5-mini').trim() || 'gpt-5-mini',
+  } : null;
 }
 
 const CONTENT_DRAFT_PLATFORM_LABELS = {
@@ -25298,8 +25318,8 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'The AI Content Hub is a Pro feature — upgrade to use it.' });
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  const provider = configuredOpenAITextProvider();
+  if (!provider) {
     return res.status(503).json({ message: "AI content drafting isn't configured yet." });
   }
   const { platform, topic, tone } = req.body || {};
@@ -25310,13 +25330,13 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   const toneLabel = (tone && typeof tone === 'string' && tone.trim()) ? tone.trim().slice(0, 40) : 'engaging and authentic';
   const prompt = `Write 3 distinct, ready-to-post ${platformLabel} caption/post drafts about: "${topic.trim().slice(0, 300)}".\nTone: ${toneLabel}.\nKeep each draft platform-appropriate in length and style (short and punchy for TikTok/Instagram, more professional for LinkedIn). Number them 1, 2, 3, each on its own paragraph. No preamble or explanation — just the three drafts.`;
   try {
-    const text = await callAnthropic(apiKey, prompt);
+    const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
     const drafts = text
       .split(/\n(?=\d\.\s)/)
       .map(s => s.replace(/^\d\.\s*/, '').trim())
       .filter(Boolean)
       .slice(0, 3);
-    res.json({ drafts: drafts.length ? drafts : [text.trim()].filter(Boolean) });
+    res.json({ drafts: drafts.length ? drafts : [text.trim()].filter(Boolean), provider: 'openai' });
   } catch (e) {
     console.error('[/command-center/content-draft] error:', e.message);
     res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
@@ -25594,8 +25614,8 @@ const RESUME_AI_FIELDS = new Set(['summary', 'bullets']);
 app.post('/resume-builder/ai-assist', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(503).json({ message: "AI assist isn't configured yet." });
+  const provider = configuredOpenAITextProvider();
+  if (!provider) return res.status(503).json({ message: "AI assist isn't configured yet." });
   const { field, context } = req.body || {};
   if (!RESUME_AI_FIELDS.has(field)) return res.status(400).json({ message: 'Unsupported field.' });
   if (!context || typeof context !== 'string' || !context.trim()) {
@@ -25605,7 +25625,7 @@ app.post('/resume-builder/ai-assist', authenticate, async (req, res) => {
     ? `Write one concise, original, ATS-friendly professional resume summary (2-3 sentences, no fabricated facts beyond what's given) based on this background: "${context.trim().slice(0, 600)}". Return only the summary text, no preamble or quotes.`
     : `Rewrite this resume bullet point to be a single concise, original, ATS-friendly achievement statement starting with a strong action verb, quantified if the input implies a number — do not invent facts or numbers that aren't implied: "${context.trim().slice(0, 400)}". Return only the rewritten bullet, no preamble, no leading bullet character or quotes.`;
   try {
-    const text = await callAnthropic(apiKey, prompt);
+    const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
     res.json({ suggestion: text.trim() });
   } catch (e) {
     console.error('[/resume-builder/ai-assist] error:', e.message);

@@ -86,6 +86,8 @@ services:
       - key: ALLOWED_ORIGINS
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
       - key: API_BASE_URL
+        value: https://api.uficonnect.org
+      - key: FALLBACK_API_BASE_URL
         value: https://uficonnect-api-708r.onrender.com
       # Keep Render as the emergency origin. OAuth routes choose this only
       # when a request did not arrive through the verified public hostname.
@@ -184,15 +186,13 @@ services:
         sync: false
       - key: USAJOBS_USER_AGENT
         sync: false
-      # Command Center's AI Content Hub (POST /command-center/content-draft)
-      # — an Anthropic API key (console.anthropic.com), real per-call cost,
-      # already gated to paid plans server-side regardless of this being
-      # set. Until it's set, the endpoint returns 503 and the Content Hub UI
-      # shows "not configured yet" rather than silently failing.
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # Command Center's AI Content Hub and Resume Builder AI assist use
+      # OPENAI_API_KEY only. Both routes remain paid-member-only server-side.
+      - key: AI_CONTENT_OPENAI_MODEL
+        value: gpt-5-mini
       # Media Studio image generation. GPT Image returns an image that the
-      # member can save or send into Cross-Post; the key stays server-side.
+      # member can save or send into Cross-Post; it also powers AI text
+      # drafting. The key stays server-side.
       - key: OPENAI_API_KEY
         sync: false
       # Optional video provider adapter. The provider receives POST {prompt}
@@ -521,7 +521,7 @@ services:
         value: noindex, nofollow
     envVars:
       - key: VITE_API_URL
-        value: https://uficonnect-api-708r.onrender.com
+        value: https://api.uficonnect.org
       # uficonnect-pipeline's own URL — Live Sources/Pipeline/Topics/agent
       # cards for source-fetchers point here now instead, since that's the
       # service actually doing the fetching post-split. Not secret (it's the
