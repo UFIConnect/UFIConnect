@@ -9320,6 +9320,17 @@ let locationProviderInFlight = 0;
 // out separately per member or city.
 const RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE = 2;
 const RESTAURANT_OPENING_NEWS_MAX_POSTS = 250;
+// Google News' RSS search results intentionally omit article thumbnails. A
+// small, shared metadata pass gives the first restaurant cards their real
+// publisher image without turning every member request into dozens of page
+// fetches. The location-feed cache keeps this work to one pass per refresh.
+const RESTAURANT_OPENING_PHOTO_LOOKUP_LIMIT = 18;
+const RESTAURANT_OPENING_PHOTO_CONCURRENCY = 6;
+const RESTAURANT_OPENING_PHOTO_CACHE_MS = 6 * 60 * 60 * 1000;
+const RESTAURANT_OPENING_PHOTO_CACHE_MAX = 1200;
+const RESTAURANT_OPENING_PHOTO_MAX_BYTES = 800 * 1024;
+const RESTAURANT_OPENING_PHOTO_TIMEOUT_MS = 6000;
+const restaurantOpeningPhotoCache = new Map();
 const RESTAURANT_OPENING_NEWS_EDITIONS = Object.freeze([
   { label: 'North America', gl: 'US', hl: 'en-US', ceid: 'US:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
   { label: 'Europe', gl: 'GB', hl: 'en-GB', ceid: 'GB:en', query: '("new restaurant" OR "restaurant opening" OR "restaurant opens" OR "restaurant to open") when:30d' },
@@ -10096,6 +10107,210 @@ function restaurantOpeningNewsPost(item, edition) {
   };
 }
 
+function isRestaurantDiscoveryPostId(postId) {
+  return /^(?:restaurant_opening_[a-f0-9]{20}|osm:(?:node|way|relation):\d+)$/i.test(String(postId || ''));
+}
+
+function readRestaurantOpeningPhotoCache(sourceUrl) {
+  const cached = restaurantOpeningPhotoCache.get(sourceUrl);
+  if (!cached) return undefined;
+  if (cached.expiresAt > Date.now()) return cached.photoUrl;
+  restaurantOpeningPhotoCache.delete(sourceUrl);
+  return undefined;
+}
+
+function cacheRestaurantOpeningPhoto(sourceUrl, photoUrl) {
+  restaurantOpeningPhotoCache.set(sourceUrl, {
+    photoUrl: photoUrl || null,
+    expiresAt: Date.now() + RESTAURANT_OPENING_PHOTO_CACHE_MS,
+  });
+  while (restaurantOpeningPhotoCache.size > RESTAURANT_OPENING_PHOTO_CACHE_MAX) {
+    restaurantOpeningPhotoCache.delete(restaurantOpeningPhotoCache.keys().next().value);
+  }
+}
+
+function readHtmlTagAttribute(tag, name) {
+  const match = String(tag || '').match(new RegExp('\\b' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\')', 'i'));
+  return match ? decodeHTMLEntities(match[1] ?? match[2] ?? '').trim() : null;
+}
+
+function normalizeRestaurantArticlePhotoUrl(value, baseUrl) {
+  if (!value || !baseUrl) return null;
+  try {
+    const target = validateSourceCheckUrl(new URL(decodeHTMLEntities(value), baseUrl).toString());
+    // The app is served over HTTPS, so never send a mixed-content image to
+    // the browser even if a publisher still advertises an old HTTP asset.
+    return target.protocol === 'https:' ? target.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function restaurantArticlePhotoFromHtml(html, baseUrl) {
+  const metaNames = new Set(['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src', 'image']);
+  const tags = String(html || '').match(/<(?:meta|link)\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const tagName = tag.match(/^<\s*([a-z]+)/i)?.[1]?.toLowerCase();
+    if (tagName === 'meta') {
+      const key = (readHtmlTagAttribute(tag, 'property') || readHtmlTagAttribute(tag, 'name') || readHtmlTagAttribute(tag, 'itemprop') || '').toLowerCase();
+      if (!metaNames.has(key)) continue;
+      const photoUrl = normalizeRestaurantArticlePhotoUrl(readHtmlTagAttribute(tag, 'content'), baseUrl);
+      if (photoUrl) return photoUrl;
+    }
+    if (tagName === 'link') {
+      const rel = (readHtmlTagAttribute(tag, 'rel') || '').toLowerCase();
+      if (!/(?:^|\s)image_src(?:\s|$)/.test(rel)) continue;
+      const photoUrl = normalizeRestaurantArticlePhotoUrl(readHtmlTagAttribute(tag, 'href'), baseUrl);
+      if (photoUrl) return photoUrl;
+    }
+  }
+  return null;
+}
+
+// Fetch only a bounded public story document. The same pinned-DNS checks used
+// by source-deletion reconciliation protect this visual enrichment path from
+// being used as an internal-network request proxy.
+function fetchRestaurantArticleHtml(rawUrl, { redirectsRemaining = 3, visited = new Set() } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      callback(value);
+    };
+
+    (async () => {
+      let target;
+      let resolvedAddress;
+      try {
+        target = validateSourceCheckUrl(rawUrl);
+        const canonicalUrl = target.toString();
+        if (visited.has(canonicalUrl)) throw new Error('Restaurant story redirect loop');
+        visited.add(canonicalUrl);
+        resolvedAddress = await resolvePublicSourceCheckAddress(target.hostname);
+      } catch (error) {
+        finish(reject, error);
+        return;
+      }
+
+      const client = target.protocol === 'https:' ? https : http;
+      const request = client.request({
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || undefined,
+        path: target.pathname + target.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'UFIconnect restaurant photo fetcher/1.0',
+          Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.1',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'identity',
+        },
+        lookup: (_hostname, _options, callback) => callback(null, resolvedAddress.address, resolvedAddress.family),
+      }, (response) => {
+        const statusCode = Number(response.statusCode || 0);
+        const location = response.headers.location;
+        response.once('error', error => finish(reject, error));
+        if ([301, 302, 303, 307, 308].includes(statusCode) && location) {
+          response.resume();
+          response.once('end', () => {
+            if (redirectsRemaining <= 0) {
+              finish(reject, new Error('Restaurant story exceeded redirect limit'));
+              return;
+            }
+            let redirectedUrl;
+            try {
+              redirectedUrl = new URL(location, target).toString();
+            } catch {
+              finish(reject, new Error('Restaurant story returned an invalid redirect'));
+              return;
+            }
+            fetchRestaurantArticleHtml(redirectedUrl, {
+              redirectsRemaining: redirectsRemaining - 1,
+              visited,
+            }).then(value => finish(resolve, value), error => finish(reject, error));
+          });
+          return;
+        }
+
+        if (statusCode < 200 || statusCode >= 300) {
+          response.resume();
+          response.once('end', () => finish(reject, new Error('Restaurant story returned HTTP ' + statusCode)));
+          return;
+        }
+
+        const contentType = String(response.headers['content-type'] || '').toLowerCase();
+        if (contentType && !/(?:text\/html|application\/xhtml\+xml)/.test(contentType)) {
+          response.resume();
+          response.once('end', () => finish(resolve, { html: '', finalUrl: target.toString() }));
+          return;
+        }
+
+        const chunks = [];
+        let bytes = 0;
+        response.on('data', (chunk) => {
+          bytes += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+          if (bytes > RESTAURANT_OPENING_PHOTO_MAX_BYTES) {
+            response.destroy(new Error('Restaurant story metadata exceeded size limit'));
+            return;
+          }
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+        });
+        response.once('end', () => finish(resolve, {
+          html: Buffer.concat(chunks).toString('utf8'),
+          finalUrl: target.toString(),
+        }));
+      });
+      request.once('error', error => finish(reject, error));
+      request.setTimeout(RESTAURANT_OPENING_PHOTO_TIMEOUT_MS, () => request.destroy(new Error('Restaurant story metadata timed out')));
+      request.end();
+    })();
+  });
+}
+
+async function fetchRestaurantOpeningPhoto(sourceUrl) {
+  const cached = readRestaurantOpeningPhotoCache(sourceUrl);
+  if (cached !== undefined) return cached;
+  try {
+    const { html, finalUrl } = await fetchRestaurantArticleHtml(sourceUrl);
+    const photoUrl = restaurantArticlePhotoFromHtml(html, finalUrl);
+    cacheRestaurantOpeningPhoto(sourceUrl, photoUrl);
+    return photoUrl;
+  } catch {
+    // A blocked or slow publisher should leave one card without a photo, not
+    // make the restaurant feed unavailable for everyone else.
+    cacheRestaurantOpeningPhoto(sourceUrl, null);
+    return null;
+  }
+}
+
+async function hydrateRestaurantOpeningPhotos(posts) {
+  const candidates = roundRobinDiscoveryGroups(
+    posts.filter(post => post?.source === 'restaurants' && !post.mediaUrl && post.sourceUrl),
+    post => 'region:' + (post.coverageRegion || post.sourceLabel || post.id),
+  ).slice(0, RESTAURANT_OPENING_PHOTO_LOOKUP_LIMIT);
+  if (!candidates.length) return posts;
+
+  const photosById = new Map();
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < candidates.length) {
+      const post = candidates[cursor++];
+      const photoUrl = await fetchRestaurantOpeningPhoto(post.sourceUrl);
+      if (photoUrl) photosById.set(post.id, photoUrl);
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(RESTAURANT_OPENING_PHOTO_CONCURRENCY, candidates.length) },
+    worker,
+  ));
+
+  return posts.map(post => {
+    const photoUrl = photosById.get(post?.id);
+    return photoUrl ? { ...post, mediaType: 'image', mediaUrl: photoUrl } : post;
+  });
+}
+
 async function fetchRestaurantOpeningNewsPosts() {
   const collected = [];
   for (let start = 0; start < RESTAURANT_OPENING_NEWS_EDITIONS.length; start += RESTAURANT_OPENING_NEWS_EDITION_BATCH_SIZE) {
@@ -10121,7 +10336,7 @@ async function fetchRestaurantOpeningNewsPosts() {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, RESTAURANT_OPENING_NEWS_MAX_POSTS);
   if (!posts.length) throw new Error('No restaurant-opening reports were available from the news search.');
-  return posts;
+  return hydrateRestaurantOpeningPhotos(posts);
 }
 
 function equalizeRestaurantDiscoveryPosts(nearbyPosts, worldwidePosts) {
@@ -13659,6 +13874,62 @@ async function getCommentsForPost(postId, limit = 50, offset = 0) {
   };
 }
 
+// Restaurant reports stay attributed to their publisher, while this overlay
+// holds the UFIconnect activity that belongs to each individual card. Querying
+// only the page about to be returned keeps an active restaurant scroll from
+// issuing a database aggregate over the whole worldwide source pool.
+async function hydrateRestaurantPostEngagement(posts, viewerId = null) {
+  const restaurantIds = [...new Set(
+    (Array.isArray(posts) ? posts : [])
+      .filter(post => post?.source === 'restaurants' && isRestaurantDiscoveryPostId(post.id))
+      .map(post => post.id),
+  )];
+  if (!restaurantIds.length) return posts;
+
+  const fallback = (post, engagement = null) => ({
+    ...post,
+    ufiInteractive: true,
+    likedByMe: Boolean(engagement?.likedByMe),
+    likesCount: Number(engagement?.likesCount ?? post.likesCount ?? 0) || 0,
+    commentsCount: Number(engagement?.commentsCount ?? post.commentsCount ?? 0) || 0,
+  });
+  if (!db.isConnected()) return posts.map(post => post?.source === 'restaurants' ? fallback(post) : post);
+
+  try {
+    const { rows } = await db.query(
+      `SELECT requested.post_id,
+              COALESCE(l.likes_count, 0)::integer AS likes_count,
+              COALESCE(l.liked_by_me, FALSE) AS liked_by_me,
+              COALESCE(c.comments_count, 0)::integer AS comments_count
+       FROM unnest($2::text[]) AS requested(post_id)
+       LEFT JOIN (
+         SELECT post_id,
+                COUNT(*)::integer AS likes_count,
+                BOOL_OR(user_id = $1::text) AS liked_by_me
+         FROM restaurant_post_likes
+         WHERE post_id = ANY($2::text[])
+         GROUP BY post_id
+       ) l ON l.post_id = requested.post_id
+       LEFT JOIN (
+         SELECT post_id, COUNT(*)::integer AS comments_count
+         FROM post_comments
+         WHERE post_id = ANY($2::text[])
+         GROUP BY post_id
+       ) c ON c.post_id = requested.post_id`,
+      [viewerId || null, restaurantIds],
+    );
+    const engagementById = new Map(rows.map(row => [row.post_id, {
+      likedByMe: Boolean(row.liked_by_me),
+      likesCount: Number(row.likes_count || 0),
+      commentsCount: Number(row.comments_count || 0),
+    }]));
+    return posts.map(post => post?.source === 'restaurants' ? fallback(post, engagementById.get(post.id)) : post);
+  } catch (error) {
+    console.warn('restaurant post engagement lookup:', error.message);
+    return posts.map(post => post?.source === 'restaurants' ? fallback(post) : post);
+  }
+}
+
 // offset added so every surface backed by this (community feed, a group's
 // posts, a profile's posts) can page past its first batch instead of
 // dead-ending there — that dead-end was most visible in each page's own
@@ -14391,6 +14662,20 @@ async function migrateDB() {
       )
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS post_comments_post_idx ON post_comments(post_id, created_at)`);
+
+    // Restaurant-opening stories are externally reported, but the reactions
+    // and comments members leave on their UFIconnect card belong here. A
+    // compact normalized table avoids copying short-lived news stories into
+    // community_posts just to hold one member's like.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS restaurant_post_likes (
+        post_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (post_id, user_id)
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS restaurant_post_likes_post_idx ON restaurant_post_likes(post_id, created_at DESC)`);
 
     // Feed post cache — stores fetched external posts across restarts
     await db.query(`
@@ -17672,6 +17957,7 @@ async function purgeUser(uid) {
     // per-user table gets cleaned above, but this one kept accumulating rows
     // against a user_id that no longer existed in `users` after a delete.
     await db.query('DELETE FROM seen_posts WHERE user_id=$1', [uid]);
+    await db.query('DELETE FROM restaurant_post_likes WHERE user_id=$1', [uid]);
     await db.query('DELETE FROM post_comments WHERE author_id=$1 OR post_id IN (SELECT id FROM community_posts WHERE author_id=$1)', [uid]);
     await db.query('DELETE FROM community_posts WHERE author_id=$1', [uid]);
     await db.query('DELETE FROM community_groups WHERE created_by=$1', [uid]);
@@ -18172,9 +18458,12 @@ async function handleFeedRequest(req, res) {
     const available = filterUnseen(localFeed.posts, seenIds);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = available.slice(offset, offset + feedLimit);
-    trackPostsSeen(pageRows);
+    const hydratedPageRows = feedMode === 'restaurants'
+      ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
+      : pageRows;
+    trackPostsSeen(hydratedPageRows);
     return res.json({
-      posts: pageRows,
+      posts: hydratedPageRows,
       mode: feedMode,
       sort: 'newest',
       page: reqPage,
@@ -20126,6 +20415,27 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
       hasMore,
       source: communityPost.source || 'uficonnect',
       live: true,
+    });
+  }
+
+  // Restaurant-opening reports are external stories with a first-party
+  // UFIconnect discussion layer. Their comments intentionally use the same
+  // durable post_comments store as native posts, but never impersonate the
+  // publisher as the author of those member replies.
+  if (isRestaurantDiscoveryPostId(postId)) {
+    const { comments, hasMore, total } = await getCommentsForPost(postId, limit, offset);
+    return res.json({
+      comments: comments.map(comment => ({
+        id: comment.id,
+        author: comment.author?.name || 'Member',
+        body: comment.content,
+        score: 0,
+        created: comment.createdAt || new Date().toISOString(),
+      })),
+      commentsCount: total,
+      hasMore,
+      source: 'restaurants',
+      live: db.isConnected(),
     });
   }
 
@@ -22413,6 +22723,90 @@ async function toggleCommunityPostLike(req, res) {
 }
 
 app.post('/posts/:postId/like', authenticate, toggleCommunityPostLike);
+
+async function toggleRestaurantPostLike(req, res) {
+  const postId = req.params.postId;
+  if (!isRestaurantDiscoveryPostId(postId)) {
+    return res.status(404).json({ message: 'Restaurant post not found.' });
+  }
+  if (!db.isConnected()) {
+    return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
+  }
+
+  try {
+    // Delete-first gives a single click its natural toggle behavior while the
+    // primary key keeps repeated requests from creating duplicate likes.
+    const removed = await db.query(
+      `DELETE FROM restaurant_post_likes WHERE post_id=$1 AND user_id=$2 RETURNING post_id`,
+      [postId, req.user.id],
+    );
+    const likedByMe = !removed.rowCount;
+    if (likedByMe) {
+      await db.query(
+        `INSERT INTO restaurant_post_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [postId, req.user.id],
+      );
+    }
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::integer AS likes_count FROM restaurant_post_likes WHERE post_id=$1`,
+      [postId],
+    );
+    const likesCount = Number(rows[0]?.likes_count || 0);
+    return res.json({
+      likedByMe,
+      likesCount,
+      post: { id: postId, ufiInteractive: true, likedByMe, likesCount },
+    });
+  } catch (error) {
+    console.error('toggleRestaurantPostLike:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+async function createRestaurantPostComment(req, res) {
+  const postId = req.params.postId;
+  if (!isRestaurantDiscoveryPostId(postId)) {
+    return res.status(404).json({ message: 'Restaurant post not found.' });
+  }
+  const content = String(req.body?.content || '').trim();
+  if (!content) return res.status(400).json({ message: 'Comment is required.' });
+  if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+  if (!db.isConnected()) {
+    return res.status(503).json({ message: 'Commenting is temporarily unavailable — please try again in a moment.' });
+  }
+
+  try {
+    const comment = {
+      id: 'restaurant_comment_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+      postId,
+      authorId: req.user.id,
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    await db.query(
+      `INSERT INTO post_comments (id,post_id,author_id,content,created_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [comment.id, comment.postId, comment.authorId, comment.content, comment.createdAt],
+    );
+    postComments.push(comment);
+    const { rows } = await db.query(
+      `SELECT COUNT(*)::integer AS comments_count FROM post_comments WHERE post_id=$1`,
+      [postId],
+    );
+    const commentsCount = Number(rows[0]?.comments_count || 0);
+    return res.status(201).json({
+      comment: serializePostComment(comment),
+      commentsCount,
+      post: { id: postId, ufiInteractive: true, commentsCount },
+    });
+  } catch (error) {
+    console.error('createRestaurantPostComment:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+app.post('/restaurants/:postId/like', authenticate, toggleRestaurantPostLike);
+app.post('/restaurants/:postId/comments', authenticate, createRestaurantPostComment);
 
 // Who liked a native UFIconnect post — post.likes is already a plain array
 // of user ids (see toggleCommunityPostLike), this just resolves it to

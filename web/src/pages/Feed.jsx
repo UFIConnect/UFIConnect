@@ -871,7 +871,7 @@ const COMMENT_SOURCES = new Set([
   'mastodon','bluesky','lobsters','producthunt','techcrunch','theverge',
   'indiehackers','hashnode','arstechnica','wired','theregister','venturebeat',
   'smashing','phoronix','infoq','mittr','youtube','twitter','linkedin',
-  'instagram','facebook','livecamera',
+  'instagram','facebook','livecamera','restaurants',
 ]);
 // Article sources where comments read as reader reviews/discussion
 const ARTICLE_SOURCES = new Set([
@@ -1064,6 +1064,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
   const isCommunityPost = !isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
+  const isRestaurantPost = post.source === 'restaurants' && post.ufiInteractive;
+  const isUFIconnectInteractive = isCommunityPost || isRestaurantPost;
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
   const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const videoLinkUrl = post.mediaUrl || post.sourceUrl;
@@ -1079,20 +1081,21 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
-  const hasComments    = COMMENT_SOURCES.has(post.source) || isCommunityPost;
+  const hasComments    = COMMENT_SOURCES.has(post.source) || isUFIconnectInteractive;
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
-  const canWriteComment = isCommunityPost && !!token;
+  const canWriteComment = isUFIconnectInteractive && !!token;
 
   async function toggleLike() {
-    if (!isCommunityPost || likeBusy) return;
+    if (!isUFIconnectInteractive || likeBusy) return;
     if (!token) {
       showToast('Sign in to like this post.', 'info');
       return;
     }
     setLikeBusy(true);
     try {
-      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/like`);
+      const interactionPath = isRestaurantPost ? 'restaurants' : 'posts';
+      const { data } = await client.post(`/${interactionPath}/${encodeURIComponent(post.id)}/like`);
       onPostUpdated?.(data.post || {
         ...post,
         likedByMe: data.likedByMe,
@@ -1145,7 +1148,8 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
     setCommentSending(true);
     setCommentPostError(false);
     try {
-      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/comments`, { content });
+      const interactionPath = isRestaurantPost ? 'restaurants' : 'posts';
+      const { data } = await client.post(`/${interactionPath}/${encodeURIComponent(post.id)}/comments`, { content });
       setComments(prev => mergeCommentLists([...(prev || []), commentToFeedComment(data.comment)]));
       setCommentsLive(true);
       setCommentDraft('');
@@ -1335,7 +1339,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
 
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        {isCommunityPost && (
+        {isUFIconnectInteractive && (
           <button
             type="button"
             onClick={toggleLike}
@@ -1349,7 +1353,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             {post.likedByMe ? 'Liked' : 'Like'}{post.likesCount > 0 ? ` ${post.likesCount.toLocaleString()}` : ''}
           </button>
         )}
-        {!isCommunityPost && post.likesCount > 0 && (
+        {!isUFIconnectInteractive && post.likesCount > 0 && (
           // GitHub/GitLab post likesCount is actually the repo/project's
           // star count (backend/index.js resolveVideoSource-adjacent
           // fetchers repurpose stargazers_count/star_count there, since
@@ -1465,7 +1469,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             </button>
           )}
 
-          {isCommunityPost && !token && (
+          {isUFIconnectInteractive && !token && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 10 }}>
               <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Sign in to comment.</span>
               <Link to="/login"><button type="button" className="btn btn-primary btn-sm">Sign in</button></Link>
