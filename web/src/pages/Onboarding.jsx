@@ -219,16 +219,6 @@ function loadSignupCtx() {
   try { return JSON.parse(localStorage.getItem('ufi_signup_ctx') || 'null'); } catch { return null; }
 }
 
-function badgeCode(label) {
-  return String(label || '')
-    .split(/[\s/()-]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0])
-    .join('')
-    .toUpperCase() || 'U';
-}
-
 export default function Onboarding() {
   const { updateProfileLocally } = useAuth();
   const navigate = useNavigate();
@@ -380,7 +370,6 @@ export default function Onboarding() {
                   background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
                   display: 'flex', alignItems: 'center', gap: 12,
                 }}>
-                  <div style={{ fontSize: '1.05rem', fontWeight: 800 }}>{badgeCode(selectedRole.label || selectedRole.value)}</div>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
                       {selectedRole.label}
@@ -399,7 +388,6 @@ export default function Onboarding() {
                 background: 'var(--primary-light)', border: '1.5px solid var(--primary)',
                 display: 'flex', alignItems: 'center', gap: 12,
               }}>
-                <div style={{ fontSize: '1.05rem', fontWeight: 800 }}>CR</div>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: '.88rem', color: 'var(--primary)', marginBottom: 2 }}>
                     {customRole.trim()}
@@ -413,7 +401,7 @@ export default function Onboarding() {
 
             <div style={{ maxHeight: 420, overflowY: 'auto', paddingRight: 4, marginBottom: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 8, marginBottom: 4 }}>
-              {filteredRoles.map(({ value, icon, label, desc }) => (
+              {filteredRoles.map(({ value, label, desc }) => (
                 <button
                   key={value}
                   onClick={() => selectRole(value)}
@@ -425,7 +413,6 @@ export default function Onboarding() {
                     boxShadow: role === value ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                   }}
                 >
-                  <div style={{ fontSize: '.95rem', marginBottom: 5, fontWeight: 800 }}>{badgeCode(label || value || icon)}</div>
                   <div style={{ fontWeight: 700, fontSize: '.83rem', color: role === value ? 'var(--primary)' : 'var(--text)', marginBottom: 2, lineHeight: 1.3 }}>
                     {label}
                   </div>
@@ -447,7 +434,6 @@ export default function Onboarding() {
                   boxShadow: role === '__custom__' ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                 }}
               >
-                <div style={{ fontSize: '.95rem', marginBottom: 5, fontWeight: 800 }}>CR</div>
                 <div style={{ fontWeight: 700, fontSize: '.83rem', color: role === '__custom__' ? 'var(--primary)' : 'var(--text)', marginBottom: 2, lineHeight: 1.3 }}>
                   Other / Custom
                 </div>
@@ -593,7 +579,7 @@ export default function Onboarding() {
             <h1 className="onboarding-title">What brings you here?</h1>
             <p className="onboarding-sub">Select everything that applies. Your feed, opportunities, and connections will reflect your goals.</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, marginBottom: 24 }}>
-              {GOALS.map(({ value, icon, label, desc }) => {
+              {GOALS.map(({ value, label, desc }) => {
                 const sel = goals.includes(value);
                 return (
                   <button
@@ -608,7 +594,6 @@ export default function Onboarding() {
                       boxShadow: sel ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                     }}
                   >
-                    <div style={{ fontSize: '.95rem', marginBottom: 6, fontWeight: 800 }}>{badgeCode(label || value || icon)}</div>
                     <div style={{ fontWeight: 700, fontSize: '.88rem', color: sel ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
                       {label}
                     </div>
@@ -627,7 +612,7 @@ export default function Onboarding() {
             <h1 className="onboarding-title">What's your experience level?</h1>
             <p className="onboarding-sub">This helps us calibrate content difficulty and tailor connection suggestions to your career stage.</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10, marginBottom: 24 }}>
-              {EXPERIENCE.map(({ value, icon, label, desc }) => (
+              {EXPERIENCE.map(({ value, label, desc }) => (
                 <button
                   key={value}
                   onClick={() => setExperience(value)}
@@ -640,7 +625,6 @@ export default function Onboarding() {
                     boxShadow: experience === value ? '0 4px 16px rgba(0,98,255,.15)' : 'none',
                   }}
                 >
-                  <div style={{ fontSize: '.95rem', marginBottom: 8, fontWeight: 800 }}>{badgeCode(label || value || icon)}</div>
                   <div style={{ fontWeight: 700, fontSize: '.9rem', color: experience === value ? 'var(--primary)' : 'var(--text)', marginBottom: 3 }}>
                     {label}
                   </div>
