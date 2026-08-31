@@ -106,6 +106,7 @@ function SourceMark({ source, label, size = 14, active = false }) {
 // uses for a single item, but centralized here since this view needs it for
 // every slide, not just one at a time.
 function resolveVideoSource(post) {
+  if (!post || typeof post !== 'object') return null;
   // Dedicated YouTube posts carry embedId (or a recoverable sourceUrl); any
   // other source's article can embed a real YouTube video too (see
   // parseRSSItems' video detection backend-side), in which case mediaUrl
@@ -1183,7 +1184,7 @@ export default function VideoFeedView({ onExit }) {
         endpoint = '/office/feed/videos';
       }
       const { data } = await client.get(`${endpoint}?${params}`);
-      const incoming = (data.posts || []).filter(p => p && resolveVideoSource(p));
+      const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(p => p && resolveVideoSource(p));
       if (reset) {
         // A reset (initial mount, mode/filter switch, or a user-initiated
         // refresh) needs the dedup window to reset with it, otherwise
@@ -1254,6 +1255,13 @@ export default function VideoFeedView({ onExit }) {
   }, [markKnownId]);
 
   useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
+
+  // A refresh/filter response can legitimately contain fewer items than the
+  // prior queue. Keep the active pointer valid instead of leaving mobile
+  // player effects pointed at an index that no longer exists.
+  useEffect(() => {
+    setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(videoPosts.length - 1, 0)));
+  }, [videoPosts.length]);
 
   const videoLiveStateRef = useRef({ loading: false, refreshing: false, activeIndex: 0 });
   useEffect(() => {
@@ -1628,7 +1636,10 @@ export default function VideoFeedView({ onExit }) {
     if (emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
-      loadPage({}).finally(() => { loadingMoreRef.current = false; });
+      // A later page may time out on a mobile connection. The videos already
+      // on screen remain usable, so this must stay quiet rather than replace
+      // the whole swipe feed with an error state.
+      loadPage({ quiet: true }).finally(() => { loadingMoreRef.current = false; });
     }
   }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
 
@@ -2345,7 +2356,7 @@ export default function VideoFeedView({ onExit }) {
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '.9rem' }}>
           Loading videos... lining up the good stuff.
         </div>
-      ) : error || videoPosts.length === 0 ? (
+      ) : videoPosts.length === 0 ? (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', gap: 14, padding: 24, textAlign: 'center' }}>
           <div style={{ fontSize: '2.2rem', fontWeight: 800 }}>Video</div>
           <div style={{ fontSize: '.9rem', opacity: 0.85, maxWidth: 280 }}>

@@ -76,8 +76,15 @@ function ScrubBar({ progressBarRef, onPointerDown, progressFraction, seeking, cu
 // HLS playlist, a direct video file, or (for sources that hand back neither
 // a YouTube ID nor a scrapable playable URL) a static poster with a link out
 // to watch on the original source rather than silently rendering nothing.
-export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEnd }) {
-  const [index, setIndex] = useState(Math.min(Math.max(startIndex, 0), Math.max(items.length - 1, 0)));
+export default function ImageLightbox({ items = [], startIndex = 0, onClose, onNearEnd }) {
+  // A feed can refresh or remove a deleted post while this viewer is open.
+  // Keep the viewer's index in the live, valid media list so a stale index
+  // cannot turn a swipe into a blank/crashed overlay on a phone.
+  const mediaItems = Array.isArray(items) ? items.filter(item => item?.url) : [];
+  const [index, setIndex] = useState(() => {
+    const last = Math.max(mediaItems.length - 1, 0);
+    return Math.min(Math.max(Number(startIndex) || 0, 0), last);
+  });
   const touchStartX = useRef(null);
   const navigate = useNavigate();
   // Muted by default, even though opening the lightbox is itself a
@@ -124,7 +131,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   const panDragRef = useRef(null); // { x, y, panX, panY } while a pan/drag is live
   const lastTapRef = useRef(0);
 
-  const goNext = useCallback(() => setIndex(i => Math.min(items.length - 1, i + 1)), [items.length]);
+  const goNext = useCallback(() => setIndex(i => Math.min(mediaItems.length - 1, i + 1)), [mediaItems.length]);
   const goPrev = useCallback(() => setIndex(i => Math.max(0, i - 1)), []);
 
   function resetZoom() { setZoom(1); setPan({ x: 0, y: 0 }); }
@@ -178,6 +185,14 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   useLockBodyScroll();
 
   useEffect(() => {
+    setIndex(current => Math.min(Math.max(current, 0), Math.max(mediaItems.length - 1, 0)));
+  }, [mediaItems.length]);
+
+  useEffect(() => {
+    if (mediaItems.length === 0) onClose?.();
+  }, [mediaItems.length, onClose]);
+
+  useEffect(() => {
     function handleKey(e) {
       if (e.key === 'Escape') onClose();
       else if (e.key === 'ArrowRight') goNext();
@@ -193,15 +208,15 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
   // the last few already-loaded items, so scrolling keeps updating with
   // fresh photos/videos instead of stopping.
   useEffect(() => {
-    if (onNearEnd && index >= items.length - 3) onNearEnd();
-  }, [index, items.length, onNearEnd]);
+    if (onNearEnd && index >= mediaItems.length - 3) onNearEnd();
+  }, [index, mediaItems.length, onNearEnd]);
 
   // Derived before the hooks below (rather than after, past an early
   // return) so every hook still runs on every render regardless of whether
   // `item` happens to be defined — item should always exist in practice
   // (index is kept in range by goNext/goPrev), but Rules of Hooks requires
   // this either way.
-  const item = items[index];
+  const item = mediaItems[index];
   const post = item?.post || {};
   const isVideo = item?.type === 'video';
   // Same precedence as VideoFeedView's resolveVideoSource — a dedicated
@@ -433,26 +448,27 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      className="media-lightbox"
       style={{
         position: 'fixed', inset: 0, zIndex: 2500,
         background: 'rgba(0,0,0,.92)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'clamp(10px, 2vw, 28px)',
       }}
     >
-      <button onClick={onClose} aria-label="Close" style={{
+      <button className="media-lightbox-close" onClick={onClose} aria-label="Close" style={{
         position: 'absolute', top: 16, right: 16, zIndex: 10, width: 38, height: 38, borderRadius: '50%',
         background: 'rgba(255,255,255,.12)', border: 'none', color: '#fff', fontSize: '1.3rem', cursor: 'pointer',
       }}>×</button>
 
-      {items.length > 1 && index > 0 && (
-        <button onClick={e => { e.stopPropagation(); goPrev(); }} aria-label="Previous" style={{
+      {mediaItems.length > 1 && index > 0 && (
+        <button className="media-lightbox-nav media-lightbox-nav--prev" onClick={e => { e.stopPropagation(); goPrev(); }} aria-label="Previous" style={{
           position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           width: 42, height: 42, borderRadius: '50%', background: 'rgba(255,255,255,.12)',
           border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer',
         }}>‹</button>
       )}
-      {items.length > 1 && index < items.length - 1 && (
-        <button onClick={e => { e.stopPropagation(); goNext(); }} aria-label="Next" style={{
+      {mediaItems.length > 1 && index < mediaItems.length - 1 && (
+        <button className="media-lightbox-nav media-lightbox-nav--next" onClick={e => { e.stopPropagation(); goNext(); }} aria-label="Next" style={{
           position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', zIndex: 10,
           width: 42, height: 42, borderRadius: '50%', background: 'rgba(255,255,255,.12)',
           border: 'none', color: '#fff', fontSize: '1.4rem', cursor: 'pointer',
@@ -497,16 +513,17 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
         </div>
       )}
 
-      <div onClick={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '92vw', maxHeight: '90vh' }}>
+      <div className="media-lightbox-content" onClick={e => e.stopPropagation()}>
+        <div className={`media-lightbox-stage${isVideo ? ' media-lightbox-stage--video' : ''}`}>
         {isVideo ? (
           playlistUrl ? (
-            <div style={{ position: 'relative', display: 'inline-block', maxWidth: '92vw' }}>
+            <div className="media-lightbox-video-shell">
               <HlsVideoPlayer key={item.url} src={playlistUrl} poster={item.url} autoPlay muted={muted}
                 videoRef={hlsVideoRef} onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
                 onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
-                style={{ maxWidth: '92vw', maxHeight: '72vh', borderRadius: 10 }} />
+                style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10 }} />
               {paused && (
                 <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
                   position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
@@ -519,13 +536,13 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                 progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : directVideoUrl ? (
-            <div style={{ position: 'relative', display: 'inline-block', maxWidth: '92vw' }}>
+            <div className="media-lightbox-video-shell">
               <video key={item.url} ref={fileVideoRef} src={directVideoUrl} muted={muted} playsInline
                 onClick={togglePlay}
                 onPlay={() => setPaused(false)} onPause={() => setPaused(true)}
                 onTimeUpdate={(e) => { if (!seekingRef.current) setCurrentTime(e.target.currentTime); }}
                 onLoadedMetadata={(e) => setDuration(e.target.duration || 0)}
-                style={{ maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
+                style={{ width: '100%', height: '100%', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 10, display: 'block', background: '#000' }} />
               {paused && (
                 <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
                   position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
@@ -538,7 +555,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
                 progressFraction={progressFraction} seeking={seeking} currentTime={currentTime} duration={duration} />
             </div>
           ) : youtubeId ? (
-            <div style={{ position: 'relative', width: 'min(92vw, 640px)', aspectRatio: '16 / 9', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
+            <div className="media-lightbox-youtube" style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
               {ytFailed ? (
                 // See VideoFeedView's identical fallback — a plain embed
                 // iframe doesn't depend on the IFrame Player API script at
@@ -574,8 +591,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
               )}
             </div>
           ) : (
-            <div style={{ position: 'relative', maxWidth: '92vw' }}>
-              <img src={item.url} alt="" style={{ maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', borderRadius: 10, display: 'block', opacity: 0.85 }} />
+            <div className="media-lightbox-video-shell">
+              <img className="media-lightbox-media" src={item.url} alt="" style={{ borderRadius: 10, opacity: 0.85 }} />
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.5)' }}>
                   <span style={{ color: '#fff', fontSize: '1.6rem', marginLeft: 3 }}>▶</span>
@@ -584,8 +601,9 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             </div>
           )
         ) : (
-          <div style={{ maxWidth: '92vw', maxHeight: '72vh', overflow: 'hidden', borderRadius: 10 }}>
+          <div className="media-lightbox-photo-shell">
             <img
+              className="media-lightbox-media"
               key={item.url}
               src={item.url}
               alt={post.title || ''}
@@ -597,7 +615,6 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
               onMouseUp={handleImageMouseUp}
               onMouseLeave={handleImageMouseUp}
               style={{
-                maxWidth: '92vw', maxHeight: '72vh', objectFit: 'contain', display: 'block',
                 transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                 transition: pinchRef.current || panDragRef.current ? 'none' : 'transform .15s ease',
                 cursor: zoom > 1 ? 'grab' : 'zoom-in',
@@ -606,7 +623,8 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             />
           </div>
         )}
-        <div style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
+        </div>
+        <div className="media-lightbox-info" style={{ color: '#fff', marginTop: 14, textAlign: 'center', maxWidth: 560, padding: '0 12px' }}>
           {post.title && <div style={{ fontWeight: 700, fontSize: '.92rem', marginBottom: 4 }}>{post.title}</div>}
           {post.content && (
             <div style={{ fontSize: '.82rem', opacity: 0.8, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
@@ -614,7 +632,7 @@ export default function ImageLightbox({ items, startIndex = 0, onClose, onNearEn
             </div>
           )}
           <div style={{ fontSize: '.72rem', opacity: 0.55, marginTop: 8 }}>
-            {post.author?.name ? `${post.author.name} · ` : ''}{index + 1} / {items.length}
+            {post.author?.name ? `${post.author.name} · ` : ''}{index + 1} / {mediaItems.length}
           </div>
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', marginTop: 10, flexWrap: 'wrap' }}>
             {/* Stays inside the app — the full post, with comments, instead

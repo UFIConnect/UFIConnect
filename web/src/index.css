@@ -1756,6 +1756,81 @@ input, textarea, select { font-family: inherit; }
   .landing-hero-copy h1 { font-size: 2.55rem; }
 }
 
+/* Full-screen media viewer. The previous viewer only set max dimensions, so
+   small source images stayed at their natural 300px-ish width in a huge dark
+   overlay. The stage now supplies a real, fluid canvas and lets each image or
+   video scale into it without distorting its aspect ratio. */
+.media-lightbox {
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+.media-lightbox-content {
+  width: min(94vw, 1320px);
+  max-width: 100%;
+  max-height: calc(100dvh - 20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+}
+.media-lightbox-stage {
+  width: 100%;
+  height: min(76dvh, 820px);
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #050505;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, .42);
+}
+.media-lightbox-video-shell,
+.media-lightbox-photo-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.media-lightbox-youtube {
+  width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+}
+.media-lightbox-media {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.media-lightbox-info {
+  flex: 0 0 auto;
+  max-width: min(760px, 100%);
+}
+
+@media (max-width: 768px) {
+  .media-lightbox-content {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+  }
+  .media-lightbox-stage {
+    height: min(68dvh, 620px);
+    border-radius: 12px;
+  }
+  .media-lightbox-nav {
+    width: 38px !important;
+    height: 38px !important;
+  }
+  .media-lightbox-nav--prev { left: 6px !important; }
+  .media-lightbox-nav--next { right: 6px !important; }
+  .media-lightbox-close { top: 10px !important; right: 10px !important; }
+}
+
 /* ── Videos (full-bleed vertical feed) above phone width ──
    Built mobile-first for a phone-width, edge-to-edge experience. Above the
    phone breakpoint, cap it to a phone-like column and give it a "theater"
