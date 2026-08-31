@@ -179,6 +179,16 @@ services:
       # shows "not configured yet" rather than silently failing.
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Media Studio image generation. GPT Image returns an image that the
+      # member can save or send into Cross-Post; the key stays server-side.
+      - key: OPENAI_API_KEY
+        sync: false
+      # Optional video provider adapter. The provider receives POST {prompt}
+      # with Bearer auth and must return {mediaUrl} (or {url}).
+      - key: VIDEO_GENERATION_API_URL
+        sync: false
+      - key: VIDEO_GENERATION_API_KEY
+        sync: false
       # ── OAuth credentials (set values in Render dashboard) ──
       - key: LINKEDIN_CLIENT_ID
         sync: false

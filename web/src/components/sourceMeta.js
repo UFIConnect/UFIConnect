@@ -7,6 +7,7 @@ export const SOURCE_META = {
   bluesky:       { label: 'Bluesky',       color: '#0085FF', icon: 'BS' },
   facebook:      { label: 'Facebook',      color: '#1877F2', icon: 'f' },
   instagram:     { label: 'Instagram',     color: '#E1306C', icon: 'IG' },
+  tiktok:        { label: 'TikTok',        color: '#111111', icon: 'TT' },
   github:        { label: 'GitHub',        color: '#24292F', icon: 'GH' },
   gitlab:        { label: 'GitLab',        color: '#FC6D26', icon: 'GL' },
   dribbble:      { label: 'Dribbble',      color: '#EA4C89', icon: 'Dr' },
@@ -48,7 +49,7 @@ export const SOURCE_META = {
 // "following timeline" fetcher wired up yet; platforms without one simply
 // show the existing empty/coming-soon states.
 export const CONNECTED_SOCIAL_PLATFORMS = [
-  'linkedin', 'twitter', 'instagram', 'facebook',
+  'linkedin', 'twitter', 'instagram', 'tiktok', 'facebook',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ];

@@ -845,7 +845,7 @@ const SOCIAL_CFG = {
     // LinkedIn" product, deprecated in favor of "Sign In with LinkedIn
     // using OpenID Connect" — openid/profile/email is the current scope
     // set; the old names would fail against a newly-created app.
-    scope: 'openid profile email',
+    scope: 'openid profile email w_member_social',
     pkce: false,
   },
   twitter: {
@@ -853,7 +853,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://api.twitter.com/2/oauth2/token',
     clientId:     () => process.env.TWITTER_CLIENT_ID,
     clientSecret: () => process.env.TWITTER_CLIENT_SECRET,
-    scope: 'tweet.read users.read offline.access',
+    scope: 'tweet.read tweet.write users.read offline.access',
     pkce: true,
     basicAuth: true,
   },
@@ -863,6 +863,17 @@ const SOCIAL_CFG = {
     clientId:     () => process.env.FACEBOOK_APP_ID,
     clientSecret: () => process.env.FACEBOOK_APP_SECRET,
     scope: 'public_profile,email',
+    pkce: false,
+    getToken: true,
+  },
+  instagram: {
+    authUrl:  'https://www.facebook.com/v18.0/dialog/oauth',
+    tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    clientId:     () => process.env.INSTAGRAM_APP_ID,
+    clientSecret: () => process.env.INSTAGRAM_APP_SECRET,
+    // Meta limits publishing to approved apps and professional accounts. A
+    // separate grant keeps Instagram revocable independently from Facebook.
+    scope: 'instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement',
     pkce: false,
     getToken: true,
   },
@@ -887,7 +898,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     clientId:     () => process.env.YOUTUBE_CLIENT_ID,
     clientSecret: () => process.env.YOUTUBE_CLIENT_SECRET,
-    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    scope: 'https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload',
     pkce: true,
     extraAuthParams: { access_type: 'offline', prompt: 'consent' },
   },
@@ -896,7 +907,7 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://www.reddit.com/api/v1/access_token',
     clientId:     () => process.env.REDDIT_CLIENT_ID,
     clientSecret: () => process.env.REDDIT_CLIENT_SECRET,
-    scope: 'identity read',
+    scope: 'identity read submit',
     pkce: false,
     basicAuth: true,
     extraAuthParams: { duration: 'permanent' },
@@ -926,10 +937,8 @@ const SOCIAL_CFG = {
   // knowing a team_id (verified against its OpenAPI spec — every file/
   // project/folder endpoint requires one), so it could never have a real
   // content fetcher either — removed for the same reason.
-  // Twitch and Threads replace TikTok's (video/entertainment) and
-  // Instagram's (visual/social) removed slots — both are genuinely popular
-  // platforms with a real, working OAuth + content API (unlike TikTok/old
-  // Instagram, which had no legitimate discovery endpoint left).
+  // Twitch and Threads add streaming and conversation connections. Instagram
+  // and TikTok are configured below for their official publishing flows.
   twitch: {
     authUrl:  'https://id.twitch.tv/oauth2/authorize',
     tokenUrl: 'https://id.twitch.tv/oauth2/token',
@@ -945,7 +954,16 @@ const SOCIAL_CFG = {
     tokenUrl: 'https://graph.threads.net/oauth/access_token',
     clientId:     () => process.env.THREADS_CLIENT_ID,
     clientSecret: () => process.env.THREADS_CLIENT_SECRET,
-    scope: 'threads_basic,threads_read_replies',
+    scope: 'threads_basic,threads_read_replies,threads_content_publish',
+    pkce: false,
+  },
+  tiktok: {
+    authUrl:  'https://www.tiktok.com/v2/auth/authorize/',
+    tokenUrl: 'https://open.tiktokapis.com/v2/oauth/token/',
+    clientId:     () => process.env.TIKTOK_CLIENT_KEY,
+    clientSecret: () => process.env.TIKTOK_CLIENT_SECRET,
+    clientIdParam: 'client_key',
+    scope: 'user.info.basic,video.list,video.publish,video.upload',
     pkce: false,
   },
   // pinterest removed — trial access got denied and the app got locked
@@ -960,6 +978,7 @@ const SOCIAL_ENV_KEYS = {
   linkedin:  ['LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'],
   twitter:   ['TWITTER_CLIENT_ID', 'TWITTER_CLIENT_SECRET'],
   facebook:  ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET'],
+  instagram: ['INSTAGRAM_APP_ID', 'INSTAGRAM_APP_SECRET'],
   github:    ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET'],
   gitlab:    ['GITLAB_CLIENT_ID', 'GITLAB_CLIENT_SECRET'],
   youtube:   ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
@@ -968,6 +987,7 @@ const SOCIAL_ENV_KEYS = {
   dribbble:  ['DRIBBBLE_CLIENT_ID', 'DRIBBBLE_CLIENT_SECRET'],
   twitch:    ['TWITCH_CLIENT_ID', 'TWITCH_CLIENT_SECRET'],
   threads:   ['THREADS_CLIENT_ID', 'THREADS_CLIENT_SECRET'],
+  tiktok:    ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
   bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
@@ -11099,8 +11119,8 @@ setTimeout(runDataCheck,  12000);
 const PLATFORMS = {
   linkedin: {
     name: 'LinkedIn', color: '#0A66C2', icon: 'linkedin',
-    description: 'Import your professional profile and network activity.',
-    scopes: ['openid', 'profile', 'email'],
+    description: 'Connect your professional profile and publish updates from Cross-Post.',
+    scopes: ['openid', 'profile', 'email', 'w_member_social'],
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
@@ -11130,7 +11150,7 @@ const PLATFORMS = {
   twitter: {
     name: 'X (Twitter)', color: '#000000', icon: 'twitter',
     description: 'Follow hashtags and conversations in your fields.',
-    scopes: ['tweet.read', 'users.read', 'follows.read'],
+    scopes: ['tweet.read', 'tweet.write', 'users.read', 'offline.access'],
     authUrl: 'https://twitter.com/i/oauth2/authorize',
     loginUrl: 'https://twitter.com/i/flow/login',
     setupUrl: 'https://developer.twitter.com/en/portal/dashboard',
@@ -11147,10 +11167,20 @@ const PLATFORMS = {
     reviewRequired: false,
     note: 'Basic profile connection. Group post feed coming once Facebook App Review is approved.',
   },
+  instagram: {
+    name: 'Instagram', color: '#E1306C', icon: 'instagram',
+    description: 'Publish photos to your professional Instagram account and bring visual work into UFIconnect.',
+    scopes: ['instagram_basic', 'instagram_content_publish', 'pages_show_list', 'pages_read_engagement'],
+    authUrl: 'https://www.facebook.com/v18.0/dialog/oauth',
+    loginUrl: 'https://www.instagram.com/accounts/login/',
+    setupUrl: 'https://developers.facebook.com/apps',
+    reviewRequired: true,
+    note: 'Requires a professional Instagram account, a Meta app with Instagram Graph access, and Meta approval for publishing.',
+  },
   youtube: {
     name: 'YouTube', color: '#FF0000', icon: 'youtube',
     description: 'Follow channels and surface video content in your areas.',
-    scopes: ['https://www.googleapis.com/auth/youtube.readonly'],
+    scopes: ['https://www.googleapis.com/auth/youtube.readonly', 'https://www.googleapis.com/auth/youtube.upload'],
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     loginUrl: 'https://accounts.google.com/ServiceLogin?service=youtube',
     setupUrl: 'https://console.cloud.google.com/apis',
@@ -11160,7 +11190,7 @@ const PLATFORMS = {
   reddit: {
     name: 'Reddit', color: '#FF4500', icon: 'reddit',
     description: 'Pull posts from subreddits matching your interests.',
-    scopes: ['read', 'identity', 'subscribe'],
+    scopes: ['read', 'identity', 'submit', 'subscribe'],
     authUrl: 'https://www.reddit.com/api/v1/authorize',
     loginUrl: 'https://www.reddit.com/login',
     setupUrl: 'https://www.reddit.com/prefs/apps',
@@ -11200,12 +11230,22 @@ const PLATFORMS = {
   threads: {
     name: 'Threads', color: '#000000', icon: 'threads',
     description: 'Pull in your Threads posts and conversations.',
-    scopes: ['threads_basic', 'threads_read_replies'],
+    scopes: ['threads_basic', 'threads_read_replies', 'threads_content_publish'],
     authUrl: 'https://threads.net/oauth/authorize',
     loginUrl: 'https://www.threads.net/login',
     setupUrl: 'https://developers.facebook.com/apps',
     reviewRequired: false,
     note: 'Uses a Meta developer app with the Threads API product added.',
+  },
+  tiktok: {
+    name: 'TikTok', color: '#111111', icon: 'tiktok',
+    description: 'Send photo posts to TikTok through its official content-posting flow.',
+    scopes: ['user.info.basic', 'video.list', 'video.publish', 'video.upload'],
+    authUrl: 'https://www.tiktok.com/v2/auth/authorize/',
+    loginUrl: 'https://www.tiktok.com/login',
+    setupUrl: 'https://developers.tiktok.com/',
+    reviewRequired: true,
+    note: 'Requires a TikTok Content Posting API app, verified media domain, and TikTok review before direct publishing is public.',
   },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
@@ -11250,22 +11290,15 @@ const PLATFORMS = {
 // content-only); medium still feeds the app-level aggregate feed via its
 // own tag-based fetcher, just not Following specifically, same reason.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
-  'linkedin', 'twitter', 'facebook',
+  'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
   'github', 'gitlab', 'youtube', 'reddit',
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ]);
 
-// Platforms whose OAuth credentials are configured and working, but which
-// deliberately stay in Connected Accounts' "Coming Soon" bucket instead of
-// "Available" — a real product gate (LinkedIn's own Partner Program
-// approval for full feed integration, still pending — see
-// PLATFORMS.linkedin's own note, which the card shows as its reason once
-// there) rather than a missing-credentials one. Kept separate from
-// `configured` below (which stays truthful about actual credential state,
-// still used elsewhere) so nothing that reads `configured` gets misled —
-// this only steers which bucket the Connected Accounts UI sorts the card
-// into.
-const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin']);
+// Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
+// even when their credentials are present. Keep it separate from
+// `configured` so the connection status itself remains truthful.
+const FORCE_COMING_SOON_PLATFORMS = new Set();
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
@@ -15471,6 +15504,12 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
+  if (user.plan === 'free') {
+    return res.status(403).json({
+      error: 'Connected accounts require an active membership.',
+      code: 'membership_required',
+    });
+  }
 
   const status = socialCredentialStatus(platform);
   if (!status.configured) return res.status(501).json({
@@ -15594,7 +15633,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // Best-effort: if this upgrade call fails for any reason, the
     // short-lived token from above is still used as-is rather than failing
     // the whole connection over it.
-    if (platform === 'facebook') {
+    if (platform === 'facebook' || platform === 'instagram') {
       try {
         const longLived = await fetchJSON(
           `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(accessToken)}`
@@ -15613,7 +15652,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     // requests access_type:'offline'+prompt:'consent' — every other
     // provider's raw.refresh_token is simply undefined, so this is a no-op
     // for them, same as before.
-    await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token);
+    await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token || raw.data?.refresh_token);
     const connectedUser = await getUser(entry.userId);
     const connectedAt = connectedSourceWindow(connectedUser, platform).connectedAt;
 
@@ -15666,6 +15705,8 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
       forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
+      requiresMembership: true,
+      locked: user?.plan === 'free',
     }];
   }));
   res.json({
@@ -21033,6 +21074,7 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
 // arbitrary Cloudinary folder.
 const UPLOAD_FOLDERS = {
   posts:    'uficonnect-posts',
+  crossposts: 'uficonnect-crossposts',
   avatars:  'uficonnect-avatars',
   covers:   'uficonnect-covers',
   messages: 'uficonnect-messages',
@@ -22507,6 +22549,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // "matches your resume" can't quietly drift into meaning two different
   // things in the two places it's shown.
   const resumeKeywords = await getUserResumeKeywords(req.user.id);
+  const userAffinity = await getUserAffinity(req.user.id);
 
   // Build the set of goal-boosted op types from this user's goals
   const goalBoostedTypes = new Set(goals.flatMap(g => [...(GOAL_TYPE_BOOST[g] || [])]));
@@ -22521,6 +22564,17 @@ app.get('/opportunities', authenticate, async (req, res) => {
   );
   // Also keep raw interest names for direct string matches
   const interestNames = new Set(rawInterests.map(i => i.toLowerCase()));
+  // A member who has not supplied a role, title, resume, skills, or topics
+  // still deserves a useful job list. Their own engagement topics are a
+  // private fallback signal, never shared or used for anyone else's feed.
+  const hasExplicitJobSignal = Boolean(role || userTitle || resumeKeywords.size || skills.size || rawInterests.length);
+  const usageTagSet = new Set(
+    [...userAffinity.topic.entries()]
+      .filter(([, weight]) => weight > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .flatMap(([topic]) => INTEREST_TAG_MAP[topic] || [String(topic).toLowerCase()])
+  );
 
   // Fetch live jobs from Remotive + Muse (non-blocking, 6s timeout)
   let liveJobs = [];
@@ -22618,6 +22672,16 @@ app.get('/opportunities', authenticate, async (req, res) => {
       if (titleInterestMatch) { score += 2; reasons.push('Matches your interests'); }
     }
 
+    // Usage is intentionally only a fallback. Explicit preferences and an
+    // uploaded resume always win, so passive browsing can never overwrite a
+    // member's stated career direction.
+    if (!hasExplicitJobSignal && usageTagSet.size) {
+      const usageMatches = [...usageTagSet].filter(tag =>
+        tagTokens.some(t => t.includes(tag) || tag.includes(t)) || textMentionsKeyword(bodyText, tag)
+      ).length;
+      if (usageMatches) { score += Math.min(usageMatches, 4) * 3; reasons.push('Matches what you explore'); }
+    }
+
     // 4. Goal ? type boost (user said they want jobs, grants, events, etc.)
     if (goalBoostedTypes.has(o.type)) { score += 3; reasons.push('Matches your goals'); }
 
@@ -22707,6 +22771,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userRole: role,
     userTitle: userTitle || null,
     sort: sortMode,
+    recommendationBasis: role || userTitle ? 'role' : resumeKeywords.size ? 'resume' : hasExplicitJobSignal ? 'profile' : usageTagSet.size ? 'usage' : 'recent listings',
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle, resumeKeywords) : null,
     availableSources: [...availableSources].sort(),
   });
@@ -22853,6 +22918,102 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   } catch (e) {
     console.error('[/command-center/content-draft] error:', e.message);
     res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
+  }
+});
+
+function callOpenAIImage(apiKey, prompt) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: 'gpt-image-1', prompt, size: '1024x1024', quality: 'low', output_format: 'png',
+    });
+    const request = https.request('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, response => {
+      let data = '';
+      response.on('data', chunk => { data += chunk; });
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return reject(new Error(`Image provider HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const image = parsed?.data?.[0]?.b64_json;
+          if (!image) throw new Error('Image provider did not return an image.');
+          resolve(`data:image/png;base64,${image}`);
+        } catch (e) { reject(e); }
+      });
+    });
+    request.on('error', reject);
+    request.setTimeout(90000, () => request.destroy(new Error('Image generation timed out.')));
+    request.write(body);
+    request.end();
+  });
+}
+
+function callConfiguredVideoGenerator(endpoint, apiKey, prompt) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(endpoint);
+    if (url.protocol !== 'https:') return reject(new Error('Video provider URL must use HTTPS.'));
+    const body = JSON.stringify({ prompt });
+    const request = https.request({
+      hostname: url.hostname, port: url.port || 443, path: url.pathname + url.search, method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, response => {
+      let data = '';
+      response.on('data', chunk => { data += chunk; });
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return reject(new Error(`Video provider HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const mediaUrl = parsed?.mediaUrl || parsed?.url || parsed?.data?.url || parsed?.output?.url;
+          if (!mediaUrl || typeof mediaUrl !== 'string') throw new Error('Video provider did not return a media URL.');
+          resolve(mediaUrl);
+        } catch (e) { reject(e); }
+      });
+    });
+    request.on('error', reject);
+    request.setTimeout(120000, () => request.destroy(new Error('Video generation timed out.')));
+    request.write(body);
+    request.end();
+  });
+}
+
+// Separate from caption drafting: the Media Studio can return an actual image
+// through GPT Image, or delegate a video job to the configured provider. Both
+// paths stay server-side so vendor keys never reach the browser.
+app.post('/command-center/media-generate', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Media Studio is a Pro feature - upgrade to use it.' });
+  }
+  const type = req.body?.type === 'video' ? 'video' : 'image';
+  const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, 1000) : '';
+  if (!prompt) return res.status(400).json({ message: 'Describe what you want to create.' });
+  try {
+    if (type === 'image') {
+      if (!process.env.OPENAI_API_KEY) return res.status(503).json({ message: 'Image generation needs OPENAI_API_KEY in Render.' });
+      const mediaUrl = await callOpenAIImage(process.env.OPENAI_API_KEY, prompt);
+      return res.json({ mediaUrl, mediaType: 'image' });
+    }
+    if (!process.env.VIDEO_GENERATION_API_URL) {
+      return res.status(503).json({ message: 'Video generation needs VIDEO_GENERATION_API_URL in Render.' });
+    }
+    const mediaUrl = await callConfiguredVideoGenerator(process.env.VIDEO_GENERATION_API_URL, process.env.VIDEO_GENERATION_API_KEY, prompt);
+    res.json({ mediaUrl, mediaType: 'video' });
+  } catch (e) {
+    console.error('[/command-center/media-generate] error:', e.message);
+    res.status(502).json({ message: e.message.slice(0, 240) || 'Could not generate media right now.' });
   }
 });
 
@@ -23211,9 +23372,20 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
 // read side). Every other requested platform is recorded 'queued' and never
 // marked posted — this must never silently pretend to have posted somewhere
 // it didn't.
-const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit']);
+// Each platform in this set has an official member-publishing endpoint wired
+// below. A provider can still reject a request when its app review, account
+// type, or OAuth scope is missing; that comes back as failed, never posted.
+const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok']);
+const PHOTO_REQUIRED_PUBLISH_PLATFORMS = new Set(['instagram', 'tiktok']);
 
-async function publishToBluesky(token, { text }) {
+function crossPostText(text, mediaUrl, limit) {
+  const clean = String(text || '').trim();
+  if (!mediaUrl) return clean.slice(0, limit);
+  const suffix = ` ${mediaUrl}`;
+  return `${clean.slice(0, Math.max(0, limit - suffix.length))}${suffix}`.trim();
+}
+
+async function publishToBluesky(token, { text, mediaUrl }) {
   let session;
   try { session = JSON.parse(token); } catch { throw new Error('Bluesky session invalid — reconnect the account.'); }
   if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw new Error('Bluesky session invalid — reconnect the account.');
@@ -23221,14 +23393,14 @@ async function publishToBluesky(token, { text }) {
   const result = await atprotoPostJSON(url, {
     repo: session.did,
     collection: 'app.bsky.feed.post',
-    record: { text: text.slice(0, 300), createdAt: new Date().toISOString(), $type: 'app.bsky.feed.post' },
+    record: { text: crossPostText(text, mediaUrl, 300), createdAt: new Date().toISOString(), $type: 'app.bsky.feed.post' },
   }, { accessToken: session.accessToken });
   if (result?.status >= 400) throw new Error(`Bluesky HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
   const rkey = (result?.data?.uri || '').split('/').pop();
   return `https://bsky.app/profile/${session.did}/post/${rkey}`;
 }
 
-async function publishToReddit(token, { text }) {
+async function publishToReddit(token, { text, mediaUrl }) {
   const auth = { Authorization: `Bearer ${token}`, 'User-Agent': 'UFIconnect/1.0 by /u/uficonnect' };
   const me = await fetchJSON('https://oauth.reddit.com/api/v1/me', auth);
   if (!me?.name) throw new Error('Reddit session invalid — reconnect the account.');
@@ -23236,9 +23408,9 @@ async function publishToReddit(token, { text }) {
   // arbitrary community — every Reddit account can post here with no
   // subreddit-specific rules/approval to navigate, and it avoids needing a
   // subreddit picker in the UI.
-  const body = new URLSearchParams({
-    sr: `u_${me.name}`, kind: 'self', title: text.slice(0, 300) || 'Untitled', text: text.slice(0, 4000), api_type: 'json',
-  });
+  const body = new URLSearchParams(mediaUrl
+    ? { sr: `u_${me.name}`, kind: 'link', title: text.slice(0, 300) || 'Photo from UFIconnect', url: mediaUrl, api_type: 'json' }
+    : { sr: `u_${me.name}`, kind: 'self', title: text.slice(0, 300) || 'Untitled', text: text.slice(0, 4000), api_type: 'json' });
   const data = await new Promise((resolve, reject) => {
     const req = https.request('https://oauth.reddit.com/api/submit', {
       method: 'POST',
@@ -23258,14 +23430,105 @@ async function publishToReddit(token, { text }) {
   return jsonUrl;
 }
 
+async function publishToTwitter(token, { text, mediaUrl }) {
+  const result = await postJSONWithMeta('https://api.twitter.com/2/tweets', {
+    text: crossPostText(text, mediaUrl, 280),
+  }, { Authorization: `Bearer ${token}` });
+  if (result.status < 200 || result.status >= 300 || !result.data?.data?.id) {
+    throw new Error(`X/Twitter HTTP ${result.status}: ${JSON.stringify(result.data || {}).slice(0, 180)}`);
+  }
+  return `https://x.com/i/web/status/${result.data.data.id}`;
+}
+
+async function publishToLinkedIn(token, { text, mediaUrl }) {
+  const identity = await fetchJSON('https://api.linkedin.com/v2/userinfo', { Authorization: `Bearer ${token}` });
+  if (!identity?.sub) throw new Error('LinkedIn session is missing the member identity - reconnect the account.');
+  const result = await postJSONWithMeta('https://api.linkedin.com/rest/posts', {
+    author: `urn:li:person:${identity.sub}`,
+    commentary: crossPostText(text, mediaUrl, 3000),
+    visibility: 'PUBLIC',
+    distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+    lifecycleState: 'PUBLISHED',
+    isReshareDisabledByAuthor: false,
+  }, {
+    Authorization: `Bearer ${token}`,
+    'Linkedin-Version': '202509',
+    'X-Restli-Protocol-Version': '2.0.0',
+  });
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`LinkedIn HTTP ${result.status}: ${JSON.stringify(result.data || {}).slice(0, 180)}`);
+  }
+  const postId = result.headers['x-restli-id'];
+  return postId ? `https://www.linkedin.com/feed/update/${encodeURIComponent(postId)}` : null;
+}
+
+async function publishToThreads(token, { text, mediaUrl }) {
+  const create = await postFormWithMeta('https://graph.threads.net/me/threads', mediaUrl
+    ? { media_type: 'IMAGE', image_url: mediaUrl, text: String(text || '').slice(0, 500), access_token: token }
+    : { media_type: 'TEXT', text: String(text || '').slice(0, 500), access_token: token });
+  if (create.status < 200 || create.status >= 300 || !create.data?.id) {
+    throw new Error(`Threads create HTTP ${create.status}: ${JSON.stringify(create.data || {}).slice(0, 180)}`);
+  }
+  const published = await postFormWithMeta('https://graph.threads.net/me/threads_publish', {
+    creation_id: create.data.id, access_token: token,
+  });
+  if (published.status < 200 || published.status >= 300 || !published.data?.id) {
+    throw new Error(`Threads publish HTTP ${published.status}: ${JSON.stringify(published.data || {}).slice(0, 180)}`);
+  }
+  return null;
+}
+
+async function publishToInstagram(token, { text, mediaUrl }) {
+  if (!mediaUrl) throw new Error('Instagram requires a photo. Add one before publishing.');
+  const pages = await fetchJSON(`https://graph.facebook.com/v19.0/me/accounts?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`);
+  const accountId = pages?.data?.map(page => page.instagram_business_account?.id).find(Boolean);
+  if (!accountId) throw new Error('No professional Instagram account is linked to this Meta connection.');
+  const container = await postFormWithMeta(`https://graph.facebook.com/v19.0/${accountId}/media`, {
+    image_url: mediaUrl, caption: String(text || '').slice(0, 2200), access_token: token,
+  });
+  if (container.status < 200 || container.status >= 300 || !container.data?.id) {
+    throw new Error(`Instagram media HTTP ${container.status}: ${JSON.stringify(container.data || {}).slice(0, 180)}`);
+  }
+  const published = await postFormWithMeta(`https://graph.facebook.com/v19.0/${accountId}/media_publish`, {
+    creation_id: container.data.id, access_token: token,
+  });
+  if (published.status < 200 || published.status >= 300 || !published.data?.id) {
+    throw new Error(`Instagram publish HTTP ${published.status}: ${JSON.stringify(published.data || {}).slice(0, 180)}`);
+  }
+  const permalink = await fetchJSON(`https://graph.facebook.com/v19.0/${published.data.id}?fields=permalink&access_token=${encodeURIComponent(token)}`).catch(() => null);
+  return permalink?.permalink || null;
+}
+
+async function publishToTikTok(token, { text, mediaUrl }) {
+  if (!mediaUrl) throw new Error('TikTok requires a photo. Add one before sending it to TikTok.');
+  const result = await postJSONWithMeta('https://open.tiktokapis.com/v2/post/publish/content/init/', {
+    media_type: 'PHOTO',
+    // This is TikTok's official inbox handoff. Direct publishing requires
+    // creator-info privacy controls that cannot be safely inferred here.
+    post_mode: 'MEDIA_UPLOAD',
+    post_info: { title: String(text || 'UFIconnect photo').slice(0, 90), description: String(text || '').slice(0, 4000) },
+    source_info: { source: 'PULL_FROM_URL', photo_images: [mediaUrl], photo_cover_index: 0 },
+  }, { Authorization: `Bearer ${token}` });
+  if (result.status < 200 || result.status >= 300 || result.data?.error?.code !== 'ok') {
+    throw new Error(`TikTok HTTP ${result.status}: ${(result.data?.error?.message || JSON.stringify(result.data || {})).slice(0, 180)}`);
+  }
+  return result.data?.data?.publish_id || null;
+}
+
 app.post('/command-center/cross-post', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
   }
   const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+  const requestedMediaUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const mediaUrl = cloudName && requestedMediaUrl.startsWith(`https://res.cloudinary.com/${cloudName}/`)
+    ? requestedMediaUrl.slice(0, 1000)
+    : null;
   const platforms = Array.isArray(req.body?.platforms) ? req.body.platforms.filter(p => CONNECTED_SOCIAL_PLATFORMS.includes(p)) : [];
-  if (!content) return res.status(400).json({ message: 'content is required.' });
+  if (!content && !mediaUrl) return res.status(400).json({ message: 'Write something or add a photo.' });
+  if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'The photo must be uploaded through UFIconnect first.' });
   if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
 
   const targets = [];
@@ -23276,10 +23539,23 @@ app.post('/command-center/cross-post', authenticate, async (req, res) => {
       targets.push({ platform, status: 'queued', error: 'Publishing API pending platform approval — saved, not yet posted.' });
       continue;
     }
+    if (PHOTO_REQUIRED_PUBLISH_PLATFORMS.has(platform) && !mediaUrl) {
+      targets.push({ platform, status: 'failed', error: `${platform === 'instagram' ? 'Instagram' : 'TikTok'} requires a photo.` });
+      continue;
+    }
     try {
-      const postedUrl = platform === 'bluesky'
-        ? await publishToBluesky(token, { text: content })
-        : await publishToReddit(token, { text: content });
+      let postedUrl = null;
+      if (platform === 'bluesky') postedUrl = await publishToBluesky(token, { text: content, mediaUrl });
+      else if (platform === 'reddit') postedUrl = await publishToReddit(token, { text: content, mediaUrl });
+      else if (platform === 'twitter') postedUrl = await publishToTwitter(token, { text: content, mediaUrl });
+      else if (platform === 'linkedin') postedUrl = await publishToLinkedIn(token, { text: content, mediaUrl });
+      else if (platform === 'threads') postedUrl = await publishToThreads(token, { text: content, mediaUrl });
+      else if (platform === 'instagram') postedUrl = await publishToInstagram(token, { text: content, mediaUrl });
+      else if (platform === 'tiktok') {
+        const publishId = await publishToTikTok(token, { text: content, mediaUrl });
+        targets.push({ platform, status: 'handoff', publishId, error: 'Sent to TikTok. Finish the post from your TikTok inbox.' });
+        continue;
+      }
       targets.push({ platform, status: 'posted', postedUrl });
     } catch (e) {
       console.error(`[/command-center/cross-post] ${platform}:`, e.message);
@@ -23290,11 +23566,11 @@ app.post('/command-center/cross-post', authenticate, async (req, res) => {
   const id = `xp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   if (db.isConnected()) {
     await db.query(
-      `INSERT INTO cross_posts (id, user_id, content, targets, created_at) VALUES ($1,$2,$3,$4,NOW())`,
-      [id, req.user.id, content, JSON.stringify(targets)]
+      `INSERT INTO cross_posts (id, user_id, content, media_url, targets, created_at) VALUES ($1,$2,$3,$4,$5,NOW())`,
+      [id, req.user.id, content, mediaUrl, JSON.stringify(targets)]
     ).catch(e => console.error('[cross_posts insert]', e.message));
   }
-  res.json({ id, targets });
+  res.json({ id, targets, mediaUrl });
 });
 
 app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
@@ -23305,10 +23581,10 @@ app.get('/command-center/cross-post/history', authenticate, async (req, res) => 
   if (!db.isConnected()) return res.json({ posts: [] });
   try {
     const { rows } = await db.query(
-      `SELECT id, content, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      `SELECT id, content, media_url, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
       [req.user.id]
     );
-    res.json({ posts: rows.map(r => ({ id: r.id, content: r.content, targets: r.targets, createdAt: r.created_at })) });
+    res.json({ posts: rows.map(r => ({ id: r.id, content: r.content, mediaUrl: r.media_url, targets: r.targets, createdAt: r.created_at })) });
   } catch (e) {
     console.error('[/command-center/cross-post/history]', e.message);
     res.status(500).json({ message: 'Could not load history.' });

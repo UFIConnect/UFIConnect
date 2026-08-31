@@ -11,6 +11,8 @@ const PLATFORM_BENEFITS = {
   gitlab:    ['Showcase GitLab projects', 'Display CI/CD and open-source work', 'Find developer collaborators'],
   twitter:   ['Surface relevant tech threads', 'Share posts across platforms', 'Follow industry conversations'],
   facebook:  ['Join professional Facebook Groups', 'Surface industry discussions', 'Expand your network'],
+  instagram: ['Publish photos from Cross-Post', 'Keep visual work connected', 'Bring creator updates into your workspace'],
+  tiktok:    ['Send photo posts through TikTok', 'Keep creator work organized', 'Use your TikTok account with Media Studio'],
   youtube:   ['Import your video library', 'Surface creator content in feed', 'Connect with fellow creators'],
   reddit:    ['Follow relevant subreddits', 'Surface top posts in your feed', 'Find niche communities'],
   medium:    ['Import your published articles', 'Share writing with your network', 'Discover great long-form reads'],
@@ -123,12 +125,7 @@ export default function ConnectedAccounts() {
   }
 
   const connectedList   = platforms.filter(([k]) =>  connected[k]);
-  // forceComingSoon (LinkedIn) — real OAuth credentials are configured and
-  // working, but it stays in "Coming Soon" anyway: full feed integration
-  // needs LinkedIn's own Partner Program approval, a product gate, not a
-  // missing-credentials one. See PlatformCard's own message below, which
-  // shows p.note (the real reason) instead of the generic "waiting on
-  // credentials" line whenever a platform has one.
+  const membershipLocked = authProfile?.plan === 'free';
   const availableList   = platforms.filter(([k, p]) => !connected[k] &&  p.configured && !p.forceComingSoon);
   const comingSoonList  = platforms.filter(([k, p]) => !connected[k] && (!p.configured || p.forceComingSoon));
 
@@ -215,6 +212,7 @@ export default function ConnectedAccounts() {
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
+                  locked={membershipLocked}
                 />
               ))}
             </div>
@@ -236,6 +234,7 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
+                  locked={membershipLocked}
                 />
               ))}
             </div>
@@ -255,6 +254,7 @@ export default function ConnectedAccounts() {
                   comingSoon
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
+                  locked={membershipLocked}
                 />
               ))}
             </div>
@@ -311,7 +311,7 @@ export default function ConnectedAccounts() {
 
 function PlatformCard({
   platformKey, p, isConnected, comingSoon, expanded, onToggle,
-  onDisconnect, onConnect, connecting, disconnecting,
+  onDisconnect, onConnect, connecting, disconnecting, locked,
 }) {
   const benefits = PLATFORM_BENEFITS[platformKey] || [];
 
@@ -356,6 +356,14 @@ function PlatformCard({
                 Coming Soon
               </span>
             )}
+            {!isConnected && locked && !comingSoon && (
+              <span style={{
+                fontSize: '.65rem', fontWeight: 700, color: '#5B21B6',
+                background: '#F3E8FF', padding: '1px 6px', borderRadius: 4,
+              }}>
+                Membership
+              </span>
+            )}
           </div>
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>
             {p.description}
@@ -375,6 +383,10 @@ function PlatformCard({
             <button className="btn btn-sm btn-outline" disabled>
               Coming Soon
             </button>
+          ) : locked ? (
+            <button className="btn btn-sm btn-outline" disabled title="An active membership is required to connect accounts.">
+              Membership required
+            </button>
           ) : (
             <button className="btn btn-sm btn-outline" onClick={onConnect} disabled={connecting} style={{ borderColor: p.color, color: p.color }}>
               {connecting ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Connect'}
@@ -387,13 +399,11 @@ function PlatformCard({
       {expanded && (
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: benefits.length ? 12 : 0, lineHeight: 1.5 }}>
-            {comingSoon
-              // p.note covers a real product-gated reason (LinkedIn: full
-              // feed integration pending LinkedIn's own Partner Program
-              // approval) — shown instead of the generic credentials
-              // message whenever a platform actually has one, since
-              // "waiting on server credentials" would be simply false for
-              // a platform whose OAuth is already fully configured.
+            {locked && !isConnected
+              ? 'An active membership is required before an account can be connected.'
+              : comingSoon
+              // A platform note explains any provider-specific gate rather
+              // than incorrectly blaming missing server credentials.
               ? (p.note || `Waiting on server credentials: ${(p.missingEnv || []).join(', ') || 'OAuth client ID/secret'}.`)
               : `Connect opens ${p.name}'s authorization page so you can approve UFIconnect access at the original source.`}
           </div>

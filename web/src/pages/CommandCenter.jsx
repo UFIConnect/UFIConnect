@@ -7,6 +7,8 @@ import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import PhotoPickerButton from '../components/PhotoPickerButton';
+import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -14,10 +16,9 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
 const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'bluesky'];
-// Platforms with a real, working publish-on-your-behalf API (see
-// REAL_PUBLISH_PLATFORMS server-side) — every other connected platform can
-// still be selected in Cross-Post, it just gets queued instead of posted.
-const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit'];
+// Platforms with a real, working publish-on-your-behalf API. Other connected
+// platforms remain visible but are queued until their API path is available.
+const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok'];
 
 function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
@@ -37,10 +38,11 @@ function SourceMark({ source, label, active = false }) {
 
 const SECTIONS = [
   { key: 'automation', label: 'Automation' },
+  { key: 'jobs',       label: 'Job Tracker' },
   { key: 'yourfeed',   label: 'Your Feed' },
   { key: 'feed',       label: 'Following Feed' },
   { key: 'content',    label: 'AI Content Hub' },
-  { key: 'jobs',       label: 'Job Tracker' },
+  { key: 'media',      label: 'Media Studio' },
   { key: 'crosspost',  label: 'Cross-Post' },
 ];
 const SECTION_KEYS = new Set(SECTIONS.map(section => section.key));
@@ -413,6 +415,96 @@ function ContentHubSection() {
 // This is the member's OWN posts on each connected platform, for reviewing
 // or pulling a copy of their own content. Only ever lists platforms the
 // member has actually connected (see ConnectedAccounts.jsx for that flow).
+function dataUrlToFile(dataUrl, name) {
+  const [header, encoded] = String(dataUrl || '').split(',');
+  const mime = header.match(/data:([^;]+)/)?.[1] || 'image/png';
+  const binary = atob(encoded || '');
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], name, { type: mime });
+}
+
+function MediaStudioSection({ onOpenCrossPost }) {
+  const [type, setType] = useState('image');
+  const [prompt, setPrompt] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [asset, setAsset] = useState(null);
+  const [error, setError] = useState('');
+
+  async function generate(e) {
+    e.preventDefault();
+    if (!prompt.trim() || generating) return;
+    setGenerating(true); setError(''); setAsset(null);
+    try {
+      const { data } = await client.post('/command-center/media-generate', { type, prompt: prompt.trim() });
+      let url = data.mediaUrl;
+      if (data.mediaType === 'image' && url?.startsWith('data:')) {
+        setUploading(true);
+        const uploaded = await uploadMedia(dataUrlToFile(url, `ufi-media-${Date.now()}.png`), null, 'crossposts');
+        url = uploaded.url;
+        setUploading(false);
+      }
+      setAsset({ url, type: data.mediaType || type });
+    } catch (err) {
+      setError(err?.response?.data?.message || err?.message || 'Could not create media right now.');
+    } finally {
+      setGenerating(false); setUploading(false);
+    }
+  }
+
+  function sendToCrossPost() {
+    if (!asset?.url) return;
+    try { sessionStorage.setItem('ufi_crosspost_media', JSON.stringify(asset)); } catch {}
+    onOpenCrossPost();
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="card">
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Create media</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.55 }}>
+          Create a share-ready image, or send a prompt to your configured video provider. Generated images are saved into Cross-Post automatically.
+        </p>
+        <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['image', 'video'].map(option => (
+              <button
+                key={option} type="button" className="btn btn-sm" onClick={() => setType(option)}
+                style={{ border: 'none', textTransform: 'capitalize', background: type === option ? 'var(--primary)' : 'var(--bg-secondary)', color: type === option ? '#fff' : 'var(--text)' }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
+            placeholder={type === 'image' ? 'Describe the photo or graphic you want to create' : 'Describe the short video you want to create'}
+            style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+          />
+          <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim()} style={{ alignSelf: 'flex-start' }}>
+            {generating || uploading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Generate ${type}`}
+          </button>
+        </form>
+      </div>
+
+      {error && <SectionError message={error} />}
+      {asset && (
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {asset.type === 'video'
+            ? <video src={asset.url} controls playsInline style={{ width: '100%', maxHeight: 420, borderRadius: 8, background: '#111' }} />
+            : <img src={asset.url} alt="Generated for your post" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 8, background: 'var(--bg-secondary)' }} />}
+          {asset.type === 'image' && (
+            <button type="button" className="btn btn-primary btn-sm" onClick={sendToCrossPost} style={{ alignSelf: 'flex-start' }}>
+              Use in Cross-Post
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function YourFeedSection() {
   const { showToast } = useToast();
   const [connected, setConnected] = useState(null);
@@ -596,6 +688,8 @@ function JobTrackerSection() {
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [view, setView] = useState('live');
+  const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
 
   // bust=1 mirrors Opportunities.jsx's own manual-refresh param — without
   // it this would just re-read the server-side listings cache and never
@@ -605,6 +699,7 @@ function JobTrackerSection() {
     Promise.all([client.get('/opportunities', { params: bust ? { bust: 1 } : {} }), client.get('/jobs/tracking')])
       .then(([oppRes, trackRes]) => {
         setOpportunities((oppRes.data.opportunities || []).filter(o => o?.id));
+        setRecommendationBasis(oppRes.data.recommendationBasis || 'recent listings');
         const map = {};
         for (const j of (trackRes.data.jobs || [])) map[j.id] = j;
         setTracked(map);
@@ -613,7 +708,11 @@ function JobTrackerSection() {
       .finally(() => setRefreshing(false));
   }, []);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => {
+    loadAll();
+    const id = setInterval(() => loadAll(true), 60000);
+    return () => clearInterval(id);
+  }, [loadAll]);
 
   function handleRefresh() {
     setRefreshing(true);
@@ -654,6 +753,9 @@ function JobTrackerSection() {
   const trackedValues = Object.values(tracked);
   const savedCount = trackedValues.filter(t => t.status === 'saved').length;
   const appliedCount = trackedValues.filter(t => t.status === 'applied').length;
+  const liveById = new Map(sorted.map(job => [job.id, job]));
+  const trackedRows = trackedValues.map(job => ({ ...job, ...(liveById.get(job.id) || {}), isLive: liveById.has(job.id) }));
+  const displayedJobs = view === 'live' ? sorted : trackedRows.filter(job => job.status === view);
 
   return (
     <div>
@@ -661,6 +763,7 @@ function JobTrackerSection() {
         <StatChip label="Listings" value={sorted.length} />
         <StatChip label="Saved" value={savedCount} />
         <StatChip label="Applied" value={appliedCount} />
+        <StatChip label="Matched by" value={recommendationBasis} />
         <button
           type="button" onClick={handleRefresh} disabled={refreshing}
           className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }}
@@ -669,8 +772,23 @@ function JobTrackerSection() {
         </button>
       </div>
 
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        {[
+          ['live', 'Live listings'],
+          ['saved', 'Saved jobs'],
+          ['applied', 'Applied jobs'],
+        ].map(([key, label]) => (
+          <button
+            key={key} type="button" className="btn btn-sm" onClick={() => setView(key)}
+            style={{ border: 'none', background: view === key ? 'var(--primary)' : 'var(--bg-secondary)', color: view === key ? '#fff' : 'var(--text)' }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {sorted.map(job => {
+        {displayedJobs.map(job => {
           const t = tracked[job.id];
           const strong = Number.isFinite(job.matchScore) && job.matchScore >= 15;
           return (
@@ -680,6 +798,11 @@ function JobTrackerSection() {
                 <div style={{ fontSize: '.76rem', color: 'var(--muted)', marginTop: 2 }}>
                   {job.org}{job.location ? ` · ${job.location}` : ''}
                 </div>
+                {job.matchReasons?.length > 0 && (
+                  <div style={{ fontSize: '.7rem', color: '#047857', marginTop: 4, fontWeight: 700 }}>
+                    {job.matchReasons.join(' / ')}
+                  </div>
+                )}
               </div>
               {Number.isFinite(job.matchScore) && (
                 <span style={{
@@ -713,9 +836,9 @@ function JobTrackerSection() {
             </div>
           );
         })}
-        {!sorted.length && (
+        {!displayedJobs.length && (
           <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
-            No listings available right now — check back soon.
+            {view === 'saved' ? 'No saved jobs yet. Save a listing to keep it here.' : view === 'applied' ? 'No applied jobs yet. Mark a saved listing as applied when you apply.' : 'No listings available right now — check back soon.'}
           </div>
         )}
       </div>
@@ -725,14 +848,14 @@ function JobTrackerSection() {
 
 const PLATFORM_RESULT_META = {
   posted: { icon: 'OK', label: 'Posted' },
+  handoff: { icon: 'TikTok', label: 'Ready in TikTok inbox' },
   queued: { icon: 'Queued', label: 'Queued - pending platform approval' },
   failed: { icon: 'Failed', label: 'Failed' },
 };
 
-// Real publishing only for Bluesky/Reddit (see REAL_PUBLISH_PLATFORMS both
-// here and server-side) — every other selected platform comes back
-// 'queued', never silently marked as posted. connectedPlatforms comes from
-// the same /social/platforms the other sections already call.
+// connectedPlatforms comes from the same /social/platforms endpoint used by
+// the rest of the command center. Each result reports whether it posted,
+// needs a platform handoff, queued, or failed.
 function CrossPostSection() {
   const { showToast } = useToast();
   const [connected, setConnected] = useState(null);
@@ -742,6 +865,9 @@ function CrossPostSection() {
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState(null);
   const [loadError, setLoadError] = useState('');
+  const [media, setMedia] = useState(null);
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [mediaError, setMediaError] = useState('');
 
   const loadCrossPostData = useCallback(async () => {
     setLoadError('');
@@ -758,7 +884,14 @@ function CrossPostSection() {
     }
   }, []);
 
-  useEffect(() => { loadCrossPostData(); }, [loadCrossPostData]);
+  useEffect(() => {
+    loadCrossPostData();
+    try {
+      const stored = JSON.parse(sessionStorage.getItem('ufi_crosspost_media') || 'null');
+      if (stored?.url && stored?.type === 'image') setMedia(stored);
+      sessionStorage.removeItem('ufi_crosspost_media');
+    } catch {}
+  }, [loadCrossPostData]);
 
   function toggle(platform) {
     setSelected(prev => {
@@ -768,17 +901,33 @@ function CrossPostSection() {
     });
   }
 
+  async function handlePhoto(file) {
+    if (!file || uploadingMedia) return;
+    if (!file.type.startsWith('image/')) { setMediaError('Choose a photo file.'); return; }
+    if (file.size > MAX_UPLOAD_BYTES) { setMediaError('That photo is too large.'); return; }
+    setUploadingMedia(true); setMediaError('');
+    try {
+      const uploaded = await uploadMedia(file, null, 'crossposts');
+      setMedia(uploaded);
+    } catch (err) {
+      setMediaError(err?.response?.data?.message || err?.message || 'Could not upload the photo.');
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
   async function handlePost(e) {
     e.preventDefault();
-    if (!content.trim() || !selected.size || posting) return;
+    if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia) return;
     setPosting(true);
     setLastResult(null);
     try {
-      const { data } = await client.post('/command-center/cross-post', { content: content.trim(), platforms: [...selected] });
+      const { data } = await client.post('/command-center/cross-post', { content: content.trim(), mediaUrl: media?.url, platforms: [...selected] });
       setLastResult(data.targets || []);
-      setHistory(prev => [{ id: data.id, content: content.trim(), targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
+      setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       setContent('');
       setSelected(new Set());
+      setMedia(null);
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not send your post. Please try again.', 'error');
     } finally {
@@ -795,7 +944,7 @@ function CrossPostSection() {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Post to multiple platforms</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          Bluesky and Reddit post for real. Every other platform saves your post as queued until its publishing API is available.
+          Publish to the connected platforms whose official API supports your account. Photo-only destinations show a clear requirement, and unfinished integrations remain queued instead of being marked as posted.
         </p>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
@@ -808,6 +957,21 @@ function CrossPostSection() {
               placeholder="What do you want to share?"
               style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
             />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <PhotoPickerButton
+                onFileSelected={handlePhoto}
+                disabled={uploadingMedia}
+                label={uploadingMedia ? 'Uploading photo...' : 'Add photo'}
+                className="btn btn-ghost btn-sm"
+              />
+              {media && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <img src={media.url} alt="Selected for cross-posting" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6 }} />
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMedia(null)}>Remove photo</button>
+                </div>
+              )}
+              {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
+            </div>
             <div>
               <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Send to</div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -827,7 +991,7 @@ function CrossPostSection() {
                 })}
               </div>
             </div>
-            <button className="btn btn-primary" type="submit" disabled={posting || !content.trim() || !selected.size} style={{ alignSelf: 'flex-start' }}>
+            <button className="btn btn-primary" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}
             </button>
           </form>
@@ -861,6 +1025,7 @@ function CrossPostSection() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {history.map(h => (
               <div key={h.id} className="card">
+                {h.mediaUrl && <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />}
                 <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}>{h.content}</p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
                   {(h.targets || []).map(t => (
@@ -1023,6 +1188,13 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('content')}
         />
         <AutomationToolCard
+          title="Media Studio"
+          description="Generate a photo or send a video prompt to the configured media provider."
+          status="Ready"
+          actionLabel="Open Media Studio"
+          onClick={() => onSelectSection('media')}
+        />
+        <AutomationToolCard
           title="Cross-Post Queue"
           description="Post to supported platforms and keep pending-platform posts saved in history."
           status={crossPostStatus}
@@ -1103,12 +1275,15 @@ export default function CommandCenter() {
 
   return (
     <Layout>
+      <div style={{ marginBottom: 14 }}>
+        <Link to="/" className="btn-back"><span className="btn-back-icon">‹</span> Back to Home</Link>
+      </div>
       <div className="command-center-header">
         <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           Command Center
         </h1>
         <p style={{ color: 'var(--muted)', fontSize: '.85rem', margin: '4px 0 0' }}>
-          Every connected account, organized. AI drafts. Job tracking.
+          Your connected accounts, media tools, cross-posting, and job search in one place.
         </p>
       </div>
 
@@ -1143,6 +1318,7 @@ export default function CommandCenter() {
           >
             {section === 'feed' && <ConnectedFeedSection />}
             {section === 'content' && <ContentHubSection />}
+            {section === 'media' && <MediaStudioSection onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}
             {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}
             {section === 'jobs' && <JobTrackerSection />}
