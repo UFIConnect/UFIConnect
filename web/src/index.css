@@ -1485,7 +1485,22 @@ input, textarea, select { font-family: inherit; }
   .sidebar { display: none; }
   .main { padding: 12px 12px 76px; }
   .main-wide { max-width: none; }
-  .home-feed-layout { display: flex; flex-direction: column; }
+  /* The desktop grid keeps align-items:start. Once this becomes a column
+     flex layout, that same value shrink-wraps the feed to its widest post
+     instead of the phone width. Keep the member feed constrained to the
+     available viewport on every mobile browser. */
+  .home-feed-layout {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    max-width: 100%;
+  }
+  .home-feed-content {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
   /* Home views and tools live in the top-right app menu on mobile. */
   .home-feed-right-tabs { display: none; }
   .profile-workspace { grid-template-columns: 1fr; }
@@ -1551,7 +1566,8 @@ input, textarea, select { font-family: inherit; }
     inset: 0;
     z-index: 220;
     border: 0;
-    background: transparent;
+    background: rgba(15, 23, 42, .22);
+    backdrop-filter: blur(1px);
     cursor: default;
   }
   .mobile-app-header {
@@ -1594,7 +1610,7 @@ input, textarea, select { font-family: inherit; }
   }
   .mobile-command-menu {
     display: block;
-    position: relative;
+    position: static;
   }
   .mobile-command-menu-trigger {
     display: inline-flex;
@@ -1622,12 +1638,17 @@ input, textarea, select { font-family: inherit; }
     outline-offset: 2px;
   }
   .mobile-command-menu-panel {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    width: min(360px, calc(100vw - 24px));
-    max-height: calc(100dvh - 76px);
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 66px);
+    right: 12px;
+    bottom: auto;
+    left: 12px;
+    z-index: 222;
+    width: auto;
+    max-height: calc(100dvh - 134px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     padding: 6px;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -1670,6 +1691,10 @@ input, textarea, select { font-family: inherit; }
     font-size: .875rem;
     font-weight: 650;
     text-decoration: none;
+  }
+  .mobile-command-menu-item.active {
+    background: var(--primary-light);
+    color: var(--primary);
   }
   .mobile-command-menu-item:active,
   .mobile-command-menu-item:focus-visible {

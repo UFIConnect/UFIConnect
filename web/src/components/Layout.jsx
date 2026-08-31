@@ -132,6 +132,7 @@ export default function Layout({ children, wide = false }) {
 
   const requestedFeed = new URLSearchParams(location.search).get('feed');
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : requestedFeed;
+  const isHomeFeedRoute = location.pathname === '/';
   const mobileUsesSourceControls = !['countries', 'restaurants'].includes(mobileFeedMode);
   const mobileSourceIds = mobileFeedMode === 'following'
     ? FOLLOWING_FEED_SOURCE_IDS
@@ -242,38 +243,42 @@ export default function Layout({ children, wide = false }) {
               <ShellIcon name="menu" size={19} />
               <span className="mobile-command-menu-trigger-label">Menu</span>
             </button>
-            {mobileMenuOpen && (
-              <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
-                <div className="mobile-command-menu-label">Your feed</div>
-                <NavLink to="/?feed=feed" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="home" size={18} />
-                  Home
-                </NavLink>
-                <NavLink to="/?feed=following" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="following" size={18} />
-                  Following
-                </NavLink>
-                <NavLink to="/?feed=countries" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="countries" size={18} />
-                  Countries
-                </NavLink>
-                <NavLink to="/?feed=restaurants" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="restaurants" size={18} />
-                  Restaurants
-                </NavLink>
-                <div className="mobile-command-menu-label">Your tools</div>
-                <HomeFeedTools
-                  showSources={mobileUsesSourceControls}
-                  sourceIds={mobileSourceIds}
-                />
-                <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="command" size={18} />
-                  Command Center
-                </NavLink>
-              </div>
-            )}
           </div>
         </header>
+      )}
+
+      {/* Keep the sheet outside the backdrop-filtered header. Fixed descendants
+          of that header are positioned against it on mobile browsers and can
+          collapse instead of filling the available viewport. */}
+      {profile && mobileMenuOpen && (
+        <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
+          <div className="mobile-command-menu-label">Your feed</div>
+          <Link to="/?feed=feed" className={`mobile-command-menu-item${isHomeFeedRoute && (!mobileFeedMode || mobileFeedMode === 'feed') ? ' active' : ''}`} aria-current={isHomeFeedRoute && (!mobileFeedMode || mobileFeedMode === 'feed') ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="home" size={18} />
+            Home
+          </Link>
+          <Link to="/?feed=following" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'following' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="following" size={18} />
+            Following
+          </Link>
+          <Link to="/?feed=countries" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'countries' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="countries" size={18} />
+            Countries
+          </Link>
+          <Link to="/?feed=restaurants" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'restaurants' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="restaurants" size={18} />
+            Restaurants
+          </Link>
+          <div className="mobile-command-menu-label">Your tools</div>
+          <HomeFeedTools
+            showSources={mobileUsesSourceControls}
+            sourceIds={mobileSourceIds}
+          />
+          <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="command" size={18} />
+            Command Center
+          </NavLink>
+        </div>
       )}
 
       {/* ── Main content ── */}
