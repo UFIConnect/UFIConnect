@@ -526,7 +526,7 @@ export default function ResumeBuilder() {
             </div>
 
             <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-ghost" type="button" onClick={saveDraft} disabled={saving}>
+              <button className="btn btn-ghost" type="button" onClick={() => saveDraft()} disabled={saving}>
                 {saving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save all changes'}
               </button>
               <button className="btn btn-primary" type="button" onClick={handleExport} disabled={exporting || !data.contact.name}>
