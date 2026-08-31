@@ -16283,8 +16283,12 @@ async function handleFeedRequest(req, res) {
   // recordEngagementSignal) — same "applied fresh per request" treatment as
   // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
   const userAffinity = await getUserAffinity(req.user.id);
+  const filterForUser = (items) => {
+    const list = Array.isArray(items) ? items.filter(matchesTopic) : [];
+    return topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+  };
   const personalizeForUser = (items, options = {}) => (
-    personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
+    personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext })
   );
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
