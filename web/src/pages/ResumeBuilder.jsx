@@ -20,16 +20,16 @@ function emptyDraft() {
   };
 }
 
-function LockedState() {
+function LockedState({ onUnlock, unlocking, billingReady }) {
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         Build an ATS-friendly resume from scratch with original templates, AI-assisted writing help,
-        and a one-click PDF export that's automatically scored and saved to your profile. This workspace is coming soon.
+        and a one-click PDF export that's automatically scored and saved to your profile.
       </p>
-      <button className="btn btn-primary" type="button" disabled>
-        Coming soon
+      <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking || billingReady === false}>
+        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === false ? 'Billing unavailable' : 'Unlock Resume Builder'}
       </button>
     </div>
   );
@@ -69,9 +69,11 @@ function Field({ label, ...props }) {
 }
 
 export default function ResumeBuilder() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
   const [loaded, setLoaded] = useState(false);
+  const [billingReady, setBillingReady] = useState(null);
+  const [unlocking, setUnlocking] = useState(false);
   const [template, setTemplate] = useState('modern');
   const [data, setData] = useState(emptyDraft());
   const [saving, setSaving] = useState(false);
@@ -79,6 +81,35 @@ export default function ResumeBuilder() {
   const [exportResult, setExportResult] = useState(null);
 
   const unlocked = !!profile?.resumeBuilderAddon;
+
+  useEffect(() => {
+    let cancelled = false;
+    client.get('/billing/config')
+      .then(({ data: config }) => {
+        if (!cancelled) setBillingReady(!!config?.stripeConfigured && !!config?.tiers?.resume_builder);
+      })
+      .catch(() => {
+        if (!cancelled) setBillingReady(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const upgrade = new URLSearchParams(window.location.search).get('upgrade');
+    if (!upgrade) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    if (upgrade === 'cancelled') {
+      showToast('Checkout cancelled - no charge was made.', 'info');
+      return;
+    }
+    refreshProfile()
+      .then((nextProfile) => {
+        showToast(nextProfile?.resumeBuilderAddon
+          ? 'Resume Builder is unlocked.'
+          : 'Payment received. Resume Builder will unlock in a moment.', 'success');
+      })
+      .catch(() => showToast('Payment received. Refresh in a moment if access has not appeared yet.', 'success'));
+  }, [refreshProfile, showToast]);
 
   useEffect(() => {
     if (!unlocked) return;
@@ -90,6 +121,18 @@ export default function ResumeBuilder() {
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, [unlocked]);
+
+  async function unlockResumeBuilder() {
+    if (unlocking) return;
+    setUnlocking(true);
+    try {
+      const { data: checkout } = await client.post('/billing/create-checkout-session', { tier: 'resume_builder' });
+      window.location.assign(checkout.url);
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not start checkout. Please try again.', 'error');
+      setUnlocking(false);
+    }
+  }
 
   async function saveDraft() {
     setSaving(true);
@@ -166,7 +209,7 @@ export default function ResumeBuilder() {
         {!profile ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
-          <LockedState />
+          <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} />
         ) : !loaded ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (

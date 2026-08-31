@@ -18004,6 +18004,11 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
+  // Keep the canonical name first, while accepting the two names people
+  // commonly use when adding this value directly in Render.
+  resume_builder: () => process.env.STRIPE_PRICE_ID_RESUME_BUILDER
+    || process.env.STRIPE_RESUME_BUILDER_PRICE_ID
+    || process.env.RESUME_BUILDER_PRICE_ID,
 };
 
 app.get('/billing/config', (_req, res) => {
@@ -18012,17 +18017,14 @@ app.get('/billing/config', (_req, res) => {
     tiers: {
       pro: !!TIER_PRICE_IDS.pro(),
       business: !!TIER_PRICE_IDS.business(),
-      resume_builder: false,
+      resume_builder: !!TIER_PRICE_IDS.resume_builder(),
     },
   });
 });
 
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   const requestedTier = req.body?.tier;
-  if (requestedTier === 'resume_builder') {
-    return res.status(400).json({ message: 'Resume Builder payments are not active yet.' });
-  }
-  const tier = ['pro', 'business'].includes(requestedTier) ? requestedTier : 'pro';
+  const tier = ['pro', 'business', 'resume_builder'].includes(requestedTier) ? requestedTier : 'pro';
   // Business is locked in the UI (not yet ready to sell) — reject it
   // server-side too so it can't be reached by POSTing directly.
   if (tier === 'business') {
@@ -18034,7 +18036,10 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
-  if (user.plan === 'pro' || user.plan === 'business') {
+  if (tier === 'resume_builder' && user.resumeBuilderAddon) {
+    return res.status(400).json({ message: 'Resume Builder is already unlocked. Manage Billing to change or cancel it.' });
+  }
+  if (tier !== 'resume_builder' && (user.plan === 'pro' || user.plan === 'business')) {
     // Blocks starting a second checkout on top of an existing paid plan
     // rather than allowing a tier switch this way — a fresh checkout session
     // creates a brand new subscription without touching the old one, which
@@ -18056,8 +18061,12 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
       customer: user.stripeCustomerId || undefined,
       customer_email: user.stripeCustomerId ? undefined : user.email,
       client_reference_id: user.id,
-      success_url: `${FRONTEND_BASE}/settings?upgrade=success`,
-      cancel_url: `${FRONTEND_BASE}/settings?upgrade=cancelled`,
+      success_url: tier === 'resume_builder'
+        ? `${FRONTEND_BASE}/resume-builder?upgrade=success`
+        : `${FRONTEND_BASE}/settings?upgrade=success`,
+      cancel_url: tier === 'resume_builder'
+        ? `${FRONTEND_BASE}/resume-builder?upgrade=cancelled`
+        : `${FRONTEND_BASE}/settings?upgrade=cancelled`,
     });
     res.json({ url: session.url });
   } catch (e) {
