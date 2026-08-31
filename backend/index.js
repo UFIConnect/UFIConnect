@@ -363,15 +363,20 @@ const passwordResetLimiter = rateLimit({
 // every other user's request also needs. /health matches its own handler
 // (registered above, before this) and never reaches this middleware at
 // all, so Render's own health checks are unaffected regardless of frequency.
-const generalApiLimiter = rateLimit({
+// Disabled by default so ordinary feed and scroll requests are unrestricted.
+// Authentication-sensitive endpoints retain their dedicated limiters above.
+const generalApiRateLimit = Number.parseInt(process.env.GENERAL_API_RATE_LIMIT || '0', 10);
+if (Number.isFinite(generalApiRateLimit) && generalApiRateLimit > 0) {
+  const generalApiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  limit: 300,
+    limit: generalApiRateLimit,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
   message: { message: 'Too many requests — please slow down and try again shortly.' },
 });
-app.use(generalApiLimiter);
+  app.use(generalApiLimiter);
+}
 
 // Tighter than generalApiLimiter specifically because this data can trigger
 // an autonomous deploy (see runAutofixCheck) — without a real per-account

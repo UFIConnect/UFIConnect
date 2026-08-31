@@ -19,6 +19,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Ordinary feed traffic is not globally throttled. Login, registration,
+      # and password-reset routes keep their own dedicated limits.
+      - key: GENERAL_API_RATE_LIMIT
+        value: '0'
       # 320MB (was 768) — `plan: starter` is a real 512MB container, and has
       # been this whole time. 768 was set assuming a "1GB instance" upgrade
       # that never actually happened here (render.yaml's plan: never moved
