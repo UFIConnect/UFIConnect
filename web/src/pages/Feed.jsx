@@ -194,16 +194,6 @@ const FOLLOWING_SOURCE_TABS = [
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
-// Rolling dedup window for pagination — comfortably larger than the
-// backend's main-feed snapshot pool (300 posts) so a normal scroll session
-// never sees a near-term repeat, but bounded (not all-time) so pagination
-// doesn't dead-end once a user has genuinely scrolled past everything the
-// server has. See loadMoreRemote's markKnownId for why an unbounded set
-// caused real, frequent duplicates: the snapshot pool gets rebuilt every
-// few minutes, so two page requests straddling a rebuild can slice
-// overlapping content even before the pool has been fully scrolled once.
-const FEED_DEDUP_WINDOW = 600;
-
 const FEED_STATE_KEY = 'ufi_feed_state';
 
 function memberStorageKey(baseKey, userId) {
@@ -1650,20 +1640,9 @@ export default function Feed({ forcedMode } = {}) {
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
-  // Insertion-order companion to knownIds so it can be trimmed like a FIFO
-  // — a plain Set has no cheap "oldest entry" eviction of its own, but
-  // JS Sets do iterate in insertion order, so pairing it with an array of
-  // the same insertions (mirrors the backend's seenPostIds/seenPostIdQueue
-  // pattern) is enough to bound it without a full data structure.
-  const knownIdsQueue = useRef([...knownIds.current]);
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
-    knownIdsQueue.current.push(id);
-    if (knownIdsQueue.current.length > FEED_DEDUP_WINDOW) {
-      const oldest = knownIdsQueue.current.shift();
-      knownIds.current.delete(oldest);
-    }
   }, []);
   const sentinelRef   = useRef(null);
   // Synchronous guard for loadMoreRemote — see its own comment. The
@@ -1821,8 +1800,7 @@ export default function Feed({ forcedMode } = {}) {
         setLastRefresh(new Date(refreshTimestamp));
         return;
       }
-      knownIdsQueue.current = nextPosts.map(p => p.id).filter(Boolean);
-      knownIds.current = new Set(knownIdsQueue.current);
+      knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(profile?.id, nextPosts);
       // Only reset pagination state (page counter AND cursor) on a genuine
@@ -2177,9 +2155,7 @@ export default function Feed({ forcedMode } = {}) {
       // it and got silently dropped, making the feed look stuck at a
       // fixed, limited amount of content even while the server kept
       // reporting hasMore:true. Confirmed live as exactly that complaint.
-      const incoming = viewModeRef.current === 'following'
-        ? (data.posts || []).filter(p => p?.id)
-        : (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
+      const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
         setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));

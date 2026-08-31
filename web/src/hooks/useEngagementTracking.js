@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { reportEngaged } from '../api/engagement';
+import { reportConsumed, reportEngaged } from '../api/engagement';
 
 // Genuine-read engagement signal for anything rendered in a scrolling list
 // (see api/engagement.js for the view-vs-seen distinction) — a post counts
@@ -18,21 +18,34 @@ let sharedObserver = null;
 const dwellTimers = new WeakMap(); // Element -> timeout id
 const elementPostIds = new WeakMap(); // Element -> postId
 const elementContexts = new WeakMap(); // Element -> feed context
+const enteredViewport = new WeakSet();
+const consumedElements = new WeakSet();
 
 function handleIntersect(entries) {
   for (const entry of entries) {
     const el = entry.target;
     const postId = elementPostIds.get(el);
     if (!postId) continue;
-    if (entry.isIntersecting) {
+    const context = elementContexts.get(el) || 'feed';
+    const prominentlyVisible = entry.isIntersecting && entry.intersectionRatio >= VISIBILITY_THRESHOLD;
+    if (entry.isIntersecting) enteredViewport.add(el);
+    if (prominentlyVisible) {
       if (dwellTimers.has(el)) continue; // already counting down
       const timer = setTimeout(() => {
         dwellTimers.delete(el);
-        reportEngaged(postId, elementContexts.get(el) || 'feed');
+        reportEngaged(postId, context);
       }, DWELL_MS);
       dwellTimers.set(el, timer);
     } else {
       const timer = dwellTimers.get(el);
+      const passedAboveViewport = !entry.isIntersecting
+        && enteredViewport.has(el)
+        && !consumedElements.has(el)
+        && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0);
+      if (passedAboveViewport) {
+        consumedElements.add(el);
+        reportConsumed(postId, context);
+      }
       if (timer) { clearTimeout(timer); dwellTimers.delete(el); } // dwell interrupted — doesn't count
     }
   }
@@ -40,7 +53,7 @@ function handleIntersect(entries) {
 
 function getSharedObserver() {
   if (!sharedObserver) {
-    sharedObserver = new IntersectionObserver(handleIntersect, { threshold: [VISIBILITY_THRESHOLD] });
+    sharedObserver = new IntersectionObserver(handleIntersect, { threshold: [0, VISIBILITY_THRESHOLD] });
   }
   return sharedObserver;
 }

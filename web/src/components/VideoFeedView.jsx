@@ -5,7 +5,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
-import { reportEngaged, reportEngagementSignal } from '../api/engagement';
+import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
 
@@ -152,7 +152,6 @@ function resolveVideoSource(post) {
 // user has genuinely scrolled past everything the server has, but large
 // enough that a normal scroll session never sees a near-term repeat caused
 // by the server's video pool being rebuilt mid-session.
-const VIDEO_DEDUP_WINDOW = 400;
 const VIDEO_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const VIDEO_COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
 const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
@@ -1103,6 +1102,7 @@ export default function VideoFeedView({ onExit }) {
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
+  const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
   // filter was applied server-side — resets to 0 the moment any page has
   // real posts. Guards the "keep auto-fetching while hasMore" effect below:
@@ -1119,12 +1119,9 @@ export default function VideoFeedView({ onExit }) {
   const emptyStreakRef = useRef(0);
   const EMPTY_STREAK_LIMIT = 6;
   const loadingMoreRef = useRef(false);
-  // Bounded rolling dedup — see VIDEO_DEDUP_WINDOW. Set for O(1) lookups,
-  // paired with an array for FIFO eviction (Sets iterate in insertion
-  // order, so the array is only needed to know what to evict, mirroring
-  // the backend's seenPostIds/seenPostIdQueue pattern).
+  // Keep a session-wide set so pagination cannot reappend a video that was
+  // already delivered while a consumed-state write is in flight.
   const knownIds = useRef(new Set());
-  const knownIdsQueue = useRef([]);
   // Feed mode: opaque date-cursor from the backend (see getCursorFeedPage
   // server-side) — null means "start from now." Following mode still pages
   // by number (getFollowingFeedPosts is a live per-user query with no
@@ -1135,10 +1132,6 @@ export default function VideoFeedView({ onExit }) {
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
     knownIds.current.add(id);
-    knownIdsQueue.current.push(id);
-    if (knownIdsQueue.current.length > VIDEO_DEDUP_WINDOW) {
-      knownIds.current.delete(knownIdsQueue.current.shift());
-    }
   }, []);
 
   const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, quiet = false } = {}) => {
@@ -1185,13 +1178,10 @@ export default function VideoFeedView({ onExit }) {
       }
       const { data } = await client.get(`${endpoint}?${params}`);
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(p => p && resolveVideoSource(p));
-      if (reset) {
-        // A reset (initial mount, mode/filter switch, or a user-initiated
-        // refresh) needs the dedup window to reset with it, otherwise
-        // videos from before the reset would still count as "recently
-        // seen" and suppress legitimately-fresh content right after.
+      const isExplicitSearch = Boolean(searchQueryRef.current);
+      if (reset && isExplicitSearch) {
+        // Search is the explicit exception to the no-repeat rule.
         knownIds.current = new Set();
-        knownIdsQueue.current = [];
       }
       setVideoPosts(prev => {
         // A flat all-time dedup here used to make infinite scroll dead-end
@@ -1216,7 +1206,7 @@ export default function VideoFeedView({ onExit }) {
         // Following videos look stuck at a small fixed amount even while
         // the server kept reporting hasMore:true. Confirmed live as
         // exactly that complaint.
-        const fresh = reset || mode === 'following' ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+        const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
         fresh.forEach(p => markKnownId(p.id));
         // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
@@ -1442,15 +1432,24 @@ export default function VideoFeedView({ onExit }) {
     if (!container) return;
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
+        const idx = Number(entry.target.dataset.idx);
+        if (Number.isNaN(idx)) return;
         if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
-          const idx = Number(entry.target.dataset.idx);
-          if (!Number.isNaN(idx)) setActiveIndex(idx);
+          setActiveIndex(idx);
+          return;
+        }
+        const passedAboveViewport = !entry.isIntersecting
+          && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0);
+        const post = videoPosts[idx];
+        if (passedAboveViewport && post?.id && !consumedVideoIds.current.has(post.id)) {
+          consumedVideoIds.current.add(post.id);
+          reportConsumed(post.id, 'videos');
         }
       });
-    }, { root: container, threshold: [0.6] });
+    }, { root: container, threshold: [0, 0.6] });
     slideRefs.current.forEach(el => el && observer.observe(el));
     return () => observer.disconnect();
-  }, [videoPosts.length]);
+  }, [videoPosts]);
 
   // Actively-scrolling detection, separate from the intersection-based
   // "which slide is active" above — that one only fires once a slide has

@@ -7802,15 +7802,9 @@ function shuffledForLap(pool, lap) {
   return shuffled;
 }
 function sliceCircular(pool, lo, count) {
-  if (!pool.length) return [];
-  const lap = Math.floor(lo / pool.length);
-  const effectivePool = shuffledForLap(pool, lap);
-  const start = lo % pool.length;
-  const result = [];
-  for (let i = 0; i < count && i < pool.length; i++) {
-    result.push(effectivePool[(start + i) % pool.length]);
-  }
-  return result;
+  // An exhausted personal queue ends until new matching content arrives.
+  // Wrapping here used to reintroduce posts a member had already passed.
+  return pool.slice(Math.max(0, lo), Math.max(0, lo) + Math.max(0, count));
 }
 
 // Per-user "already consumed" tracking, so infinite scroll within one
@@ -7897,7 +7891,7 @@ function markPostsSeen(userId, posts, context = 'feed') {
 // ~3s/50%, or a feed post visible on screen for ~2s+). Delivery impressions
 // stay context-specific, but actual engagement consumes the post in both
 // signed-in feed contexts so the user does not have to scroll through it again.
-function markPostsEngaged(userId, postIds, context = 'feed') {
+async function markPostsEngaged(userId, postIds, context = 'feed') {
   if (!userId || userId === SYSTEM_WARMUP_USER_ID || !postIds?.length) return;
   const ids = [...new Set(asArray(postIds).filter(Boolean))].slice(0, 100);
   if (!ids.length) return;
@@ -7910,15 +7904,19 @@ function markPostsEngaged(userId, postIds, context = 'feed') {
     }
   }
   if (!db.isConnected()) return;
-  db.query(
-    `INSERT INTO seen_posts (user_id, post_id, context, engaged_at)
-     SELECT $1, p.post_id, c.ctx, NOW()
-     FROM unnest($2::text[]) AS p(post_id)
-     CROSS JOIN unnest($3::text[]) AS c(ctx)
-     ON CONFLICT (user_id, post_id, context) DO UPDATE SET
-       engaged_at = COALESCE(seen_posts.engaged_at, EXCLUDED.engaged_at)`,
-    [userId, ids, contexts]
-  ).catch(e => console.warn('markPostsEngaged:', e.message));
+  try {
+    await db.query(
+      `INSERT INTO seen_posts (user_id, post_id, context, engaged_at)
+       SELECT $1, p.post_id, c.ctx, NOW()
+       FROM unnest($2::text[]) AS p(post_id)
+       CROSS JOIN unnest($3::text[]) AS c(ctx)
+       ON CONFLICT (user_id, post_id, context) DO UPDATE SET
+         engaged_at = COALESCE(seen_posts.engaged_at, EXCLUDED.engaged_at)`,
+      [userId, ids, contexts]
+    );
+  } catch (e) {
+    console.warn('markPostsEngaged:', e.message);
+  }
 }
 
 // --- Behavioral affinity - real time spent, not declared interests -----------
@@ -14154,6 +14152,8 @@ async function migrateDB() {
     // happen after delivery), so this is strictly additional information
     // about a row that already exists, not a new relationship to track.
     await db.query(`ALTER TABLE seen_posts ADD COLUMN IF NOT EXISTS engaged_at TIMESTAMPTZ`);
+    // Supports the exact durable no-repeat predicate used by cursor feeds.
+    await db.query(`CREATE INDEX IF NOT EXISTS seen_posts_user_engaged_post_idx ON seen_posts(user_id, post_id) WHERE engaged_at IS NOT NULL`);
 
     // Behavioral affinity — see recordEngagementSignal/getUserAffinity. Not
     // "did they engage" (seen_posts.engaged_at already covers that), but
@@ -15772,7 +15772,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
+async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -15884,6 +15884,18 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
         params.push(new Date(Date.now() - rangeMs).toISOString());
         clauses.push(`fp.post_created_at >= $${params.length}`);
       }
+      if (userId) {
+        params.push(userId);
+        // The in-process cache makes repeat filtering fast, while this DB
+        // predicate keeps the guarantee intact after a restart or once a
+        // very active member has consumed more than the in-memory window.
+        clauses.push(`NOT EXISTS (
+          SELECT 1 FROM seen_posts sp
+          WHERE sp.user_id = $${params.length}
+            AND sp.post_id = fp.id
+            AND sp.engaged_at IS NOT NULL
+        )`);
+      }
       params.push(perSourceLimit);
       const limitParam = params.length;
       // id, not fetched_at, as the tiebreak — same reasoning as the cursor
@@ -15987,20 +15999,9 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // comes back shorter than `limit`; instead of over-filling with repeats,
   // which just makes the client ask for another page sooner.
   const SEEN_BACKFILL_MAX_FRACTION = 0.25;
-  const page = freshOnly
-    ? _seededShuffle(fullMerged, (Date.now() ^ Math.floor(Math.random() * 0x7fffffff)) | 0).slice(0, limit)
-    : trulyUnseen.length >= limit
-      ? trulyUnseen.slice(0, limit)
-      : (() => {
-          const unseenIds = new Set(trulyUnseen.map(p => p?.id).filter(Boolean));
-          const seenCandidates = merged.filter(p => !p?.id || !unseenIds.has(p.id));
-          const seenBudget = Math.min(
-            Math.ceil(limit * SEEN_BACKFILL_MAX_FRACTION),
-            limit - trulyUnseen.length,
-            seenCandidates.length
-          );
-          return [...trulyUnseen, ...seenCandidates.slice(0, seenBudget)];
-        })();
+  // No repeat backfill: an exhausted page is allowed to be short or empty.
+  // The one exception is search, which supplies an empty seen set upstream.
+  const page = filterUnseen(fullMerged, seenIds).slice(0, limit);
 
   // Genuine exhaustion — not "nothing unseen left" (that's `exhausted`
   // above, and already has a reshow-the-seen-ones fallback), but "there is
@@ -16013,14 +16014,14 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
   // this pipeline. Real repeats are the accepted tradeoff over a hard
   // dead-end; seenIds is dropped on the wrapped call since admitting
   // repeats is the whole point once genuinely fresh content is gone.
-  const genuinelyExhausted = isLiveMode ? page.length === 0 : !allLists.some(arr => arr.length > 0);
-  if (genuinelyExhausted && !_wrapRetried) {
+  const genuinelyExhausted = !allLists.some(arr => arr.length > 0);
+  if (genuinelyExhausted) {
     // freshOnly not passed through here on purpose: this pass already has
     // seenIds:null (repeats allowed), so there's nothing left for a further
     // freshOnly live-mode detour to usefully do — it would just immediately
     // hit this same genuinelyExhausted branch again with _wrapRetried now
     // true, adding a wasted round trip before landing here anyway.
-    return getCursorFeedPage({ sources, cursorMap: {}, limit, mediaType, timeRange, extraLists, seenIds: null, _freshRetried: true, _wrapRetried: true });
+    return { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: false };
   }
 
   const nextCursor = { ...cursorMap };
@@ -16033,8 +16034,11 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
     const newest = page.reduce((max, p) => Math.max(max, postTimestamp(p)), 0);
     if (newest > 0) nextCursor.__liveSince = new Date(newest).toISOString();
   } else {
+    // Advance across consumed candidates too, otherwise an all-consumed
+    // window can leave a cursor stuck on the same rows forever.
+    const cursorPosts = page.length < limit ? merged : page;
     for (const src of allSources) {
-      const shown = page.filter(p => p.source === src);
+      const shown = cursorPosts.filter(p => p.source === src);
       if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
       // Matches the query's own ORDER BY (post_created_at DESC, id DESC):
       // the "last shown" boundary is the smallest timestamp, and among
@@ -16046,7 +16050,14 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
       });
       nextCursor[src] = { ts: new Date(postTimestamp(oldest)).toISOString(), id: oldest.id };
     }
-    if (exhausted) nextCursor.__liveSince = new Date().toISOString();
+  }
+
+  if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
+    return getCursorFeedPage({
+      userId, sources, cursorMap: nextCursor, limit, mediaType, topics,
+      topicBypassSources, timeRange, extraLists, seenIds, freshOnly,
+      _emptySkips: _emptySkips + 1,
+    });
   }
 
   return {
@@ -17837,7 +17848,10 @@ async function handleFeedRequest(req, res) {
   // authenticated and returns the same content; it simply skips read-state
   // filtering/writes for that non-scrolling preview request.
   const passivePreview = req.query.passive === '1';
-  const seenIds = passivePreview ? new Set() : await getUserSeenSet(req.user.id);
+  // Search deliberately permits a previously consumed post; all normal
+  // feeds and filters remain unseen-only for this individual member.
+  const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
+  const seenIds = passivePreview || hasExplicitSearch ? new Set() : await getUserSeenSet(req.user.id);
   const trackPostsSeen = (items) => {
     if (!passivePreview) markPostsSeen(req.user.id, items);
   };
@@ -17955,13 +17969,10 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
-    // A live camera is an ongoing view, not a one-time article. Keep it
-    // available after it has been watched so the Countries catalog remains
-    // complete instead of emptying itself for each member.
-    const available = feedMode === 'countries' ? localFeed.posts : filterUnseen(localFeed.posts, seenIds);
+    const available = filterUnseen(localFeed.posts, seenIds);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = available.slice(offset, offset + feedLimit);
-    if (feedMode !== 'countries') trackPostsSeen(pageRows);
+    trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       mode: feedMode,
@@ -18008,6 +18019,7 @@ async function handleFeedRequest(req, res) {
     const cursorTimeRange = usesSavedTopicScope ? '20d' : dbTimeRange;
 
     const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+      userId: req.user.id,
       sources: cursorSources,
       cursorMap,
       limit: feedLimit,
@@ -18067,13 +18079,13 @@ async function handleFeedRequest(req, res) {
     // false the instant a thin pool ran out, not a genuine content shortage.
     const equalized = buildEqualizedFollowingPool(rawFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
-    const pageRows = sliceCircular(rotated, offset, feedLimit);
+    const pageRows = rotated.slice(0, feedLimit);
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'following',
-      hasMore: rotated.length > 0,
+      hasMore: rotated.length > pageRows.length,
       totalAvailable: rotated.length,
       followingCount: followingIds.size,
       sourceErrors,
@@ -18127,6 +18139,7 @@ async function handleFeedRequest(req, res) {
       }
 
       const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+        userId: req.user.id,
         sources: cursorSources,
         cursorMap,
         limit: feedLimit,
@@ -18344,7 +18357,7 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        let personalized = buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity);
+        let personalized = filterUnseen(buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
         // See applyResumeMatchedJobs's own comment — swaps whichever posts
         // already landed in a job-source slot for a better resume match,
         // same slot, same mix shape.
@@ -18355,7 +18368,7 @@ async function handleFeedRequest(req, res) {
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
         // shouldn't just stop.
-        const pageSlice = sliceCircular(personalized, lo, feedLimit);
+        const pageSlice = personalized.slice(0, feedLimit);
         trackPostsSeen(pageSlice);
         return res.json({
           posts: pageSlice.map(p => ({
@@ -18367,7 +18380,7 @@ async function handleFeedRequest(req, res) {
             relevance:       1,
           })),
           page: reqPage,
-          hasMore: personalized.length > 0,
+          hasMore: personalized.length > pageSlice.length,
           sort: sortMode,
         });
       }
@@ -18430,9 +18443,9 @@ async function handleFeedRequest(req, res) {
       // cache entry on the plain `timeRange`, and a mismatched key would
       // silently split page 1 and page 2+ onto two different pools again.
       const pool = await getFilteredFeedPool(pageSources, sortMode, timeRange);
-      const rotated = personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed));
-      pageRows = sliceCircular(rotated, offset, feedLimit);
-      hasMore = rotated.length > 0;
+      const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
+      pageRows = rotated.slice(0, feedLimit);
+      hasMore = rotated.length > pageRows.length;
     } else if (!dbRows.length) {
       pageRows = filterUnseen(personalizeForUser(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
         limit: offset + feedLimit + 1,
@@ -19122,7 +19135,6 @@ async function handleVideoFeedRequest(req, res) {
     // shown" tracking (default 'feed' context) so scrolling past a video in
     // one surface doesn't silently remove it from the other. See
     // getUserSeenSet/markPostsSeen's own comment for why this split exists.
-    const seenIds = await getUserSeenSet(req.user.id, 'videos');
     // See getCursorFeedPage's own comment on freshOnly — a manual refresh
     // (reset:true + bust:true client-side) always sends a fresh/empty
     // cursor, and without this the response could just reshow whatever this
@@ -19136,6 +19148,7 @@ async function handleVideoFeedRequest(req, res) {
     // stays in place as the in-memory fallback for whenever that branch
     // doesn't apply (no DB connection, e.g. local dev fallback mode).
     const { topicsFilter, searchQuery, matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
@@ -19220,7 +19233,7 @@ async function handleVideoFeedRequest(req, res) {
     // "one per platform" intro has nothing to add there.
     if (!isUnfilteredVideo) {
       const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
-        sources: cursorSources, cursorMap, limit: feedLimit,
+        userId: req.user.id, sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       const filtered = personalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch)));
@@ -19238,7 +19251,7 @@ async function handleVideoFeedRequest(req, res) {
     let cursorAfterIntro = cursorMap;
     if (isFreshSession && cursorSources.length) {
       const intro = await fetchPlayableVideoPage({
-        sources: cursorSources, cursorMap, limit: cursorSources.length,
+        userId: req.user.id, sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       introPosts = applyPersonalTopicFilter(intro.posts.filter(matchesSearch));
@@ -19264,7 +19277,7 @@ async function handleVideoFeedRequest(req, res) {
     let mixPosts = [], nextCursor = encodeFeedCursor(cursorAfterIntro), hasMore = introPosts.length > 0;
     if (remaining > 0) {
       const mix = await fetchPlayableVideoPage({
-        sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
+        userId: req.user.id, sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       const mixCandidates = mix.posts.filter(p => !introIds.has(p.id)).filter(matchesSearch);
@@ -19306,7 +19319,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // nothing here ever read them until now: Search and Topic silently
     // filtered nothing while in Following mode even though the controls
     // looked identical to Feed mode's working ones.
-    const { topicsFilter, matchesSearch, matchesTopic } = parseVideoFilters(req);
+    const { topicsFilter, searchQuery, matchesSearch, matchesTopic } = parseVideoFilters(req);
     const user = await getUser(req.user.id);
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
@@ -19333,13 +19346,13 @@ async function handleFollowingVideoFeedRequest(req, res) {
       userAffinity,
       { locationContext }
     );
-    const seenIds = await getUserSeenSet(req.user.id, 'videos');
+    const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
-    const pageRows = sliceCircular(rotated, offset, feedLimit);
+    const pageRows = rotated.slice(0, feedLimit);
     sendVideoPage(req, res, pageRows, {
       page: reqPage,
       mode: 'following',
-      hasMore: rotated.length > 0,
+      hasMore: rotated.length > pageRows.length,
       totalAvailable: rotated.length,
       followingCount: followingIds.size,
       sourceErrors,
@@ -19446,10 +19459,10 @@ app.post('/feed/refresh', authenticate, (req, res) => {
 // Fire-and-forget from the client's perspective (204, nothing to react to)
 // — losing an engagement ping to a dropped request isn't worth retry logic
 // for a signal that's not on any critical path yet.
-app.post('/posts/engaged', authenticate, (req, res) => {
+app.post('/posts/engaged', authenticate, async (req, res) => {
   const ids = Array.isArray(req.body?.postIds) ? req.body.postIds.filter(id => typeof id === 'string') : [];
   const context = req.body?.context === 'videos' ? 'videos' : 'feed';
-  markPostsEngaged(req.user.id, ids, context);
+  await markPostsEngaged(req.user.id, ids, context);
   res.status(204).end();
 });
 

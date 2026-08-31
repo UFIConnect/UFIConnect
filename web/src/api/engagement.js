@@ -14,32 +14,52 @@ import client from './client';
 // posts in a few seconds would otherwise be a dozen separate requests for
 // a signal that isn't on any critical path and doesn't need to land
 // instantly.
-const FLUSH_INTERVAL_MS = 3000;
+const FLUSH_INTERVAL_MS = 500;
 const MAX_BATCH = 50;
 
 const reported = new Set(); // post ids already sent this session - never re-queued even if re-viewed
 const queues = new Map(); // context -> Set<postId>
+const inFlight = new Set();
 let flushTimer = null;
+let flushing = false;
 
-function flush() {
+async function flush() {
   flushTimer = null;
+  if (flushing) return;
+  flushing = true;
   let hasMore = false;
-  for (const [context, queue] of queues.entries()) {
-    if (!queue.size) continue;
-    const postIds = [...queue].slice(0, MAX_BATCH);
-    postIds.forEach(id => { queue.delete(id); reported.add(id); });
-    client.post('/posts/engaged', { postIds, context }).catch(() => {});
-    if (queue.size) hasMore = true;
+  try {
+    for (const [context, queue] of queues.entries()) {
+      if (!queue.size) continue;
+      const postIds = [...queue].slice(0, MAX_BATCH);
+      postIds.forEach(id => { queue.delete(id); inFlight.add(id); });
+      try {
+        await client.post('/posts/engaged', { postIds, context });
+        postIds.forEach(id => reported.add(id));
+      } catch {
+        // Keep the item queued so a transient connection failure cannot make
+        // a consumed card eligible to come back in this browser session.
+        postIds.forEach(id => { if (!reported.has(id)) queue.add(id); });
+      }
+      postIds.forEach(id => inFlight.delete(id));
+      if (queue.size) hasMore = true;
+    }
+  } finally {
+    flushing = false;
   }
-  if (hasMore) scheduleFlush();
+  if (hasMore || [...queues.values()].some(queue => queue.size)) scheduleFlush();
 }
 
-function scheduleFlush() {
-  if (flushTimer) return;
-  flushTimer = setTimeout(flush, FLUSH_INTERVAL_MS);
+function scheduleFlush(delay = FLUSH_INTERVAL_MS) {
+  if (flushTimer) {
+    if (delay > 0) return;
+    clearTimeout(flushTimer);
+  }
+  flushTimer = setTimeout(() => { void flush(); }, delay);
 }
 
 function isQueued(postId) {
+  if (inFlight.has(postId)) return true;
   for (const queue of queues.values()) {
     if (queue.has(postId)) return true;
   }
@@ -59,12 +79,27 @@ export function reportEngaged(postId, context = 'feed') {
   scheduleFlush();
 }
 
+// A card becomes consumed when it has actually moved above the viewport.
+// Send that batch immediately rather than waiting for a dwell timer, so the
+// next feed request cannot race it and return the same card again.
+export function reportConsumed(postId, context = 'feed') {
+  if (!postId || reported.has(postId) || isQueued(postId)) return;
+  const key = context === 'videos' ? 'videos' : 'feed';
+  let queue = queues.get(key);
+  if (!queue) {
+    queue = new Set();
+    queues.set(key, queue);
+  }
+  queue.add(postId);
+  scheduleFlush(0);
+}
+
 // Best-effort immediate flush — e.g. before the tab backgrounds/closes, so
 // the last few seconds of engagement aren't silently dropped waiting on
 // the timer.
 export function flushEngaged() {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  flush();
+  void flush();
 }
 
 if (typeof document !== 'undefined') {
