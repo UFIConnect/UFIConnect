@@ -34,7 +34,7 @@ function scoreStyle(score) {
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools() {
+export default function HomeFeedTools({ showSources = true }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -63,7 +63,6 @@ export default function HomeFeedTools() {
 
   const toggle = (key) => setOpenPanel(current => current === key ? null : key);
   const connected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
-  const feedLocation = profile?.roleSettings?.feedLocation;
 
   function addSkill() {
     const value = skillInput.trim();
@@ -126,8 +125,8 @@ export default function HomeFeedTools() {
   }
 
   return (
-    <aside className="home-feed-side-tools" aria-label="Home workspace tools">
-      <ToolPanel title="Feed sources" summary={feedLocation?.city || feedLocation?.country ? `${feedLocation.city ? `${feedLocation.city}, ` : ''}${feedLocation.country || ''}` : 'Personalized for you'} open={openPanel === 'sources'} onToggle={() => toggle('sources')}>
+    <div className="home-feed-side-tools" aria-label="Home tools">
+      {showSources && <ToolPanel title="Feed sources" summary="Personalized for you" open={openPanel === 'sources'} onToggle={() => toggle('sources')}>
         <p style={{ margin: '0 0 10px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>
           Home balances your saved topics, role, activity, and connected accounts.
         </p>
@@ -137,7 +136,7 @@ export default function HomeFeedTools() {
           </div>
         ) : <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.8rem' }}>No accounts connected yet.</p>}
         <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none' }}>Source settings</Link>
-      </ToolPanel>
+      </ToolPanel>}
 
       <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Connect the accounts that should shape your personal feed.</p>
@@ -179,7 +178,6 @@ export default function HomeFeedTools() {
         )}
       </ToolPanel>
 
-      <Link to="/command-center" className="btn btn-ghost btn-sm" style={{ alignSelf: 'flex-start', textDecoration: 'none' }}>Command Center</Link>
-    </aside>
+    </div>
   );
 }

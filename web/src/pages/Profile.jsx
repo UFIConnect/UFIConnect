@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
 import PhotoPickerButton from '../components/PhotoPickerButton';
+import PostList from '../components/PostList';
 import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { uploadMedia } from '../api/upload';
@@ -109,6 +110,40 @@ export default function Profile() {
       .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
       .catch(() => {});
   }, [profile?.id]);
+
+  async function fetchProfilePosts(offset = 0) {
+    if (!profile?.id) return;
+    const appending = offset > 0;
+    if (appending) setPostsLoadingMore(true);
+    else setPostsLoading(true);
+    try {
+      const { data } = await client.get(`/users/${profile.id}/posts`, { params: { limit: 50, offset } });
+      const incoming = data.posts || [];
+      setPosts(current => {
+        if (!appending) return incoming;
+        const seen = new Set(current.map(post => post.id));
+        return [...current, ...incoming.filter(post => !seen.has(post.id))];
+      });
+      setPostsHasMore(!!data.hasMore);
+    } catch {
+      if (!appending) setPosts([]);
+      setPostsHasMore(false);
+    } finally {
+      if (appending) setPostsLoadingMore(false);
+      else setPostsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setPosts([]);
+    setPostsHasMore(false);
+    fetchProfilePosts();
+  }, [profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function loadMorePosts() {
+    if (postsLoadingMore || !postsHasMore) return;
+    fetchProfilePosts(posts.length);
+  }
 
   function fetchAttachments() {
     setAttachmentsLoading(true);
@@ -471,6 +506,29 @@ export default function Profile() {
                 <p style={{ fontSize: '.9rem', lineHeight: 1.65, color: profile.bio ? 'var(--text)' : 'var(--muted)', margin: 0 }}>
                   {profile.bio || 'Add a short bio so people know what you are building and learning.'}
                 </p>
+              </div>
+              <div style={{ marginTop: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                  <div>
+                    <h2 style={{ fontSize: '1rem', margin: 0 }}>Your UFIconnect posts</h2>
+                    <p style={{ color: 'var(--muted)', fontSize: '.82rem', margin: '3px 0 0' }}>Posts you share with the community live here.</p>
+                  </div>
+                  <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none', flexShrink: 0 }}>Write a post</Link>
+                </div>
+                <PostList
+                  posts={posts}
+                  loading={postsLoading}
+                  emptyTitle="No posts yet"
+                  emptyDesc="Write your first UFIconnect post and it will appear here."
+                  emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>Write a post</Link>}
+                  showAuthor={false}
+                  maxWidth={null}
+                  currentUserId={profile?.id}
+                  onPostUpdated={(updated) => setPosts(current => current.map(post => post.id === updated.id ? { ...post, ...updated } : post))}
+                  onPostDeleted={(id) => setPosts(current => current.filter(post => post.id !== id))}
+                  onNearEnd={loadMorePosts}
+                />
+                {postsLoadingMore && <div style={{ textAlign: 'center', padding: '12px 0' }}><span className="spinner spinner-primary" /></div>}
               </div>
             </>
           )}

@@ -163,8 +163,8 @@ input, textarea, select { font-family: inherit; }
 
 .home-feed-layout {
   display: grid;
-  grid-template-columns: 156px minmax(0, 1fr) minmax(250px, 290px);
-  gap: 18px;
+  grid-template-columns: minmax(220px, 248px) minmax(0, 1fr);
+  gap: 20px;
   align-items: start;
   width: 100%;
 }
@@ -173,9 +173,17 @@ input, textarea, select { font-family: inherit; }
 .home-feed-left-tabs {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   position: sticky;
-  top: 24px;
+  top: 18px;
+  max-height: calc(100vh - 36px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.home-feed-view-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 .home-feed-rail-label {
   padding: 0 10px;
@@ -187,6 +195,8 @@ input, textarea, select { font-family: inherit; }
 .home-feed-rail-tab {
   display: flex;
   align-items: center;
+  width: 100%;
+  box-sizing: border-box;
   min-height: 38px;
   padding: 7px 12px;
   border: 1px solid var(--border);
@@ -215,13 +225,11 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  position: sticky;
-  top: 18px;
+  position: static;
 }
 
 @media (max-width: 1180px) {
-  .home-feed-layout { grid-template-columns: 150px minmax(0, 1fr); }
-  .home-feed-side-tools { grid-column: 2; position: static; }
+  .home-feed-layout { grid-template-columns: minmax(205px, 225px) minmax(0, 1fr); }
 }
 
 .page-header {
@@ -1207,16 +1215,14 @@ input, textarea, select { font-family: inherit; }
   .main-wide { max-width: none; }
   .home-feed-layout { display: block; }
   .home-feed-left-tabs {
-    flex-direction: row;
     position: static;
-    overflow-x: auto;
-    padding-bottom: 14px;
-    scrollbar-width: none;
+    max-height: none;
+    overflow: visible;
+    padding: 0 0 16px;
   }
-  .home-feed-left-tabs::-webkit-scrollbar { display: none; }
-  .home-feed-rail-label { display: none; }
-  .home-feed-rail-tab { flex: 0 0 auto; min-height: 34px; white-space: nowrap; }
-  .home-feed-side-tools { position: static; margin-top: 16px; }
+  .home-feed-view-tabs { margin-bottom: 10px; }
+  .home-feed-rail-tab { min-height: 38px; white-space: normal; }
+  .home-feed-side-tools { margin-top: 0; }
   .profile-workspace { grid-template-columns: 1fr; }
   .profile-side-panels { position: static; }
 

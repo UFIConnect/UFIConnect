@@ -1738,8 +1738,10 @@ export default function Feed({ forcedMode } = {}) {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
-      if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
+      if (['local', 'restaurants'].includes(activeMode)) {
+        if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
+        if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
+      }
       if (bust) {
         params.set('bust', '1');
       }
@@ -1904,21 +1906,25 @@ export default function Feed({ forcedMode } = {}) {
   // own version of it.
   const switchViewMode = useCallback((mode) => {
     const nextMode = ['following', 'local', 'restaurants'].includes(mode) ? mode : 'feed';
+    const usesSources = ['feed', 'following'].includes(nextMode);
+    const nextTabs = usesSources ? activeTabsRef.current : [];
+    const nextFilters = usesSources
+      ? filtersRef.current
+      : { ...filtersRef.current, sources: [] };
     viewModeRef.current = nextMode;
+    activeTabsRef.current = nextTabs;
+    filtersRef.current = nextFilters;
     setViewMode(nextMode);
+    setActiveTabs(nextTabs);
+    setFilters(nextFilters);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Deliberately does NOT clear activeTabs/filters.sources — switching
-    // into Feed (or refreshing while already there) keeps whatever's
-    // currently selected instead of resetting to "All." A source that only
-    // really makes sense in the other view (e.g. Following's "linkedin")
-    // carried into Feed just falls through to whatever that source
-    // normally does there (the connect gate for a gated platform, an empty
-    // result for one with nothing to show) rather than a crash — the same
-    // honest outcome picking it any other way would produce.
-    loadFeed(true, activeTabsRef.current, {
+    // Local and restaurant feeds are location-first. Clear source controls
+    // before fetching so a hidden Home/Following source cannot leak into
+    // one of those views.
+    loadFeed(true, nextTabs, {
       mode: nextMode,
-      filters: filtersRef.current,
+      filters: nextFilters,
       q: searchRef.current,
       // Always a full replace now, whether this is a real context switch
       // (Feed vs Following — obviously different data) or clicking the tab
@@ -2100,8 +2106,10 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
-      if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
+      if (['local', 'restaurants'].includes(viewModeRef.current)) {
+        if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
+        if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
+      }
       const { data } = await client.get(`/office/feed?${params.toString()}`);
       // A flat all-time dedup here used to make infinite scroll dead-end
       // (once a user had paged through the whole shared pool once, every
@@ -2422,7 +2430,8 @@ export default function Feed({ forcedMode } = {}) {
     : -1;
 
   const firstName = profile?.name?.split(' ')[0] || '';
-  const activeFilterCount = filters.sources.length + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const usesSourceControls = ['feed', 'following'].includes(viewMode);
+  const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -2435,19 +2444,19 @@ export default function Feed({ forcedMode } = {}) {
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
       {!forcedMode && (
-        <aside className="home-feed-left-tabs" aria-label="Home feed views">
-          <span className="home-feed-rail-label">Browse</span>
-          {[
-            { key: 'feed', label: 'Home' },
-            { key: 'following', label: 'Following' },
-            { key: 'local', label: 'Local' },
-            { key: 'restaurants', label: 'Restaurants' },
-          ].map(({ key, label }) => (
-            <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
-          ))}
-          <span className="home-feed-rail-label" style={{ marginTop: 14 }}>Workspace</span>
-          <Link to="/you" className="home-feed-rail-tab">Your feed</Link>
-          <Link to="/command-center" className="home-feed-rail-tab">Command Center</Link>
+        <aside className="home-feed-left-tabs" aria-label="Home feed controls">
+          <div className="home-feed-view-tabs">
+            {[
+              { key: 'feed', label: 'Home' },
+              { key: 'following', label: 'Following' },
+              { key: 'local', label: 'Local' },
+              { key: 'restaurants', label: 'Restaurants' },
+            ].map(({ key, label }) => (
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
+            ))}
+            <Link to="/command-center" className="home-feed-rail-tab">Command Center</Link>
+          </div>
+          <HomeFeedTools showSources={usesSourceControls} />
         </aside>
       )}
       <div className="home-feed-content">
@@ -2561,7 +2570,7 @@ export default function Feed({ forcedMode } = {}) {
 
       </div>
 
-      {viewMode !== 'following' && (
+      {['local', 'restaurants'].includes(viewMode) && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
           <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>Location</span>
           <input
@@ -2609,7 +2618,7 @@ export default function Feed({ forcedMode } = {}) {
       {/* Source tabs — Feed and Following each filter over their own
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
           list of sources can appear in the other view. */}
-      {viewMode === 'following' && (<div style={{
+      {usesSourceControls && (<div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
         paddingBottom: 4, scrollbarWidth: 'none',
         WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
@@ -2639,11 +2648,11 @@ export default function Feed({ forcedMode } = {}) {
         })}
       </div>)}
 
-      {(activeTabs.length > 0 || activeFilterCount > 0) && (
+      {((usesSourceControls && activeTabs.length > 0) || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
           <span style={{ color: 'var(--muted)', fontWeight: 500, marginRight: 2 }}>Showing:</span>
 
-          {activeTabs.length > 0 ? activeTabs.map(key => {
+          {usesSourceControls && (activeTabs.length > 0 ? activeTabs.map(key => {
             const meta = SOURCE_META[key] || {};
             const color = meta.color || 'var(--primary)';
             return (
@@ -2663,7 +2672,7 @@ export default function Feed({ forcedMode } = {}) {
             );
           }) : (
             <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>All sources</span>
-          )}
+          ))}
 
           {filters.timeRange !== 'all' && (
             <span style={{
@@ -2710,7 +2719,7 @@ export default function Feed({ forcedMode } = {}) {
             </span>
           ))}
 
-          {filters.sources.length > 0 && filters.sources.map(key => {
+          {usesSourceControls && filters.sources.length > 0 && filters.sources.map(key => {
             const meta = SOURCE_META[key] || {};
             return (
               <span key={key} style={{
@@ -3002,7 +3011,6 @@ export default function Feed({ forcedMode } = {}) {
         />
       )}
       </div>
-      {!forcedMode && <HomeFeedTools />}
       </div>
 
       <style>{`
