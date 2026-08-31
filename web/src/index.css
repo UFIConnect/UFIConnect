@@ -1372,7 +1372,8 @@ input, textarea, select { font-family: inherit; }
     overflow: visible;
     padding: 0 0 16px;
   }
-  .home-feed-view-tabs { margin-bottom: 10px; }
+  /* Feed-mode navigation lives in the top-right app menu on mobile. */
+  .home-feed-view-tabs { display: none; }
   .home-feed-rail-tab { min-height: 40px; white-space: normal; }
   .home-feed-command-center-link { display: none; }
   .home-feed-side-tools { margin-top: 0; }
