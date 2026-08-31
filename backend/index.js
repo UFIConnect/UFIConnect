@@ -6639,17 +6639,21 @@ function broadcastSSE(posts) {
   sseBatchTimer = setTimeout(flushSSEBatch, SSE_BATCH_DEBOUNCE);
 }
 
-// Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE
-function addAndBroadcast(incoming) {
+// Call after every fetch: deduplicates, trims content, updates cache, broadcasts via SSE.
+// `includeAccepted` is used by the Equalizer so its fairness telemetry tracks
+// posts that actually made it through the filter, not just work it attempted.
+function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   const started = Date.now();
   const passed = [];
+  const acceptedIds = new Set();
   let droppedInvalid = 0, droppedDuplicate = 0;
   for (const p of incoming) {
     const src = p?.source || 'unknown';
     const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0 });
     bucket.input++;
     if (!p?.id || isFallbackFeedPost(p)) { bucket.droppedInvalid++; droppedInvalid++; continue; }
-    if (seenPostIds.has(p.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    if (seenPostIds.has(p.id) || acceptedIds.has(p.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    acceptedIds.add(p.id);
     bucket.output++;
     passed.push(p);
   }
@@ -6666,7 +6670,7 @@ function addAndBroadcast(incoming) {
   filterAgentState.lastDurationMs = Date.now() - started;
   filterAgentState.lastRun = Date.now();
 
-  if (!fresh.length) return 0;
+  if (!fresh.length) return includeAccepted ? { count: 0, posts: [] } : 0;
   fresh.forEach(p => addSeenId(p.id));
   // This is the one call site building the shared cache itself (every other
   // diversify/maxSharePct usage — enforceFeedDiversity, the Jobs filter —
@@ -6684,18 +6688,75 @@ function addAndBroadcast(incoming) {
   // diversity (enforceFeedDiversity, =18%/=10% - see SRC_CAP in
   // handleFeedRequest) is still what actually caps what any one user sees,
   // same as before this was ever added.
-  globalFeedCache.posts = sortFeedBatch([...fresh, ...globalFeedCache.posts], 'global-feed-cache', {
-    limit: GLOBAL_FEED_CACHE_LIMIT,
-    diversify: true,
-  });
-  globalFeedCache.refreshedAt = Date.now();
+  mergeFreshIntoGlobalFeedCache(fresh);
   broadcastSSE(fresh);
   // Pipeline role writes to the staging table (promoted to feed_posts_cache
   // by the transfer job); api role keeps writing feed_posts_cache directly —
   // relevant for the Deploy A overlap window and any api-role code path not
   // yet gated (see SERVICE_ROLE), so a save never lands somewhere unexpected.
-  if (db.isConnected()) savePostsToDB(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache').catch(() => {});
-  return fresh.length;
+  if (db.isConnected()) queueFeedPersistence(fresh, IS_PIPELINE_ROLE ? 'feed_posts_staging' : 'feed_posts_cache');
+  return includeAccepted ? { count: fresh.length, posts: fresh } : fresh.length;
+}
+
+// Equalizer drains are intentionally quick and frequent. Persisting every
+// drain with its own concurrent database write made a busy pipeline build a
+// second, invisible queue inside the Postgres pool. Coalesce by id and write
+// one bounded bulk batch at a time instead; the newest version of a post
+// wins while the queue stays observable and finite.
+const INGEST_PERSIST_BATCH_SIZE = envNumber('INGEST_PERSIST_BATCH_SIZE', 500, 50, 2000);
+const INGEST_PERSIST_FLUSH_MS = envNumber('INGEST_PERSIST_FLUSH_MS', 150, 25, 2000);
+const INGEST_PERSIST_RETRY_MS = envNumber('INGEST_PERSIST_RETRY_MS', 1500, 250, 30000);
+const INGEST_PERSIST_MAX_PENDING = envNumber('INGEST_PERSIST_MAX_PENDING', 15000, 1000, 100000);
+const ingestPersistenceQueues = new Map(); // target table -> { pending: Map<id, post>, inFlight, timer }
+
+function queueFeedPersistence(posts, targetTable) {
+  if (!posts?.length) return;
+  let state = ingestPersistenceQueues.get(targetTable);
+  if (!state) {
+    state = { pending: new Map(), inFlight: false, timer: null, dropped: 0 };
+    ingestPersistenceQueues.set(targetTable, state);
+  }
+  for (const post of posts) {
+    if (post?.id) state.pending.set(post.id, post);
+  }
+  while (state.pending.size > INGEST_PERSIST_MAX_PENDING) {
+    const oldestId = state.pending.keys().next().value;
+    if (!oldestId) break;
+    state.pending.delete(oldestId);
+    state.dropped += 1;
+  }
+  scheduleFeedPersistenceFlush(targetTable, state, INGEST_PERSIST_FLUSH_MS);
+}
+
+function scheduleFeedPersistenceFlush(targetTable, state, delay) {
+  if (state.inFlight || state.timer || !state.pending.size) return;
+  state.timer = setTimeout(() => flushFeedPersistenceQueue(targetTable), delay);
+}
+
+async function flushFeedPersistenceQueue(targetTable) {
+  const state = ingestPersistenceQueues.get(targetTable);
+  if (!state) return;
+  state.timer = null;
+  if (state.inFlight || !state.pending.size) return;
+  state.inFlight = true;
+  const batch = [...state.pending.values()].slice(0, INGEST_PERSIST_BATCH_SIZE);
+  for (const post of batch) state.pending.delete(post.id);
+  let retryDelay = INGEST_PERSIST_FLUSH_MS;
+  try {
+    const saved = await savePostsToDBFast(batch, targetTable, db, { skipTrim: false });
+    recordFeedWriteOutcome(targetTable, batch.length, saved, null);
+  } catch (error) {
+    // Preserve newer copies queued while this batch was in flight. Only put
+    // an older failed post back when no newer copy of that id has arrived.
+    for (const post of batch) {
+      if (!state.pending.has(post.id)) state.pending.set(post.id, post);
+    }
+    recordFeedWriteOutcome(targetTable, batch.length, 0, error?.message || String(error));
+    retryDelay = INGEST_PERSIST_RETRY_MS;
+  } finally {
+    state.inFlight = false;
+    scheduleFeedPersistenceFlush(targetTable, state, retryDelay);
+  }
 }
 
 // --- Continuous per-source workers -------------------------------------------
@@ -7027,7 +7088,7 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
       }
       if (posts.length) {
         const trimmed = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
-        addAndBroadcast(trimmed);
+        pushToEqualizer(agentId, trimmed);
         const prev = agentSourceCache.get(agentId) || { posts: [], totalSeen: 0 };
         agentSourceCache.set(agentId, {
           posts: sortFeedBatch([...trimmed, ...prev.posts], `${agentId}-manual-cache`, {
@@ -7178,6 +7239,40 @@ const GLOBAL_FEED_CACHE_LIMIT = 100000;
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
+
+// Sorting the entire 100k-post runtime cache for every small Equalizer drain
+// costs far more CPU than the drain itself. New posts are visible immediately
+// at the cache head, then one short coalesced resort restores the full ranked
+// and diversified order. DB-backed feeds remain the source of truth.
+const GLOBAL_CACHE_RESORT_MIN_MS = envNumber('GLOBAL_CACHE_RESORT_MIN_MS', 15000, 1000, 5 * 60 * 1000);
+let globalCacheLastResortAt = 0;
+let globalCacheResortTimer = null;
+
+function flushGlobalFeedCacheResort() {
+  globalCacheResortTimer = null;
+  if (!globalFeedCache.posts.length) return;
+  globalFeedCache.posts = sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'global-feed-cache', {
+    limit: GLOBAL_FEED_CACHE_LIMIT,
+    diversify: true,
+  });
+  globalFeedCache.refreshedAt = Date.now();
+  globalCacheLastResortAt = globalFeedCache.refreshedAt;
+}
+
+function mergeFreshIntoGlobalFeedCache(fresh) {
+  const freshIds = new Set(fresh.map(post => post?.id).filter(Boolean));
+  const existing = globalFeedCache.posts || [];
+  globalFeedCache.posts = [...fresh, ...existing.filter(post => !freshIds.has(post?.id))]
+    .slice(0, GLOBAL_FEED_CACHE_LIMIT);
+  globalFeedCache.refreshedAt = Date.now();
+
+  if (!globalCacheLastResortAt || globalFeedCache.refreshedAt - globalCacheLastResortAt >= GLOBAL_CACHE_RESORT_MIN_MS) {
+    flushGlobalFeedCacheResort();
+  } else if (!globalCacheResortTimer) {
+    const wait = Math.max(0, GLOBAL_CACHE_RESORT_MIN_MS - (globalFeedCache.refreshedAt - globalCacheLastResortAt));
+    globalCacheResortTimer = setTimeout(flushGlobalFeedCacheResort, wait);
+  }
+}
 
 // Personal Feed and All Collected share one merged view now, and its sort
 // used to be recomputed fresh on every single request — 'ranked' mode's
@@ -7375,10 +7470,19 @@ function roundRobinMerge(lists) {
 // comment).
 const EQUALIZER_DRAIN_MS = 2000;
 const equalizerBuffer = new Map(); // sourceId -> post[], awaiting the next drain
+const equalizerQueuedPostIds = new Set();
+const EQUALIZER_MAX_BUFFER_PER_SOURCE = envNumber('EQUALIZER_MAX_BUFFER_PER_SOURCE', 1200, 100, 10000);
+const EQUALIZER_MAX_BUFFER_TOTAL = envNumber('EQUALIZER_MAX_BUFFER_TOTAL', 12000, 500, 50000);
+const EQUALIZER_MAX_DRAIN_PER_TICK = envNumber('EQUALIZER_MAX_DRAIN_PER_TICK', 600, 20, 5000);
+const EQUALIZER_MIN_DRAIN_PER_SOURCE = envNumber('EQUALIZER_MIN_DRAIN_PER_SOURCE', 2, 1, 20);
 const equalizerState = {
-  totalRuns: 0, totalBuffered: 0, totalDrained: 0,
+  totalRuns: 0, totalBuffered: 0, totalDrained: 0, totalAccepted: 0,
+  totalQueueDuplicates: 0, totalBackpressureDropped: 0,
   lastRun: null, lastDurationMs: 0,
   lastDrainedBySource: {}, // sourceId -> count drained on the most recent tick
+  lastAcceptedBySource: {},
+  lastRejectedBySource: {},
+  lastBackpressureDroppedBySource: {},
   recentSharePct: {},      // sourceId -> rolling % of total drained, feeds both the office display and the dampening calc below
 };
 // Rolling window (not just "last tick") so the dampening calc reacts to a
@@ -7391,9 +7495,61 @@ const equalizerShareCounts = new Map(); // sourceId -> weighted count within the
 
 function pushToEqualizer(sourceId, posts) {
   if (!posts?.length) return;
+  equalizerState.lastBackpressureDroppedBySource = {};
   if (!equalizerBuffer.has(sourceId)) equalizerBuffer.set(sourceId, []);
-  equalizerBuffer.get(sourceId).push(...posts);
-  equalizerState.totalBuffered += posts.length;
+  const buffer = equalizerBuffer.get(sourceId);
+  let buffered = 0;
+  for (const post of posts) {
+    if (!post?.id || isFallbackFeedPost(post) || seenPostIds.has(post.id) || equalizerQueuedPostIds.has(post.id)) {
+      equalizerState.totalQueueDuplicates += 1;
+      continue;
+    }
+    buffer.push(post);
+    equalizerQueuedPostIds.add(post.id);
+    buffered += 1;
+  }
+  if (!buffered) return;
+  equalizerState.totalBuffered += buffered;
+  trimEqualizerBacklog();
+}
+
+function dropEqualizerPosts(sourceId, count) {
+  const buffer = equalizerBuffer.get(sourceId);
+  if (!buffer?.length || count <= 0) return 0;
+  const dropped = buffer.splice(0, Math.min(count, buffer.length));
+  for (const post of dropped) equalizerQueuedPostIds.delete(post?.id);
+  if (!buffer.length) equalizerBuffer.delete(sourceId);
+  if (dropped.length) {
+    equalizerState.totalBackpressureDropped += dropped.length;
+    equalizerState.lastBackpressureDroppedBySource[sourceId] = (equalizerState.lastBackpressureDroppedBySource[sourceId] || 0) + dropped.length;
+  }
+  return dropped.length;
+}
+
+function equalizerPendingTotal() {
+  let total = 0;
+  for (const buffer of equalizerBuffer.values()) total += buffer.length;
+  return total;
+}
+
+function trimEqualizerBacklog() {
+  for (const [sourceId, buffer] of equalizerBuffer) {
+    if (buffer.length > EQUALIZER_MAX_BUFFER_PER_SOURCE) {
+      dropEqualizerPosts(sourceId, buffer.length - EQUALIZER_MAX_BUFFER_PER_SOURCE);
+    }
+  }
+  let overflow = equalizerPendingTotal() - EQUALIZER_MAX_BUFFER_TOTAL;
+  while (overflow > 0) {
+    let fullestId = null;
+    let fullestLength = 0;
+    for (const [sourceId, buffer] of equalizerBuffer) {
+      if (buffer.length > fullestLength) { fullestId = sourceId; fullestLength = buffer.length; }
+    }
+    if (!fullestId) break;
+    const dropped = dropEqualizerPosts(fullestId, Math.min(overflow, Math.max(1, Math.ceil(fullestLength / 4))));
+    if (!dropped) break;
+    overflow -= dropped;
+  }
 }
 
 function recordEqualizerShare(sourceId, count) {
@@ -7412,6 +7568,54 @@ function recordEqualizerShare(sourceId, count) {
   }
 }
 
+function buildEqualizerDrainPlan(sourceIds) {
+  const totalBaseWeight = sourceIds.reduce((sum, sourceId) => sum + (SOURCE_CONFIG[sourceId]?.shards || 1), 0) || 1;
+  const candidates = sourceIds.map(id => {
+    const buffer = equalizerBuffer.get(id);
+    const baseWeight = SOURCE_CONFIG[id]?.shards || 1;
+    const fairShare = baseWeight / totalBaseWeight;
+    const recentShare = equalizerShareTotal > 0 ? (equalizerShareCounts.get(id) || 0) / equalizerShareTotal : fairShare;
+    const dampening = recentShare > fairShare ? Math.max(0.15, fairShare / recentShare) : 1;
+    return {
+      id,
+      available: buffer.length,
+      weight: Math.max(0.15, baseWeight * dampening),
+      quota: 0,
+    };
+  });
+  const budget = Math.min(EQUALIZER_MAX_DRAIN_PER_TICK, equalizerPendingTotal());
+  let remaining = budget;
+  for (let turn = 0; turn < EQUALIZER_MIN_DRAIN_PER_SOURCE && remaining > 0; turn++) {
+    for (const source of candidates) {
+      if (!remaining) break;
+      if (source.quota < source.available) {
+        source.quota += 1;
+        remaining -= 1;
+      }
+    }
+  }
+  if (!remaining) return candidates;
+
+  const totalWeight = candidates.reduce((sum, source) => sum + source.weight, 0) || 1;
+  for (const source of candidates) {
+    const room = source.available - source.quota;
+    const extra = Math.min(room, Math.floor((remaining * source.weight) / totalWeight));
+    source.quota += extra;
+  }
+  remaining = Math.max(0, budget - candidates.reduce((sum, source) => sum + source.quota, 0));
+  // Give any rounding remainder to the currently most under-served weighted
+  // source. Work per drain stays bounded even during a manual-refresh burst.
+  while (remaining > 0) {
+    const eligible = candidates
+      .filter(source => source.quota < source.available)
+      .sort((a, b) => (b.weight / (b.quota + 1)) - (a.weight / (a.quota + 1)));
+    if (!eligible.length) break;
+    eligible[0].quota += 1;
+    remaining -= 1;
+  }
+  return candidates;
+}
+
 function runEqualizerDrain() {
   const sourceIds = [...equalizerBuffer.keys()].filter(id => equalizerBuffer.get(id)?.length);
   if (!sourceIds.length) return;
@@ -7421,31 +7625,26 @@ function runEqualizerDrain() {
   // fraction of every currently-buffered source's combined rate — a source
   // configured to pull faster earns proportionally more turns, the "based
   // on the limit we just set" half of this.
-  const totalShards = sourceIds.reduce((sum, id) => sum + (SOURCE_CONFIG[id]?.shards || 1), 0);
   const perSourceLists = [];
   const drainedBySource = {};
-  for (const id of sourceIds) {
+  for (const { id, quota } of buildEqualizerDrainPlan(sourceIds)) {
     const buf = equalizerBuffer.get(id);
-    const baseWeight = SOURCE_CONFIG[id]?.shards || 1;
-    const fairShare = baseWeight / totalShards;
-    const recentShare = equalizerShareTotal > 0 ? (equalizerShareCounts.get(id) || 0) / equalizerShareTotal : fairShare;
     // Dampen — never boost — a source currently running ahead of its fair
     // share. This is the "also take into account some sources really
     // over-dominating" half: a source configured to pull fast still gets
     // fewer turns this tick if it's already over-represented in what's
     // actually made it through recently, not just its raw configured rate.
-    const dampening = recentShare > fairShare ? Math.max(0.15, fairShare / recentShare) : 1;
-    const weight = Math.max(1, Math.round(baseWeight * dampening));
     // The extra ceil(buf.length/20) floor keeps a backlog from growing
     // unbounded under sustained dampening — always drains at least 5% of
     // whatever's waiting on top of the weighted amount, so a heavily-
     // dampened source's buffer still empties out, just slower than a
     // fairly-weighted one's.
-    const drained = buf.splice(0, Math.max(weight, Math.ceil(buf.length / 20)));
+    const drained = buf.splice(0, quota);
+    for (const post of drained) equalizerQueuedPostIds.delete(post?.id);
+    if (!buf.length) equalizerBuffer.delete(id);
     if (!drained.length) continue;
     perSourceLists.push(drained);
     drainedBySource[id] = drained.length;
-    recordEqualizerShare(id, drained.length);
   }
   if (!perSourceLists.length) return;
 
@@ -7453,20 +7652,34 @@ function runEqualizerDrain() {
   // same fair round-robin primitive the rest of this pipeline already
   // uses — see its own comment for why this is "the full equalizer."
   const merged = roundRobinMerge(perSourceLists);
-  const n = addAndBroadcast(merged);
+  const accepted = addAndBroadcast(merged, { includeAccepted: true });
+  const acceptedBySource = {};
+  for (const post of accepted.posts) {
+    const sourceId = post.source || 'unknown';
+    acceptedBySource[sourceId] = (acceptedBySource[sourceId] || 0) + 1;
+  }
+  const rejectedBySource = {};
+  for (const [sourceId, drainedCount] of Object.entries(drainedBySource)) {
+    const acceptedCount = acceptedBySource[sourceId] || 0;
+    if (acceptedCount) recordEqualizerShare(sourceId, acceptedCount);
+    if (drainedCount > acceptedCount) rejectedBySource[sourceId] = drainedCount - acceptedCount;
+  }
 
   equalizerState.totalRuns += 1;
   equalizerState.totalDrained += merged.length;
+  equalizerState.totalAccepted += accepted.count;
   equalizerState.lastRun = Date.now();
   equalizerState.lastDurationMs = Date.now() - started;
   equalizerState.lastDrainedBySource = drainedBySource;
+  equalizerState.lastAcceptedBySource = acceptedBySource;
+  equalizerState.lastRejectedBySource = rejectedBySource;
   equalizerState.recentSharePct = Object.fromEntries(
     [...equalizerShareCounts.entries()].map(([id, c]) =>
       [id, equalizerShareTotal ? Math.round((c / equalizerShareTotal) * 1000) / 10 : 0])
   );
-  if (n > 0) {
+  if (accepted.count > 0) {
     logAgentAction('equalizer', '??',
-      `Drained ${merged.length} posts across ${perSourceLists.length} source(s), ${n} new`, '#38BDF8');
+      `Drained ${merged.length} posts across ${perSourceLists.length} source(s), ${accepted.count} accepted`, '#38BDF8');
   }
 }
 setInterval(runEqualizerDrain, EQUALIZER_DRAIN_MS);
@@ -20105,14 +20318,23 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       totalRuns: equalizerState.totalRuns,
       totalBuffered: equalizerState.totalBuffered,
       totalDrained: equalizerState.totalDrained,
+      totalAccepted: equalizerState.totalAccepted,
+      totalQueueDuplicates: equalizerState.totalQueueDuplicates,
+      totalBackpressureDropped: equalizerState.totalBackpressureDropped,
       lastRun: equalizerState.lastRun,
       lastDurationMs: equalizerState.lastDurationMs,
       lastDrainedBySource: equalizerState.lastDrainedBySource,
+      lastAcceptedBySource: equalizerState.lastAcceptedBySource,
+      lastRejectedBySource: equalizerState.lastRejectedBySource,
+      lastBackpressureDroppedBySource: equalizerState.lastBackpressureDroppedBySource,
       recentSharePct: equalizerState.recentSharePct,
-      pendingTotal: [...equalizerBuffer.values()].reduce((sum, arr) => sum + arr.length, 0),
+      pendingTotal: equalizerPendingTotal(),
       bufferedBySource: Object.fromEntries(
         [...equalizerBuffer.entries()].filter(([, arr]) => arr.length).map(([id, arr]) => [id, arr.length])
       ),
+      persistencePendingTotal: [...ingestPersistenceQueues.values()].reduce((sum, queue) => sum + queue.pending.size, 0),
+      persistenceInFlight: [...ingestPersistenceQueues.values()].some(queue => queue.inFlight),
+      persistenceDroppedTotal: [...ingestPersistenceQueues.values()].reduce((sum, queue) => sum + queue.dropped, 0),
     },
     filterAgent: {
       status: filterAgentState.lastError ? 'degraded' : filterAgentState.status,
@@ -22588,7 +22810,7 @@ function startJobBoardSweeps() {
       if (posts.length) {
         health.lastSuccess = Date.now();
         health.consecutiveErrors = 0;
-        addAndBroadcast(posts);
+        pushToEqualizer('remotive', posts);
         logAgentAction('remotive', '???', `${category}: ${posts.length} listing(s)`, '#00A876');
       }
     } catch (err) {
@@ -22609,7 +22831,7 @@ function startJobBoardSweeps() {
       if (posts.length) {
         health.lastSuccess = Date.now();
         health.consecutiveErrors = 0;
-        addAndBroadcast(posts);
+        pushToEqualizer('muse', posts);
         logAgentAction('muse', '??', `${category} / ${level}: ${posts.length} listing(s)`, '#8A2BE2');
       }
     } catch (err) {

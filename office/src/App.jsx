@@ -1961,7 +1961,12 @@ function DetailStat({ label, value, color }) {
 function EqualizerDetailCard({ equalizer, workers = [] }) {
   const bufferedBySource = equalizer?.bufferedBySource || {};
   const drainedBySource = equalizer?.lastDrainedBySource || {};
+  const acceptedBySource = equalizer?.lastAcceptedBySource || {};
+  const rejectedBySource = equalizer?.lastRejectedBySource || {};
   const sharePct = equalizer?.recentSharePct || {};
+  const drainedThisTick = Object.values(drainedBySource).reduce((sum, count) => sum + count, 0);
+  const acceptedThisTick = Object.values(acceptedBySource).reduce((sum, count) => sum + count, 0);
+  const rejectedThisTick = Object.values(rejectedBySource).reduce((sum, count) => sum + count, 0);
   const queuedRows = Object.entries(bufferedBySource).sort((a, b) => b[1] - a[1]).slice(0, 8);
   const shareRows = Object.entries(sharePct).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const nameFor = (id) => (workers.find(w => w.id === id)?.name || id).replace(' Agent', '');
@@ -1972,15 +1977,30 @@ function EqualizerDetailCard({ equalizer, workers = [] }) {
       <Label color="#38bdf8">Equalizer — detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
         Drains every 2s: interleaves whatever's queued from each source, weighted by its own configured pull rate
-        and dampened if it's currently over-represented in recent output — reorders fairly, never drops anything.
+        and dampened if it is currently over-represented in accepted output. Queue and write batches are capped so a burst cannot exhaust memory or database connections.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
         <DetailStat label="queued now" value={(equalizer?.pendingTotal ?? 0).toLocaleString()} color="#38bdf8" />
-        <DetailStat label="drained/tick" value={(Object.values(drainedBySource).reduce((s, n) => s + n, 0)).toLocaleString()} />
+        <DetailStat label="drained/tick" value={drainedThisTick.toLocaleString()} />
+        <DetailStat label="accepted/tick" value={acceptedThisTick.toLocaleString()} color="#4ade80" />
+        <DetailStat label="rejected/tick" value={rejectedThisTick.toLocaleString()} color={rejectedThisTick ? '#fbbf24' : undefined} />
+        <DetailStat label="write queue" value={(equalizer?.persistencePendingTotal ?? 0).toLocaleString()} color={equalizer?.persistenceInFlight ? '#38bdf8' : undefined} />
         <DetailStat label="total drained" value={(equalizer?.totalDrained ?? 0).toLocaleString()} />
+        <DetailStat label="total accepted" value={(equalizer?.totalAccepted ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="last tick" value={equalizer?.lastDurationMs != null ? `${equalizer.lastDurationMs}ms` : '—'} />
       </div>
+
+      {(equalizer?.totalBackpressureDropped ?? 0) > 0 && (
+        <div style={{ margin: '0 0 12px', padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,.1)', color: '#fbbf24', fontSize: 11 }}>
+          Backpressure protected the service by discarding {(equalizer.totalBackpressureDropped || 0).toLocaleString()} oldest queued post(s). Increase the Equalizer buffer limits if this keeps rising.
+        </div>
+      )}
+      {(equalizer?.persistenceDroppedTotal ?? 0) > 0 && (
+        <div style={{ margin: '0 0 12px', padding: '8px 10px', borderRadius: 6, background: 'rgba(239,68,68,.1)', color: '#f87171', fontSize: 11 }}>
+          The database write queue discarded {(equalizer.persistenceDroppedTotal || 0).toLocaleString()} post(s) after repeated write failures. Check staging storage and the database connection.
+        </div>
+      )}
 
       {queuedRows.length > 0 && (
         <div style={{ marginBottom: 12 }}>
