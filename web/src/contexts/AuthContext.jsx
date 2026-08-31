@@ -146,8 +146,8 @@ export function AuthProvider({ children }) {
     return data.profile || data.user;
   }
 
-  async function register(name, email, password, title) {
-    const { data } = await client.post('/auth/register', { name, email, password, title });
+  async function register(name, email, password, title, phone) {
+    const { data } = await client.post('/auth/register', { name, email, password, title, phone });
     localStorage.setItem('pc_token', data.token);
     cacheProfile(data.profile || data.user || null, data.token);
     setToken(data.token);

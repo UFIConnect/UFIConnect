@@ -470,7 +470,7 @@ export default function Register() {
   const navigate = useNavigate();
 
   const [step,          setStep]        = useState(0);
-  const [form,          setForm]        = useState({ name: '', email: '', password: '', confirmPassword: '' });
+  const [form,          setForm]        = useState({ name: '', email: '', phone: '', password: '', confirmPassword: '' });
   const [selectedMacro, setMacro]       = useState(null);
   const [title,         setTitle]       = useState('');
   const [titleSearch,   setTitleSearch] = useState('');
@@ -487,8 +487,12 @@ export default function Register() {
 
   function handleStep1(e) {
     e.preventDefault();
-    if (!form.name || !form.email || !form.password || !form.confirmPassword) {
+    if (!form.name || !form.email || !form.phone || !form.password || !form.confirmPassword) {
       setError('All fields are required.'); return;
+    }
+    const normalizedPhone = form.phone.replace(/[\s().-]/g, '');
+    if (!/^\+[1-9]\d{7,14}$/.test(normalizedPhone)) {
+      setError('Use a phone number with country code, such as +1 555 123 4567.'); return;
     }
     if (form.password.length < 6) {
       setError('Password must be at least 6 characters.'); return;
@@ -530,7 +534,7 @@ export default function Register() {
     e.preventDefault();
     setLoading(true);
     try {
-      await register(form.name, form.email, form.password, title);
+      await register(form.name, form.email, form.password, title, form.phone);
       if (selectedMacro) {
         localStorage.setItem('ufi_signup_ctx', JSON.stringify({
           role: selectedMacro.role,
@@ -638,6 +642,12 @@ export default function Register() {
                   <label className="form-label">Email address</label>
                   <input className="form-input" type="email" name="email"
                     placeholder="jane@example.com" value={form.email} onChange={handleChange} autoComplete="email" />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Phone number</label>
+                  <input className="form-input" type="tel" name="phone"
+                    placeholder="+1 555 123 4567" value={form.phone} onChange={handleChange} autoComplete="tel" inputMode="tel" />
+                  <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 4, display: 'block' }}>Include your country code. Used only to keep your billing account accurate.</span>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Password</label>

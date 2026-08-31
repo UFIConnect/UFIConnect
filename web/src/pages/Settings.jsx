@@ -223,6 +223,7 @@ export default function Settings() {
   // ── Account / role-specific settings state ────────────────────────────────
   const [form, setForm] = useState({
     name:         profile?.name         || '',
+    phone:        profile?.phone        || '',
     title:        profile?.title        || '',
     bio:          profile?.bio          || '',
     organization: profile?.organization || '',
@@ -273,7 +274,7 @@ export default function Settings() {
       const persisted = data.profile || data;
       updateProfileLocally(persisted);
       setForm({
-        name: persisted.name || '', title: persisted.title || '', bio: persisted.bio || '',
+        name: persisted.name || '', phone: persisted.phone || '', title: persisted.title || '', bio: persisted.bio || '',
         organization: persisted.organization || '',
         skills: (Array.isArray(persisted.skills) ? persisted.skills : []).join(', '),
       });
@@ -380,6 +381,7 @@ export default function Settings() {
     const savedPreferences = profile.preferences || {};
     setForm({
       name: profile.name || '',
+      phone: profile.phone || '',
       title: profile.title || '',
       bio: profile.bio || '',
       organization: profile.organization || '',
@@ -649,6 +651,11 @@ export default function Settings() {
               <label className="form-label">Email address</label>
               <input className="form-input" value={profile.email} disabled style={{ background: 'var(--bg-secondary)', color: 'var(--muted)' }} />
               <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Email cannot be changed. Contact support if you need help.</span>
+            </div>
+            <div className="form-group" style={{ marginBottom: 4 }}>
+              <label className="form-label">Billing phone number</label>
+              <input className="form-input" type="tel" name="phone" value={form.phone} onChange={handleChange} placeholder="+1 555 123 4567" autoComplete="tel" inputMode="tel" />
+              <span style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 3, display: 'block' }}>Include your country code. This stays private and is used only to keep Stripe billing accurate.</span>
             </div>
             <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
               Profile photo and cover image are managed from your <Link to="/profile">profile page</Link>.

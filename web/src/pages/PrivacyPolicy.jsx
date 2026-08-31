@@ -96,7 +96,8 @@ export default function PrivacyPolicy() {
         <Section title="2. Data we collect">
           <P><strong>Account data</strong> — when you register:</P>
           <UL items={[
-            'Name, email address, and password (stored as a bcrypt hash — we never store plaintext passwords)',
+            'Name, email address, phone number, and password (stored as a bcrypt hash — we never store plaintext passwords)',
+            'Your phone number is private and used only to create and keep your Stripe billing customer accurate',
             'Professional role, title, organisation, skills, goals, and interests you provide during onboarding',
             'Profile photo URL (if you add one)',
             'Links to external profiles (GitHub, LinkedIn, Twitter, portfolio, etc.) that you optionally add',

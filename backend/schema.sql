@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name            VARCHAR(100)  NOT NULL,
   email           VARCHAR(255)  UNIQUE NOT NULL,
+  phone           VARCHAR(20)   DEFAULT '',
   password_hash   VARCHAR(255)  NOT NULL,
   auth_provider   VARCHAR(50)   DEFAULT 'local',
   auth_subject    VARCHAR(255),

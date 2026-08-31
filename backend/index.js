@@ -14259,6 +14259,9 @@ function fullProfile(user) {
 
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
+    // Phone is only returned to the signed-in member through their profile
+    // response. Public/member discovery always uses sanitizeUser().
+    phone: user.phone || '',
     bio: user.bio, skills: Array.isArray(user.skills) ? user.skills : [], organization: user.organization,
     avatarUrl: user.avatarUrl || '',
     coverUrl: user.coverUrl || '',
@@ -14285,6 +14288,15 @@ function fullProfile(user) {
 }
 
 // -- DB ? memory helpers -------------------------------------------------------
+function normalizeMemberPhone(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  // Keep one unambiguous, internationally usable representation for Stripe.
+  // Formatting spaces, parentheses, and hyphens are welcome in the form.
+  const compact = raw.replace(/[\s().-]/g, '');
+  return /^\+[1-9]\d{7,14}$/.test(compact) ? compact : null;
+}
+
 function isDBId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(id));
 }
@@ -14294,6 +14306,7 @@ function dbRowToMemUser(row) {
     id: row.id,
     name: row.name,
     email: row.email,
+    phone: row.phone || '',
     passwordHash: row.password_hash,
     authProvider: row.auth_provider || 'local',
     authSubject: row.auth_subject || null,
@@ -14453,6 +14466,7 @@ async function provisionAuth0User(payload) {
     id: `u${Date.now()}`,
     name,
     email,
+    phone: '',
     passwordHash: bcrypt.hashSync(crypto.randomUUID(), 10),
     authProvider: 'auth0',
     authSubject: subject,
@@ -14485,6 +14499,7 @@ async function migrateDB() {
         id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name                TEXT NOT NULL,
         email               TEXT UNIQUE NOT NULL,
+        phone               TEXT DEFAULT '',
         password_hash       TEXT NOT NULL,
         auth_provider       TEXT DEFAULT 'local',
         auth_subject        TEXT,
@@ -14541,6 +14556,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_subject TEXT`);
+    await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT ''`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT ''`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cover_url TEXT DEFAULT ''`);
     // Stripe billing — see createCheckoutSession/handleStripeWebhook. Customer
@@ -17431,8 +17447,10 @@ app.get('/auth/me', authenticate, async (req, res) => {
 });
 
 app.post('/auth/register', registerLimiter, async (req, res) => {
-  const { name, email, password, title } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields.' });
+  const { name, email, password, title, phone: phoneInput } = req.body || {};
+  if (!name || !email || !password || !phoneInput) return res.status(400).json({ message: 'Name, email, password, and phone number are required.' });
+  const phone = normalizeMemberPhone(phoneInput);
+  if (!phone) return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567.' });
   const emailLc = email.toLowerCase();
 
   if (db.isConnected()) {
@@ -17441,8 +17459,8 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
       if (exists.rows.length) return res.status(409).json({ message: 'Email already registered.' });
       const hash = bcrypt.hashSync(password, 10);
       const { rows } = await db.query(
-        `INSERT INTO users (name, email, password_hash, title) VALUES ($1,$2,$3,$4) RETURNING *`,
-        [name, emailLc, hash, title || null]
+        `INSERT INTO users (name, email, phone, password_hash, title) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [name, emailLc, phone, hash, title || null]
       );
       const mem = syncToMemory(dbRowToMemUser(rows[0]));
       const token = jwt.sign({ id: mem.id, email: mem.email }, JWT_SECRET, { expiresIn: '7d' });
@@ -17953,11 +17971,16 @@ app.patch('/profile', authenticate, async (req, res) => {
     return res.status(503).json({ message: 'Saving is temporarily unavailable. Please try again in a moment.' });
   }
   const { name, title, bio, skills, organization, links, roleSettings, profileHidden, avatarUrl, coverUrl } = req.body;
+  const hasPhoneUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'phone');
+  const normalizedPhone = hasPhoneUpdate ? normalizeMemberPhone(req.body.phone) : undefined;
+  if (hasPhoneUpdate && String(req.body.phone || '').trim() && !normalizedPhone) {
+    return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567.' });
+  }
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
   const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
     organization: user.organization, links: user.links, roleSettings: user.roleSettings,
-    profileHidden: user.profileHidden, avatarUrl: user.avatarUrl, coverUrl: user.coverUrl };
+    profileHidden: user.profileHidden, avatarUrl: user.avatarUrl, coverUrl: user.coverUrl, phone: user.phone };
   if (name) user.name = name;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
@@ -17980,6 +18003,7 @@ app.patch('/profile', authenticate, async (req, res) => {
   // a broken-looking avatar for that one user, not a security issue.
   if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
   if (coverUrl !== undefined) user.coverUrl = coverUrl;
+  if (hasPhoneUpdate) user.phone = normalizedPhone || '';
   // Was unconditionally reset to false on every save regardless of what the
   // request sent — meaning even a real "hide my profile" toggle could never
   // actually stick, since the very next profile edit (or the same request
@@ -17990,10 +18014,10 @@ app.patch('/profile', authenticate, async (req, res) => {
   try {
     if (isDBId(user.id)) {
       const { rows } = await db.query(
-        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10 WHERE id=$11 RETURNING *`,
+        `UPDATE users SET name=$1,title=$2,bio=$3,skills=$4,organization=$5,links=$6,role_settings=$7,profile_hidden=$8,avatar_url=$9,cover_url=$10,phone=$11 WHERE id=$12 RETURNING *`,
         [user.name, user.title, user.bio, user.skills, user.organization,
          JSON.stringify(user.links || {}), JSON.stringify(user.roleSettings || {}), user.profileHidden || false,
-         user.avatarUrl || '', user.coverUrl || '', user.id]
+         user.avatarUrl || '', user.coverUrl || '', user.phone || '', user.id]
       );
       if (!rows[0]) throw new Error('Profile record was not found after save');
       Object.assign(user, dbRowToMemUser(rows[0]));
@@ -18130,6 +18154,49 @@ const TIER_PRICE_IDS = {
     || process.env.RESUME_BUILDER_PRICE_ID,
 };
 
+async function persistStripeCustomerId(user, stripeCustomerId) {
+  if (isDBId(user.id) && db.isConnected()) {
+    const { rows } = await db.query(
+      'UPDATE users SET stripe_customer_id=$1 WHERE id=$2 RETURNING *',
+      [stripeCustomerId, user.id]
+    );
+    if (!rows[0]) throw new Error('Profile record was not found while saving billing customer.');
+    Object.assign(user, dbRowToMemUser(rows[0]));
+    return;
+  }
+  user.stripeCustomerId = stripeCustomerId;
+  filestore.saveUsers(users);
+}
+
+async function ensureStripeCustomer(user, phone) {
+  const customerData = {
+    email: user.email,
+    name: user.name || undefined,
+    phone,
+    metadata: { uficonnect_user_id: user.id },
+  };
+  if (user.stripeCustomerId) {
+    try {
+      await stripe.customers.update(user.stripeCustomerId, customerData);
+      return user.stripeCustomerId;
+    } catch (error) {
+      // A deleted Stripe customer should not permanently prevent checkout.
+      if (error?.statusCode !== 404) throw error;
+    }
+  }
+
+  const created = await stripe.customers.create(customerData);
+  try {
+    await persistStripeCustomerId(user, created.id);
+  } catch (error) {
+    // Avoid leaving an unlinked customer behind when the durable DB write
+    // fails after Stripe accepts the create request.
+    await stripe.customers.del(created.id).catch(() => {});
+    throw error;
+  }
+  return created.id;
+}
+
 app.get('/billing/config', (_req, res) => {
   res.json({
     stripeConfigured: !!stripe,
@@ -18156,6 +18223,10 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
+  const phone = normalizeMemberPhone(user.phone);
+  if (!phone) {
+    return res.status(400).json({ message: 'Add a valid phone number in Settings before starting checkout.' });
+  }
   if (tier === 'resume_builder' && user.resumeBuilderAddon) {
     return res.status(400).json({ message: 'Resume Builder is already unlocked. Manage Billing to change or cancel it.' });
   }
@@ -18170,16 +18241,19 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
     return res.status(400).json({ message: `Already on the ${user.plan === 'business' ? 'Business' : 'Pro'} plan — use Manage Billing to change plans.` });
   }
   try {
+    // Checkout receives a real app-owned customer with the saved phone,
+    // rather than creating an anonymous customer from partial form data.
+    const stripeCustomerId = await ensureStripeCustomer(user, phone);
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      metadata: { tier },
+      metadata: { tier, uficonnect_user_id: user.id },
       // Reuse an existing Stripe customer if this user has one (e.g. a past
       // canceled subscription, or an already-active plan/addon) instead of
       // creating a duplicate — this is also what lets one Manage Billing
       // portal session show both a plan and the resume_builder addon.
-      customer: user.stripeCustomerId || undefined,
-      customer_email: user.stripeCustomerId ? undefined : user.email,
+      customer: stripeCustomerId,
+      phone_number_collection: { enabled: false },
       client_reference_id: user.id,
       success_url: tier === 'resume_builder'
         ? `${FRONTEND_BASE}/resume-builder?upgrade=success`
