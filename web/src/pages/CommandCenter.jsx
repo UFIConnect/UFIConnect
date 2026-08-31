@@ -18,7 +18,7 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'bluesky'];
 // Platforms with a real, working publish-on-your-behalf API. Other connected
 // platforms remain visible but are queued until their API path is available.
-const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok'];
+const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok'];
 const ACCOUNT_OWNED_CROSS_POST_PLATFORMS = ['instagram', 'tiktok', 'threads'];
 
 function SourceMark({ source, label, active = false }) {

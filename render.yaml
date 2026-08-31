@@ -87,6 +87,10 @@ services:
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
       - key: API_BASE_URL
         value: https://uficonnect-api-708r.onrender.com
+      # Keep Render as the emergency origin. OAuth routes choose this only
+      # when a request did not arrive through the verified public hostname.
+      - key: PUBLIC_API_URL
+        value: https://api.uficonnect.org
       - key: FRONTEND_URL
         value: https://uficonnect.org
       # Auth0 API verifier. AUTH0_AUDIENCE must match the API Identifier in Auth0.

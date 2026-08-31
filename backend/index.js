@@ -845,6 +845,29 @@ function fetchJSONWithHeaders(url, extraHeaders = {}) {
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
+const PUBLIC_API_BASE = process.env.PUBLIC_API_URL || 'https://api.uficonnect.org';
+
+function normalizedOrigin(value, fallback) {
+  try {
+    const url = new URL(value);
+    return url.origin;
+  } catch {
+    return fallback;
+  }
+}
+
+const SAFE_PUBLIC_API_BASE = normalizedOrigin(PUBLIC_API_BASE, 'https://api.uficonnect.org');
+const SAFE_PUBLIC_API_HOST = new URL(SAFE_PUBLIC_API_BASE).host.toLowerCase();
+
+// OAuth providers require an exact redirect URI. The browser normally reaches
+// the API through api.uficonnect.org, but it can temporarily fall back to the
+// Render origin while DNS or TLS recovers. Only honor the canonical Host header
+// here; accepting arbitrary forwarded-host headers would let a caller choose a
+// redirect URI for an OAuth flow.
+function apiBaseForRequest(req) {
+  const requestHost = String(req?.headers?.host || '').trim().toLowerCase();
+  return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : API_BASE;
+}
 
 const SOCIAL_CFG = {
   linkedin: {
@@ -1005,7 +1028,7 @@ const SOCIAL_ENV_KEYS = {
   bluesky:   ['BLUESKY_SIGNING_KEY'],
 };
 
-function socialCredentialStatus(platform) {
+function socialCredentialStatus(platform, req) {
   // Bluesky's whole credential shape is one ES256 signing key (see the
   // dedicated Bluesky OAuth section below), not a client_id/secret pair —
   // doesn't fit the generic index-0/1 special-casing below at all.
@@ -1015,6 +1038,9 @@ function socialCredentialStatus(platform) {
       configured,
       requiredEnv: ['BLUESKY_SIGNING_KEY'],
       missingEnv: configured ? [] : ['BLUESKY_SIGNING_KEY'],
+      // AT Protocol requires its client metadata and redirect URI to share
+      // one origin, so Bluesky stays on the configured API origin until its
+      // public metadata URL is separately registered and verified.
       callbackUrl: oauthCallbackUrl('bluesky'),
     };
   }
@@ -1030,12 +1056,12 @@ function socialCredentialStatus(platform) {
     configured: missingEnv.length === 0,
     requiredEnv,
     missingEnv,
-    callbackUrl: oauthCallbackUrl(platform),
+    callbackUrl: oauthCallbackUrl(platform, req),
   };
 }
 
-function oauthCallbackUrl(platform) {
-  return `${API_BASE}/auth/social/${platform}/callback`;
+function oauthCallbackUrl(platform, req) {
+  return `${apiBaseForRequest(req)}/auth/social/${platform}/callback`;
 }
 
 function pkceVerifier() { return crypto.randomBytes(32).toString('base64url'); }
@@ -12569,7 +12595,7 @@ const PLATFORMS = {
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
     reviewRequired: false,
-    note: 'Basic profile import. Post feed integration coming once LinkedIn Partner access is approved.',
+    note: 'Available again after the public API callback and LinkedIn access are verified.',
   },
   github: {
     name: 'GitHub', color: '#24292F', icon: 'github',
@@ -12742,7 +12768,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
-const FORCE_COMING_SOON_PLATFORMS = new Set(['tiktok']);
+const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin', 'tiktok']);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
@@ -17493,10 +17519,10 @@ async function removeSocialToken(userId, platform) {
 }
 
 // --- Social OAuth: initiate (returns URL so the SPA can navigate) ------------
-app.get('/auth/social/config', authenticate, async (_req, res) => {
+app.get('/auth/social/config', authenticate, async (req, res) => {
   const platforms = Object.fromEntries(Object.keys(SOCIAL_CFG).map(platform => {
     const cfg = SOCIAL_CFG[platform];
-    const status = socialCredentialStatus(platform);
+    const status = socialCredentialStatus(platform, req);
     return [platform, {
       configured: status.configured,
       requiredEnv: status.requiredEnv,
@@ -17526,7 +17552,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
     });
   }
 
-  const status = socialCredentialStatus(platform);
+  const status = socialCredentialStatus(platform, req);
   if (!status.configured) return res.status(501).json({
     error: `${platform} OAuth not configured`,
     detail: `Set ${status.missingEnv.join(' and ')} in your server environment variables.`,
@@ -17536,7 +17562,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   });
 
   const clientId = cfg.clientId();
-  const redirectUri = oauthCallbackUrl(platform);
+  const redirectUri = oauthCallbackUrl(platform, req);
   let codeVerifier;
 
   const params = new URLSearchParams({
@@ -17576,7 +17602,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const cfg         = SOCIAL_CFG[platform];
   const clientId    = cfg.clientId();
   const clientSecret= cfg.clientSecret();
-  const redirectUri = oauthCallbackUrl(platform);
+  const redirectUri = oauthCallbackUrl(platform, req);
 
   try {
     let accessToken;
@@ -17709,7 +17735,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     return [p, Boolean(token)];
   }));
   const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => {
-    const status = socialCredentialStatus(key);
+    const status = socialCredentialStatus(key, req);
     const token = user?.socialTokens?.[key];
     return [key, {
       ...PLATFORMS[key],
@@ -25748,7 +25774,7 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
 // Each platform in this set has an official member-publishing endpoint wired
 // below. A provider can still reject a request when its app review, account
 // type, or OAuth scope is missing; that comes back as failed, never posted.
-const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok']);
+const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok']);
 const PHOTO_REQUIRED_PUBLISH_PLATFORMS = new Set(['instagram', 'tiktok']);
 
 function crossPostText(text, mediaUrl, limit) {
