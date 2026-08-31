@@ -1862,7 +1862,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
               {retention?.inFlight ? 'Cleaning now' : retention?.lastRun ? `Cleaned ${fmtAgo(retention.lastRun)}` : 'Ready'}
             </div>
             <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
-              {(retention?.lastArchivedCount ?? 0).toLocaleString()} archived
+              {(retention?.lastArchivedCount ?? 0).toLocaleString()} archived from live
               {retention?.lastArchivePrunedCount ? ` · ${retention.lastArchivePrunedCount.toLocaleString()} pruned` : ''}
             </div>
           </PipelineNode>
@@ -2284,6 +2284,9 @@ function StagingTransferDetailCard({ staging }) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8);
   const recentRuns = Array.isArray(staging?.recentRuns) ? staging.recentRuns.slice(0, 5) : [];
+  const stagingClearedPosts = Array.isArray(staging?.lastStagingClearedPosts)
+    ? staging.lastStagingClearedPosts.slice(0, 16)
+    : [];
   const batchCapacity = process.batchSize && process.maxBatches
     ? process.batchSize * process.maxBatches
     : null;
@@ -2305,7 +2308,7 @@ function StagingTransferDetailCard({ staging }) {
         <DetailStat label="pending in staging" value={staging?.pendingCount != null ? staging.pendingCount.toLocaleString() : '—'} color="#38bdf8" />
         <DetailStat label="live cache posts" value={liveCachePostCount != null ? liveCachePostCount.toLocaleString() : '—'} color="#4ade80" />
         <DetailStat label="last run moved" value={(staging?.lastCount ?? 0).toLocaleString()} />
-        <DetailStat label="saved / deleted" value={`${(staging?.lastSavedCount ?? 0).toLocaleString()} / ${(staging?.lastDeletedCount ?? 0).toLocaleString()}`} />
+        <DetailStat label="saved / staging cleared" value={`${(staging?.lastSavedCount ?? 0).toLocaleString()} / ${(staging?.lastDeletedCount ?? 0).toLocaleString()}`} />
         <DetailStat label="total transferred" value={(staging?.totalTransferred ?? 0).toLocaleString()} color="#4ade80" />
         <DetailStat label="transfer lock" value={staging?.inFlight ? 'active' : 'clear'} color={staging?.inFlight ? '#fbbf24' : '#4ade80'} />
         <DetailStat label="process state" value={process.state || (staging?.inFlight ? 'draining' : 'ready')} color={process.state === 'degraded' ? '#f87171' : '#38bdf8'} />
@@ -2316,6 +2319,7 @@ function StagingTransferDetailCard({ staging }) {
       <div style={{ fontSize: 11, color: '#475569', borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 10, lineHeight: 1.8 }}>
         <div>Last run: <span style={{ color: '#94a3b8' }}>{staging?.lastRun ? fmtAgo(staging.lastRun) : 'not run yet'}</span></div>
         <div>Last trigger: <span style={{ color: '#94a3b8' }}>{staging?.lastReason || '—'}</span></div>
+        <div>Staging cleared: <span style={{ color: '#94a3b8' }}>only after the same rows were saved into the live cache</span></div>
         <div>Current batch: <span style={{ color: '#94a3b8' }}>{staging?.currentBatch ? `${staging.currentBatch} (${(staging.currentBatchSize || 0).toLocaleString()} rows)` : 'idle'}</span></div>
         <div>Configured batch: <span style={{ color: '#94a3b8' }}>{process.batchSize ? `${process.batchSize.toLocaleString()} x ${process.maxBatches || 1}` : '—'}</span></div>
         <div>Oldest staged row: <span style={{ color: '#94a3b8' }}>{staging?.oldestFetchedAt ? fmtAgo(staging.oldestFetchedAt) : 'none queued'}</span></div>
@@ -2365,6 +2369,25 @@ function StagingTransferDetailCard({ staging }) {
           </div>
         </div>
       )}
+
+      {stagingClearedPosts.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Recently promoted and cleared from staging</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 190, overflowY: 'auto' }}>
+            {stagingClearedPosts.map((post) => (
+              <div key={post.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title || post.id}</div>
+                  <div style={{ color: '#64748b', marginTop: 2 }}>{post.source || 'unknown'}{post.topic ? ` - ${post.topic}` : ''}</div>
+                </div>
+                {post.sourceUrl && (
+                  <a href={post.sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#38bdf8', textDecoration: 'none' }}>Open</a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -2380,6 +2403,15 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
     ['Archive cap', breakdown.archiveCap],
   ].filter(([, item]) => item);
   const timers = Object.entries(retention?.timers || {});
+  const sourceDeletion = retention?.sourceDeletion || {};
+  const sourceDeletedPosts = Array.isArray(sourceDeletion.lastDeletedPosts) ? sourceDeletion.lastDeletedPosts : [];
+  const removedPosts = Array.isArray(retention?.lastRemovedPosts) ? retention.lastRemovedPosts : [];
+  const permanentlyDeletedPosts = Array.isArray(retention?.lastDeletedPosts) ? retention.lastDeletedPosts : [];
+  const recentChanges = [
+    ...sourceDeletedPosts.map(post => ({ ...post, action: 'Source deleted', color: '#f87171' })),
+    ...removedPosts.map(post => ({ ...post, action: 'Archived from live', color: '#22c55e' })),
+    ...permanentlyDeletedPosts.map(post => ({ ...post, action: 'Permanently pruned', color: '#f87171' })),
+  ].slice(0, 16);
   const formatMs = (ms) => {
     if (ms == null) return '-';
     return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
@@ -2389,8 +2421,8 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
     <Card>
       <Label color="#22c55e">After Transfer - detail</Label>
       <p style={{ fontSize: 11.5, color: '#64748b', margin: '6px 0 14px', lineHeight: 1.6 }}>
-        Runs after staged posts become live, plus scheduled count/unseen/archive passes. Old or over-cap feed rows are
-        archived first; archived rows are then pruned by age and by count so storage does not build up forever.
+        Runs after staged posts become live, plus scheduled count/unseen/archive passes. A source post is removed only when
+        its original URL explicitly returns 404 or 410; old or over-cap rows are archived first, then pruned by age and count.
       </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 12, marginBottom: 14 }}>
@@ -2400,6 +2432,8 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
         <DetailStat label="live removed" value={(retention?.lastLiveDeletedCount ?? 0).toLocaleString()} />
         <DetailStat label="last archived" value={(retention?.lastArchivedCount ?? 0).toLocaleString()} color="#22c55e" />
         <DetailStat label="last pruned" value={(retention?.lastArchivePrunedCount ?? 0).toLocaleString()} />
+        <DetailStat label="source deleted" value={(sourceDeletion.lastConfirmedDeletedCount ?? 0).toLocaleString()} color="#f87171" />
+        <DetailStat label="source checked" value={(sourceDeletion.lastCheckedCount ?? 0).toLocaleString()} color="#38bdf8" />
         <DetailStat label="last duration" value={formatMs(retention?.lastDurationMs)} />
         <DetailStat label="last run" value={retention?.lastRun ? fmtAgo(retention.lastRun) : '-'} />
       </div>
@@ -2411,7 +2445,10 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
         <div>Unseen cap: <span style={{ color: '#94a3b8' }}>{policy.unseenPostDays || '-'}d unseen posts, every {policy.unseenCapIntervalSec || '-'}s</span></div>
         <div>Count timer: <span style={{ color: '#94a3b8' }}>every {policy.countCapIntervalSec || '-'}s</span></div>
         <div>Archive cap: <span style={{ color: '#94a3b8' }}>{policy.maxArchivePosts?.toLocaleString?.() || '-'} rows, {policy.archivePostDays || '-'}d max age</span></div>
+        <div>Source deletion check: <span style={{ color: '#94a3b8' }}>every {policy.sourceDeletionCheckIntervalSec || '-'}s, {policy.sourceDeletionCheckBatchSize || '-'} URLs per pass, after {policy.sourceDeletionGraceSec || '-'}s grace</span></div>
+        <div>Source checker: <span style={{ color: '#94a3b8' }}>{sourceDeletion.inFlight ? 'running' : (sourceDeletion.status || 'idle')}, {sourceDeletion.lastUnverifiedCount || 0} kept after temporary/unknown responses</span></div>
         {retention?.lastError && <div style={{ color: '#f87171' }}>! {retention.lastError}</div>}
+        {sourceDeletion.lastError && <div style={{ color: '#f87171' }}>! Source deletion check: {sourceDeletion.lastError}</div>}
         {retention?.lastSkippedReason && <div style={{ color: '#fbbf24' }}>Skipped overlapping pass: {retention.lastSkippedReason}</div>}
       </div>
 
@@ -2440,6 +2477,25 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
                 <span style={{ color: '#94a3b8' }}>{label}</span>
                 <strong style={{ color: '#e2e8f0' }}>{Number(item.deleted || 0).toLocaleString()} removed</strong>
                 <span style={{ color: '#22c55e' }}>{Number(item.archived || 0).toLocaleString()} archived</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {recentChanges.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Recent removed or deleted posts</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+            {recentChanges.map((post, index) => (
+              <div key={`${post.action}-${post.id}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.title || post.id}</div>
+                  <div style={{ color: post.color, marginTop: 2 }}>{post.action} - {post.source || 'unknown'}{post.reason ? ` - ${post.reason.replace(/-/g, ' ')}` : ''}</div>
+                </div>
+                {post.sourceUrl && (
+                  <a href={post.sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#38bdf8', textDecoration: 'none' }}>Open</a>
+                )}
               </div>
             ))}
           </div>

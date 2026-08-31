@@ -7,6 +7,8 @@ const bcrypt = require('bcryptjs');
 const dotenv = require('dotenv');
 const http   = require('http');
 const https  = require('https');
+const dns    = require('dns');
+const net    = require('net');
 const crypto = require('crypto');
 const fs     = require('fs');
 const os     = require('os');
@@ -95,6 +97,7 @@ function buildHealthPayload() {
       totalTransferred: stagingTransferState?.totalTransferred ?? 0,
       lastSavedCount: stagingTransferState?.lastSavedCount ?? 0,
       lastDeletedCount: stagingTransferState?.lastDeletedCount ?? 0,
+      lastStagingClearedPosts: stagingTransferState?.lastStagingClearedPosts || [],
       lastDurationMs: stagingTransferState?.lastDurationMs ?? null,
       lastSourceCounts: stagingTransferState?.lastSourceCounts || {},
       currentBatch: stagingTransferState?.currentBatch || 0,
@@ -14278,6 +14281,14 @@ async function migrateDB() {
     // API responses ever populate this (candidate_required_location /
     // location); never inferred or guessed for sources that don't have it.
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
+    // Source-presence reconciliation runs after transfer on the API role.
+    // These fields keep its bounded checker from repeatedly re-requesting
+    // the same URL, and make a transient source failure observable without
+    // ever treating it as a deletion.
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS source_checked_at TIMESTAMPTZ`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS source_check_status TEXT`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS source_check_failures INTEGER NOT NULL DEFAULT 0`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_check_idx ON feed_posts_cache(source_checked_at ASC NULLS FIRST, fetched_at ASC) WHERE source_url IS NOT NULL`);
 
     // --- Pipeline/staging split (SERVICE_ROLE) ----------------------------
     // Exact schema clone of feed_posts_cache above, not a status flag on
@@ -14371,12 +14382,15 @@ async function migrateDB() {
         fetched_at      TIMESTAMPTZ,
         location        TEXT,
         media_poster    TEXT,
+        archive_reason  TEXT,
         archived_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
 
     // Website optimizer snapshots - public-domain checks retained for office/HQ history
     await db.query(`
@@ -14635,6 +14649,19 @@ const FEED_UNSEEN_CAP_INTERVAL_MS = envNumber('FEED_UNSEEN_CAP_INTERVAL_MS', 15 
 const ARCHIVE_MAX_AGE_MS = envNumber('ARCHIVE_MAX_AGE_MS', 30 * 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000, 365 * 24 * 60 * 60 * 1000);
 const ARCHIVE_AGE_PRUNE_INTERVAL_MS = envNumber('ARCHIVE_AGE_PRUNE_INTERVAL_MS', 60 * 60 * 1000, 10 * 60 * 1000, 24 * 60 * 60 * 1000);
 const ARCHIVE_PRUNE_BATCH_SIZE = envNumber('ARCHIVE_PRUNE_BATCH_SIZE', 10000, 100, 50000);
+const RETENTION_AUDIT_SAMPLE_LIMIT = envNumber('RETENTION_AUDIT_SAMPLE_LIMIT', 16, 1, 100);
+// Checks are intentionally small and paced: they run after transfer, but
+// never turn a normal ingest burst into hundreds of simultaneous outbound
+// requests. A source must explicitly return 404/410 before its UFI copy is
+// removed; login walls, rate limits, and source outages remain untouched.
+const SOURCE_DELETION_CHECK_INTERVAL_MS = envNumber('SOURCE_DELETION_CHECK_INTERVAL_MS', 10 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const SOURCE_DELETION_CHECK_BATCH_SIZE = envNumber('SOURCE_DELETION_CHECK_BATCH_SIZE', 50, 1, 250);
+const SOURCE_DELETION_CHECK_CONCURRENCY = envNumber('SOURCE_DELETION_CHECK_CONCURRENCY', 4, 1, 12);
+const SOURCE_DELETION_GRACE_MS = envNumber('SOURCE_DELETION_GRACE_MS', 10 * 60 * 1000, 60 * 1000, 24 * 60 * 60 * 1000);
+const SOURCE_DELETION_RECHECK_MS = envNumber('SOURCE_DELETION_RECHECK_MS', 12 * 60 * 60 * 1000, 60 * 60 * 1000, 14 * 24 * 60 * 60 * 1000);
+const SOURCE_DELETION_EXCLUDED_SOURCES = new Set([
+  'uficonnect', 'livecamera', 'wikivoyage', 'travelnews', 'localpulse', 'restaurants',
+]);
 const feedRetentionState = {
   status: 'idle',
   inFlight: false,
@@ -14653,6 +14680,26 @@ const feedRetentionState = {
   totalArchivedCount: 0,
   totalArchivePrunedCount: 0,
   lastBreakdown: {},
+  // Bounded samples make retention observable in Office without retaining a
+  // second, unbounded copy of every removed post in process memory.
+  lastRemovedPosts: [],
+  lastDeletedPosts: [],
+  sourceDeletion: {
+    status: 'idle',
+    inFlight: false,
+    lastReason: null,
+    lastSkippedReason: null,
+    lastRun: null,
+    lastDurationMs: null,
+    lastError: null,
+    lastCheckedCount: 0,
+    lastConfirmedDeletedCount: 0,
+    lastUnverifiedCount: 0,
+    totalCheckedCount: 0,
+    totalConfirmedDeletedCount: 0,
+    totalUnverifiedCount: 0,
+    lastDeletedPosts: [],
+  },
   timers: {},
   policy: {
     maxLivePosts: MAX_CACHED_DB_POSTS,
@@ -14667,66 +14714,133 @@ const feedRetentionState = {
     archivePostDays: Math.round(ARCHIVE_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
     archiveAgePruneIntervalSec: Math.round(ARCHIVE_AGE_PRUNE_INTERVAL_MS / 1000),
     archivePruneBatchSize: ARCHIVE_PRUNE_BATCH_SIZE,
+    sourceDeletionCheckIntervalSec: Math.round(SOURCE_DELETION_CHECK_INTERVAL_MS / 1000),
+    sourceDeletionCheckBatchSize: SOURCE_DELETION_CHECK_BATCH_SIZE,
+    sourceDeletionGraceSec: Math.round(SOURCE_DELETION_GRACE_MS / 1000),
+    sourceDeletionRecheckHours: Math.round(SOURCE_DELETION_RECHECK_MS / (60 * 60 * 1000)),
   },
 };
 let feedRetentionInFlight = false;
 
-async function archiveThenDelete(sql, params = []) {
+function retentionAuditRows(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// Retention has two different kinds of removal: a live row can be moved into
+// the archive, and an already archived row can later be permanently purged.
+// Return small samples for Office alongside the aggregate counts, instead of
+// making operators infer which posts changed from a number alone.
+async function archiveThenDelete(sql, params = [], { reason = 'retention' } = {}) {
+  const reasonParam = params.length + 1;
+  const sampleLimitParam = params.length + 2;
   const { rows } = await db.query(
     `WITH moved AS (
        ${sql}
        RETURNING ${ARCHIVE_RETURNING_COLUMNS}
      ),
      inserted AS (
-       INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
-       SELECT ${ARCHIVE_COLUMNS} FROM moved
-       ON CONFLICT (id) DO NOTHING
+       INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS}, archive_reason)
+       SELECT ${ARCHIVE_COLUMNS}, $${reasonParam} FROM moved
+       ON CONFLICT (id) DO UPDATE
+       SET archive_reason = CASE
+             WHEN EXCLUDED.archive_reason = 'source-deleted' THEN EXCLUDED.archive_reason
+             ELSE feed_posts_archive.archive_reason
+           END,
+           archived_at = CASE
+             WHEN EXCLUDED.archive_reason = 'source-deleted' THEN NOW()
+             ELSE feed_posts_archive.archived_at
+           END
        RETURNING id
+     ),
+     samples AS (
+       SELECT id, source, title, topic, source_url, post_created_at
+       FROM moved
+       ORDER BY post_created_at DESC NULLS LAST, id ASC
+       LIMIT $${sampleLimitParam}
      )
      SELECT
        (SELECT COUNT(*)::int FROM moved) AS deleted,
-       (SELECT COUNT(*)::int FROM inserted) AS archived`,
-    params
+       (SELECT COUNT(*)::int FROM inserted) AS archived,
+       COALESCE((
+         SELECT jsonb_agg(jsonb_build_object(
+           'id', id,
+           'source', source,
+           'title', title,
+           'topic', topic,
+           'sourceUrl', source_url,
+           'postCreatedAt', post_created_at
+         ) ORDER BY post_created_at DESC NULLS LAST, id ASC)
+         FROM samples
+       ), '[]'::jsonb) AS removed_posts`,
+    [...params, reason, RETENTION_AUDIT_SAMPLE_LIMIT]
   );
   return {
     deleted: Number(rows?.[0]?.deleted || 0),
     archived: Number(rows?.[0]?.archived || 0),
+    removedPosts: retentionAuditRows(rows?.[0]?.removed_posts).map(post => ({ ...post, reason })),
+  };
+}
+
+async function purgeArchivedRows(sql, params = [], { reason = 'archive-prune' } = {}) {
+  const sampleLimitParam = params.length + 1;
+  const { rows } = await db.query(
+    `WITH removed AS (
+       ${sql}
+       RETURNING id, source, title, topic, source_url, post_created_at, archived_at, archive_reason
+     ),
+     samples AS (
+       SELECT * FROM removed
+       ORDER BY archived_at ASC NULLS LAST, id ASC
+       LIMIT $${sampleLimitParam}
+     )
+     SELECT
+       (SELECT COUNT(*)::int FROM removed) AS deleted,
+       COALESCE((
+         SELECT jsonb_agg(jsonb_build_object(
+           'id', id,
+           'source', source,
+           'title', title,
+           'topic', topic,
+           'sourceUrl', source_url,
+           'postCreatedAt', post_created_at,
+           'archivedAt', archived_at,
+           'archiveReason', archive_reason
+         ) ORDER BY archived_at ASC NULLS LAST, id ASC)
+         FROM samples
+       ), '[]'::jsonb) AS deleted_posts`,
+    [...params, RETENTION_AUDIT_SAMPLE_LIMIT]
+  );
+  return {
+    deleted: Number(rows?.[0]?.deleted || 0),
+    archived: 0,
+    deletedPosts: retentionAuditRows(rows?.[0]?.deleted_posts).map(post => ({ ...post, reason })),
   };
 }
 
 async function archiveAgeCappedRows() {
-  const { rows } = await db.query(
-    `WITH source_counts AS (
+  return archiveThenDelete(
+    `DELETE FROM feed_posts_cache fp
+     USING (
        SELECT source, COUNT(*)::float / NULLIF(SUM(COUNT(*)) OVER (), 0) AS share
        FROM feed_posts_cache
        GROUP BY source
-     ),
-     moved AS (
-       DELETE FROM feed_posts_cache fp
-       USING source_counts sc
-       WHERE fp.source = sc.source
-         AND (
-           (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
-           OR
-           ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
-         )
-       RETURNING ${ARCHIVE_RETURNING_COLUMNS}
-     ),
-     inserted AS (
-       INSERT INTO feed_posts_archive (${ARCHIVE_COLUMNS})
-       SELECT ${ARCHIVE_COLUMNS} FROM moved
-       ON CONFLICT (id) DO NOTHING
-       RETURNING id
-     )
-     SELECT
-       (SELECT COUNT(*)::int FROM moved) AS deleted,
-       (SELECT COUNT(*)::int FROM inserted) AS archived`,
-    [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES]
+     ) sc
+     WHERE fp.source = sc.source
+       AND (
+         (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+         OR
+         ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+       )`,
+    [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES],
+    { reason: 'age-cap' }
   );
-  return {
-    deleted: Number(rows?.[0]?.deleted || 0),
-    archived: Number(rows?.[0]?.archived || 0),
-  };
 }
 
 async function archiveCountCappedRows() {
@@ -14740,7 +14854,8 @@ async function archiveCountCappedRows() {
        ) ranked
        WHERE global_rank > $1 AND source_rank > $2
      )`,
-    [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR]
+    [MAX_CACHED_DB_POSTS, SOURCE_KEEP_FLOOR],
+    { reason: 'count-cap' }
   );
 }
 
@@ -14748,23 +14863,25 @@ async function archiveUnseenExpiredRows() {
   return archiveThenDelete(
     `DELETE FROM feed_posts_cache fp
      WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
-       AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`
+       AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`,
+    [],
+    { reason: 'unseen-cap' }
   );
 }
 
 async function pruneArchiveByCount(limit = MAX_ARCHIVE_POSTS) {
   const safeLimit = Math.max(0, Math.floor(Number(limit) || 0));
-  const pruned = await db.query(
+  return purgeArchivedRows(
     `DELETE FROM feed_posts_archive WHERE id IN (
        SELECT id FROM feed_posts_archive ORDER BY archived_at DESC OFFSET $1
      )`,
-    [safeLimit]
+    [safeLimit],
+    { reason: 'archive-count-cap' }
   );
-  return { deleted: Number(pruned.rowCount || 0), archived: 0 };
 }
 
 async function pruneArchiveByAge() {
-  const pruned = await db.query(
+  return purgeArchivedRows(
     `DELETE FROM feed_posts_archive WHERE id IN (
        SELECT id
        FROM feed_posts_archive
@@ -14772,9 +14889,9 @@ async function pruneArchiveByAge() {
        ORDER BY archived_at ASC
        LIMIT $1
      )`,
-    [ARCHIVE_PRUNE_BATCH_SIZE]
+    [ARCHIVE_PRUNE_BATCH_SIZE],
+    { reason: 'archive-age-cap' }
   );
-  return { deleted: Number(pruned.rowCount || 0), archived: 0 };
 }
 
 const FEED_RETENTION_ALL_STEPS = ['countCap', 'ageCap', 'unseenCap', 'archiveAgeCap', 'archiveCap'];
@@ -14785,6 +14902,12 @@ function retentionStepDeleted(breakdown, keys) {
 
 function retentionStepArchived(breakdown, keys) {
   return keys.reduce((sum, key) => sum + Number(breakdown[key]?.archived || 0), 0);
+}
+
+function retentionAuditSamples(breakdown, keys, field) {
+  return keys
+    .flatMap(key => Array.isArray(breakdown[key]?.[field]) ? breakdown[key][field] : [])
+    .slice(0, RETENTION_AUDIT_SAMPLE_LIMIT);
 }
 // force skips the normal 10-minute throttle (used by checkDatabaseSize's
 // critical-path response, where waiting up to 10 minutes to actually free
@@ -14901,9 +15024,11 @@ function runFeedRetentionPass({ reason = 'scheduled', steps = FEED_RETENTION_ALL
     if (selectedSteps.has('archiveAgeCap')) breakdown.archiveAgeCap = await pruneArchiveByAge();
     if (selectedSteps.has('archiveCap')) breakdown.archiveCap = await pruneArchiveByCount(archiveCapOverride ?? MAX_ARCHIVE_POSTS);
 
-    const liveDeleted = retentionStepDeleted(breakdown, ['countCap', 'ageCap', 'unseenCap']);
-    const archivePruned = retentionStepDeleted(breakdown, ['archiveAgeCap', 'archiveCap']);
-    const archived = retentionStepArchived(breakdown, ['countCap', 'ageCap', 'unseenCap']);
+    const liveSteps = ['countCap', 'ageCap', 'unseenCap'];
+    const archiveSteps = ['archiveAgeCap', 'archiveCap'];
+    const liveDeleted = retentionStepDeleted(breakdown, liveSteps);
+    const archivePruned = retentionStepDeleted(breakdown, archiveSteps);
+    const archived = retentionStepArchived(breakdown, liveSteps);
     feedRetentionState.lastDeletedCount = liveDeleted + archivePruned;
     feedRetentionState.lastLiveDeletedCount = liveDeleted;
     feedRetentionState.lastArchivedCount = archived;
@@ -14913,6 +15038,8 @@ function runFeedRetentionPass({ reason = 'scheduled', steps = FEED_RETENTION_ALL
     feedRetentionState.totalArchivedCount += archived;
     feedRetentionState.totalArchivePrunedCount += archivePruned;
     feedRetentionState.lastBreakdown = breakdown;
+    feedRetentionState.lastRemovedPosts = retentionAuditSamples(breakdown, liveSteps, 'removedPosts');
+    feedRetentionState.lastDeletedPosts = retentionAuditSamples(breakdown, archiveSteps, 'deletedPosts');
     feedRetentionState.lastDurationMs = Date.now() - started;
     feedRetentionState.lastRun = new Date().toISOString();
     feedRetentionState.status = 'ready';
@@ -14961,6 +15088,252 @@ function scheduleFeedRetentionTimer(reason, intervalMs, steps, initialDelayMs) {
   recordNextRun(initialDelayMs);
   setTimeout(run, initialDelayMs);
   return setInterval(run, intervalMs);
+}
+
+// Source deletion reconciliation is deliberately conservative. A post is
+// removed only after the source itself answers 404 or 410; network trouble,
+// login walls, rate limits, and every other response keep the cached post.
+// URL validation and a pinned DNS lookup keep this small worker from being
+// used as an internal-network request proxy through a malicious source URL.
+function isBlockedSourceCheckAddress(address) {
+  const ipVersion = net.isIP(address);
+  if (ipVersion === 4) {
+    const [a, b] = address.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && (b === 0 || b === 168))
+      || (a === 198 && (b === 18 || b === 19 || b === 51))
+      || (a === 203 && b === 0);
+  }
+  if (ipVersion !== 6) return true;
+  const normalized = String(address).toLowerCase().split('%')[0];
+  return normalized === '::' || normalized === '::1'
+    || normalized.startsWith('::ffff:')
+    || normalized.startsWith('fc') || normalized.startsWith('fd')
+    || /^fe[89ab]/.test(normalized)
+    || normalized.startsWith('2001:db8');
+}
+
+function validateSourceCheckUrl(rawUrl) {
+  const target = new URL(rawUrl);
+  const hostname = target.hostname.toLowerCase().replace(/\.$/, '');
+  if (!['http:', 'https:'].includes(target.protocol)
+    || !hostname
+    || target.username
+    || target.password
+    || net.isIP(hostname)
+    || hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+    || hostname.endsWith('.local')
+    || hostname.endsWith('.internal')
+    || hostname.endsWith('.home')
+    || (target.port && target.port !== (target.protocol === 'https:' ? '443' : '80'))) {
+    throw new Error('Unsupported source URL');
+  }
+  return target;
+}
+
+async function resolvePublicSourceCheckAddress(hostname) {
+  const addresses = await dns.promises.lookup(hostname, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(record => isBlockedSourceCheckAddress(record.address))) {
+    throw new Error('Source URL resolved to a blocked address');
+  }
+  return addresses[0];
+}
+
+function requestSourcePresence(rawUrl, { method = 'HEAD', redirectsRemaining = 3, visited = new Set() } = {}) {
+  return new Promise(async (resolve, reject) => {
+    let target;
+    let resolvedAddress;
+    try {
+      target = validateSourceCheckUrl(rawUrl);
+      const canonicalUrl = target.toString();
+      if (visited.has(canonicalUrl)) throw new Error('Source URL redirect loop');
+      visited.add(canonicalUrl);
+      resolvedAddress = await resolvePublicSourceCheckAddress(target.hostname);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const client = target.protocol === 'https:' ? https : http;
+    const request = client.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      path: `${target.pathname}${target.search}`,
+      method,
+      headers: {
+        'User-Agent': 'UFIconnect source-presence checker/1.0',
+        Accept: '*/*',
+        'Accept-Encoding': 'identity',
+        ...(method === 'GET' ? { Range: 'bytes=0-0' } : {}),
+      },
+      lookup: (_hostname, _options, callback) => callback(null, resolvedAddress.address, resolvedAddress.family),
+    }, (response) => {
+      const statusCode = Number(response.statusCode || 0);
+      const location = response.headers.location;
+      response.resume();
+      response.once('end', () => {
+        if ([301, 302, 303, 307, 308].includes(statusCode) && location) {
+          if (redirectsRemaining <= 0) {
+            reject(new Error('Source URL exceeded redirect limit'));
+            return;
+          }
+          let redirectedUrl;
+          try {
+            redirectedUrl = new URL(location, target).toString();
+          } catch {
+            reject(new Error('Source URL returned an invalid redirect'));
+            return;
+          }
+          requestSourcePresence(redirectedUrl, {
+            method,
+            redirectsRemaining: redirectsRemaining - 1,
+            visited,
+          }).then(resolve, reject);
+          return;
+        }
+        if (method === 'HEAD' && [405, 501].includes(statusCode)) {
+          requestSourcePresence(target.toString(), {
+            method: 'GET',
+            redirectsRemaining,
+            visited: new Set(),
+          }).then(resolve, reject);
+          return;
+        }
+        resolve({ statusCode, finalUrl: target.toString() });
+      });
+    });
+    request.setTimeout(8000, () => request.destroy(new Error('Source URL check timed out')));
+    request.once('error', reject);
+    request.end();
+  });
+}
+
+async function markSourcePresenceChecked(post, status, failed = false) {
+  await db.query(
+    `UPDATE feed_posts_cache
+     SET source_checked_at = NOW(),
+         source_check_status = $1,
+         source_check_failures = CASE WHEN $2 THEN source_check_failures + 1 ELSE 0 END
+     WHERE id = $3 AND source_url = $4`,
+    [String(status || 'unknown').slice(0, 80), failed, post.id, post.source_url]
+  );
+}
+
+function invalidateDeletedFeedPosts(postIds) {
+  const ids = new Set(postIds.filter(Boolean));
+  if (!ids.size) return;
+  globalFeedCache.posts = (globalFeedCache.posts || []).filter(post => !ids.has(post?.id));
+  for (const cache of agentSourceCache.values()) {
+    if (Array.isArray(cache?.posts)) cache.posts = cache.posts.filter(post => !ids.has(post?.id));
+  }
+  for (const id of ids) postUrlIndex.delete(id);
+  mainFeedSnapshots.clear();
+  filteredFeedSnapshots.clear();
+}
+
+async function reconcileDeletedSourcePost(post) {
+  try {
+    const result = await requestSourcePresence(post.source_url);
+    if (![404, 410].includes(result.statusCode)) {
+      await markSourcePresenceChecked(post, `http-${result.statusCode}`);
+      return { checked: true, confirmedDeleted: 0, unverified: 0, deletedPosts: [] };
+    }
+
+    const archived = await archiveThenDelete(
+      `DELETE FROM feed_posts_cache fp WHERE fp.id = $1 AND fp.source_url = $2`,
+      [post.id, post.source_url],
+      { reason: 'source-deleted' }
+    );
+    if (archived.deleted) {
+      // A stale pipeline row must not revive an already-confirmed deletion.
+      await db.query(
+        `DELETE FROM feed_posts_staging WHERE id = $1 AND source_url = $2`,
+        [post.id, post.source_url]
+      );
+    }
+    return {
+      checked: true,
+      confirmedDeleted: archived.deleted,
+      unverified: 0,
+      deletedPosts: archived.removedPosts,
+    };
+  } catch (error) {
+    await markSourcePresenceChecked(post, `unverified-${error.message}`, true).catch(() => {});
+    return { checked: true, confirmedDeleted: 0, unverified: 1, deletedPosts: [] };
+  }
+}
+
+function runSourceDeletionReconciliation({ reason = 'scheduled', force = false } = {}) {
+  const state = feedRetentionState.sourceDeletion;
+  if (IS_PIPELINE_ROLE || !db.isConnected()) return false;
+  if (state.inFlight) {
+    state.lastSkippedReason = reason;
+    return false;
+  }
+  const lastRunAt = Date.parse(state.lastRun || '') || 0;
+  if (!force && lastRunAt && Date.now() - lastRunAt < SOURCE_DELETION_CHECK_INTERVAL_MS) return false;
+
+  state.inFlight = true;
+  state.status = 'running';
+  state.lastReason = reason;
+  state.lastError = null;
+  const startedAt = Date.now();
+  (async () => {
+    const { rows: candidates } = await db.query(
+      `SELECT id, source, title, topic, source_url, post_created_at
+       FROM feed_posts_cache
+       WHERE source_url IS NOT NULL
+         AND source_url <> ''
+         AND source <> ALL($1::text[])
+         AND fetched_at <= NOW() - ($2 * INTERVAL '1 millisecond')
+         AND (source_checked_at IS NULL OR source_checked_at <= NOW() - ($3 * INTERVAL '1 millisecond'))
+       ORDER BY CASE WHEN source_checked_at IS NULL THEN 0 ELSE 1 END,
+                fetched_at DESC,
+                source_checked_at ASC NULLS FIRST
+       LIMIT $4`,
+      [Array.from(SOURCE_DELETION_EXCLUDED_SOURCES), SOURCE_DELETION_GRACE_MS, SOURCE_DELETION_RECHECK_MS, SOURCE_DELETION_CHECK_BATCH_SIZE]
+    );
+    const results = [];
+    let nextIndex = 0;
+    const workers = Array.from({ length: Math.min(SOURCE_DELETION_CHECK_CONCURRENCY, candidates.length) }, async () => {
+      while (nextIndex < candidates.length) {
+        const candidate = candidates[nextIndex++];
+        results.push(await reconcileDeletedSourcePost(candidate));
+      }
+    });
+    await Promise.all(workers);
+    const deletedPosts = results.flatMap(result => result.deletedPosts || []).slice(0, RETENTION_AUDIT_SAMPLE_LIMIT);
+    const checked = results.reduce((count, result) => count + (result.checked || 0), 0);
+    const confirmedDeleted = results.reduce((count, result) => count + (result.confirmedDeleted || 0), 0);
+    const unverified = results.reduce((count, result) => count + (result.unverified || 0), 0);
+    if (deletedPosts.length) invalidateDeletedFeedPosts(deletedPosts.map(post => post.id));
+    state.lastCheckedCount = checked;
+    state.lastConfirmedDeletedCount = confirmedDeleted;
+    state.lastUnverifiedCount = unverified;
+    state.totalCheckedCount += checked;
+    state.totalConfirmedDeletedCount += confirmedDeleted;
+    state.totalUnverifiedCount = (state.totalUnverifiedCount || 0) + unverified;
+    state.lastDeletedPosts = deletedPosts;
+    if (confirmedDeleted) {
+      logAgentAction('data', 'source-delete', `Confirmed ${confirmedDeleted} source-deleted post(s) after ${checked} URL checks`, '#F87171');
+    }
+  })().then(() => {
+    state.status = 'ready';
+  }).catch((error) => {
+    state.status = 'degraded';
+    state.lastError = error.message;
+    console.warn('[source deletion reconciliation] failed:', error.message);
+  }).finally(() => {
+    state.inFlight = false;
+    state.lastRun = new Date().toISOString();
+    state.lastDurationMs = Date.now() - startedAt;
+  });
+  return true;
 }
 
 // --- Database size guard ----------------------------------------------------
@@ -20830,6 +21203,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       totalTransferred: stagingTransferState.totalTransferred,
       lastSavedCount: stagingTransferState.lastSavedCount,
       lastDeletedCount: stagingTransferState.lastDeletedCount,
+      lastStagingClearedPosts: stagingTransferState.lastStagingClearedPosts,
       lastDurationMs: stagingTransferState.lastDurationMs,
       lastSourceCounts: stagingTransferState.lastSourceCounts,
       currentBatch: stagingTransferState.currentBatch,
@@ -21216,6 +21590,7 @@ const stagingTransferState = {
   lastDurationMs: null,
   lastSavedCount: 0,
   lastDeletedCount: 0,
+  lastStagingClearedPosts: [],
   lastSourceCounts: {},
   currentBatch: 0,
   currentBatchSize: 0,
@@ -21268,6 +21643,17 @@ function summarizeRowsBySource(rows = []) {
   return counts;
 }
 
+function summarizeStagingClearedRows(rows = []) {
+  return rows.slice(0, 16).map(row => ({
+    id: row.id,
+    source: row.source || 'unknown',
+    title: row.title || null,
+    topic: row.topic || null,
+    sourceUrl: row.source_url || null,
+    postCreatedAt: row.post_created_at || null,
+  }));
+}
+
 function addSourceCounts(into, counts) {
   for (const [source, count] of Object.entries(counts || {})) {
     into[source] = (into[source] || 0) + count;
@@ -21300,6 +21686,7 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   stagingTransferState.lastError = null;
   stagingTransferState.currentBatch = 0;
   stagingTransferState.currentBatchSize = 0;
+  stagingTransferState.lastStagingClearedPosts = [];
   const startedAtIso = new Date(transferStartedAt).toISOString();
   const pendingBefore = stagingPostCount;
   let totalMoved = 0;
@@ -21320,6 +21707,16 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       const result = await db.withClient(async (client) => {
         await client.query('BEGIN');
         try {
+          // A URL confirmed deleted at its origin gets a tombstone in the
+          // archive. Clear any old pipeline copy before it can be promoted
+          // back into the live feed on a later transfer tick.
+          await client.query(
+            `DELETE FROM feed_posts_staging s
+             USING feed_posts_archive a
+             WHERE s.id = a.id
+               AND s.source_url = a.source_url
+               AND a.archive_reason = 'source-deleted'`
+          );
           const { rows } = await client.query(
             `WITH picked AS (
                SELECT id
@@ -21365,12 +21762,19 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       stagingTransferState.lastSourceCounts = batchSources;
       stagingTransferState.currentBatchSize = result.rows.length;
       stagingTransferState.totalTransferred += count;
+      if (result.deleted) {
+        stagingTransferState.lastStagingClearedPosts = [
+          ...stagingTransferState.lastStagingClearedPosts,
+          ...summarizeStagingClearedRows(result.rows),
+        ].slice(0, 16);
+      }
       broadcastSSE(result.rows.map(dbRowToFeedPost));
       logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
       if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
     trimFeedPostsCache({ reason: 'after-transfer' });
     await refreshStagingPostCount();
+    if (totalMoved > 0) runSourceDeletionReconciliation({ reason: 'after-transfer' });
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
     rememberTransferRun({
       id: `transfer_${transferStartedAt}_${Math.random().toString(36).slice(2, 8)}`,
@@ -21443,6 +21847,10 @@ refreshStagingPostCount();
 scheduleFeedRetentionTimer('count-cap-timer', FEED_COUNT_CAP_INTERVAL_MS, ['countCap'], 2 * 60 * 1000);
 scheduleFeedRetentionTimer('unseen-cap-timer', FEED_UNSEEN_CAP_INTERVAL_MS, ['unseenCap'], 4 * 60 * 1000);
 scheduleFeedRetentionTimer('archive-age-timer', ARCHIVE_AGE_PRUNE_INTERVAL_MS, ['archiveAgeCap', 'archiveCap'], 6 * 60 * 1000);
+if (!IS_PIPELINE_ROLE) {
+  setTimeout(() => runSourceDeletionReconciliation({ reason: 'startup' }), 30 * 1000);
+  setInterval(() => runSourceDeletionReconciliation({ reason: 'scheduled' }), SOURCE_DELETION_CHECK_INTERVAL_MS);
+}
 
 // See refreshFollowingSourceCaches/FOLLOWING_SOURCE_REFRESH_MS above — the
 // per-user-connected-account equivalent of the app-level transfer just
