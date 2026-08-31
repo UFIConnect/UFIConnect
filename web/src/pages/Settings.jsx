@@ -384,6 +384,7 @@ export default function Settings() {
         role: prefRole, experience: prefExperience,
         goals: prefGoals, interests: prefInterests,
       });
+      try { localStorage.removeItem('ufi_feed_v1'); } catch {}
       updateProfileLocally(data.profile || data);
       setPrefSaved(true);
       showToast('Preferences saved', 'success');

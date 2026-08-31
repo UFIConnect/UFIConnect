@@ -7228,6 +7228,15 @@ function mainFeedSnapshotKey(userId, sortMode, timeRange) {
   return `${userId}::${sortMode}::${timeRange || 'all'}`;
 }
 
+function invalidateUserFeedSnapshots(userId) {
+  if (!userId) return;
+  const prefix = `${userId}::`;
+  for (const key of mainFeedSnapshots.keys()) {
+    if (key.startsWith(prefix)) mainFeedSnapshots.delete(key);
+  }
+  lastPersonalFeedComputeAt.delete(userId);
+}
+
 // Per-user pacing guards for the personalized pool below. The per-tag fetch
 // cache every individual fetcher already uses (getCached/postCache, keyed by
 // source+tag, no userId) still protects raw external request volume
@@ -9019,7 +9028,7 @@ function rankFeedPostsForLocation(posts, locationContext, options = {}) {
 // (fresh account mid-onboarding) or if the hard filter would leave nothing
 // at all — same "never truly dead-end" rule every other filter in this
 // pipeline follows (see filterUnseen's identical fallback).
-function filterByUserTopics(posts, userTopics) {
+function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) {
   const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
   if (!topics.length || !posts.length) return posts;
 
@@ -9046,19 +9055,17 @@ function filterByUserTopics(posts, userTopics) {
     bucket.keptTotal += kept.length;
   }
 
-  return kept.length ? kept : posts;
+  if (kept.length || !fallbackToInput) return kept;
+  return posts;
 }
 
 // The actual shape of the default landing feed (and Videos' first page —
 // see handleVideoFeedRequest): two phases, both built from the same
 // roundRobinMerge primitive the rest of this pipeline already uses.
 //
-// Phase 1 ("platform intro") — one post per source, in round-robin order,
-// straight from the pool as given (unfiltered by topic on purpose — its
-// whole job is showing the viewer how many platforms are actually feeding
-// this, not their own interests specifically). Just the *first* round of
-// roundRobinMerge rather than letting it continue, which is exactly "one
-// from each, then stop."
+// Phase 1 ("platform intro") — one post per matching source, in round-robin
+// order. It remains useful for showing source variety, but it must not bypass
+// a member's declared interests.
 //
 // Phase 2 ("topic mix") — everything else, hard-filtered to the viewer's
 // own onboarding-selected topics (filterByUserTopics), grouped by topic,
@@ -9085,8 +9092,13 @@ function filterByUserTopics(posts, userTopics) {
 function buildTwoPhaseMix(pool, userTopics, userAffinity) {
   if (!pool.length) return pool;
 
+  // A source introduction must obey the same declared-topic boundary as the
+  // rest of a personalized feed. Otherwise one unrelated post per source
+  // leaks through before filtering (for example, music for a member who did
+  // not select it).
+  const topicFiltered = filterByUserTopics(pool, userTopics, { fallbackToInput: false });
   const bySource = new Map();
-  for (const p of pool) {
+  for (const p of topicFiltered) {
     const src = p?.source || 'unknown';
     if (!bySource.has(src)) bySource.set(src, []);
     bySource.get(src).push(p);
@@ -9095,8 +9107,7 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
   const intro = roundRobinMerge(sourceLists).slice(0, sourceLists.length);
   const introIds = new Set(intro.map(p => p?.id));
 
-  const rest = pool.filter(p => !introIds.has(p?.id));
-  const topicFiltered = filterByUserTopics(rest, userTopics);
+  const rest = topicFiltered.filter(p => !introIds.has(p?.id));
   const topicAffinity = userAffinity?.topic;
 
   const byTopic = new Map();
@@ -15766,6 +15777,7 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
     } else {
       filestore.saveUsers(users);
     }
+    invalidateUserFeedSnapshots(user.id);
     res.json({ profile: fullProfile(user), autoJoined: suggested });
   } catch (e) {
     console.error('POST /profile/onboarding DB:', e.message);
@@ -17553,6 +17565,9 @@ async function handleVideoFeedRequest(req, res) {
       ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
       ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
     ];
+    const applyPersonalTopicFilter = (items) => (
+      topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false })
+    );
 
     // -- Full-text search across every cached video post, not just whatever
     // a single getCursorFeedPage page happened to return — the comment
@@ -17583,7 +17598,7 @@ async function handleVideoFeedRequest(req, res) {
         sort: 'newest',
         diversify: true,
       });
-      const playable = filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic);
+      const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic));
       const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
       return sendVideoPage(req, res, pageRows, { hasMore: playable.length > pageRows.length, search: searchQuery });
     }
@@ -17609,8 +17624,8 @@ async function handleVideoFeedRequest(req, res) {
         sortMode: 'balanced', mediaType: 'video', source: balancedSource,
         timeRange: videoTimeRange || 'all', page: reqPage, perSourcePageSize,
       });
-      const playable = filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
-        .filter(matchesTopic).filter(matchesSearch);
+      const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
+        .filter(matchesTopic).filter(matchesSearch));
       const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
       const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
       return sendVideoPage(req, res, pageRows, { page: reqPage, hasMore });
@@ -17625,14 +17640,13 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      const filtered = personalizeVideosForUser(playable.filter(matchesSearch));
+      const filtered = personalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch)));
       return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
     }
 
     // Phase 1 ("platform intro") — only on a genuinely fresh session (no
-    // cursor param sent yet at all), one video per platform, unfiltered by
-    // topic — same reasoning as buildTwoPhaseMix's identical phase for the
-    // main Feed. getCursorFeedPage already round-robin-mixes every source
+    // cursor param sent yet at all), one matching video per platform.
+    // getCursorFeedPage already round-robin-mixes every source
     // on every page (see its own comment), so sizing the limit to exactly
     // the number of active sources naturally yields "one from each, then
     // stop" without needing separate mixing logic here.
@@ -17644,7 +17658,7 @@ async function handleVideoFeedRequest(req, res) {
         sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
-      introPosts = intro.posts.filter(matchesSearch);
+      introPosts = applyPersonalTopicFilter(intro.posts.filter(matchesSearch));
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
     }
 
@@ -17671,7 +17685,7 @@ async function handleVideoFeedRequest(req, res) {
         mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
       });
       const mixCandidates = mix.posts.filter(p => !introIds.has(p.id)).filter(matchesSearch);
-      mixPosts = (topicsFilter.length ? mixCandidates : filterByUserTopics(mixCandidates, userTopics)).slice(0, remaining);
+      mixPosts = applyPersonalTopicFilter(mixCandidates).slice(0, remaining);
       nextCursor = mix.nextCursor;
       hasMore = mix.hasMore;
     }
