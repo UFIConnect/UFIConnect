@@ -696,6 +696,11 @@ function JobTrackerSection() {
   const { showToast } = useToast();
   const [opportunities, setOpportunities] = useState(null);
   const [tracked, setTracked] = useState({});
+  const [resumes, setResumes] = useState([]);
+  const [resumesLoading, setResumesLoading] = useState(true);
+  const [selectingResumeId, setSelectingResumeId] = useState(null);
+  const [viewingResumeId, setViewingResumeId] = useState(null);
+  const [resumePreview, setResumePreview] = useState(null);
   const [error, setError] = useState(false);
   const [savingId, setSavingId] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -707,16 +712,26 @@ function JobTrackerSection() {
   // actually show anything new.
   const loadAll = useCallback((bust = false) => {
     setError(false);
-    Promise.all([client.get('/opportunities', { params: bust ? { bust: 1 } : {} }), client.get('/jobs/tracking')])
-      .then(([oppRes, trackRes]) => {
+    Promise.all([
+      client.get('/opportunities', { params: bust ? { bust: 1 } : {} }),
+      client.get('/jobs/tracking'),
+      // A missing attachment must not make the live job feed fail. This is
+      // intentionally independent from the two core Job Tracker requests.
+      client.get('/profile/attachments').catch(() => ({ data: { attachments: [] } })),
+    ])
+      .then(([oppRes, trackRes, attachmentRes]) => {
         setOpportunities((oppRes.data.opportunities || []).filter(o => o?.id));
         setRecommendationBasis(oppRes.data.recommendationBasis || 'recent listings');
         const map = {};
         for (const j of (trackRes.data.jobs || [])) map[j.id] = j;
         setTracked(map);
+        setResumes(attachmentRes.data.attachments || []);
       })
       .catch(() => setError(true))
-      .finally(() => setRefreshing(false));
+      .finally(() => {
+        setResumesLoading(false);
+        setRefreshing(false);
+      });
   }, []);
 
   useEffect(() => {
@@ -728,6 +743,45 @@ function JobTrackerSection() {
   function handleRefresh() {
     setRefreshing(true);
     loadAll(true);
+  }
+
+  useEffect(() => () => {
+    if (resumePreview?.url) URL.revokeObjectURL(resumePreview.url);
+  }, [resumePreview]);
+
+  async function selectResume(id) {
+    if (!id || resumes.find(resume => resume.id === id)?.isPrimary) return;
+    setSelectingResumeId(id);
+    try {
+      await client.post(`/profile/attachments/${id}/select`);
+      setResumes(current => current.map(resume => ({ ...resume, isPrimary: resume.id === id })));
+      showToast('Resume selected for job matching.', 'success');
+      // Resume keywords are read by /opportunities on every request. Refresh
+      // the list so the member sees the selected resume take effect now.
+      setRefreshing(true);
+      loadAll(true);
+    } catch (requestError) {
+      showToast(requestError?.response?.data?.message || 'Could not select that resume.', 'error');
+    } finally {
+      setSelectingResumeId(null);
+    }
+  }
+
+  async function viewResume(resume) {
+    if (!resume) return;
+    setViewingResumeId(resume.id);
+    try {
+      const { data } = await client.get(`/profile/attachments/${resume.id}/download`, { responseType: 'blob' });
+      setResumePreview({
+        ...resume,
+        mimeType: data.type || resume.mimeType || '',
+        url: URL.createObjectURL(data),
+      });
+    } catch {
+      showToast('Could not open this resume.', 'error');
+    } finally {
+      setViewingResumeId(null);
+    }
   }
 
   async function setStatus(job, status) {
@@ -767,9 +821,51 @@ function JobTrackerSection() {
   const liveById = new Map(sorted.map(job => [job.id, job]));
   const trackedRows = trackedValues.map(job => ({ ...job, ...(liveById.get(job.id) || {}), isLive: liveById.has(job.id) }));
   const displayedJobs = view === 'live' ? sorted : trackedRows.filter(job => job.status === view);
+  const selectedResume = resumes.find(resume => resume.isPrimary) || resumes[0] || null;
+  const selectedResumeScore = Number(selectedResume?.atsScore);
+  const canPreviewResume = resumePreview && (
+    resumePreview.mimeType === 'application/pdf' ||
+    resumePreview.mimeType.startsWith('text/') ||
+    /\.(pdf|txt)$/i.test(resumePreview.filename || '')
+  );
 
   return (
     <div>
+      <div className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: 14 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '.82rem', fontWeight: 800 }}>Resume for matching</div>
+          <div style={{ fontSize: '.74rem', color: 'var(--muted)', marginTop: 3 }}>
+            {resumesLoading ? 'Loading saved resumes...' : selectedResume ? 'The selected file tailors future job matches.' : 'Add a resume to tailor job matches.'}
+          </div>
+        </div>
+        {selectedResume ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+            <select
+              className="form-input"
+              aria-label="Resume used for job matching"
+              value={selectedResume.id}
+              disabled={selectingResumeId !== null || resumesLoading}
+              onChange={event => selectResume(event.target.value)}
+              style={{ minWidth: 210, maxWidth: '100%', padding: '7px 28px 7px 10px', fontSize: '.78rem' }}
+            >
+              {resumes.map(resume => (
+                <option key={resume.id} value={resume.id}>
+                  {resume.filename}{resume.isPrimary ? ' (selected)' : ''}
+                </option>
+              ))}
+            </select>
+            {Number.isFinite(selectedResumeScore) && (
+              <span style={{ fontSize: '.7rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>ATS {selectedResumeScore}/100</span>
+            )}
+            <button type="button" className="btn btn-ghost btn-sm" disabled={viewingResumeId === selectedResume.id} onClick={() => viewResume(selectedResume)}>
+              {viewingResumeId === selectedResume.id ? 'Opening...' : 'View resume'}
+            </button>
+          </div>
+        ) : !resumesLoading && (
+          <Link to="/profile?tab=attachments" className="btn btn-primary btn-sm">Add a resume</Link>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20, alignItems: 'center' }}>
         <StatChip label="Listings" value={sorted.length} />
         <StatChip label="Saved" value={savedCount} />
@@ -853,6 +949,33 @@ function JobTrackerSection() {
           </div>
         )}
       </div>
+
+      {resumePreview && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Preview ${resumePreview.filename || 'resume'}`}
+          onMouseDown={event => { if (event.target === event.currentTarget) setResumePreview(null); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 2000, display: 'grid', placeItems: 'center', padding: 16, background: 'rgba(15, 23, 42, .58)' }}
+        >
+          <div className="card" style={{ width: 'min(900px, 100%)', maxHeight: 'calc(100vh - 32px)', display: 'flex', flexDirection: 'column', padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'space-between', marginBottom: 12 }}>
+              <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resumePreview.filename || 'Resume'}</strong>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setResumePreview(null)}>Close</button>
+            </div>
+            {canPreviewResume ? (
+              <iframe title={resumePreview.filename || 'Resume preview'} src={resumePreview.url} style={{ width: '100%', height: 'min(72vh, 700px)', border: '1px solid var(--border)', borderRadius: 6, background: '#fff' }} />
+            ) : (
+              <div style={{ padding: '36px 18px', textAlign: 'center', color: 'var(--muted)', fontSize: '.86rem' }}>
+                This file type opens in your document app. Download it to view the full resume.
+              </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
+              <a href={resumePreview.url} download={resumePreview.filename || 'resume'} className="btn btn-primary btn-sm">Download</a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
