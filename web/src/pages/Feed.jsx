@@ -2862,10 +2862,10 @@ export default function Feed({ forcedMode } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Countries' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No country discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2913,7 +2913,7 @@ export default function Feed({ forcedMode } = {}) {
                 <p style={{ marginBottom: 12 }}>
                   {locationMessage || (viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
-                    : 'Countries combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to bring nearby places forward.')}
+                    : 'Travel combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to bring nearby places forward.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
@@ -3025,7 +3025,7 @@ export default function Feed({ forcedMode } = {}) {
             {[
               { key: 'feed', label: 'Home' },
               { key: 'following', label: 'Following' },
-              { key: 'countries', label: 'Countries' },
+              { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>

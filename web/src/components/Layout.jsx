@@ -263,7 +263,7 @@ export default function Layout({ children, wide = false }) {
           </Link>
           <Link to="/?feed=countries" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'countries' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
             <ShellIcon name="countries" size={18} />
-            Countries
+            Travel
           </Link>
           <Link to="/?feed=restaurants" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'restaurants' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
             <ShellIcon name="restaurants" size={18} />

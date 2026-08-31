@@ -1308,10 +1308,10 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('feed')}
         />
         <AutomationToolCard
-          title="Countries"
+          title="Travel"
           description="Browse live views, destination guides, and travel ideas from around the world."
           status="Worldwide discovery feed"
-          actionLabel="Open Countries"
+          actionLabel="Open Travel"
           to="/?feed=countries"
         />
         <AutomationToolCard
