@@ -4,6 +4,20 @@ import client from '../api/client';
 import { auth0AuthorizationParams, isAuth0Configured } from '../auth/auth0Config';
 
 const AuthContext = createContext(null);
+const AUTH_SESSION_KEY = 'ufi_authenticated_session_id';
+
+function getAuthenticatedSessionId() {
+  try {
+    let id = sessionStorage.getItem(AUTH_SESSION_KEY);
+    if (!id) {
+      id = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      sessionStorage.setItem(AUTH_SESSION_KEY, id);
+    }
+    return id;
+  } catch {
+    return null;
+  }
+}
 
 export function AuthProvider({ children }) {
   const [token,   setToken]   = useState(() => localStorage.getItem('pc_token'));
@@ -64,6 +78,7 @@ export function AuthProvider({ children }) {
           localStorage.setItem('pc_token', accessToken);
           setToken(accessToken);
           const { data } = await client.get('/auth/me');
+          client.post('/analytics/sign-in', { sessionId: getAuthenticatedSessionId() }).catch(() => {});
           if (!cancelled) setProfile(data.profile || data);
         } catch {
           if (!cancelled) {

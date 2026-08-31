@@ -815,26 +815,28 @@ function AnalyticsView() {
   const [users, setUsers] = useState(null);
   const [usersError, setUsersError] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const visitorLabel = data?.visitorKey === 'ip-with-browser-fallback' ? 'unique visitors' : 'unique IPs';
 
   const loadUsers = useCallback(() => {
     officeFetch(`${API}/office/users`)
       .then(r => r.json())
-      .then(j => setUsers(j))
+      .then(j => { setUsers(j); setUsersError(false); })
       .catch(() => setUsersError(true));
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadAnalytics = useCallback(() => {
     officeFetch(`${API}/office/analytics/pageviews`)
       .then(r => r.json())
-      .then(j => { if (!cancelled) setData(j); })
-      .catch(() => { if (!cancelled) setError(true); });
-    officeFetch(`${API}/office/users`)
-      .then(r => r.json())
-      .then(j => { if (!cancelled) setUsers(j); })
-      .catch(() => { if (!cancelled) setUsersError(true); });
-    return () => { cancelled = true; };
+      .then(j => { setData(j); setError(false); })
+      .catch(() => setError(true));
   }, []);
+
+  useEffect(() => {
+    loadAnalytics();
+    loadUsers();
+    const id = window.setInterval(() => { loadAnalytics(); loadUsers(); }, 30000);
+    return () => window.clearInterval(id);
+  }, [loadAnalytics, loadUsers]);
 
   async function handleDeleteUser(u) {
     if (!window.confirm(`Permanently delete "${u.name}" (${u.email})? This removes their account, posts, and follows — cannot be undone.`)) return;
@@ -854,7 +856,7 @@ function AnalyticsView() {
   return (
     <>
       <h1 style={H1}>Analytics</h1>
-      <p style={SUBTITLE}>First-party pageview counts, grouped by request IP so skip-signup traffic is counted without an account. See also GA4 at analytics.google.com.</p>
+      <p style={SUBTITLE}>First-party pageview counts, deduped by request IP with a stable browser fallback only when an IP is unavailable. See also GA4 at analytics.google.com.</p>
 
       {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
 
@@ -881,8 +883,13 @@ function AnalyticsView() {
         <>
           <div style={{ display: 'flex', gap: 16, margin: '12px 0 20px', flexWrap: 'wrap' }}>
             <Card style={{ minWidth: 150 }}>
-              <Label>Total signups</Label>
+              <Label>Registered accounts</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{users.total}</div>
+            </Card>
+            <Card style={{ minWidth: 150 }}>
+              <Label>Recorded sign-ins</Label>
+              <div style={{ fontSize: 32, fontWeight: 800, color: '#c084fc', marginTop: 6 }}>{users.signIns?.allTime ?? 0}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{users.signIns?.uniqueMembers ?? 0} member{(users.signIns?.uniqueMembers ?? 0) === 1 ? '' : 's'}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Completed onboarding</Label>
@@ -896,6 +903,10 @@ function AnalyticsView() {
               <Label>New last 7 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{users.last7}</div>
             </Card>
+          </div>
+
+          <div style={{ fontSize: 11.5, color: '#64748b', margin: '-8px 0 18px' }}>
+            Account totals come from the users table. Sign-ins are tracked separately from this release forward; the recent list shows the newest 20 accounts only.
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
@@ -943,17 +954,17 @@ function AnalyticsView() {
             <Card style={{ minWidth: 150 }}>
               <Label>Today</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#60a5fa', marginTop: 6 }}>{data.today}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} unique IP{data.todayVisitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.todayVisitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 7 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#4ade80', marginTop: 6 }}>{data.last7}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} unique IP{data.last7Visitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last7Visitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Last 30 days</Label>
               <div style={{ fontSize: 32, fontWeight: 800, color: '#e2e8f0', marginTop: 6 }}>{data.last30}</div>
-              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} unique IP{data.last30Visitors === 1 ? '' : 's'}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{data.last30Visitors} {visitorLabel}</div>
             </Card>
             <Card style={{ minWidth: 150 }}>
               <Label>Signed-in today</Label>

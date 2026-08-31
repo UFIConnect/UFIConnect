@@ -7829,6 +7829,24 @@ function recordClientError(userId, { message, stack, componentStack, urlPath, vi
   ).catch(e => console.warn('recordClientError:', e.message));
 }
 
+function recordSuccessfulSignIn(user, req, { provider = 'local', sessionId = null } = {}) {
+  if (!db.isConnected() || !isDBId(user?.id)) return;
+  const safeSessionId = typeof sessionId === 'string' && sessionId.length
+    ? sessionId.slice(0, 120)
+    : null;
+  const providerName = String(provider || 'local').slice(0, 40);
+  const ipKey = clientIpAnalyticsKey(req);
+  const query = safeSessionId
+    ? `INSERT INTO user_sign_in_events (user_id, provider, session_id, ip_key)
+       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`
+    : `INSERT INTO user_sign_in_events (user_id, provider, session_id, ip_key)
+       VALUES ($1,$2,NULL,$3)`;
+  const params = safeSessionId
+    ? [user.id, providerName, safeSessionId, ipKey]
+    : [user.id, providerName, ipKey];
+  db.query(query, params).catch(e => console.warn('recordSuccessfulSignIn:', e.message));
+}
+
 function recordNegativeSignal(userId, { signalType, source, topic, postId, visitorId, context } = {}) {
   if (!db.isConnected() || !signalType) return;
   db.query(
@@ -13367,6 +13385,22 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS pv_ip_created_idx ON page_views(ip_key, created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS pv_user_created_idx ON page_views(user_id, created_at DESC) WHERE user_id IS NOT NULL`);
 
+    // Registrations and successful sign-ins are different metrics. This
+    // durable log keeps repeat sign-ins visible without inflating users.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_sign_in_events (
+        id          BIGSERIAL PRIMARY KEY,
+        user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider    TEXT NOT NULL DEFAULT 'local',
+        session_id  TEXT,
+        ip_key      TEXT,
+        created_at  TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS usie_created_idx ON user_sign_in_events(created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS usie_user_created_idx ON user_sign_in_events(user_id, created_at DESC)`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS usie_session_idx ON user_sign_in_events(user_id, session_id) WHERE session_id IS NOT NULL`);
+
     // Cross-service activity heartbeat. API receives real web traffic, while
     // the pipeline service is the only process running source fetchers; an
     // in-memory "someone is here" flag on the API cannot wake the pipeline.
@@ -15002,6 +15036,15 @@ app.post('/analytics/pageview', authenticateOptional, async (req, res) => {
   }
 });
 
+// Auth0 completes outside the local /auth/login route. Its client sends one
+// stable browser-session ID after verification, so it is counted once per
+// sign-in session instead of once for every authenticated API request.
+app.post('/analytics/sign-in', authenticate, (req, res) => {
+  const sessionId = typeof req.body?.sessionId === 'string' ? req.body.sessionId : null;
+  recordSuccessfulSignIn(req.user, req, { provider: req.user?.authProvider || 'local', sessionId });
+  res.status(204).end();
+});
+
 // --- Reports admin (office dashboard) --------------------------------------
 // The other half of what makes "users can report child safety concerns
 // in-app" a real, working claim rather than a form that submits into a
@@ -15050,7 +15093,10 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     // logging endpoint above, by crawlers with no person behind them at
     // all). Distinct visitors next to it gives the actually-meaningful
     // number for "how many separate people were here."
-    const visitorSql = `COUNT(DISTINCT ip_key) FILTER (WHERE ip_key IS NOT NULL)`;
+    // Cloudflare/Render client IP is the primary visitor key. The browser ID
+    // is only used when a deployment does not forward a trusted client IP.
+    const visitorKeySql = `COALESCE(NULLIF(ip_key, ''), NULLIF(client_visitor_id, ''), NULLIF(visitor_id, ''))`;
+    const visitorSql = `COUNT(DISTINCT ${visitorKeySql}) FILTER (WHERE ${visitorKeySql} IS NOT NULL)`;
     const [today, last7, last30, topPaths, daily, signedIn] = await Promise.all([
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '7 days'`),
@@ -15089,6 +15135,7 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
       signedInTodayUsers: Number(signedIn.rows[0].today_users),
       signedInLast30Views: Number(signedIn.rows[0].last30_views),
       signedInLast30Users: Number(signedIn.rows[0].last30_users),
+      visitorKey: 'ip-with-browser-fallback',
       topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views), visitors: Number(r.visitors) })),
       daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
     });
@@ -15154,7 +15201,7 @@ app.get('/office/topics', requireOfficeToken, async (req, res) => {
 app.get('/office/users', requireOfficeToken, async (req, res) => {
   try {
     if (!db.isConnected()) return res.json({ available: false });
-    const [total, hidden, onboarded, today, last7, last30, recent] = await Promise.all([
+    const [total, hidden, onboarded, today, last7, last30, recent, signIns] = await Promise.all([
       db.query(`SELECT COUNT(*) FROM users`),
       db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden = true`),
       db.query(`SELECT COUNT(*) FROM users WHERE onboarding_complete = true`),
@@ -15162,6 +15209,15 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'`),
       db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC LIMIT 20`),
+      db.query(`
+        SELECT
+          COUNT(*) AS all_time,
+          COUNT(DISTINCT user_id) AS all_time_users,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 day') AS today,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS last7,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS last30
+        FROM user_sign_in_events
+      `),
     ]);
     const totalCount = Number(total.rows[0].count);
     res.json({
@@ -15172,6 +15228,13 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       today:  Number(today.rows[0].count),
       last7:  Number(last7.rows[0].count),
       last30: Number(last30.rows[0].count),
+      signIns: {
+        allTime: Number(signIns.rows[0].all_time),
+        uniqueMembers: Number(signIns.rows[0].all_time_users),
+        today: Number(signIns.rows[0].today),
+        last7: Number(signIns.rows[0].last7),
+        last30: Number(signIns.rows[0].last30),
+      },
       recent: recent.rows.map(r => ({
         id: r.id, name: r.name, email: r.email,
         createdAt: r.created_at,
@@ -15248,6 +15311,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   if (db.isConnected()) {
     const dbUser = await fetchAndSyncUserByEmail(emailLc);
     if (dbUser && dbUser.passwordHash && bcrypt.compareSync(password, dbUser.passwordHash)) {
+      recordSuccessfulSignIn(dbUser, req);
       const token = jwt.sign({ id: dbUser.id, email: dbUser.email }, JWT_SECRET, { expiresIn: '7d' });
       return res.json({ token, profile: fullProfile(dbUser) });
     }
@@ -15256,6 +15320,7 @@ app.post('/auth/login', authLimiter, async (req, res) => {
   // Fall back to in-memory cache (users synced from DB at login)
   const user = users.find((u) => u.email === emailLc || u.email === email);
   if (!user || !user.passwordHash || !bcrypt.compareSync(password, user.passwordHash)) return res.status(401).json({ message: 'Invalid email or password.' });
+  recordSuccessfulSignIn(user, req);
   const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, profile: fullProfile(user) });
 });
