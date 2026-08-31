@@ -197,6 +197,10 @@ const FEED_DEDUP_WINDOW = 600;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
+function memberStorageKey(baseKey, userId) {
+  return userId ? `${baseKey}:${userId}` : null;
+}
+
 function normalizeLocationFilters(value = {}) {
   return {
     country: String(value?.country || '').replace(/[<>]/g, '').trim().slice(0, 80),
@@ -204,9 +208,11 @@ function normalizeLocationFilters(value = {}) {
   };
 }
 
-function loadFeedState() {
+function loadFeedState(userId) {
   try {
-    const raw = sessionStorage.getItem(FEED_STATE_KEY);
+    const key = memberStorageKey(FEED_STATE_KEY, userId);
+    if (!key) return null;
+    const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const s = JSON.parse(raw);
     const activeTabs = Array.isArray(s.activeTabs) ? s.activeTabs : [];
@@ -222,9 +228,11 @@ function loadFeedState() {
   } catch { return null; }
 }
 
-function saveFeedState(filters, activeTabs, search, viewMode, location) {
+function saveFeedState(userId, filters, activeTabs, search, viewMode, location) {
   try {
-    sessionStorage.setItem(FEED_STATE_KEY, JSON.stringify({ filters, activeTabs, search, viewMode, location }));
+    const key = memberStorageKey(FEED_STATE_KEY, userId);
+    if (!key) return;
+    sessionStorage.setItem(key, JSON.stringify({ filters, activeTabs, search, viewMode, location }));
   } catch {}
 }
 
@@ -1566,9 +1574,11 @@ const FEED_CACHE_KEY       = 'ufi_feed_v1';
 const FEED_CACHE_SILENT_MS = 10 * 60 * 1000; // silent bg refresh within 10 min
 const FEED_CACHE_SHOW_MS   = 60 * 60 * 1000; // show stale posts up to 1 hr
 
-function readFeedCache() {
+function readFeedCache(userId) {
   try {
-    const raw = localStorage.getItem(FEED_CACHE_KEY);
+    const key = memberStorageKey(FEED_CACHE_KEY, userId);
+    if (!key) return null;
+    const raw = localStorage.getItem(key);
     if (!raw) return null;
     const { posts, ts } = JSON.parse(raw);
     if (!Array.isArray(posts)) return null;
@@ -1578,9 +1588,11 @@ function readFeedCache() {
   } catch { return null; }
 }
 
-function writeFeedCache(posts) {
+function writeFeedCache(userId, posts) {
   try {
-    localStorage.setItem(FEED_CACHE_KEY, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
+    const key = memberStorageKey(FEED_CACHE_KEY, userId);
+    if (!key) return;
+    localStorage.setItem(key, JSON.stringify({ posts: posts.slice(0, 100), ts: Date.now() }));
   } catch {}
 }
 
@@ -1600,20 +1612,21 @@ export default function Feed({ forcedMode } = {}) {
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
-  const _cache = readFeedCache();
+  const _cache = readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   // Following mode's per-source fetch failures (bad scope, API not
   // enabled, expired token) — see getFollowingFeedPosts's own comment
   // server-side. Surfaced in the empty state below instead of a real
   // failure reading identically to "this account just has nothing new."
   const [sourceErrors,  setSourceErrors]  = useState({});
+  const activeMemberIdRef = useRef(profile?.id || null);
   const [loading,       setLoading]      = useState(!_cache);
   const [feedError,     setFeedError]    = useState(null);
   const [refreshing,    setRefreshing]   = useState(false);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
   const [remoteHasMore, setRemoteHasMore]= useState(true);
-  const _saved = loadFeedState();
+  const _saved = loadFeedState(profile?.id);
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
@@ -1801,7 +1814,7 @@ export default function Feed({ forcedMode } = {}) {
       knownIdsQueue.current = nextPosts.map(p => p.id).filter(Boolean);
       knownIds.current = new Set(knownIdsQueue.current);
       setPosts(nextPosts);
-      if (activeMode === 'feed' && !activeSearch) writeFeedCache(nextPosts);
+      if (activeMode === 'feed' && !activeSearch) writeFeedCache(profile?.id, nextPosts);
       // Only reset pagination state (page counter AND cursor) on a genuine
       // context reset, same condition as the existing remotePage reset —
       // a merge (silent background top-up) must NOT rewind the cursor,
@@ -1829,7 +1842,7 @@ export default function Feed({ forcedMode } = {}) {
       if (!silent || postsRef.current.length === 0) setFeedError(message);
     }
     finally { setLoading(false); setRefreshing(false); }
-  }, []); // eslint-disable-line
+  }, [profile?.id]);
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
@@ -1840,8 +1853,32 @@ export default function Feed({ forcedMode } = {}) {
 
   // Persist filter state so the page reopens with the same settings
   useEffect(() => {
-    saveFeedState(filters, activeTabs, search, viewMode, locationFilters);
-  }, [filters, activeTabs, search, viewMode, locationFilters]);
+    saveFeedState(profile?.id, filters, activeTabs, search, viewMode, locationFilters);
+  }, [profile?.id, filters, activeTabs, search, viewMode, locationFilters]);
+  useEffect(() => {
+    if (!profile?.id || activeMemberIdRef.current === profile.id) return;
+    activeMemberIdRef.current = profile.id;
+    const saved = loadFeedState(profile.id);
+    const nextFilters = saved?.filters || DEFAULT_FILTERS;
+    const nextTabs = saved?.activeTabs || [];
+    const nextSearch = saved?.search || '';
+    const nextMode = saved?.viewMode || 'feed';
+    const nextLocation = saved?.location || normalizeLocationFilters(profile.roleSettings?.feedLocation);
+    filtersRef.current = nextFilters;
+    activeTabsRef.current = nextTabs;
+    searchRef.current = nextSearch;
+    viewModeRef.current = nextMode;
+    locationFiltersRef.current = nextLocation;
+    setFilters(nextFilters);
+    setActiveTabs(nextTabs);
+    setSearch(nextSearch);
+    setSearchInput(nextSearch);
+    setViewMode(nextMode);
+    setLocationFilters(nextLocation);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    remoteCursorRef.current = null;
+  }, [profile?.id, profile?.roleSettings?.feedLocation]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
@@ -2115,9 +2152,11 @@ export default function Feed({ forcedMode } = {}) {
 
   // Load initial feed — if cache is fresh, show it instantly and stream new posts on top silently
   useEffect(() => {
-    const c = readFeedCache();
+    if (!profile?.id) return;
+    const c = readFeedCache(profile.id);
+    setPosts(c?.posts || []);
     loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
-  }, [loadFeed]); // eslint-disable-line
+  }, [loadFeed, profile?.id]);
 
   useEffect(() => {
     const refreshQuietly = () => {
