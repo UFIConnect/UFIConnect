@@ -9889,15 +9889,25 @@ async function getCountriesCameraFeed(location, viewerId = null) {
         ? { ...current, matchedByLocation: true, locationMatch: score === 2 ? 'local' : 'country', locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}` }
         : current;
     });
+  // Keep the live cameras as their own rail instead of spending the first
+  // page of Travel on them. The client can rotate one lightweight player at
+  // a time while the scroll below remains a full set of guides and travel
+  // stories. Camera entries are intentionally not fed through seen-post
+  // filtering: a live view is a persistent destination, not a card a
+  // member should lose after one visit.
+  const serialized = ranked.map(post => post?.source === LIVE_CAMERA_SOURCE ? serializeCommunityPost(post, viewerId) : post);
+  const liveFeeds = serialized.filter(post => post?.isLiveCamera);
+  const travelPosts = serialized.filter(post => !post?.isLiveCamera);
   return {
-    posts: ranked.map(post => post?.source === LIVE_CAMERA_SOURCE ? serializeCommunityPost(post, viewerId) : post),
+    posts: travelPosts,
+    liveFeeds,
     fetchedAt: entry?.fetchedAt || new Date().toISOString(),
     catalogSize: ranked.length,
     equalizer: {
       mode: 'live-weighted-round-robin',
-      liveCameras: ranked.filter(post => post?.isLiveCamera).length,
-      destinationGuides: ranked.filter(post => post?.source === 'wikivoyage').length,
-      travelNews: ranked.filter(post => post?.source === 'travelnews').length,
+      liveCameras: liveFeeds.length,
+      destinationGuides: travelPosts.filter(post => post?.source === 'wikivoyage').length,
+      travelNews: travelPosts.filter(post => post?.source === 'travelnews').length,
     },
     providerError: entry?.error || null,
   };
@@ -18480,6 +18490,10 @@ async function handleFeedRequest(req, res) {
     trackPostsSeen(hydratedPageRows);
     return res.json({
       posts: hydratedPageRows,
+      // Travel's looping live-camera rail is deliberately separate from
+      // paginated discovery cards. Do not run it through `filterUnseen` --
+      // a camera remains useful every time a member opens Travel.
+      ...(feedMode === 'countries' ? { liveFeeds: localFeed.liveFeeds || [] } : {}),
       mode: feedMode,
       sort: 'newest',
       page: reqPage,

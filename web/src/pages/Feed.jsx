@@ -759,6 +759,133 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   );
 }
 
+// Travel has a small, persistent live-camera rail above its discoverable
+// stories. Only the current camera is mounted, so rotating the rail never
+// turns into a row of simultaneously decoding YouTube players on mobile.
+function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [inView, setInView] = useState(false);
+  const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
+  const loopRef = useRef(null);
+  const liveFeeds = Array.isArray(feeds) ? feeds.filter(feed => feed?.id && feed?.mediaUrl) : [];
+  const active = liveFeeds[activeIndex] || liveFeeds[0] || null;
+  const embedId = extractYouTubeId(active?.sourceUrl || active?.mediaUrl);
+
+  useEffect(() => {
+    setActiveIndex(current => Math.min(current, Math.max(liveFeeds.length - 1, 0)));
+  }, [liveFeeds.length]);
+
+  useEffect(() => {
+    const element = loopRef.current;
+    if (!element || !('IntersectionObserver' in window)) {
+      setInView(true);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => setInView(entry.isIntersecting),
+      { threshold: 0.2 }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const handleVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (!inView || liveFeeds.length < 2) return undefined;
+    const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
+      setActiveIndex(current => (current + 1) % liveFeeds.length);
+    }, 18000);
+    return () => window.clearInterval(intervalId);
+  }, [inView, liveFeeds.length]);
+
+  if (!active) return null;
+
+  const selectCamera = (index) => setActiveIndex(index);
+  const moveCamera = (direction) => {
+    setActiveIndex(current => (current + direction + liveFeeds.length) % liveFeeds.length);
+  };
+
+  return (
+    <section ref={loopRef} className="travel-live-loop" aria-label="Live travel cameras">
+      <div className="travel-live-loop-header">
+        <div>
+          <div className="travel-live-loop-title">Live travel</div>
+          <div className="travel-live-loop-subtitle">A moving window into places worth keeping on the list.</div>
+        </div>
+        <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>
+      </div>
+
+      <div className="travel-live-loop-stage">
+        {embedId ? (
+          <YouTubeEmbedBlock
+            key={active.id}
+            embedId={embedId}
+            videoKey={`travel-live-${active.id}`}
+            poster={`https://i.ytimg.com/vi/${embedId}/hqdefault.jpg`}
+            title={active.title}
+            maxHeight={520}
+            forcePause={mediaOpenId === active.id || !inView || !pageVisible}
+          />
+        ) : (
+          <img src={active.mediaUrl} alt={active.title || 'Live travel camera'} className="travel-live-loop-fallback" />
+        )}
+
+        <div className="travel-live-loop-overlay">
+          <div className="travel-live-loop-copy">
+            <div className="travel-live-loop-kicker">
+              <SourceMark source="youtube" label="YouTube" size={12} />
+              <span>{active.city || active.country || 'Live camera'}</span>
+              <LocationMatchBadge post={active} />
+            </div>
+            <div className="travel-live-loop-camera-title">{active.title}</div>
+            {active.content && <p>{active.content}</p>}
+          </div>
+          <div className="travel-live-loop-actions">
+            <Link to={`/p/${encodeURIComponent(active.id)}`} className="travel-live-loop-action">Discuss</Link>
+            {active.sourceUrl && (
+              <a href={active.sourceUrl} target="_blank" rel="noopener noreferrer" className="travel-live-loop-action travel-live-loop-action--primary">
+                Watch live
+              </a>
+            )}
+          </div>
+        </div>
+
+        {liveFeeds.length > 1 && (
+          <div className="travel-live-loop-navigation">
+            <button type="button" onClick={() => moveCamera(-1)} aria-label="Previous live camera" title="Previous live camera">&larr;</button>
+            <span>{activeIndex + 1} / {liveFeeds.length}</span>
+            <button type="button" onClick={() => moveCamera(1)} aria-label="Next live camera" title="Next live camera">&rarr;</button>
+          </div>
+        )}
+        {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(active)} />}
+      </div>
+
+      {liveFeeds.length > 1 && (
+        <div className="travel-live-loop-choices" aria-label="Choose a live travel camera">
+          {liveFeeds.map((feed, index) => (
+            <button
+              key={feed.id}
+              type="button"
+              onClick={() => selectCamera(index)}
+              className={`travel-live-loop-choice${active.id === feed.id ? ' active' : ''}`}
+              aria-pressed={active.id === feed.id}
+            >
+              <span>{feed.city || feed.country || 'Live camera'}</span>
+              <small>{feed.country || 'Worldwide'}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
@@ -1604,6 +1731,7 @@ export default function Feed({ forcedMode } = {}) {
   const [lockedPlatform, setLockedPlatform] = useState(null);
   const _cache = readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
+  const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   // Following mode's per-source fetch failures (bad scope, API not
   // enabled, expired token) — see getFollowingFeedPosts's own comment
   // server-side. Surfaced in the empty state below instead of a real
@@ -1745,6 +1873,7 @@ export default function Feed({ forcedMode } = {}) {
         // simply not set it again.
         setLockedPlatform(data.source || requestedSources[0] || null);
         setPosts([]);
+        setTravelLiveFeeds([]);
         setRemoteHasMore(false);
         setLastRefresh(new Date());
         return;
@@ -1752,6 +1881,11 @@ export default function Feed({ forcedMode } = {}) {
       setLockedPlatform(null);
       setFeedError(null);
       const incoming = data.posts || [];
+      if (activeMode === 'countries' && viewModeRef.current === 'countries') {
+        setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
+      } else if (viewModeRef.current !== 'countries') {
+        setTravelLiveFeeds([]);
+      }
       const previous = postsRef.current;
       // "Updated Xm ago" used to always show however long ago the browser
       // last fetched, even when the feed is served from the server's
@@ -1930,6 +2064,7 @@ export default function Feed({ forcedMode } = {}) {
     setFilters(nextFilters);
     setRemotePage(2);
     setRemoteHasMore(true);
+    if (nextMode !== 'countries') setTravelLiveFeeds([]);
     // Countries and restaurant feeds are location-first. Clear source controls
     // before fetching so a hidden Home/Following source cannot leak into
     // one of those views.
@@ -2131,6 +2266,9 @@ export default function Feed({ forcedMode } = {}) {
         if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
       }
       const { data } = await client.get(`/office/feed?${params.toString()}`);
+      if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
+        setTravelLiveFeeds(data.liveFeeds);
+      }
       // A flat all-time dedup here used to make infinite scroll dead-end
       // (once a user had paged through the whole shared pool once, every
       // later page was "all already seen" and got filtered to nothing) —
@@ -2181,6 +2319,7 @@ export default function Feed({ forcedMode } = {}) {
     if (!profile?.id) return;
     const c = readFeedCache(profile.id);
     setPosts(c?.posts || []);
+    setTravelLiveFeeds([]);
     loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
   }, [loadFeed, profile?.id]);
 
@@ -2436,6 +2575,14 @@ export default function Feed({ forcedMode } = {}) {
   );
 
   const displayed = processed; // render all locally-held posts — no artificial cap
+  // Live cameras have a dedicated carousel in Travel. Keeping them out of
+  // the long-form list means its cards stay focused on guides, openings,
+  // and current travel stories instead of repeating the same camera feeds.
+  const contentPosts = useMemo(
+    () => viewMode === 'countries' ? displayed.filter(post => !post?.isLiveCamera) : displayed,
+    [displayed, viewMode]
+  );
+  const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
   const hasMore   = remoteHasMore;
 
   // Every photo- or video-bearing post currently on screen, in the same
@@ -2444,10 +2591,20 @@ export default function Feed({ forcedMode } = {}) {
   // opening into a separate single-post modal with no scrolling. Keyed by
   // post id (not index) so a click stays pointed at the right item even if
   // `displayed` changes shape between the click and the next render.
-  const mediaPosts = useMemo(
-    () => displayed.filter(p => p?.mediaUrl && (p.mediaType === 'image' || p.mediaType === 'video')),
-    [displayed]
-  );
+  const mediaPosts = useMemo(() => {
+    const candidates = [
+      ...(viewMode === 'countries' ? travelLiveFeeds : []),
+      ...displayed,
+    ];
+    const seen = new Set();
+    return candidates.filter((post) => {
+      if (!post?.mediaUrl || (post.mediaType !== 'image' && post.mediaType !== 'video')) return false;
+      const key = post.id || post.mediaUrl;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [displayed, travelLiveFeeds, viewMode]);
   const mediaLightboxIndex = mediaLightboxPostId
     ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
@@ -2806,6 +2963,7 @@ export default function Feed({ forcedMode } = {}) {
             )}
             <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
             {posts.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {posts.length.toLocaleString()} post{posts.length !== 1 ? 's' : ''}</span>}
+            {viewMode === 'countries' && travelLiveFeeds.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {travelLiveFeeds.length.toLocaleString()} live camera{travelLiveFeeds.length !== 1 ? 's' : ''}</span>}
             {search && <span style={{ marginLeft: 8, opacity: 0.7 }}>· searching "{search}"</span>}
             {refreshing && <span style={{ marginLeft: 8, opacity: 0.7 }}>· refreshing…</span>}
           </div>
@@ -2847,7 +3005,7 @@ export default function Feed({ forcedMode } = {}) {
           <PostCardSkeleton />
           <PostCardSkeleton />
         </div>
-      ) : feedError && displayed.length === 0 ? (
+      ) : feedError && contentPosts.length === 0 && !hasTravelLiveFeeds ? (
         <div className="empty-state">
           <div className="empty-icon">!</div>
           <div className="empty-title">Couldn't load posts</div>
@@ -2859,7 +3017,7 @@ export default function Feed({ forcedMode } = {}) {
             </div>
           </div>
         </div>
-      ) : displayed.length === 0 ? (
+      ) : contentPosts.length === 0 && !hasTravelLiveFeeds ? (
         <div className="empty-state">
           <div className="empty-icon">
             {activeTabs.length === 1
@@ -2948,19 +3106,36 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       ) : (
         <>
-          <FeedErrorBoundary>
-          <div>
-            {displayed.map((post, idx) => (
-              <PostCard
-                key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
-                post={post}
-                onMediaOpen={p => setMediaLightboxPostId(p.id)}
-                onPostUpdated={updateFeedPost}
-                isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
-              />
-            ))}
-          </div>
-          </FeedErrorBoundary>
+          {viewMode === 'countries' && (
+            <TravelLiveLoop
+              feeds={travelLiveFeeds}
+              onMediaOpen={post => setMediaLightboxPostId(post.id)}
+              mediaOpenId={mediaLightboxPostId}
+            />
+          )}
+
+          {viewMode === 'countries' && contentPosts.length > 0 && (
+            <div className="travel-content-heading">
+              <span>Travel picks</span>
+              <small>Fresh places, guides, and reasons to keep scrolling.</small>
+            </div>
+          )}
+
+          {contentPosts.length > 0 && (
+            <FeedErrorBoundary>
+            <div>
+              {contentPosts.map((post, idx) => (
+                <PostCard
+                  key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
+                  post={post}
+                  onMediaOpen={p => setMediaLightboxPostId(p.id)}
+                  onPostUpdated={updateFeedPost}
+                  isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
+                />
+              ))}
+            </div>
+            </FeedErrorBoundary>
+          )}
 
           {/* Infinite scroll sentinel */}
           <div ref={sentinelRef} style={{ height: 1 }} />
@@ -2970,14 +3145,14 @@ export default function Feed({ forcedMode } = {}) {
               <span className="spinner spinner-primary" />
             </div>
           )}
-          {!hasMore && displayed.length > 0 && (
+          {!hasMore && contentPosts.length > 0 && (
             <div style={{
               textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', marginBottom: 24,
               padding: '12px 16px', borderRadius: 8, background: 'var(--card)',
               border: '1px dashed var(--border)'
             }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>You are caught up</div>
-              Showing {displayed.length.toLocaleString()} post{displayed.length !== 1 ? 's' : ''}. Pull to refresh for new content.
+              Showing {contentPosts.length.toLocaleString()} post{contentPosts.length !== 1 ? 's' : ''}. Pull to refresh for new content.
             </div>
           )}
         </>
