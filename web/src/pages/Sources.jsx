@@ -3,17 +3,8 @@ import { Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
+import { useAuth } from '../contexts/AuthContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-
-const DISABLED_KEY = 'ufi_disabled_sources';
-
-function loadDisabled() {
-  try { return new Set(JSON.parse(localStorage.getItem(DISABLED_KEY) || '[]')); }
-  catch { return new Set(); }
-}
-function saveDisabled(set) {
-  localStorage.setItem(DISABLED_KEY, JSON.stringify([...set]));
-}
 
 const SOURCE_META = {
   reddit:        { label: 'Reddit',           icon: 'RD', color: '#FF4500', desc: 'Community discussions and threads' },
@@ -64,11 +55,12 @@ const CATEGORIES = [
   { id: 'community',  label: 'UFIconnect',            sources: ['uficonnect'] },
 ];
 
-function Toggle({ enabled, onChange }) {
+function Toggle({ enabled, onChange, disabled = false }) {
   return (
     <button
       role="switch"
       aria-checked={enabled}
+      disabled={disabled}
       onClick={e => { e.stopPropagation(); onChange(!enabled); }}
       style={{
         flexShrink: 0,
@@ -122,7 +114,7 @@ function relativeTime(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand }) {
+function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, saving }) {
   const meta = SOURCE_META[sourceId] || { label: sourceId, icon: 'SRC', color: '#6366F1', desc: '' };
   const { postCount = 0, lastFetch, samplePosts = [] } = health || {};
 
@@ -180,7 +172,7 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand }) 
               {expanded ? '▲' : '▼'}
             </button>
           )}
-          <Toggle enabled={enabled} onChange={onToggle} />
+          <Toggle enabled={enabled} onChange={onToggle} disabled={saving} />
         </div>
       </div>
 
@@ -225,12 +217,14 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand }) 
 }
 
 export default function Sources() {
+  const { profile, updateProfileLocally } = useAuth();
   const [data,      setData]      = useState(null);
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState(null);
   const [search,    setSearch]    = useState('');
   const [expanded,  setExpanded]  = useState(null);
-  const [disabled,  setDisabled]  = useState(loadDisabled);
+  const [disabled,  setDisabled]  = useState(new Set());
+  const [savingSources, setSavingSources] = useState(false);
 
   const loadSources = useCallback((opts = {}) => {
     if (!opts.silent) setLoading(true);
@@ -242,22 +236,46 @@ export default function Sources() {
 
   useEffect(() => { loadSources(); }, [loadSources]);
 
+  useEffect(() => {
+    if (!profile?.id) return;
+    const stored = profile.roleSettings?.disabledSources;
+    setDisabled(new Set(Array.isArray(stored) ? stored : []));
+  }, [profile?.id, profile?.roleSettings?.disabledSources]);
+
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page — refetches quietly (no full-page loading spinner).
   useScrollToRefresh(() => loadSources({ silent: true }), { enabled: !loading });
 
-  const toggle = useCallback((sourceId) => {
-    setDisabled(prev => {
-      const next = new Set(prev);
-      if (next.has(sourceId)) next.delete(sourceId);
-      else next.add(sourceId);
-      saveDisabled(next);
-      return next;
-    });
-  }, []);
+  const persistDisabled = useCallback(async (next) => {
+    if (savingSources || !profile) return;
+    const previous = new Set(disabled);
+    setDisabled(next);
+    setSavingSources(true);
+    try {
+      const { data: saved } = await client.patch('/profile', {
+        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
+      });
+      const persisted = saved.profile || saved;
+      updateProfileLocally(persisted);
+      setDisabled(new Set(Array.isArray(persisted.roleSettings?.disabledSources) ? persisted.roleSettings.disabledSources : []));
+      setError(null);
+    } catch (err) {
+      setDisabled(previous);
+      setError(err?.response?.data?.message || 'Could not save your source choices. Please try again.');
+    } finally {
+      setSavingSources(false);
+    }
+  }, [disabled, profile, savingSources, updateProfileLocally]);
 
-  const enableAll  = () => { setDisabled(new Set()); saveDisabled(new Set()); };
-  const disableAll = (ids) => { const s = new Set(ids); setDisabled(s); saveDisabled(s); };
+  const toggle = useCallback((sourceId) => {
+    const next = new Set(disabled);
+    if (next.has(sourceId)) next.delete(sourceId);
+    else next.add(sourceId);
+    persistDisabled(next);
+  }, [disabled, persistDisabled]);
+
+  const enableAll = () => persistDisabled(new Set());
+  const disableAll = (ids) => persistDisabled(new Set(ids));
 
   // Build a health map: sourceId → { postCount, lastFetch, samplePosts }
   const healthMap = useMemo(() => {
@@ -341,6 +359,7 @@ export default function Sources() {
               {disabled.size > 0 && (
                 <button
                   onClick={enableAll}
+                  disabled={savingSources}
                   className="btn btn-sm btn-outline"
                   style={{ fontSize: '.75rem' }}
                 >
@@ -350,6 +369,7 @@ export default function Sources() {
               {disabled.size < allSourceIds.length && (
                 <button
                   onClick={() => disableAll(allSourceIds)}
+                  disabled={savingSources}
                   className="btn btn-sm btn-ghost"
                   style={{ fontSize: '.75rem' }}
                 >
@@ -414,6 +434,7 @@ export default function Sources() {
                       health={healthMap[id]}
                       enabled={!disabled.has(id)}
                       onToggle={() => toggle(id)}
+                      saving={savingSources}
                       expanded={expanded === id}
                       onExpand={() => setExpanded(expanded === id ? null : id)}
                     />
@@ -444,6 +465,7 @@ export default function Sources() {
                       health={healthMap[id]}
                       enabled={!disabled.has(id)}
                       onToggle={() => toggle(id)}
+                      saving={savingSources}
                       expanded={expanded === id}
                       onExpand={() => setExpanded(expanded === id ? null : id)}
                     />

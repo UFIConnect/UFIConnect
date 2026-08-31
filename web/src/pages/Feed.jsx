@@ -1949,10 +1949,13 @@ export default function Feed({ forcedMode } = {}) {
       const { data } = await client.patch('/profile', {
         roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
       });
-      updateProfileLocally({ roleSettings: data.roleSettings || { ...(profile?.roleSettings || {}), feedLocation: next } });
+      updateProfileLocally(data.profile || data);
       setLocationMessage(next.country || next.city ? 'Location saved for your feeds.' : 'Location filter cleared.');
     } catch {
-      setLocationMessage('Location saved for this session. Try again later to sync it across devices.');
+      const stored = normalizeLocationFilters(profile?.roleSettings?.feedLocation);
+      locationFiltersRef.current = stored;
+      setLocationFilters(stored);
+      setLocationMessage('Could not save this location. Your previous feed location is still active.');
     } finally {
       setLocationSaving(false);
       setRemotePage(2);
@@ -2274,11 +2277,12 @@ export default function Feed({ forcedMode } = {}) {
   const processed = useMemo(() => {
     let result = [...posts];
 
-    // Respect sources the user has disabled from the Sources settings page
-    try {
-      const disabled = new Set(JSON.parse(localStorage.getItem('ufi_disabled_sources') || '[]'));
-      if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
-    } catch { /* ignore */ }
+    // Source controls are stored on this member's profile, not in shared
+    // browser storage, so different accounts and devices keep their own feed.
+    const disabled = new Set(Array.isArray(profile?.roleSettings?.disabledSources)
+      ? profile.roleSettings.disabledSources
+      : []);
+    if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
 
     // Search
     const q = search.trim().toLowerCase();
@@ -2308,7 +2312,7 @@ export default function Feed({ forcedMode } = {}) {
     }
 
     return sortPostsForView(result, filters.sort);
-  }, [posts, search, filters, activeTabs]);
+  }, [posts, search, filters, activeTabs, profile?.roleSettings?.disabledSources]);
 
   useEffect(() => {
     const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
