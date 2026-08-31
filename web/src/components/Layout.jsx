@@ -215,6 +215,67 @@ export default function Layout({ children, wide = false }) {
         )}
       </aside>
 
+      {profile && (
+        <header className="mobile-app-header">
+          <Link
+            to="/"
+            className="mobile-app-header-brand"
+            onClick={() => {
+              setMobileMenuOpen(false);
+              handleNavClick('/');
+            }}
+          >
+            <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
+            <span>UFIconnect</span>
+          </Link>
+
+          <div className="mobile-command-menu">
+            <button
+              type="button"
+              className="mobile-command-menu-trigger"
+              aria-label={mobileMenuOpen ? 'Close app menu' : 'Open app menu'}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-command-menu-panel"
+              title="App menu"
+              onClick={() => setMobileMenuOpen((open) => !open)}
+            >
+              <ShellIcon name="menu" size={19} />
+              <span className="mobile-command-menu-trigger-label">Menu</span>
+            </button>
+            {mobileMenuOpen && (
+              <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
+                <div className="mobile-command-menu-label">Your feed</div>
+                <NavLink to="/?feed=feed" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="home" size={18} />
+                  Home
+                </NavLink>
+                <NavLink to="/?feed=following" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="following" size={18} />
+                  Following
+                </NavLink>
+                <NavLink to="/?feed=countries" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="countries" size={18} />
+                  Countries
+                </NavLink>
+                <NavLink to="/?feed=restaurants" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="restaurants" size={18} />
+                  Restaurants
+                </NavLink>
+                <div className="mobile-command-menu-label">Your tools</div>
+                <HomeFeedTools
+                  showSources={mobileUsesSourceControls}
+                  sourceIds={mobileSourceIds}
+                />
+                <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="command" size={18} />
+                  Command Center
+                </NavLink>
+              </div>
+            )}
+          </div>
+        </header>
+      )}
+
       {/* ── Main content ── */}
       <main className={`main${wide ? ' main-wide' : ''}`}>
         {children}
@@ -228,52 +289,6 @@ export default function Layout({ children, wide = false }) {
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
-      {profile && (
-        <div className="mobile-command-menu">
-          <button
-            type="button"
-            className="mobile-command-menu-trigger"
-            aria-label="Open app menu"
-            aria-expanded={mobileMenuOpen}
-            aria-controls="mobile-command-menu-panel"
-            title="Open app menu"
-            onClick={() => setMobileMenuOpen((open) => !open)}
-          >
-            <ShellIcon name="menu" size={20} />
-          </button>
-          {mobileMenuOpen && (
-            <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
-              <div className="mobile-command-menu-label">Your feed</div>
-              <NavLink to="/?feed=feed" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="home" size={18} />
-                Home
-              </NavLink>
-              <NavLink to="/?feed=following" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="following" size={18} />
-                Following
-              </NavLink>
-              <NavLink to="/?feed=countries" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="countries" size={18} />
-                Countries
-              </NavLink>
-              <NavLink to="/?feed=restaurants" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="restaurants" size={18} />
-                Restaurants
-              </NavLink>
-              <div className="mobile-command-menu-label">Your tools</div>
-              <HomeFeedTools
-                showSources={mobileUsesSourceControls}
-                sourceIds={mobileSourceIds}
-              />
-              <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="command" size={18} />
-                Command Center
-              </NavLink>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ── Mobile bottom tab bar ── */}
       <nav className="bottom-nav">
         {NAV.map(({ to, icon, label, shortLabel }) => (
