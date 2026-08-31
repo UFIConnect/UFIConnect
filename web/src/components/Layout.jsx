@@ -61,7 +61,7 @@ function NavBadge({ count }) {
   );
 }
 
-export default function Layout({ children }) {
+export default function Layout({ children, wide = false }) {
   const { profile, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -180,7 +180,7 @@ export default function Layout({ children }) {
       </aside>
 
       {/* ── Main content ── */}
-      <main className="main">
+      <main className={`main${wide ? ' main-wide' : ''}`}>
         {children}
       </main>
 

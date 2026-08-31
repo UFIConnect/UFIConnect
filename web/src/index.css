@@ -153,26 +153,33 @@ input, textarea, select { font-family: inherit; }
 
 /* ── Main content area ────────────────────────────────────── */
 .main {
-  flex: 1 1 0;
+  flex: 1;
   min-width: 0;
-  width: 100%;
   padding: 28px 32px;
   max-width: 860px;
-  margin: 0 auto;
 }
 
+.main-wide { max-width: 1080px; }
+
+.home-feed-layout {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.home-feed-layout--single { display: block; }
+.home-feed-content { min-width: 0; max-width: 860px; }
 .home-workspace-tabs {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
   gap: 6px;
-  width: 100%;
-  overflow-x: auto;
-  padding: 0 0 16px;
-  scrollbar-width: none;
+  position: sticky;
+  top: 24px;
 }
-.home-workspace-tabs::-webkit-scrollbar { display: none; }
 .home-workspace-tab {
-  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 38px;
   padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -181,7 +188,7 @@ input, textarea, select { font-family: inherit; }
   font-size: .8rem;
   font-weight: 650;
   text-decoration: none;
-  white-space: nowrap;
+  white-space: normal;
   transition: border-color .15s, color .15s, background .15s;
 }
 .home-workspace-tab:hover,
@@ -1093,8 +1100,18 @@ input, textarea, select { font-family: inherit; }
 @media (max-width: 768px) {
   /* Hide sidebar, show bottom nav */
   .sidebar { display: none; }
-  .main { width: auto; margin: 0; padding: 16px 12px; padding-bottom: 76px; }
-  .home-workspace-tabs { justify-content: flex-start; padding-bottom: 14px; }
+  .main { padding: 16px 12px; padding-bottom: 76px; }
+  .main-wide { max-width: none; }
+  .home-feed-layout { display: block; }
+  .home-workspace-tabs {
+    flex-direction: row;
+    position: static;
+    overflow-x: auto;
+    padding-bottom: 14px;
+    scrollbar-width: none;
+  }
+  .home-workspace-tabs::-webkit-scrollbar { display: none; }
+  .home-workspace-tab { flex: 0 0 auto; min-height: 34px; white-space: nowrap; }
 
   /* Mobile browsers (iOS Safari, and Chromium's own mobile emulation) auto-
      zoom the page when a focused input's font-size is under 16px — .9rem

@@ -135,8 +135,8 @@ export default function ConnectedAccounts() {
   return (
     <Layout>
       <div style={{ marginBottom: 20 }}>
-        <Link to="/profile" className="btn-back">
-          <span className="btn-back-icon">‹</span> Back to Profile
+        <Link to="/" className="btn-back">
+          <span className="btn-back-icon">‹</span> Back to Home
         </Link>
       </div>
 

@@ -2321,13 +2321,23 @@ export default function Feed({ forcedMode } = {}) {
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
-    <Layout>
+    <Layout wide={!forcedMode}>
       <Helmet>
         <title>{forcedMode ? 'You | UFIconnect' : 'Home | UFIconnect'}</title>
         <meta name="description" content="Your live UFIconnect home: posts, videos, jobs, communities, and connected-account updates balanced into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
+      <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
+      {!forcedMode && (
+        <nav className="home-workspace-tabs" aria-label="Account workspaces">
+          {HOME_WORKSPACE_TABS.map(({ label, to }) => (
+            <Link key={to} to={to} className="home-workspace-tab">{label}</Link>
+          ))}
+        </nav>
+      )}
+
+      <div className="home-feed-content">
       <div className="page-header">
         <h1 className="page-title">
           {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Home')}
@@ -2346,15 +2356,6 @@ export default function Feed({ forcedMode } = {}) {
           Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.
         </p>
       </div>
-
-      {!forcedMode && (
-        <nav className="home-workspace-tabs" aria-label="Account workspaces">
-          {HOME_WORKSPACE_TABS.map(({ label, to }) => (
-            <Link key={to} to={to} className="home-workspace-tab">{label}</Link>
-          ))}
-        </nav>
-      )}
-
 
       {/* Toolbar: search + filter + refresh */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
@@ -2858,6 +2859,8 @@ export default function Feed({ forcedMode } = {}) {
           onNearEnd={loadMoreRemote}
         />
       )}
+      </div>
+      </div>
 
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
