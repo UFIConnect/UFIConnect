@@ -109,13 +109,18 @@ export async function resolveApiBaseUrl({ force = false } = {}) {
   if (resolvingOrigin) return resolvingOrigin;
 
   resolvingOrigin = (async () => {
-    // Always test the public route first, even after the fallback was used.
-    // That lets a client automatically promote itself after DNS recovers.
-    for (const origin of apiOrigins) {
-      if (await probe(origin)) {
-        activeApiOrigin = origin;
-        break;
-      }
+    // Race the routes instead of waiting for a regional DNS timeout before
+    // trying the fallback. The first confirmed healthy route serves this
+    // session; later checks still give the public route a chance to recover.
+    try {
+      activeApiOrigin = await Promise.any(apiOrigins.map(async (origin) => {
+        if (await probe(origin)) return origin;
+        throw new Error(`API origin unavailable: ${origin}`);
+      }));
+    } catch {
+      // Keep the last working origin when neither probe can answer. A safe
+      // request can still perform its one normal retry and surface a useful
+      // offline state rather than selecting an arbitrary new hostname.
     }
     nextProbeAt = Date.now() + RECHECK_INTERVAL_MS;
     return activeApiOrigin;
