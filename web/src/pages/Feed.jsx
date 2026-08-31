@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -1646,6 +1646,7 @@ function writeFeedCache(userId, posts) {
 export default function Feed({ forcedMode } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const routeLocation = useLocation();
+  const navigate = useNavigate();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
@@ -1685,6 +1686,10 @@ export default function Feed({ forcedMode } = {}) {
       ? [...new Set(profile.roleSettings.disabledSources.map(source => String(source).trim().toLowerCase()).filter(Boolean))].sort().join(',')
       : ''
   ), [profile?.roleSettings?.disabledSources]);
+  const requestedHomeToolPanel = useMemo(() => {
+    const panel = new URLSearchParams(routeLocation.search).get('panel');
+    return ['sources', 'accounts', 'skills', 'files'].includes(panel) ? panel : null;
+  }, [routeLocation.search]);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -2011,6 +2016,14 @@ export default function Feed({ forcedMode } = {}) {
       bust: false,
     });
   }, [loadFeed]);
+
+  const setHomeToolPanel = useCallback((panel) => {
+    const params = new URLSearchParams(routeLocation.search);
+    if (panel) params.set('panel', panel);
+    else params.delete('panel');
+    const nextSearch = params.toString();
+    navigate({ pathname: '/', search: nextSearch ? `?${nextSearch}` : '' }, { replace: true });
+  }, [navigate, routeLocation.search]);
 
   useEffect(() => {
     if (forcedMode) return;
@@ -3095,6 +3108,8 @@ export default function Feed({ forcedMode } = {}) {
           <HomeFeedTools
             showSources={usesSourceControls}
             sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
+            activePanel={requestedHomeToolPanel}
+            onActivePanelChange={setHomeToolPanel}
           />
         </aside>
       )}

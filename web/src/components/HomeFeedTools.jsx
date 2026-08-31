@@ -51,11 +51,11 @@ function scoreStyle(score) {
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools({ showSources = true, sourceIds = [] }) {
+export default function HomeFeedTools({ showSources = true, sourceIds = [], activePanel, onActivePanelChange }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const [openPanel, setOpenPanel] = useState(null);
+  const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
   const [skills, setSkills] = useState([]);
@@ -75,6 +75,8 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [] }) {
     setDisabledSources(new Set(stored));
   }, [profile?.roleSettings?.disabledSources]);
 
+  const openPanel = activePanel === undefined ? uncontrolledOpenPanel : activePanel;
+
   useEffect(() => {
     if (openPanel !== 'files' || attachmentsLoading || attachments.length) return;
     setAttachmentsLoading(true);
@@ -84,7 +86,11 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [] }) {
       .finally(() => setAttachmentsLoading(false));
   }, [openPanel, attachments.length, attachmentsLoading]);
 
-  const toggle = (key) => setOpenPanel(current => current === key ? null : key);
+  const toggle = (key) => {
+    const next = openPanel === key ? null : key;
+    if (activePanel === undefined) setUncontrolledOpenPanel(next);
+    onActivePanelChange?.(next);
+  };
   const connected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
   const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
   const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;

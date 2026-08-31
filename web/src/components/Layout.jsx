@@ -20,6 +20,12 @@ function ShellIcon({ name, size = 20 }) {
     install: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
     menu: <><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></>,
     command: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 17h6" /><path d="M17 14v6" /></>,
+    following: <><circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0" /><path d="m17 10 2 2 3-3" /></>,
+    countries: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18" /><path d="M12 3a14 14 0 0 0 0 18" /></>,
+    restaurants: <><path d="M7 3v8" /><path d="M4 3v5a3 3 0 0 0 6 0V3" /><path d="M7 11v10" /><path d="M17 3v18" /><path d="M17 3c3 1.5 3 7.5 0 9" /></>,
+    sources: <><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="m3 12 9 4.5 9-4.5" /><path d="m3 16.5 9 4.5 9-4.5" /></>,
+    skills: <><path d="M12 3 14.5 8l5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9L9.5 8 12 3Z" /></>,
+    files: <><path d="M6 3h8l4 4v14H6V3Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></>,
   };
   return <svg {...common}>{paths[name] || paths.home}</svg>;
 }
@@ -223,7 +229,41 @@ export default function Layout({ children, wide = false }) {
           </button>
           {mobileMenuOpen && (
             <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="menu" aria-label="App menu">
-              <NavLink to="/command-center" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <div className="mobile-command-menu-label">Your feed</div>
+              <NavLink to="/?feed=feed" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="home" size={18} />
+                Home
+              </NavLink>
+              <NavLink to="/?feed=following" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="following" size={18} />
+                Following
+              </NavLink>
+              <NavLink to="/?feed=countries" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="countries" size={18} />
+                Countries
+              </NavLink>
+              <NavLink to="/?feed=restaurants" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="restaurants" size={18} />
+                Restaurants
+              </NavLink>
+              <div className="mobile-command-menu-label">Your tools</div>
+              <NavLink to="/?feed=feed&amp;panel=sources" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="sources" size={18} />
+                Feed sources
+              </NavLink>
+              <NavLink to="/?feed=feed&amp;panel=accounts" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="groups" size={18} />
+                Connected accounts
+              </NavLink>
+              <NavLink to="/?feed=feed&amp;panel=skills" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="skills" size={18} />
+                Skills
+              </NavLink>
+              <NavLink to="/?feed=feed&amp;panel=files" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="files" size={18} />
+                Files
+              </NavLink>
+              <NavLink to="/command-center" role="menuitem" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="command" size={18} />
                 Command Center
               </NavLink>
