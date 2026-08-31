@@ -2433,6 +2433,7 @@ export default function Feed({ forcedMode } = {}) {
     : -1;
 
   const firstName = profile?.name?.split(' ')[0] || '';
+  const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
@@ -3013,7 +3014,9 @@ export default function Feed({ forcedMode } = {}) {
               <span>
                 <span className="home-feed-command-center-title">Command Center</span>
                 <span className="home-feed-command-center-summary">
-                  Tools and automation - Pro ${COMMAND_CENTER_PRO_TIER?.price}/mo
+                  {hasCommandCenterMembership
+                    ? 'Tools and automation'
+                    : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
                 </span>
               </span>
               <span className="home-feed-command-center-arrow" aria-hidden="true">&rarr;</span>
