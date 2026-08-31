@@ -12,6 +12,7 @@ jobs:
       RENDER_HOOK_API: ${{ secrets.RENDER_HOOK_API }}
       RENDER_HOOK_WEB: ${{ secrets.RENDER_HOOK_WEB }}
       RENDER_HOOK_OFFICE: ${{ secrets.RENDER_HOOK_OFFICE }}
+      RENDER_HOOK_PIPELINE: ${{ secrets.RENDER_HOOK_PIPELINE }}
     steps:
       - name: Trigger API deploy
         if: env.RENDER_HOOK_API != ''
@@ -37,8 +38,16 @@ jobs:
           [[ "$url" == *\?* ]] && sep='&'
           curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
 
+      - name: Trigger pipeline deploy
+        if: env.RENDER_HOOK_PIPELINE != ''
+        run: |
+          url="$RENDER_HOOK_PIPELINE"
+          sep='?'
+          [[ "$url" == *\?* ]] && sep='&'
+          curl -fsS -X POST "${url}${sep}ref=${GITHUB_SHA}"
+
       - name: Hooks not configured
-        if: env.RENDER_HOOK_API == '' && env.RENDER_HOOK_WEB == '' && env.RENDER_HOOK_OFFICE == ''
+        if: env.RENDER_HOOK_API == '' && env.RENDER_HOOK_WEB == '' && env.RENDER_HOOK_OFFICE == '' && env.RENDER_HOOK_PIPELINE == ''
         run: |
           echo "Render deploy hooks are not configured yet."
-          echo "Add RENDER_HOOK_API, RENDER_HOOK_WEB, and RENDER_HOOK_OFFICE as GitHub Actions secrets."
+          echo "Add RENDER_HOOK_API, RENDER_HOOK_WEB, RENDER_HOOK_OFFICE, and RENDER_HOOK_PIPELINE as GitHub Actions secrets."
