@@ -152,6 +152,8 @@ export default function Layout({ children, wide = false }) {
               key={to}
               to={to}
               end={to === '/'}
+              aria-label={label}
+              title={label}
               onClick={() => handleNavClick(to)}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
@@ -159,7 +161,7 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name={icon} size={19} />
                 {to === '/notifications' && <NavBadge count={notifBadge} />}
               </span>
-              {label}
+              <span className="nav-label">{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -167,6 +169,9 @@ export default function Layout({ children, wide = false }) {
         {canInstall && (
           <button
             onClick={triggerInstall}
+            className="sidebar-install"
+            aria-label="Get app"
+            title="Get app"
             style={{
               margin: '0 12px 12px',
               padding: '10px 16px',
@@ -187,7 +192,7 @@ export default function Layout({ children, wide = false }) {
             onMouseOut={e => e.currentTarget.style.transform = ''}
           >
             <ShellIcon name="install" size={16} />
-            Get App
+            <span className="sidebar-install-label">Get App</span>
           </button>
         )}
 

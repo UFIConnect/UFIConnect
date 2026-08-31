@@ -327,16 +327,12 @@ export default function GuestFeed() {
       <Helmet>
         <title>UFIconnect - Global Scroll</title>
       </Helmet>
-      <div style={{ maxWidth: 640, margin: '0 auto', padding: '20px 16px 60px' }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
-          background: 'var(--primary-light, #EDE9FE)', border: '1px solid var(--primary)',
-          borderRadius: 12, padding: '12px 16px', marginBottom: 18,
-        }}>
-          <span style={{ fontSize: '.82rem', color: 'var(--text)' }}>
+      <div className="guest-feed-main">
+        <div className="guest-feed-banner">
+          <span className="guest-feed-banner-copy">
             {refreshing ? 'Refreshing...' : "You're browsing as a guest. Scroll around; sign in when you want the feed to remember your taste."}
           </span>
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <div className="guest-feed-banner-actions">
             <button
               type="button" onClick={handleRefresh} disabled={refreshing || loading}
               className="btn btn-ghost btn-sm"
@@ -353,7 +349,7 @@ export default function GuestFeed() {
             >
               <SoundIcon muted={muted} size={15} />
             </button>
-            <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join free</button></Link>
+            <Link to="/register" className="btn btn-primary btn-sm">Join free</Link>
           </div>
         </div>
         <style>{'@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'}</style>

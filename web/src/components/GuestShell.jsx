@@ -9,28 +9,24 @@
 // redirected straight to login.
 export default function GuestShell({ children }) {
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg, #F8FAFC)' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--card)',
-      }}>
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none', color: 'var(--text)', fontWeight: 800, fontSize: '1.05rem' }}>
+    <div className="guest-shell">
+      <header className="guest-header">
+        <Link to="/" className="guest-brand">
           {/* Same branded mark as the authenticated sidebar's logo (see
               Layout.jsx's sidebar-logo-icon) instead of a generic globe
               emoji placeholder, so a guest sees the same identity a member
               does. */}
-          <span style={{
-            width: 28, height: 28, borderRadius: 8, background: 'var(--primary)', color: '#fff',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '.68rem', fontWeight: 800, letterSpacing: '-.5px', flexShrink: 0,
-          }}>UFI</span>
-          UFIconnect
+          <span className="guest-brand-mark">UFI</span>
+          <span className="guest-brand-name">UFIconnect</span>
         </Link>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/login"><button className="btn btn-ghost btn-sm" type="button">Sign in</button></Link>
-          <Link to="/register"><button className="btn btn-primary btn-sm" type="button">Join UFIconnect</button></Link>
+        <div className="guest-actions">
+          <Link to="/login" className="btn btn-ghost btn-sm guest-action">Sign in</Link>
+          <Link to="/register" className="btn btn-primary btn-sm guest-action">
+            <span className="guest-join-full">Join UFIconnect</span>
+            <span className="guest-join-short">Join free</span>
+          </Link>
         </div>
-      </div>
+      </header>
       {children}
     </div>
   );
