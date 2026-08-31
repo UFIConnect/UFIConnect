@@ -196,17 +196,6 @@ const FEED_DEDUP_WINDOW = 600;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
-// Account controls previously lived inside Profile, which made Home feel
-// disconnected from the work that shapes a member's own feed. Posts stay on
-// Profile; these shortcuts are the account workspaces that shape Home.
-const HOME_WORKSPACE_TABS = [
-  { label: 'Profile', to: '/profile?tab=overview' },
-  { label: 'Connected Accounts', to: '/connected-accounts' },
-  { label: 'Sources', to: '/sources' },
-  { label: 'Skills', to: '/profile?tab=skills' },
-  { label: 'Files', to: '/profile?tab=attachments' },
-];
-
 function loadFeedState() {
   try {
     const raw = sessionStorage.getItem(FEED_STATE_KEY);
@@ -2329,14 +2318,6 @@ export default function Feed({ forcedMode } = {}) {
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
-      {!forcedMode && (
-        <nav className="home-workspace-tabs" aria-label="Account workspaces">
-          {HOME_WORKSPACE_TABS.map(({ label, to }) => (
-            <Link key={to} to={to} className="home-workspace-tab">{label}</Link>
-          ))}
-        </nav>
-      )}
-
       <div className="home-feed-content">
       <div className="page-header">
         <h1 className="page-title">

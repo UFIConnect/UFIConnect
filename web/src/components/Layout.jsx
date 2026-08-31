@@ -29,11 +29,12 @@ function ShellIcon({ name, size = 20 }) {
 const NAV = [
   { to: '/',              icon: 'home',          label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
-  { to: '/profile?tab=posts', icon: 'posts',      label: 'Posts'        },
+  { to: '/post',          icon: 'posts',         label: 'Posts'        },
   { to: '/search',        icon: 'search',        label: 'Search'       },
   { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
   { to: '/groups',        icon: 'groups',        label: 'Groups'       },
   { to: '/opportunities', icon: 'opportunities', label: 'Opportunities', shortLabel: 'Jobs' },
+  { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
 
 function initials(name = '') {

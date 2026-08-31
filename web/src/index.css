@@ -999,6 +999,83 @@ input, textarea, select { font-family: inherit; }
 .profile-org   { font-size: .85rem; color: var(--muted); margin-top: 2px; }
 .profile-bio   { font-size: .875rem; line-height: 1.6; margin: 12px 0; }
 .profile-actions { display: flex; gap: 8px; margin-top: 14px; }
+.profile-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 18px;
+  align-items: start;
+}
+.profile-posts-column { min-width: 0; }
+.profile-side-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 18px;
+}
+.profile-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.profile-panel-trigger {
+  width: 100%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.profile-panel-trigger:hover { background: var(--hover); }
+.profile-panel-title { display: block; font-size: .88rem; font-weight: 750; }
+.profile-panel-summary { display: block; margin-top: 3px; color: var(--muted); font-size: .74rem; }
+.profile-panel-chevron {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.profile-panel-content { padding: 0 14px 14px; border-top: 1px solid var(--border); }
+.profile-file-item { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin-bottom: 8px; }
+.profile-file-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.profile-file-trigger:hover { background: var(--hover); }
+.profile-file-details { padding: 10px; border-top: 1px solid var(--border); }
+.profile-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  color: var(--text);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: .82rem;
+}
+.profile-link-row:hover { border-color: var(--primary); color: var(--primary); }
 
 /* ── Connected accounts ───────────────────────────────────── */
 .platform-list { display: flex; flex-direction: column; gap: 12px; }
@@ -1112,6 +1189,8 @@ input, textarea, select { font-family: inherit; }
   }
   .home-workspace-tabs::-webkit-scrollbar { display: none; }
   .home-workspace-tab { flex: 0 0 auto; min-height: 34px; white-space: nowrap; }
+  .profile-workspace { grid-template-columns: 1fr; }
+  .profile-side-panels { position: static; }
 
   /* Mobile browsers (iOS Safari, and Chromium's own mobile emulation) auto-
      zoom the page when a focused input's font-size is under 16px — .9rem

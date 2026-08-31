@@ -31,15 +31,24 @@ function validateProfileImage(file) {
   return null;
 }
 
-const PROFILE_TAB_BY_QUERY = {
-  overview: 'Overview',
-  posts: 'Posts',
-  skills: 'Skills',
-  attachments: 'Attachments',
-};
-
-function profileTabFromQuery(value) {
-  return PROFILE_TAB_BY_QUERY[String(value || '').toLowerCase()] || 'Posts';
+function ProfilePanel({ title, summary, open, onToggle, children }) {
+  return (
+    <section className="profile-panel">
+      <button
+        type="button"
+        className="profile-panel-trigger"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <span>
+          <span className="profile-panel-title">{title}</span>
+          {summary && <span className="profile-panel-summary">{summary}</span>}
+        </span>
+        <span className="profile-panel-chevron" aria-hidden="true">{open ? '-' : '+'}</span>
+      </button>
+      {open && <div className="profile-panel-content">{children}</div>}
+    </section>
+  );
 }
 
 export default function Profile() {
@@ -52,13 +61,13 @@ export default function Profile() {
     logout();
     navigate('/login');
   }
-  const [tab,         setTab]         = useState(() => profileTabFromQuery(searchParams.get('tab')));
-  const [editing,     setEditing]     = useState(false);
+  const [openPanel,   setOpenPanel]   = useState(null);
+  const [editing,     setEditing]     = useState(null);
   const [form,        setForm]        = useState(null);
   const [links,       setLinks]       = useState(null);
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState('');
-  // Skills tab state
+  // Skills panel state
   const [skillInput,    setSkillInput]    = useState('');
   const [skills,        setSkills]        = useState([]);
   const [skillSaving,   setSkillSaving]   = useState(false);
@@ -82,17 +91,17 @@ export default function Profile() {
   const [deletingAttachment, setDeletingAttachment]  = useState(null);
   const [selectingAttachment, setSelectingAttachment] = useState(null);
 
-  // Home owns navigation between account workspaces. Profile is the
-  // member's UFIconnect-post page unless a Home shortcut opens a workspace.
+  // Old profile deep links still open the corresponding right-side panel.
   useEffect(() => {
-    setTab(profileTabFromQuery(searchParams.get('tab')));
-    setEditing(false);
+    const requested = searchParams.get('tab');
+    setOpenPanel(requested === 'skills' ? 'skills' : requested === 'attachments' ? 'files' : null);
+    setEditing(null);
   }, [searchParams]);
 
-  // Sync skills from profile when profile loads or tab changes
+  // Sync skills from profile when profile loads.
   useEffect(() => {
     if (Array.isArray(profile?.skills)) setSkills(profile.skills);
-  }, [profile, tab]);
+  }, [profile]);
 
   // Load follow counts
   useEffect(() => {
@@ -139,11 +148,10 @@ export default function Profile() {
       .finally(() => setAttachmentsLoading(false));
   }
 
-  // Loaded lazily on first visit to the tab rather than on every profile
-  // page load — most sessions never open Attachments at all.
+  // Loaded lazily when the Files panel is opened.
   useEffect(() => {
-    if (tab === 'Attachments' && attachments.length === 0 && !attachmentsLoading) fetchAttachments();
-  }, [tab]); // eslint-disable-line
+    if (openPanel === 'files' && attachments.length === 0 && !attachmentsLoading) fetchAttachments();
+  }, [openPanel]); // eslint-disable-line
 
   async function handleAvatarUpload(file) {
     if (!file) return;
@@ -285,7 +293,14 @@ export default function Profile() {
       skills:       (profile?.skills || []).join(', '),
     });
     setLinks({ ...(profile?.links || {}) });
-    setEditing(true);
+    setEditing('profile');
+    setError('');
+  }
+
+  function startFileEdit() {
+    setLinks({ ...(profile?.links || {}) });
+    setEditing('files');
+    setOpenPanel('files');
     setError('');
   }
 
@@ -310,8 +325,32 @@ export default function Profile() {
       const data = await client.patch('/profile', payload).then(r => r.data);
       // Support both { profile: {...} } and flat profile shapes
       updateProfileLocally(data.profile || data);
-      setEditing(false);
+      setEditing(null);
       showToast('Profile saved', 'success');
+    } catch {
+      setError('Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleFilesSave(e) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        name: profile.name,
+        title: profile.title,
+        bio: profile.bio,
+        organization: profile.organization,
+        skills: profile.skills || [],
+        links,
+      };
+      const data = await client.patch('/profile', payload).then(r => r.data);
+      updateProfileLocally(data.profile || data);
+      setEditing(null);
+      showToast('Files and links saved', 'success');
     } catch {
       setError('Failed to save. Please try again.');
     } finally {
@@ -424,8 +463,180 @@ export default function Profile() {
         />
       )}
 
+      <div className="profile-workspace">
+        <section className="profile-posts-column">
+          {editing === 'profile' ? (
+            <form className="card" onSubmit={handleSave}>
+              {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
+              <h2 style={{ fontSize: '1rem', margin: '0 0 18px' }}>Edit profile</h2>
+              <div className="form-group">
+                <label className="form-label">Full name</label>
+                <input className="form-input" name="name" value={form.name} onChange={handleChange} />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Professional title</label>
+                <input className="form-input" name="title" value={form.title} onChange={handleChange} placeholder="e.g. Senior Product Manager" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Organization</label>
+                <input className="form-input" name="organization" value={form.organization} onChange={handleChange} placeholder="Where do you work or study?" />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Bio</label>
+                <textarea className="form-textarea" name="bio" value={form.bio} onChange={handleChange} placeholder="Tell people what you're working on..." />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Skills <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(comma-separated)</span></label>
+                <input className="form-input" name="skills" value={form.skills} onChange={handleChange} placeholder="React, Python, Product Strategy..." />
+              </div>
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? <span className="spinner" /> : 'Save changes'}</button>
+                <button className="btn btn-ghost" type="button" onClick={() => setEditing(null)}>Cancel</button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <div className="card" style={{ marginBottom: 14 }}>
+                <h2 style={{ fontSize: '1rem', margin: '0 0 6px' }}>About</h2>
+                <p style={{ fontSize: '.9rem', lineHeight: 1.65, color: profile.bio ? 'var(--text)' : 'var(--muted)', margin: 0 }}>
+                  {profile.bio || 'Add a short bio so people know what you are building and learning.'}
+                </p>
+              </div>
+              <div className="card" style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div>
+                    <h2 style={{ fontSize: '1rem', margin: '0 0 4px' }}>Your UFIconnect posts</h2>
+                    <p style={{ fontSize: '.84rem', color: 'var(--muted)', margin: 0 }}>Only posts you share with the UFIconnect community live here.</p>
+                  </div>
+                  <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>Write a post</Link>
+                </div>
+              </div>
+              <PostList
+                posts={posts}
+                loading={postsLoading}
+                emptyTitle="No posts yet"
+                emptyDesc="Write your first community post and it will appear on your profile."
+                emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>Write a post</Link>}
+                currentUserId={profile?.id}
+                onPostDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
+                onNearEnd={loadMorePosts}
+              />
+            </>
+          )}
+        </section>
+
+        <aside className="profile-side-panels" aria-label="Profile tools">
+          <ProfilePanel
+            title="Connected accounts"
+            summary="Manage the sources you bring into UFIconnect"
+            open={openPanel === 'accounts'}
+            onToggle={() => setOpenPanel(openPanel === 'accounts' ? null : 'accounts')}
+          >
+            <p style={{ color: 'var(--muted)', fontSize: '.84rem', lineHeight: 1.55, margin: '0 0 12px' }}>
+              Connect the accounts you use so their activity is available in your personal workspace.
+            </p>
+            <button className="btn btn-primary btn-sm" type="button" onClick={() => navigate('/connected-accounts')}>Manage accounts</button>
+          </ProfilePanel>
+
+          <ProfilePanel
+            title="Skills"
+            summary={skills.length ? `${skills.length} saved` : 'Add the skills you use'}
+            open={openPanel === 'skills'}
+            onToggle={() => setOpenPanel(openPanel === 'skills' ? null : 'skills')}
+          >
+            {skills.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+                {skills.map(skill => (
+                  <span key={skill} className="tag tag-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: '.82rem' }}>
+                    {skill}
+                    <button type="button" onClick={() => removeSkill(skill)} aria-label={`Remove ${skill}`} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, lineHeight: 1, fontSize: '.85rem', opacity: .7 }}>x</button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '.84rem', margin: '0 0 14px' }}>No skills added yet.</p>
+            )}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="form-input" placeholder="Add a skill" value={skillInput} onChange={e => setSkillInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }} style={{ minWidth: 0, flex: 1 }} />
+              <button className="btn btn-ghost btn-sm" type="button" onClick={addSkill}>Add</button>
+            </div>
+            <button className="btn btn-primary btn-sm" type="button" onClick={saveSkills} disabled={skillSaving} style={{ marginTop: 10 }}>
+              {skillSaving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save skills'}
+            </button>
+          </ProfilePanel>
+
+          <ProfilePanel
+            title="Files"
+            summary={attachments.length ? `${attachments.length} resume${attachments.length === 1 ? '' : 's'} saved` : 'Resumes and profile links'}
+            open={openPanel === 'files'}
+            onToggle={() => setOpenPanel(openPanel === 'files' ? null : 'files')}
+          >
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1.5px dashed var(--border)', borderRadius: 8, cursor: uploading ? 'default' : 'pointer', fontSize: '.82rem', color: 'var(--muted)', opacity: uploading ? .6 : 1 }}>
+                {uploading && <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />}
+                {uploading ? 'Uploading and scoring...' : 'Upload resume (PDF, DOCX, TXT)'}
+                <input type="file" accept=".pdf,.docx,.txt" style={{ display: 'none' }} disabled={uploading} onChange={e => { const file = e.target.files[0]; e.target.value = ''; handleAttachmentUpload(file); }} />
+              </label>
+              {uploadError && <div className="auth-error" style={{ marginTop: 8 }}>{uploadError}</div>}
+            </div>
+
+            {attachmentsLoading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '12px 0' }}><span className="spinner spinner-primary" /></div>
+            ) : attachments.map(attachment => {
+              const colors = scoreColor(attachment.atsScore);
+              const isExpanded = expandedAttachment === attachment.id;
+              return (
+                <div key={attachment.id} className="profile-file-item">
+                  <button type="button" className="profile-file-trigger" onClick={() => setExpandedAttachment(isExpanded ? null : attachment.id)} aria-expanded={isExpanded}>
+                    <span style={{ fontSize: '.75rem', fontWeight: 800 }}>CV</span>
+                    <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                      <span style={{ display: 'block', fontWeight: 600, fontSize: '.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filename}</span>
+                      <span style={{ display: 'block', fontSize: '.7rem', color: 'var(--muted)' }}>{attachment.isPrimary ? 'Used for job matching' : 'Saved resume'}</span>
+                    </span>
+                    <span style={{ fontSize: '.72rem', fontWeight: 800, color: colors.text, background: colors.bg, border: `1px solid ${colors.border}`, padding: '3px 6px', borderRadius: 5 }}>{attachment.atsScore}/100</span>
+                  </button>
+                  {isExpanded && (
+                    <div className="profile-file-details">
+                      {(attachment.atsChecks || []).map((check, index) => <div key={index} style={{ fontSize: '.76rem', lineHeight: 1.45, color: check.passed ? 'var(--text)' : 'var(--muted)' }}>{check.label}{check.detail ? `: ${check.detail}` : ''}</div>)}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                        {!attachment.isPrimary && <button type="button" className="btn btn-ghost btn-sm" disabled={selectingAttachment === attachment.id} onClick={() => handleAttachmentSelect(attachment.id)}>{selectingAttachment === attachment.id ? 'Saving...' : 'Use for matching'}</button>}
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => handleAttachmentDownload(attachment)}>Download</button>
+                        <button type="button" className="btn btn-ghost btn-sm" disabled={deletingAttachment === attachment.id} onClick={() => handleAttachmentDelete(attachment.id)} style={{ color: 'var(--danger)' }}>{deletingAttachment === attachment.id ? 'Deleting...' : 'Delete'}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {editing === 'files' ? (
+              <form onSubmit={handleFilesSave} style={{ marginTop: 14 }}>
+                {error && <div className="auth-error" style={{ marginBottom: 10 }}>{error}</div>}
+                {LINK_FIELDS.map(({ key, label, placeholder }) => (
+                  <div className="form-group" key={key} style={{ marginBottom: 10 }}>
+                    <label className="form-label">{label}</label>
+                    <input className="form-input" type="url" name={key} value={links?.[key] || ''} onChange={handleLinkChange} placeholder={placeholder} />
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary btn-sm" type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save links'}</button>
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setEditing(null)}>Cancel</button>
+                </div>
+              </form>
+            ) : hasLinks ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                {LINK_FIELDS.filter(field => profileLinks[field.key]).map(({ key, label }) => <a key={key} href={profileLinks[key]} target="_blank" rel="noopener noreferrer" className="profile-link-row">{label}<span aria-hidden="true">&rarr;</span></a>)}
+                <button className="btn btn-ghost btn-sm" type="button" onClick={startFileEdit} style={{ alignSelf: 'flex-start' }}>Edit links</button>
+              </div>
+            ) : (
+              <button className="btn btn-ghost btn-sm" type="button" onClick={startFileEdit}>Add profile links</button>
+            )}
+          </ProfilePanel>
+        </aside>
+      </div>
+
       {/* ── OVERVIEW TAB ─────────────────────────────────────── */}
-      {tab === 'Overview' && !editing && (
+      {false && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
           {/* Bio */}
           <div className="card">
@@ -555,7 +766,7 @@ export default function Profile() {
       )}
 
       {/* ── OVERVIEW EDIT FORM ───────────────────────────────── */}
-      {tab === 'Overview' && editing && (
+      {false && (
         <form className="card" onSubmit={handleSave}>
           {error && <div className="auth-error" style={{ marginBottom:14 }}>{error}</div>}
           <div className="form-group">
@@ -588,7 +799,7 @@ export default function Profile() {
       )}
 
       {/* ── POSTS TAB ───────────────────────────────────────── */}
-      {tab === 'Posts' && !editing && (
+      {false && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
           <div className="card" style={{ maxWidth: 640 }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
@@ -613,7 +824,7 @@ export default function Profile() {
       )}
 
       {/* ── SKILLS TAB ───────────────────────────────────────── */}
-      {tab === 'Skills' && (
+      {false && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div className="card">
             <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Your Skills</h3>
@@ -665,7 +876,7 @@ export default function Profile() {
       )}
 
       {/* ── ATTACHMENTS TAB ──────────────────────────────────── */}
-      {tab === 'Attachments' && !editing && (
+      {false && (
         <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
           {/* Resume upload + ATS score */}
           <div className="card">
@@ -810,7 +1021,7 @@ export default function Profile() {
       )}
 
       {/* ── ATTACHMENTS EDIT FORM ────────────────────────────── */}
-      {tab === 'Attachments' && editing && (
+      {false && (
         <form className="card" onSubmit={handleSave}>
           {error && <div className="auth-error" style={{ marginBottom:14 }}>{error}</div>}
           <h3 style={{ fontSize:'.85rem', fontWeight:700, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.5px', marginBottom:16 }}>Files &amp; Links</h3>
