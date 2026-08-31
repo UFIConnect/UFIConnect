@@ -86,7 +86,7 @@ export default function ResumeBuilder() {
     let cancelled = false;
     client.get('/billing/config')
       .then(({ data: config }) => {
-        if (!cancelled) setBillingReady(!!config?.stripeConfigured && !!config?.tiers?.resume_builder);
+        if (!cancelled) setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder);
       })
       .catch(() => {
         if (!cancelled) setBillingReady(false);

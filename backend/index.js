@@ -18014,6 +18014,7 @@ const TIER_PRICE_IDS = {
 app.get('/billing/config', (_req, res) => {
   res.json({
     stripeConfigured: !!stripe,
+    webhookConfigured: !!process.env.STRIPE_WEBHOOK_SECRET,
     tiers: {
       pro: !!TIER_PRICE_IDS.pro(),
       business: !!TIER_PRICE_IDS.business(),
@@ -18031,7 +18032,7 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
     return res.status(400).json({ message: 'Business is not available yet.' });
   }
   const priceId = TIER_PRICE_IDS[tier]();
-  if (!stripe || !priceId) {
+  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET || !priceId) {
     return res.status(503).json({ message: 'Billing is not configured yet.' });
   }
   const user = await getUser(req.user.id);
