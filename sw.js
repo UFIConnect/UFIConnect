@@ -1,7 +1,10 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v5';
-const API_ORIGIN = 'https://uficonnect-api-708r.onrender.com';
+const CACHE_NAME = 'uficonnect-v6';
+const API_ORIGINS = new Set([
+  'https://api.uficonnect.org',
+  'https://uficonnect-api-708r.onrender.com',
+]);
 
 const SHELL_ASSETS = [
   '/',
@@ -37,7 +40,7 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.endsWith('/feed/stream')) return;
 
   // API calls — network-first, no caching; return 503 on failure so callers treat it as an error
-  if (url.origin === API_ORIGIN || url.pathname.startsWith('/api/')) {
+  if (API_ORIGINS.has(url.origin) || url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(request).catch(() => new Response(JSON.stringify({ error: 'offline' }), {
         status: 503,
