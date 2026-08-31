@@ -225,7 +225,7 @@ function loadFeedState(userId) {
       filters,
       activeTabs,
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   ['following', 'local', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed',
+      viewMode:   s.viewMode === 'local' ? 'countries' : ['following', 'countries', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed',
       location:   normalizeLocationFilters(s.location),
     };
   } catch { return null; }
@@ -893,7 +893,7 @@ const COMMENT_SOURCES = new Set([
   'mastodon','bluesky','lobsters','producthunt','techcrunch','theverge',
   'indiehackers','hashnode','arstechnica','wired','theregister','venturebeat',
   'smashing','phoronix','infoq','mittr','youtube','twitter','linkedin',
-  'instagram','facebook',
+  'instagram','facebook','livecamera',
 ]);
 // Article sources where comments read as reader reviews/discussion
 const ARTICLE_SOURCES = new Set([
@@ -993,6 +993,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const [commentDraft,    setCommentDraft]    = useState('');
   const [commentSending,  setCommentSending]  = useState(false);
   const [commentPostError,setCommentPostError]= useState(false);
+  const [likeBusy,        setLikeBusy]        = useState(false);
   // Genuine-read engagement (see api/engagement.js) — declared before the
   // early returns below so it runs unconditionally on every render
   // (Rules of Hooks), reporting once this specific card has been ~60%
@@ -1082,6 +1083,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
 
   const isExternal     = post.isExternal;
   const isJob          = JOB_SOURCES.has(post.source);
+  const isCommunityPost = !isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
   const hasVideo       = post.mediaUrl && post.mediaType === 'video';
   const videoPlaylistUrl = hasVideo && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(post.mediaUrl) : null;
   const videoLinkUrl = post.mediaUrl || post.sourceUrl;
@@ -1097,10 +1099,31 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const videoIsPlayable = hasVideo && (videoPlaylistUrl || videoIsDirectFile || videoYouTubeId || videoVimeoId);
   const commentCount   = post.commentsCount || 0;
   const commUrl        = commentUrl(post);
-  const hasComments    = COMMENT_SOURCES.has(post.source);
+  const hasComments    = COMMENT_SOURCES.has(post.source) || isCommunityPost;
   const sectionLabel   = commentSectionLabel(post.source);
   const isArticle      = ARTICLE_SOURCES.has(post.source);
-  const canWriteComment = !post.isExternal && (post.source || 'uficonnect') === 'uficonnect' && !!token;
+  const canWriteComment = isCommunityPost && !!token;
+
+  async function toggleLike() {
+    if (!isCommunityPost || likeBusy) return;
+    if (!token) {
+      showToast('Sign in to like this post.', 'info');
+      return;
+    }
+    setLikeBusy(true);
+    try {
+      const { data } = await client.post(`/posts/${encodeURIComponent(post.id)}/like`);
+      onPostUpdated?.(data.post || {
+        ...post,
+        likedByMe: data.likedByMe,
+        likesCount: data.likesCount,
+      });
+    } catch {
+      showToast('Could not update that like. Please try again.', 'error');
+    } finally {
+      setLikeBusy(false);
+    }
+  }
 
   async function loadMoreComments() {
     if (commentsLoadingMore || !comments) return;
@@ -1159,6 +1182,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
         <SourceMark source={post.source} label={src.icon} size={13} />
         <span style={{ fontSize: '.72rem', fontWeight: 700, color: src.color }}>{post.sourceLabel || src.label}</span>
+        {post.isLiveCamera && <span style={{ fontSize: '.62rem', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', border: '1px solid #FECACA', padding: '2px 6px', borderRadius: 4 }}>LIVE</span>}
         {isJob && <span style={{ fontSize: '.65rem', fontWeight: 700, color: '#059669', background: '#ECFDF5', padding: '2px 8px', borderRadius: 5 }}>Job</span>}
         {post.group && <span style={{ fontSize: '.68rem', fontWeight: 700, background: c.bg, color: c.text, padding: '2px 8px', borderRadius: 5 }}>{post.group.name}</span>}
         {post.topic && <span style={{ fontSize: '.65rem', color: 'var(--muted)', background: 'var(--border)', padding: '2px 6px', borderRadius: 4 }}>{post.topic}</span>}
@@ -1367,7 +1391,21 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
 
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-        {post.likesCount > 0 && (
+        {isCommunityPost && (
+          <button
+            type="button"
+            onClick={toggleLike}
+            disabled={likeBusy}
+            style={{
+              all: 'unset', cursor: likeBusy ? 'default' : 'pointer', fontSize: '.75rem',
+              color: post.likedByMe ? src.color : 'var(--muted)', fontWeight: post.likedByMe ? 700 : 500,
+              opacity: likeBusy ? 0.6 : 1,
+            }}
+          >
+            {post.likedByMe ? 'Liked' : 'Like'}{post.likesCount > 0 ? ` ${post.likesCount.toLocaleString()}` : ''}
+          </button>
+        )}
+        {!isCommunityPost && post.likesCount > 0 && (
           // GitHub/GitLab post likesCount is actually the repo/project's
           // star count (backend/index.js resolveVideoSource-adjacent
           // fetchers repurpose stargazers_count/star_count there, since
@@ -1395,7 +1433,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             }}
             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5, textDecoration: 'none' }}>
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '3px 8px', borderRadius: 5 }}>
-              {isJob ? 'Apply' : hasVideo ? 'Watch' : 'Open'} on {src.label} ↗
+              {isJob ? 'Apply' : post.isLiveCamera ? 'Watch live' : hasVideo ? 'Watch' : 'Open'}{post.isLiveCamera ? '' : ` on ${src.label}`} ↗
             </span>
           </a>
         )}
@@ -1483,7 +1521,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
             </button>
           )}
 
-          {!isExternal && !token && (post.source || 'uficonnect') === 'uficonnect' && (
+          {isCommunityPost && !token && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 10, padding: '8px 12px', background: 'var(--bg-secondary)', borderRadius: 10 }}>
               <span style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Sign in to comment.</span>
               <Link to="/login"><button type="button" className="btn btn-primary btn-sm">Sign in</button></Link>
@@ -1747,7 +1785,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (['local', 'restaurants'].includes(activeMode)) {
+      if (['countries', 'restaurants'].includes(activeMode)) {
         if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
         if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
       }
@@ -1839,7 +1877,7 @@ export default function Feed({ forcedMode } = {}) {
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date(refreshTimestamp));
       setSourceErrors(data.sourceErrors || {});
-      if (['local', 'restaurants'].includes(activeMode)) {
+      if (['countries', 'restaurants'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
       }
     } catch (e) {
@@ -1936,7 +1974,8 @@ export default function Feed({ forcedMode } = {}) {
   // fresh, freshly-sorted data instead of several buttons each doing their
   // own version of it.
   const switchViewMode = useCallback((mode) => {
-    const nextMode = ['following', 'local', 'restaurants'].includes(mode) ? mode : 'feed';
+    const requestedMode = mode === 'local' ? 'countries' : mode;
+    const nextMode = ['following', 'countries', 'restaurants'].includes(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
     const nextTabs = usesSources ? activeTabsRef.current : [];
     const nextFilters = usesSources
@@ -1950,7 +1989,7 @@ export default function Feed({ forcedMode } = {}) {
     setFilters(nextFilters);
     setRemotePage(2);
     setRemoteHasMore(true);
-    // Local and restaurant feeds are location-first. Clear source controls
+    // Countries and restaurant feeds are location-first. Clear source controls
     // before fetching so a hidden Home/Following source cannot leak into
     // one of those views.
     loadFeed(true, nextTabs, {
@@ -1975,8 +2014,9 @@ export default function Feed({ forcedMode } = {}) {
 
   useEffect(() => {
     if (forcedMode) return;
-    const requested = new URLSearchParams(routeLocation.search).get('feed');
-    if (!['local', 'restaurants', 'following', 'feed'].includes(requested) || requested === viewModeRef.current) return;
+    const requestedParam = new URLSearchParams(routeLocation.search).get('feed');
+    const requested = requestedParam === 'local' ? 'countries' : requestedParam;
+    if (!['countries', 'restaurants', 'following', 'feed'].includes(requested) || requested === viewModeRef.current) return;
     switchViewMode(requested);
   }, [forcedMode, routeLocation.search, switchViewMode]);
 
@@ -2137,7 +2177,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      if (['local', 'restaurants'].includes(viewModeRef.current)) {
+      if (['countries', 'restaurants'].includes(viewModeRef.current)) {
         if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
         if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
       }
@@ -2200,7 +2240,7 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (!['feed', 'local', 'restaurants'].includes(viewModeRef.current)) return;
+      if (!['feed', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -2224,7 +2264,7 @@ export default function Feed({ forcedMode } = {}) {
       const y = window.scrollY;
       const pulledToTop = y <= 0 && lastScrollY > 40;
       lastScrollY = y;
-      if (!pulledToTop || !['feed', 'local', 'restaurants'].includes(viewModeRef.current)) return;
+      if (!pulledToTop || !['feed', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
       const state = loadStateRef.current;
       if (state.loading || state.refreshing || state.loadingMore) return;
       if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
@@ -2491,8 +2531,8 @@ export default function Feed({ forcedMode } = {}) {
           </span>
         </h1>
         <p className="page-subtitle">
-          {viewMode === 'local'
-            ? 'Fresh local coverage, ranked by live activity so the city has something new to say.'
+          {viewMode === 'countries'
+            ? 'Live public camera views from around the world, with nearby places gently moved toward the top.'
             : viewMode === 'restaurants'
               ? 'Recently updated local restaurant listings, ready for the important work of deciding where to eat.'
               : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
@@ -2588,9 +2628,9 @@ export default function Feed({ forcedMode } = {}) {
 
       </div>
 
-      {['local', 'restaurants'].includes(viewMode) && (
+      {['countries', 'restaurants'].includes(viewMode) && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>Location</span>
+          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>{viewMode === 'countries' ? 'Prioritize' : 'Location'}</span>
           <input
             className="form-input"
             aria-label="Country filter"
@@ -2845,8 +2885,8 @@ export default function Feed({ forcedMode } = {}) {
             gap: 8
           }}>
             <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
-            {viewMode === 'local'
-              ? 'Loading local activity...'
+            {viewMode === 'countries'
+              ? 'Loading live cameras...'
               : viewMode === 'restaurants'
                 ? 'Loading nearby restaurants...'
                 : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
@@ -2872,10 +2912,10 @@ export default function Feed({ forcedMode } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'local' ? 'Local' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Countries' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'local' ? 'No local activity yet' : viewMode === 'restaurants' ? 'No nearby restaurants yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No live cameras are available yet' : viewMode === 'restaurants' ? 'No nearby restaurants yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2918,12 +2958,12 @@ export default function Feed({ forcedMode } = {}) {
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
                 </div>
               </>
-            ) : (viewMode === 'local' || viewMode === 'restaurants') ? (
+            ) : (viewMode === 'countries' || viewMode === 'restaurants') ? (
               <>
                 <p style={{ marginBottom: 12 }}>
                   {locationMessage || (viewMode === 'restaurants'
                     ? 'Add your city above to see recently updated nearby restaurant listings.'
-                    : 'Add a country or city above to tune this live local stream.')}
+                    : 'The Countries feed includes every live camera in the catalog. Add a country or city to bring nearby views forward.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
@@ -3035,7 +3075,7 @@ export default function Feed({ forcedMode } = {}) {
             {[
               { key: 'feed', label: 'Home' },
               { key: 'following', label: 'Following' },
-              { key: 'local', label: 'Local' },
+              { key: 'countries', label: 'Countries' },
               { key: 'restaurants', label: 'Restaurants' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>

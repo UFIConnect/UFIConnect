@@ -1308,11 +1308,11 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('feed')}
         />
         <AutomationToolCard
-          title="Local Pulse"
-          description="Open the provider-backed live activity stream for your saved country and city."
-          status="Live provider cache"
-          actionLabel="Open Local Feed"
-          to="/?feed=local"
+          title="Countries"
+          description="Open the live public-camera feed from around the world."
+          status="Live camera catalog"
+          actionLabel="Open Countries"
+          to="/?feed=countries"
         />
         <AutomationToolCard
           title="Restaurant Finder"

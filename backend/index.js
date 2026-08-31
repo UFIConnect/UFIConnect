@@ -9114,10 +9114,21 @@ try {
   countryDisplayNames = new Intl.DisplayNames(['en'], { type: 'region' });
 } catch {}
 
+const COUNTRY_INPUT_CODES = {
+  'united states': 'US', usa: 'US', us: 'US',
+  'united kingdom': 'GB', uk: 'GB', great_britain: 'GB',
+  canada: 'CA', australia: 'AU', japan: 'JP',
+  germany: 'DE', france: 'FR', spain: 'ES', italy: 'IT',
+  netherlands: 'NL', ireland: 'IE', india: 'IN',
+  'new zealand': 'NZ', brazil: 'BR', mexico: 'MX',
+  singapore: 'SG', poland: 'PL', portugal: 'PT', sweden: 'SE',
+};
+
 function countryCodeFromInput(value) {
   const input = String(value || '').trim();
   if (!input) return null;
-  return /^[a-z]{2}$/i.test(input) ? input.toUpperCase() : null;
+  if (/^[a-z]{2}$/i.test(input)) return input.toUpperCase();
+  return COUNTRY_INPUT_CODES[input.toLowerCase().replace(/\s+/g, ' ')] || null;
 }
 
 function cleanLocationInput(value) {
@@ -9293,20 +9304,138 @@ function rankFeedPostsForLocation(posts, locationContext, options = {}) {
   return ranked;
 }
 
-// Local discovery is intentionally provider-backed and cache-bounded: a
-// request never starts an unbounded crawl, while a busy city shares one
-// short-lived provider response across every member viewing it.
+// Location lookups are cache-bounded: a busy city shares one short-lived
+// response across members instead of creating a request burst.
 const locationLiveFeedCache = new Map();
 const LOCATION_LIVE_CACHE_MAX = 160;
-const LOCATION_ACTIVITY_CACHE_MS = 3 * 60 * 1000;
 const LOCATION_RESTAURANT_CACHE_MS = 10 * 60 * 1000;
 const LOCATION_GEOCODE_CACHE_MS = 24 * 60 * 60 * 1000;
 const LOCATION_PROVIDER_MAX_IN_FLIGHT = 4;
 let locationProviderInFlight = 0;
 
+const LIVE_CAMERA_SOURCE = 'livecamera';
+const LIVE_CAMERA_CATALOG = Object.freeze([
+  {
+    id: 'camera_times_square_ny',
+    title: 'Times Square, New York',
+    content: 'Live public camera from EarthCam at Times Square. The city does not take coffee breaks.',
+    sourceUrl: 'https://www.youtube.com/watch?v=rnXIjl_Rzy4',
+    mediaUrl: 'https://www.youtube.com/watch?v=rnXIjl_Rzy4',
+    country: 'United States', countryCode: 'US', city: 'New York',
+    createdAt: '2024-10-02T12:00:00.000Z',
+  },
+  {
+    id: 'camera_new_orleans_street',
+    title: 'New Orleans Street View',
+    content: 'Live public camera from EarthCam in New Orleans. There is always something happening on this corner.',
+    sourceUrl: 'https://www.youtube.com/watch?v=UUhTr19MH0k',
+    mediaUrl: 'https://www.youtube.com/watch?v=UUhTr19MH0k',
+    country: 'United States', countryCode: 'US', city: 'New Orleans',
+    createdAt: '2026-01-20T12:00:00.000Z',
+  },
+  {
+    id: 'camera_niagara_falls',
+    title: 'Niagara Falls, Canada',
+    content: 'Live public camera from EarthCam at Niagara Falls. Nature remains wonderfully committed to the bit.',
+    sourceUrl: 'https://www.youtube.com/watch?v=gIv9J38Dax8',
+    mediaUrl: 'https://www.youtube.com/watch?v=gIv9J38Dax8',
+    country: 'Canada', countryCode: 'CA', city: 'Niagara Falls',
+    createdAt: '2025-07-28T12:00:00.000Z',
+  },
+  {
+    id: 'camera_abbey_road_london',
+    title: 'Abbey Road Crossing, London',
+    content: 'Live public camera from EarthCam at Abbey Road. Yes, people are still recreating that photo.',
+    sourceUrl: 'https://www.youtube.com/watch?v=j9Sa4uBGGQ0',
+    mediaUrl: 'https://www.youtube.com/watch?v=j9Sa4uBGGQ0',
+    country: 'United Kingdom', countryCode: 'GB', city: 'London',
+    createdAt: '2025-04-25T12:00:00.000Z',
+  },
+  {
+    id: 'camera_sydney_harbour',
+    title: 'Sydney Harbour and Opera House',
+    content: 'Live public camera from Sydney Live Camera, with a clear view of the bridge and Opera House.',
+    sourceUrl: 'https://www.youtube.com/watch?v=Fy8_xLMkAXc',
+    mediaUrl: 'https://www.youtube.com/watch?v=Fy8_xLMkAXc',
+    country: 'Australia', countryCode: 'AU', city: 'Sydney',
+    createdAt: '2025-03-28T12:00:00.000Z',
+  },
+  {
+    id: 'camera_tokyo_bay',
+    title: 'Tokyo Bay and Rainbow Bridge',
+    content: 'Live public camera from Tokyo Views over Tokyo Bay. A quiet way to watch a very unquiet city move.',
+    sourceUrl: 'https://www.youtube.com/watch?v=r74OyneNmg8',
+    mediaUrl: 'https://www.youtube.com/watch?v=r74OyneNmg8',
+    country: 'Japan', countryCode: 'JP', city: 'Tokyo',
+    createdAt: '2024-01-12T12:00:00.000Z',
+  },
+]);
+const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
+let liveCameraPostsSeeded = false;
+let liveCameraPostsSeedPromise = null;
+
+function liveCameraPost(camera) {
+  return {
+    id: camera.id,
+    authorId: null,
+    groupId: null,
+    title: camera.title,
+    content: camera.content,
+    likes: [],
+    commentsCount: 0,
+    createdAt: camera.createdAt,
+    source: LIVE_CAMERA_SOURCE,
+    sourceLabel: 'Live Cameras',
+    sourceUrl: camera.sourceUrl,
+    mediaUrl: camera.mediaUrl,
+    mediaType: 'video',
+    country: camera.country,
+    countryCode: camera.countryCode,
+    city: camera.city,
+    topic: 'Live Cameras',
+    isLiveCamera: true,
+  };
+}
+
+function enrichLiveCameraPost(post) {
+  const camera = LIVE_CAMERA_BY_ID.get(post?.id);
+  return camera
+    ? { ...liveCameraPost(camera), ...post, country: camera.country, countryCode: camera.countryCode, city: camera.city, isLiveCamera: true }
+    : post;
+}
+
+function liveCameraLocationScore(post, location) {
+  if (!location?.available) return 0;
+  const city = String(location.city || '').trim().toLowerCase();
+  if (city && city === String(post.city || '').trim().toLowerCase()) return 2;
+  if (location.country && location.country === post.countryCode) return 1;
+  return 0;
+}
+
+function getCountriesCameraFeed(location, viewerId = null) {
+  const savedById = new Map(posts
+    .filter(post => post?.source === LIVE_CAMERA_SOURCE)
+    .map(post => [post.id, post]));
+  const cameras = LIVE_CAMERA_CATALOG
+    .map(camera => enrichLiveCameraPost(savedById.get(camera.id) || liveCameraPost(camera)))
+    .map((post, index) => {
+      const score = liveCameraLocationScore(post, location);
+      return score > 0
+        ? { ...post, matchedByLocation: true, locationMatch: score === 2 ? 'local' : 'country', locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}` , _catalogOrder: index, _locationScore: score }
+        : { ...post, _catalogOrder: index, _locationScore: 0 };
+    })
+    .sort((a, b) => (b._locationScore - a._locationScore) || (a._catalogOrder - b._catalogOrder))
+    .map(({ _catalogOrder, _locationScore, ...post }) => post);
+  return {
+    posts: cameras.map(post => serializeCommunityPost(post, viewerId)),
+    fetchedAt: new Date().toISOString(),
+    catalogSize: cameras.length,
+  };
+}
+
 async function withLocationProviderSlot(task) {
   if (locationProviderInFlight >= LOCATION_PROVIDER_MAX_IN_FLIGHT) {
-    throw new Error('Local discovery is briefly at capacity. Please retry shortly.');
+    throw new Error('Location lookup is briefly at capacity. Please retry shortly.');
   }
   locationProviderInFlight += 1;
   try {
@@ -9326,28 +9455,28 @@ function fetchLocationJSON(url, extraHeaders = {}) {
     };
     const request = https.get(url, {
       headers: {
-        'User-Agent': 'UFIconnect-LocalDiscovery/1.0 (https://uficonnect.org)',
+        'User-Agent': 'UFIconnect-LocationData/1.0 (https://uficonnect.org)',
         Accept: 'application/json',
         ...extraHeaders,
       },
     }, (response) => {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         response.resume();
-        finish(reject, new Error(`HTTP ${response.statusCode} for local discovery provider`));
+        finish(reject, new Error(`HTTP ${response.statusCode} for location lookup`));
         return;
       }
       let body = '';
       response.on('data', (chunk) => {
         body += chunk;
-        if (body.length > 2_000_000) request.destroy(new Error('Local discovery response exceeded the size limit.'));
+        if (body.length > 2_000_000) request.destroy(new Error('Location lookup response exceeded the size limit.'));
       });
       response.on('end', () => {
         try { finish(resolve, JSON.parse(body)); }
-        catch (error) { finish(reject, new Error(`Local discovery JSON parse failed: ${error.message}`)); }
+        catch (error) { finish(reject, new Error(`Location lookup JSON parse failed: ${error.message}`)); }
       });
     });
     request.once('error', (error) => finish(reject, error));
-    request.setTimeout(6000, () => request.destroy(new Error('Local discovery provider timed out.')));
+    request.setTimeout(6000, () => request.destroy(new Error('Location lookup timed out.')));
   });
 }
 
@@ -9394,46 +9523,6 @@ function locationFeedTimestamp(value, fallback = Date.now()) {
     return new Date(Date.UTC(+year, +month - 1, +day, +hour, +minute, +second)).toISOString();
   }
   return normalizeTimestamp(raw, fallback);
-}
-
-async function fetchLocalActivityPosts(location) {
-  const scope = locationScopeLabel(location);
-  if (!scope) return [];
-  const params = new URLSearchParams({
-    query: location.city ? `\"${location.city}\"` : `\"${location.countryName}\"`,
-    mode: 'artlist',
-    format: 'json',
-    maxrecords: '100',
-    timespan: '3h',
-    sort: 'HybridRel',
-  });
-  const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://api.gdeltproject.org/api/v2/doc/doc?${params.toString()}`));
-  const articles = Array.isArray(data?.articles) ? data.articles : [];
-  return articles
-    .filter(article => article?.url && article?.title)
-    .map((article, index) => ({
-      id: `gdelt:${crypto.createHash('sha1').update(article.url).digest('hex')}`,
-      source: 'localpulse',
-      sourceLabel: 'Local Pulse',
-      sourceUrl: article.url,
-      title: decodeHTMLEntities(article.title).slice(0, 500),
-      content: `Live coverage from ${article.domain || 'the web'} for ${scope}.`,
-      author: { name: article.domain || 'GDELT' },
-      authorName: article.domain || 'GDELT',
-      mediaUrl: article.socialimage || null,
-      mediaType: article.socialimage ? 'image' : null,
-      createdAt: locationFeedTimestamp(article.seendate || article.datetime),
-      isExternal: true,
-      location: scope,
-      city: location.city || null,
-      country: location.countryName || null,
-      topic: 'Local Activity',
-      activityScore: Math.max(1, 100 - index),
-      matchedByLocation: true,
-      locationMatch: 'local',
-      locationMatchLabel: `Live in ${scope}`,
-      group: { id: 'local_activity', name: 'Local Activity', category: 'Community', externalUrl: article.url },
-    }));
 }
 
 async function geocodeLocation(location) {
@@ -9493,17 +9582,14 @@ async function fetchLocalRestaurantPosts(location) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
-async function getLocationLiveFeed(kind, location) {
+async function getLocationLiveFeed(kind, location, viewerId = null) {
+  if (kind === 'countries') return getCountriesCameraFeed(location, viewerId);
   const scope = locationScopeLabel(location);
-  if (!scope || (kind === 'restaurants' && !location?.city)) {
-    return { posts: [], fetchedAt: null, locationRequired: kind === 'restaurants' ? 'Choose a city to see nearby restaurants.' : 'Choose a country or city to see local activity.' };
+  if (!scope || !location?.city) {
+    return { posts: [], fetchedAt: null, locationRequired: 'Choose a city to see nearby restaurants.' };
   }
   const key = locationCacheKey(kind, location);
-  const ttl = kind === 'restaurants' ? LOCATION_RESTAURANT_CACHE_MS : LOCATION_ACTIVITY_CACHE_MS;
-  const loader = kind === 'restaurants'
-    ? () => fetchLocalRestaurantPosts(location)
-    : () => fetchLocalActivityPosts(location);
-  const entry = await readLocationLiveCache(key, ttl, loader);
+  const entry = await readLocationLiveCache(key, LOCATION_RESTAURANT_CACHE_MS, () => fetchLocalRestaurantPosts(location));
   return { posts: entry?.posts || [], fetchedAt: entry?.fetchedAt || null, providerError: entry?.error || null };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
@@ -12154,6 +12240,17 @@ let groups = GROUPS_SEED.map(g => ({
 // Real posts — user-created, stored in community_posts table and kept in memory
 let posts = [];
 
+function ensureLiveCameraPostsInMemory() {
+  for (const camera of LIVE_CAMERA_CATALOG) {
+    if (!posts.some(post => post.id === camera.id)) posts.push(liveCameraPost(camera));
+  }
+}
+
+// Keeps the Countries feed useful during a short startup or DB reconnect
+// window. PostgreSQL replaces these lightweight records with persisted likes
+// and comment counts as soon as startup loading completes.
+ensureLiveCameraPostsInMemory();
+
 // Real comments for first-party posts
 let postComments = [];
 
@@ -12191,20 +12288,26 @@ function sanitizeUser(u) {
   return { id: u.id, name: u.name, title: u.title, organization: u.organization || '', skills: asArray(u.skills), avatarUrl: u.avatarUrl || '' };
 }
 
+function isInteractiveCommunitySource(source) {
+  return ['uficonnect', LIVE_CAMERA_SOURCE].includes(source || 'uficonnect');
+}
+
 function serializeCommunityPost(post, viewerId = null) {
-  const author = users.find((u) => u.id === post.authorId);
-  const group  = groups.find((g) => g.id === post.groupId);
+  const normalizedPost = enrichLiveCameraPost(post);
+  const source = normalizedPost.source || 'uficonnect';
+  const author = users.find((u) => u.id === normalizedPost.authorId);
+  const group  = groups.find((g) => g.id === normalizedPost.groupId);
   const cat    = group?.category;
   return {
-    ...post,
-    author:      author ? sanitizeUser(author) : { id: post.authorId, name: 'Unknown', title: '', organization: '' },
+    ...normalizedPost,
+    author:      author ? sanitizeUser(author) : source === LIVE_CAMERA_SOURCE ? { id: null, name: 'Live Cameras', title: '', organization: '' } : { id: normalizedPost.authorId, name: 'Unknown', title: '', organization: '' },
     group:       group ? { id: group.id, name: group.name, category: cat } : null,
-    likedByMe:   viewerId ? (post.likes || []).includes(viewerId) : false,
-    likesCount:  (post.likes || []).length,
-    commentsCount: Math.max(post.commentsCount || 0, postComments.filter(c => c.postId === post.id).length),
-    source:      post.source || 'uficonnect',
-    sourceLabel: post.sourceLabel || 'UFIconnect',
-    sourceUrl:   post.sourceUrl || null,
+    likedByMe:   viewerId ? (normalizedPost.likes || []).includes(viewerId) : false,
+    likesCount:  (normalizedPost.likes || []).length,
+    commentsCount: Math.max(normalizedPost.commentsCount || 0, postComments.filter(c => c.postId === normalizedPost.id).length),
+    source,
+    sourceLabel: normalizedPost.sourceLabel || (source === LIVE_CAMERA_SOURCE ? 'Live Cameras' : 'UFIconnect'),
+    sourceUrl:   normalizedPost.sourceUrl || null,
     isExternal:  false,
   };
 }
@@ -12834,20 +12937,54 @@ function interleaveByAuthor(items) {
 }
 
 function dbCommunityPostToMemPost(row) {
-  return {
+  return enrichLiveCameraPost({
     id: row.id,
     authorId: row.author_id,
     groupId: row.group_id,
+    title: row.title || null,
     content: row.content,
     likes: row.likes || [],
     commentsCount: row.comments_count || 0,
     createdAt: row.created_at,
     source: row.source || 'uficonnect',
     sourceLabel: row.source_label || 'UFIconnect',
-    url: row.url,
+    sourceUrl: row.url || null,
     mediaUrl: row.media_url || null,
     mediaType: row.media_type || null,
-  };
+  });
+}
+
+async function seedLiveCameraPosts() {
+  if (!db.isConnected() || liveCameraPostsSeeded) return;
+  if (liveCameraPostsSeedPromise) return liveCameraPostsSeedPromise;
+  liveCameraPostsSeedPromise = (async () => {
+    for (const camera of LIVE_CAMERA_CATALOG) {
+      const post = liveCameraPost(camera);
+      await db.query(
+        `INSERT INTO community_posts
+         (id, group_id, author_id, author_name, title, content, url, source, source_label, created_at, media_url, media_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         ON CONFLICT (id) DO UPDATE SET
+           title=EXCLUDED.title,
+           content=EXCLUDED.content,
+           url=EXCLUDED.url,
+           source_label=EXCLUDED.source_label,
+           media_url=EXCLUDED.media_url,
+           media_type=EXCLUDED.media_type`,
+        [
+          post.id, post.groupId, post.authorId, 'Live Cameras', post.title,
+          post.content, post.sourceUrl, post.source, post.sourceLabel,
+          post.createdAt, post.mediaUrl, post.mediaType,
+        ]
+      );
+    }
+    liveCameraPostsSeeded = true;
+  })();
+  try {
+    await liveCameraPostsSeedPromise;
+  } finally {
+    liveCameraPostsSeedPromise = null;
+  }
 }
 
 function boundedLimit(raw, fallback = 50, max = 100) {
@@ -12856,16 +12993,16 @@ function boundedLimit(raw, fallback = 50, max = 100) {
 }
 
 async function getCommunityPostById(postId) {
-  let post = posts.find((p) => p.id === postId && (p.source || 'uficonnect') === 'uficonnect');
+  let post = posts.find((p) => p.id === postId && isInteractiveCommunitySource(p.source));
   if (post) return post;
 
   if (db.isConnected()) {
     try {
       const { rows } = await db.query(
         `SELECT * FROM community_posts
-         WHERE id=$1 AND COALESCE(source,'uficonnect')='uficonnect'
+         WHERE id=$1 AND COALESCE(source,'uficonnect') = ANY($2::text[])
          LIMIT 1`,
-        [postId]
+        [postId, ['uficonnect', LIVE_CAMERA_SOURCE]]
       );
       if (rows[0]) {
         post = dbCommunityPostToMemPost(rows[0]);
@@ -13639,6 +13776,7 @@ async function migrateDB() {
         author_id TEXT,
         author_name TEXT,
         author_title TEXT,
+        title TEXT,
         content TEXT NOT NULL,
         url TEXT,
         source TEXT DEFAULT 'uficonnect',
@@ -13653,6 +13791,9 @@ async function migrateDB() {
     // table that doesn't exist yet and this DB already has one.
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_url TEXT`);
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_type TEXT`);
+    await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS title TEXT`);
+    await db.query(`CREATE INDEX IF NOT EXISTS community_posts_source_idx ON community_posts(source, created_at DESC)`);
+    await seedLiveCameraPosts();
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS post_comments (
@@ -16978,9 +17119,12 @@ async function handleFeedRequest(req, res) {
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
   ), 250);
-  const feedMode = ['archive', 'following', 'local', 'restaurants'].includes(req.query.mode)
+  const requestedFeedMode = ['archive', 'following', 'local', 'countries', 'restaurants'].includes(req.query.mode)
     ? req.query.mode
     : 'feed';
+  // Existing shared links and stored client state can still ask for `local`.
+  // Keep those working while the public surface has moved to Countries.
+  const feedMode = requestedFeedMode === 'local' ? 'countries' : requestedFeedMode;
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
   const timeRange = normalizeFeedTimeRange(req.query.timeRange || req.query.range);
   // 'ranked' sort computes its score per row with no supporting index, so an
@@ -17033,16 +17177,19 @@ async function handleFeedRequest(req, res) {
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
-  if (feedMode === 'local' || feedMode === 'restaurants') {
-    const localFeed = await getLocationLiveFeed(feedMode, locationContext);
-    const available = filterUnseen(localFeed.posts, seenIds);
+  if (feedMode === 'countries' || feedMode === 'restaurants') {
+    const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
+    // A live camera is an ongoing view, not a one-time article. Keep it
+    // available after it has been watched so the Countries catalog remains
+    // complete instead of emptying itself for each member.
+    const available = feedMode === 'countries' ? localFeed.posts : filterUnseen(localFeed.posts, seenIds);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = available.slice(offset, offset + feedLimit);
-    trackPostsSeen(pageRows);
+    if (feedMode !== 'countries') trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       mode: feedMode,
-      sort: feedMode === 'local' ? 'activity' : 'newest',
+      sort: 'newest',
       page: reqPage,
       hasMore: offset + pageRows.length < available.length,
       totalAvailable: available.length,
@@ -18977,7 +19124,7 @@ app.get('/feed/:postId/comments', authenticateOptional, async (req, res) => {
       })),
       commentsCount: total,
       hasMore,
-      source: 'uficonnect',
+      source: communityPost.source || 'uficonnect',
       live: true,
     });
   }
@@ -21195,20 +21342,23 @@ async function toggleCommunityPostLike(req, res) {
       return res.status(503).json({ message: 'Liking is temporarily unavailable — please try again in a moment.' });
     }
 
+    if (post.source === LIVE_CAMERA_SOURCE) await seedLiveCameraPosts();
+
     const uid = req.user.id;
     const idx = post.likes.indexOf(uid);
     const isUnlike = idx > -1;
     if (isUnlike) post.likes.splice(idx, 1);
     else if (!post.likes.includes(uid)) post.likes.push(uid);
 
-    await db.query(
-      `UPDATE community_posts SET likes=$1 WHERE id=$2`,
+    const likeUpdate = await db.query(
+      `UPDATE community_posts SET likes=$1 WHERE id=$2 RETURNING id`,
       [post.likes, post.id]
     );
+    if (!likeUpdate.rowCount) throw new Error('Community post did not persist before its like was updated.');
 
     // Only on a genuine like, not an unlike — nobody wants a notification
     // for someone changing their mind back to nothing.
-    if (!isUnlike) {
+    if (!isUnlike && post.authorId) {
       getUser(uid).then(liker => {
         if (!liker) return;
         createNotification({
@@ -21278,6 +21428,8 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
       return res.status(503).json({ message: 'Commenting is temporarily unavailable — please try again in a moment.' });
     }
 
+    if (post.source === LIVE_CAMERA_SOURCE) await seedLiveCameraPosts();
+
     const comment = {
       id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       postId: post.id,
@@ -21303,7 +21455,7 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
       [post.id]
     ).catch(e => console.error('post comment count DB:', e.message));
 
-    getUser(req.user.id).then(commenter => {
+    if (post.authorId) getUser(req.user.id).then(commenter => {
       if (!commenter) return;
       createNotification({
         userId: post.authorId, type: 'comment', actorId: req.user.id,
@@ -24492,6 +24644,7 @@ async function loadPostsFromDB() {
     );
     posts.length = 0;
     rows.forEach((r) => posts.push(dbCommunityPostToMemPost(r)));
+    ensureLiveCameraPostsInMemory();
     if (rows.length) console.log(`? Loaded ${rows.length} posts from DB`);
   } catch (err) { console.warn('loadPostsFromDB:', err.message); }
 }
