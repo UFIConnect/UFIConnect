@@ -9330,6 +9330,72 @@ const RESTAURANT_OPENING_NEWS_EDITIONS = Object.freeze([
   { label: 'Japan', gl: 'JP', hl: 'ja', ceid: 'JP:ja', query: '"restaurant opening" when:30d' },
 ]);
 
+// Countries is a browseable travel surface, not a six-camera dead end. The
+// shared cache keeps these wider lookups off the request path for everyone
+// except the first visitor after a refresh.
+const COUNTRIES_DISCOVERY_CACHE_MS = 30 * 60 * 1000;
+const COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE = 2;
+const COUNTRIES_DISCOVERY_NEWS_MAX_POSTS = 220;
+const COUNTRIES_GUIDES_PER_REFRESH = 15;
+const COUNTRIES_GUIDE_BATCH_SIZE = 4;
+const COUNTRIES_DISCOVERY_NEWS_EDITIONS = Object.freeze([
+  { label: 'North America', gl: 'US', hl: 'en-US', ceid: 'US:en', query: '("travel guide" OR "things to do" OR "places to visit" OR "travel destination") -"birth tourism" when:60d' },
+  { label: 'Europe', gl: 'GB', hl: 'en-GB', ceid: 'GB:en', query: '("travel guide" OR "destination guide" OR "places to visit" OR "city break") -"birth tourism" when:60d' },
+  { label: 'Latin America', gl: 'MX', hl: 'es-419', ceid: 'MX:es-419', query: '("guia de viaje" OR "lugares para visitar" OR "destinos turisticos") when:60d' },
+  { label: 'Africa', gl: 'ZA', hl: 'en-ZA', ceid: 'ZA:en', query: '("travel guide" OR safari OR "places to visit" OR tourism) -"birth tourism" when:60d' },
+  { label: 'Middle East', gl: 'AE', hl: 'en', ceid: 'AE:en', query: '("travel guide" OR "places to visit" OR "travel destination" OR tourism) -"birth tourism" when:60d' },
+  { label: 'Asia-Pacific', gl: 'SG', hl: 'en-SG', ceid: 'SG:en', query: '("travel guide" OR "things to do" OR "places to visit" OR tourism) -"birth tourism" when:60d' },
+  { label: 'Oceania', gl: 'AU', hl: 'en-AU', ceid: 'AU:en', query: '("travel guide" OR "places to visit" OR "weekend getaway" OR tourism) -"birth tourism" when:60d' },
+]);
+
+// A rotating, explicitly global set means the tab keeps offering real trip
+// ideas without asking Wikimedia for dozens of pages on every cold request.
+// The fallback copy makes the card useful even when a source temporarily
+// declines a request; an image is only attached when Wikimedia supplied one.
+const COUNTRIES_DESTINATION_GUIDES = Object.freeze([
+  { slug: 'Copenhagen', city: 'Copenhagen', country: 'Denmark', countryCode: 'DK', fallback: 'Canals, design, bakeries, and a very walkable harbor city.' },
+  { slug: 'Reykjavik', city: 'Reykjavik', country: 'Iceland', countryCode: 'IS', fallback: 'A compact base for hot springs, waterfalls, and northern landscapes.' },
+  { slug: 'Lisbon', city: 'Lisbon', country: 'Portugal', countryCode: 'PT', fallback: 'Hills, tiled streets, Atlantic light, and easy day trips.' },
+  { slug: 'Barcelona', city: 'Barcelona', country: 'Spain', countryCode: 'ES', fallback: 'Architecture, late dinners, beaches, and neighborhoods made for wandering.' },
+  { slug: 'Rome', city: 'Rome', country: 'Italy', countryCode: 'IT', fallback: 'Ancient landmarks, piazzas, and a food stop around nearly every corner.' },
+  { slug: 'Paris', city: 'Paris', country: 'France', countryCode: 'FR', fallback: 'Museums, river walks, neighborhoods, and an unreasonable number of good pastries.' },
+  { slug: 'Amsterdam', city: 'Amsterdam', country: 'Netherlands', countryCode: 'NL', fallback: 'Canals, cycling, art museums, and relaxed cafe stops.' },
+  { slug: 'Prague', city: 'Prague', country: 'Czech Republic', countryCode: 'CZ', fallback: 'Historic bridges, compact streets, and a strong cafe-and-castle itinerary.' },
+  { slug: 'Athens', city: 'Athens', country: 'Greece', countryCode: 'GR', fallback: 'Ancient sites, city markets, and islands within easy reach.' },
+  { slug: 'Dubrovnik', city: 'Dubrovnik', country: 'Croatia', countryCode: 'HR', fallback: 'Stone walls, Adriatic views, and coastal day trips.' },
+  { slug: 'Istanbul', city: 'Istanbul', country: 'Turkey', countryCode: 'TR', fallback: 'A city stretched across two continents with markets, ferries, and layered history.' },
+  { slug: 'Marrakesh', city: 'Marrakesh', country: 'Morocco', countryCode: 'MA', fallback: 'Courtyards, markets, gardens, and a gateway to the Atlas Mountains.' },
+  { slug: 'Cairo', city: 'Cairo', country: 'Egypt', countryCode: 'EG', fallback: 'Museum days, Nile views, and pyramids just beyond the city.' },
+  { slug: 'Cape Town', city: 'Cape Town', country: 'South Africa', countryCode: 'ZA', fallback: 'Mountain trails, coastal drives, vineyards, and city beaches.' },
+  { slug: 'Zanzibar', city: 'Zanzibar City', country: 'Tanzania', countryCode: 'TZ', fallback: 'Stone Town, spice history, and Indian Ocean beaches.' },
+  { slug: 'Nairobi', city: 'Nairobi', country: 'Kenya', countryCode: 'KE', fallback: 'A city break with parks, food, and safari routes nearby.' },
+  { slug: 'Dubai', city: 'Dubai', country: 'United Arab Emirates', countryCode: 'AE', fallback: 'Waterfronts, desert day trips, modern architecture, and global food.' },
+  { slug: 'Petra', city: 'Wadi Musa', country: 'Jordan', countryCode: 'JO', fallback: 'A dramatic historic site with desert landscapes and nearby trails.' },
+  { slug: 'Tokyo', city: 'Tokyo', country: 'Japan', countryCode: 'JP', fallback: 'Tiny bars, giant crossings, gardens, and a different favorite neighborhood every day.' },
+  { slug: 'Kyoto', city: 'Kyoto', country: 'Japan', countryCode: 'JP', fallback: 'Temples, gardens, old streets, and seasonal day trips.' },
+  { slug: 'Seoul', city: 'Seoul', country: 'South Korea', countryCode: 'KR', fallback: 'Palaces, night markets, design districts, and mountain paths inside the city.' },
+  { slug: 'Bangkok', city: 'Bangkok', country: 'Thailand', countryCode: 'TH', fallback: 'Street food, river ferries, temples, and a fast-moving city rhythm.' },
+  { slug: 'Singapore', city: 'Singapore', country: 'Singapore', countryCode: 'SG', fallback: 'Hawker centers, gardens, museums, and easy tropical escapes.' },
+  { slug: 'Bali', city: 'Denpasar', country: 'Indonesia', countryCode: 'ID', fallback: 'Beaches, rice terraces, temples, and a wide range of slow or lively stays.' },
+  { slug: 'Hanoi', city: 'Hanoi', country: 'Vietnam', countryCode: 'VN', fallback: 'Old Quarter streets, lakeside walks, and food worth planning a day around.' },
+  { slug: 'Siem_Reap', city: 'Siem Reap', country: 'Cambodia', countryCode: 'KH', fallback: 'Temple mornings, markets, and a relaxed base for Angkor.' },
+  { slug: 'Sydney', city: 'Sydney', country: 'Australia', countryCode: 'AU', fallback: 'Harbor walks, beaches, ferries, and neighborhoods with their own pace.' },
+  { slug: 'Melbourne', city: 'Melbourne', country: 'Australia', countryCode: 'AU', fallback: 'Laneways, cafes, galleries, and coastal road trips nearby.' },
+  { slug: 'Queenstown', city: 'Queenstown', country: 'New Zealand', countryCode: 'NZ', fallback: 'Lakes, mountain views, hiking, and enough outdoor plans for a second trip.' },
+  { slug: 'Honolulu', city: 'Honolulu', country: 'United States', countryCode: 'US', fallback: 'Beach mornings, city food, volcanic landscapes, and island day trips.' },
+  { slug: 'New_Orleans', city: 'New Orleans', country: 'United States', countryCode: 'US', fallback: 'Music, architecture, food, and neighborhoods that reward a slower stroll.' },
+  { slug: 'Mexico_City', city: 'Mexico City', country: 'Mexico', countryCode: 'MX', fallback: 'Museums, markets, parks, and a serious food itinerary.' },
+  { slug: 'Oaxaca_City', city: 'Oaxaca', country: 'Mexico', countryCode: 'MX', fallback: 'Markets, craft traditions, mountain day trips, and regional food.' },
+  { slug: 'San_Jose_(Costa_Rica)', city: 'San Jose', country: 'Costa Rica', countryCode: 'CR', fallback: 'A practical base for rainforests, volcanoes, beaches, and coffee regions.' },
+  { slug: 'Lima', city: 'Lima', country: 'Peru', countryCode: 'PE', fallback: 'Coastal neighborhoods, museums, and a food scene that does not waste your time.' },
+  { slug: 'Cusco', city: 'Cusco', country: 'Peru', countryCode: 'PE', fallback: 'Highland history, mountain routes, and a base for Sacred Valley adventures.' },
+  { slug: 'Rio_de_Janeiro', city: 'Rio de Janeiro', country: 'Brazil', countryCode: 'BR', fallback: 'Beaches, viewpoints, music, and dramatic city-meets-mountain scenery.' },
+  { slug: 'Buenos_Aires', city: 'Buenos Aires', country: 'Argentina', countryCode: 'AR', fallback: 'Bookshops, cafes, late dinners, and neighborhoods made for walking.' },
+  { slug: 'Cartagena,_Colombia', city: 'Cartagena', country: 'Colombia', countryCode: 'CO', fallback: 'Caribbean color, old walls, nearby islands, and warm evenings.' },
+  { slug: 'Banff', city: 'Banff', country: 'Canada', countryCode: 'CA', fallback: 'Mountain lakes, wildlife, and trails that make a long weekend feel too short.' },
+  { slug: 'Vancouver', city: 'Vancouver', country: 'Canada', countryCode: 'CA', fallback: 'Waterfront paths, forest access, food, and mountain views in one compact trip.' },
+]);
+
 const LIVE_CAMERA_SOURCE = 'livecamera';
 const LIVE_CAMERA_CATALOG = Object.freeze([
   {
@@ -9390,6 +9456,8 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
+const liveCameraVerificationCache = new Map();
+const LIVE_CAMERA_VERIFICATION_CACHE_MS = 6 * H;
 
 function liveCameraPost(camera) {
   return {
@@ -9429,24 +9497,260 @@ function liveCameraLocationScore(post, location) {
   return 0;
 }
 
-function getCountriesCameraFeed(location, viewerId = null) {
+function currentLiveCameraPosts() {
   const savedById = new Map(posts
     .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map(post => [post.id, post]));
-  const cameras = LIVE_CAMERA_CATALOG
+  return LIVE_CAMERA_CATALOG
     .map(camera => enrichLiveCameraPost(savedById.get(camera.id) || liveCameraPost(camera)))
-    .map((post, index) => {
+    .filter(post => post?.mediaUrl && post?.sourceUrl);
+}
+
+// oEmbed is a lightweight public check that rejects deleted, private, and
+// embedding-disabled YouTube streams before they are put in Countries. It is
+// intentionally shared for six hours so this quality check cannot become a
+// per-visitor request fan-out.
+async function isLiveCameraEmbeddable(camera) {
+  const now = Date.now();
+  const cached = liveCameraVerificationCache.get(camera.id);
+  if (cached?.expiresAt > now) return cached.valid;
+  if (cached?.pending) return cached.pending;
+  const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(camera.sourceUrl)}&format=json`;
+  const entry = cached || { valid: false, expiresAt: 0, pending: null };
+  entry.pending = fetchJSON(url)
+    .then(data => Boolean(data?.title))
+    .catch(() => false)
+    .then((valid) => {
+      entry.valid = valid;
+      entry.expiresAt = Date.now() + LIVE_CAMERA_VERIFICATION_CACHE_MS;
+      return valid;
+    })
+    .finally(() => { entry.pending = null; });
+  liveCameraVerificationCache.set(camera.id, entry);
+  return entry.pending;
+}
+
+async function verifiedLiveCameraPosts() {
+  const candidates = currentLiveCameraPosts();
+  const checks = await Promise.all(candidates.map(async (post) => ({
+    post,
+    valid: await isLiveCameraEmbeddable(post),
+  })));
+  const valid = checks.filter(check => check.valid).map(check => check.post);
+  if (valid.length < candidates.length) {
+    console.warn(`[Countries] omitted ${candidates.length - valid.length} unavailable live camera(s).`);
+  }
+  return valid;
+}
+
+function countryGuideUrl(destination) {
+  return `https://en.wikivoyage.org/wiki/${encodeURIComponent(destination.slug)}`;
+}
+
+function safeWikivoyageImage(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return parsed.protocol === 'https:' && parsed.hostname.endsWith('wikimedia.org')
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function countryDestinationGuidePost(destination, summary = null) {
+  const mediaUrl = safeWikivoyageImage(summary?.thumbnail?.source || summary?.originalimage?.source);
+  const destinationName = String(summary?.title || destination.city || destination.slug).trim();
+  const guideKey = `${destination.slug}|${destination.country}`;
+  const id = crypto.createHash('md5').update(guideKey).digest('hex').slice(0, 20);
+  return {
+    id: `wikivoyage_${id}`,
+    source: 'wikivoyage',
+    sourceLabel: 'Wikivoyage',
+    sourceUrl: countryGuideUrl(destination),
+    title: `${destinationName}, ${destination.country}`,
+    content: String(summary?.extract || destination.fallback || `Explore ${destinationName}.`).slice(0, POST_CONTENT_MAX_CHARS),
+    author: { id: 'wikivoyage', name: 'Wikivoyage', title: 'Travel guide', organization: 'Wikivoyage' },
+    authorName: 'Wikivoyage',
+    createdAt: normalizeTimestamp(summary?.timestamp),
+    isExternal: true,
+    country: destination.country,
+    countryCode: destination.countryCode,
+    city: destination.city,
+    topic: 'Travel & Adventure',
+    mediaType: mediaUrl ? 'image' : null,
+    mediaUrl,
+    group: {
+      id: 'country_destination_guides',
+      name: 'Vacation Ideas',
+      category: 'Travel',
+      externalUrl: 'https://en.wikivoyage.org/',
+    },
+  };
+}
+
+function rotatingCountryGuideSelection() {
+  const total = COUNTRIES_DESTINATION_GUIDES.length;
+  if (!total) return [];
+  const count = Math.min(COUNTRIES_GUIDES_PER_REFRESH, total);
+  const cycle = Math.floor(Date.now() / COUNTRIES_DISCOVERY_CACHE_MS);
+  const start = (cycle * count) % total;
+  return Array.from({ length: count }, (_, index) => COUNTRIES_DESTINATION_GUIDES[(start + index) % total]);
+}
+
+async function fetchCountryDestinationGuides() {
+  const destinations = rotatingCountryGuideSelection();
+  const guides = [];
+  let failures = 0;
+  for (let start = 0; start < destinations.length; start += COUNTRIES_GUIDE_BATCH_SIZE) {
+    const batch = destinations.slice(start, start + COUNTRIES_GUIDE_BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map(destination =>
+      fetchJSON(`https://en.wikivoyage.org/api/rest_v1/page/summary/${encodeURIComponent(destination.slug)}`)
+    ));
+    results.forEach((result, index) => {
+      if (result.status !== 'fulfilled') failures += 1;
+      guides.push(countryDestinationGuidePost(batch[index], result.status === 'fulfilled' ? result.value : null));
+    });
+  }
+  if (failures) console.warn(`[Countries] ${failures} Wikivoyage guide lookup(s) failed; using compact fallback cards.`);
+  return guides;
+}
+
+function countryDiscoveryNewsUrl(edition) {
+  const params = new URLSearchParams({
+    q: edition.query,
+    hl: edition.hl,
+    gl: edition.gl,
+    ceid: edition.ceid,
+  });
+  return `https://news.google.com/rss/search?${params.toString()}`;
+}
+
+function countryDiscoveryStoryKey(item) {
+  const title = String(item?.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return `${title || String(item?.link || '').trim()}|${String(item?.source || '').toLowerCase().trim()}`;
+}
+
+function isCountryDiscoveryNewsItem(item) {
+  const text = `${item?.title || ''} ${item?.desc || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const travelTerms = /\b(travel guide|travel destination|destination guide|places? to visit|things to do|city break|weekend getaway|holiday destination|vacation|tourist attraction|safari|national park|beaches?|islands?|resort|cruise|guia de viaje|lugares para visitar|destinos turisticos|turismo|guide de voyage|destination(?:s)? a visiter|tourisme)\b/;
+  const exclusions = /\b(birth tourism|medical tourism|tourism tax|tourism levy|tourist visa|travel ban|travel warning|airline (?:stock|profit|earnings)|visa scam)\b/;
+  return travelTerms.test(text) && !exclusions.test(text);
+}
+
+function countryDiscoveryNewsPost(item, edition) {
+  const publisher = item.source || 'Google News';
+  const storyKey = countryDiscoveryStoryKey(item) || item.link || `${publisher}:${item.title}`;
+  const articleHash = crypto.createHash('md5').update(storyKey).digest('hex').slice(0, 20);
+  const suffix = ` - ${publisher}`;
+  const title = String(item.title || '').endsWith(suffix)
+    ? String(item.title).slice(0, -suffix.length)
+    : item.title;
+  return {
+    id: `travel_news_${articleHash}`,
+    source: 'travelnews',
+    sourceLabel: 'Travel News',
+    sourceUrl: item.link,
+    title,
+    content: item.desc || `A current travel story reported by ${publisher}.`,
+    author: { id: `travel_news_${articleHash}`, name: publisher, title: 'Travel news', organization: publisher },
+    authorName: publisher,
+    createdAt: normalizeTimestamp(item.pubDate),
+    isExternal: true,
+    topic: 'Travel & Adventure',
+    coverageRegion: edition.label,
+    activityScore: parseTimestampMs(item.pubDate) || Date.now(),
+    // News videos and thumbnails are often permission-gated by their
+    // publishers. Guides and cameras provide the visual cards here, while
+    // these stay cleanly readable instead of rendering an unavailable tile.
+    mediaType: null,
+    mediaUrl: null,
+    group: {
+      id: 'country_travel_news',
+      name: 'Travel Ideas Worldwide',
+      category: 'Travel',
+      externalUrl: item.link,
+    },
+  };
+}
+
+async function fetchCountryDiscoveryNewsPosts() {
+  const collected = [];
+  for (let start = 0; start < COUNTRIES_DISCOVERY_NEWS_EDITIONS.length; start += COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE) {
+    const editions = COUNTRIES_DISCOVERY_NEWS_EDITIONS.slice(start, start + COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE);
+    const results = await Promise.allSettled(editions.map(async (edition) => {
+      const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+      return parseRSSItems(xml)
+        .filter(item => item?.title && item?.link && isCountryDiscoveryNewsItem(item))
+        .map(item => countryDiscoveryNewsPost(item, edition));
+    }));
+    for (const result of results) {
+      if (result.status === 'fulfilled') collected.push(...result.value);
+      else console.warn('[Countries] travel-news search failed:', result.reason?.message || result.reason);
+    }
+  }
+
+  const deduped = new Map();
+  for (const post of collected) {
+    const previous = deduped.get(post.id);
+    if (!previous || new Date(post.createdAt).getTime() > new Date(previous.createdAt).getTime()) deduped.set(post.id, post);
+  }
+  return [...deduped.values()]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, COUNTRIES_DISCOVERY_NEWS_MAX_POSTS);
+}
+
+function interleaveCountryDiscoveryPosts(cameras, guides, news) {
+  const queues = [cameras, guides, news].filter(queue => Array.isArray(queue) && queue.length);
+  const result = [];
+  for (let index = 0; queues.some(queue => index < queue.length); index += 1) {
+    for (const queue of queues) {
+      if (queue[index]) result.push(queue[index]);
+    }
+  }
+  return result;
+}
+
+async function getCountriesCameraFeed(location, viewerId = null) {
+  const entry = await readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
+    const [cameraResult, guideResult, newsResult] = await Promise.allSettled([
+      verifiedLiveCameraPosts(),
+      fetchCountryDestinationGuides(),
+      fetchCountryDiscoveryNewsPosts(),
+    ]);
+    const cameras = cameraResult.status === 'fulfilled' ? cameraResult.value : [];
+    const guides = guideResult.status === 'fulfilled' ? guideResult.value : [];
+    const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
+    if (cameraResult.status === 'rejected') console.warn('[Countries] live-camera verification failed:', cameraResult.reason?.message || cameraResult.reason);
+    if (guideResult.status === 'rejected') console.warn('[Countries] guide search failed:', guideResult.reason?.message || guideResult.reason);
+    if (newsResult.status === 'rejected') console.warn('[Countries] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
+    return interleaveCountryDiscoveryPosts(cameras, guides, news);
+  });
+
+  const rawPosts = Array.isArray(entry?.posts) ? entry.posts : [];
+  const savedById = new Map(posts
+    .filter(post => post?.source === LIVE_CAMERA_SOURCE)
+    .map(post => [post.id, post]));
+  const ranked = rankFeedPostsForLocation(rawPosts, location, { preserveFirst: 0, chunkSize: 12 })
+    .map((post) => {
+      if (post?.source !== LIVE_CAMERA_SOURCE) return post;
+      const saved = savedById.get(post.id);
+      const current = saved
+        ? { ...post, likes: saved.likes, commentsCount: saved.commentsCount }
+        : post;
       const score = liveCameraLocationScore(post, location);
       return score > 0
-        ? { ...post, matchedByLocation: true, locationMatch: score === 2 ? 'local' : 'country', locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}` , _catalogOrder: index, _locationScore: score }
-        : { ...post, _catalogOrder: index, _locationScore: 0 };
-    })
-    .sort((a, b) => (b._locationScore - a._locationScore) || (a._catalogOrder - b._catalogOrder))
-    .map(({ _catalogOrder, _locationScore, ...post }) => post);
+        ? { ...current, matchedByLocation: true, locationMatch: score === 2 ? 'local' : 'country', locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}` }
+        : current;
+    });
   return {
-    posts: cameras.map(post => serializeCommunityPost(post, viewerId)),
-    fetchedAt: new Date().toISOString(),
-    catalogSize: cameras.length,
+    posts: ranked.map(post => post?.source === LIVE_CAMERA_SOURCE ? serializeCommunityPost(post, viewerId) : post),
+    fetchedAt: entry?.fetchedAt || new Date().toISOString(),
+    catalogSize: ranked.length,
+    providerError: entry?.error || null,
   };
 }
 

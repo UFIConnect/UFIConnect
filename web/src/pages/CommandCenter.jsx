@@ -1309,8 +1309,8 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Countries"
-          description="Open the live public-camera feed from around the world."
-          status="Live camera catalog"
+          description="Browse live views, destination guides, and travel ideas from around the world."
+          status="Worldwide discovery feed"
           actionLabel="Open Countries"
           to="/?feed=countries"
         />

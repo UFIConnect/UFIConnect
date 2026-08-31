@@ -51,6 +51,8 @@ const EXTERNAL_BRAND_ICON_URLS = {
   muse:          'https://www.themuse.com/favicon.ico',
   yc:            'https://cdn.simpleicons.org/ycombinator/FF6600',
   crunchbase:    'https://cdn.simpleicons.org/crunchbase/146AFF',
+  wikivoyage:    'https://en.wikivoyage.org/static/favicon/wikivoyage.ico',
+  travelnews:    'https://www.gstatic.com/images/branding/product/ico/googleg_lodp.ico',
 };
 
 // True for every platform this can actually render as a real brand mark —

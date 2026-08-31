@@ -42,6 +42,8 @@ export const SOURCE_META = {
   twitch:        { label: 'Twitch',          color: '#9146FF', icon: 'TW' },
   threads:       { label: 'Threads',         color: '#000000', icon: 'TH' },
   livecamera:    { label: 'Live Cameras',    color: '#DC2626', icon: 'CAM' },
+  wikivoyage:    { label: 'Wikivoyage',      color: '#396',    icon: 'WV' },
+  travelnews:    { label: 'Travel News',     color: '#1A73E8', icon: 'GN' },
   localpulse:    { label: 'Local Pulse',     color: '#0F766E', icon: 'LP' },
   restaurants:   { label: 'Restaurants',     color: '#B45309', icon: 'RS' },
   uficonnect:    { label: 'UFIconnect',      color: 'var(--primary)', icon: 'UFI' },

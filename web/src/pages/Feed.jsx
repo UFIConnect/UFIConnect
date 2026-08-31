@@ -777,6 +777,8 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
   const src = SOURCE_META.youtube;
   const c   = catStyle(post.group?.category);
   const embedId = post.embedId || extractYouTubeId(post.sourceUrl || post.mediaUrl);
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
   return (
     <div ref={cardRef} className="card post-card" style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -795,20 +797,10 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
           <YouTubeEmbedBlock embedId={embedId} videoKey={post.id} poster={post.mediaUrl} title={post.title} maxHeight={280} forcePause={isMediaOpen} />
           {onMediaOpen && <MaximizeButton onClick={() => onMediaOpen(post)} />}
         </div>
-      ) : post.mediaUrl ? (
+      ) : post.mediaUrl && !imageFailed ? (
         <div style={{ borderRadius: 14, overflow: 'hidden', marginBottom: 10, background: 'var(--border)' }}>
           <img src={post.mediaUrl} alt={post.title} style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 280 }}
-            onError={e => {
-              e.currentTarget.style.display = 'none';
-              const fallback = e.currentTarget.parentElement.querySelector('[data-youtube-img-fallback]');
-              if (fallback) fallback.style.display = 'flex';
-            }} />
-          <div data-youtube-img-fallback style={{
-            display: 'none', alignItems: 'center', justifyContent: 'center',
-            height: 200, color: 'var(--muted)', fontSize: '.85rem',
-          }}>
-            Image unavailable
-          </div>
+            onError={() => setImageFailed(true)} />
         </div>
       ) : null}
       {post.content && <PostText text={post.content} />}
@@ -994,6 +986,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   const [commentSending,  setCommentSending]  = useState(false);
   const [commentPostError,setCommentPostError]= useState(false);
   const [likeBusy,        setLikeBusy]        = useState(false);
+  const [imageFailed,     setImageFailed]     = useState(false);
   // Genuine-read engagement (see api/engagement.js) — declared before the
   // early returns below so it runs unconditionally on every render
   // (Rules of Hooks), reporting once this specific card has been ~60%
@@ -1016,6 +1009,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
   useEffect(() => {
     commentsRef.current = comments;
   }, [comments]);
+  useEffect(() => setImageFailed(false), [post?.id, post?.mediaUrl]);
 
   const fetchComments = useCallback(async ({ background = false } = {}) => {
     if (!post?.id) return;
@@ -1276,7 +1270,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
 
       <PostText text={post.content} />
 
-      {post.mediaUrl && post.mediaType === 'image' && (
+      {post.mediaUrl && post.mediaType === 'image' && !imageFailed && (
         <button
           onClick={() => onMediaOpen?.(post)}
           style={{ all: 'unset', display: 'block', width: '100%', cursor: 'pointer', marginTop: 12 }}
@@ -1284,17 +1278,7 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
           <div style={{ borderRadius: 14, overflow: 'hidden', background: 'var(--border)' }}>
             <img src={post.mediaUrl} alt={post.title || 'Post image'}
               style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 400 }}
-              onError={e => {
-                e.currentTarget.style.display = 'none';
-                const placeholder = e.currentTarget.parentElement.querySelector('[data-img-placeholder]');
-                if (placeholder) placeholder.style.display = 'flex';
-              }} />
-            <div data-img-placeholder style={{
-              display: 'none', alignItems: 'center', justifyContent: 'center',
-              height: 200, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 500,
-            }}>
-              Image unavailable
-            </div>
+              onError={() => setImageFailed(true)} />
           </div>
         </button>
       )}
@@ -1341,53 +1325,27 @@ const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMe
           </span>
           <MaximizeButton onClick={() => onMediaOpen?.(post)} />
         </div>
-      ) : hasVideo && (
+      ) : hasVideo && videoIsPlayable ? (
         <button onClick={() => onMediaOpen?.(post)} style={{ all: 'unset', display: 'block', width: '100%', marginTop: 12, cursor: 'pointer' }}>
           <div style={{ borderRadius: 14, overflow: 'hidden', position: 'relative', background: '#000' }}>
-            {videoIsPlayable ? (
-              // Autoplays muted/looping as it scrolls into view (see
-              // InlineAutoplayVideo) instead of sitting as a static frame
-              // with a "tap to play" badge — the click-to-maximize behavior
-              // is unchanged, same as photos: the button wrapping this
-              // still opens ImageLightbox for sound, seeking, and next/prev.
-              <InlineAutoplayVideo
-                kind={videoPlaylistUrl ? 'hls' : 'file'}
-                src={videoPlaylistUrl || videoLinkUrl}
-                videoKey={post.id}
-                poster={videoPlaylistUrl ? post.mediaPoster : undefined}
-                style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
-                forcePause={isMediaOpen}
-              />
-            ) : (
-              <>
-                <img src={post.mediaUrl} alt="Video"
-                  style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360, opacity: 0.82 }}
-                  onError={e => {
-                    e.currentTarget.style.display = 'none';
-                    const fallback = e.currentTarget.parentElement.querySelector('[data-video-fallback]');
-                    if (fallback) fallback.style.display = 'flex';
-                  }} />
-                <div data-video-fallback style={{
-                  display: 'none', position: 'absolute', inset: 0,
-                  alignItems: 'center', justifyContent: 'center',
-                  background: 'rgba(0,0,0,0.5)', color: 'var(--muted)', fontSize: '.85rem',
-                }}>
-                  Video unavailable
-                </div>
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <div style={{ width: 60, height: 60, borderRadius: '50%', background: `${src.color}e0`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 20px rgba(0,0,0,.45)' }}>
-                    <span style={{ color: '#fff', fontSize: '1.5rem', marginLeft: 3 }}>▶</span>
-                  </div>
-                </div>
-              </>
-            )}
+            {/* Autoplays muted/looping as it scrolls into view (see
+                InlineAutoplayVideo); unsupported external media is omitted
+                instead of producing a dead card. */}
+            <InlineAutoplayVideo
+              kind={videoPlaylistUrl ? 'hls' : 'file'}
+              src={videoPlaylistUrl || videoLinkUrl}
+              videoKey={post.id}
+              poster={videoPlaylistUrl ? post.mediaPoster : undefined}
+              style={{ width: '100%', display: 'block', objectFit: 'cover', maxHeight: 360 }}
+              forcePause={isMediaOpen}
+            />
             <span style={{ position: 'absolute', bottom: 10, right: 12, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '.68rem', fontWeight: 700, padding: '3px 8px', borderRadius: 4 }}>
               <SourceMark source={post.source} label={src.icon} size={12} />
               {src.label}
             </span>
           </div>
         </button>
-      )}
+        ) : null}
 
       {/* Stats + actions bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
@@ -2545,7 +2503,7 @@ export default function Feed({ forcedMode } = {}) {
         </h1>
         <p className="page-subtitle">
           {viewMode === 'countries'
-            ? 'Live public camera views from around the world, with nearby places gently moved toward the top.'
+            ? 'Live views, destination guides, and current travel ideas from around the world. Pick a place that makes the next vacation feel inevitable.'
             : viewMode === 'restaurants'
               ? 'Fresh restaurant-opening reports from around the world. Add a country or city to gently move familiar places toward the top.'
               : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
@@ -2899,7 +2857,7 @@ export default function Feed({ forcedMode } = {}) {
           }}>
             <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
             {viewMode === 'countries'
-              ? 'Loading live cameras...'
+              ? 'Loading live cameras, destination guides, and travel ideas...'
               : viewMode === 'restaurants'
                 ? 'Loading restaurant openings from around the world...'
                 : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
@@ -2928,7 +2886,7 @@ export default function Feed({ forcedMode } = {}) {
               : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Countries' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No live cameras are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No country discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2976,7 +2934,7 @@ export default function Feed({ forcedMode } = {}) {
                 <p style={{ marginBottom: 12 }}>
                   {locationMessage || (viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
-                    : 'The Countries feed includes every live camera in the catalog. Add a country or city to bring nearby views forward.')}
+                    : 'Countries combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to bring nearby places forward.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
