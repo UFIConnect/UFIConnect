@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META } from './sourceMeta';
+import BrandIcon, { hasBrandIcon } from './BrandIcon';
 
 const LINK_FIELDS = [
   { key: 'linkedin', label: 'LinkedIn', placeholder: 'https://linkedin.com/in/yourname' },
@@ -13,9 +14,9 @@ const LINK_FIELDS = [
   { key: 'twitter', label: 'X / Twitter', placeholder: 'https://x.com/yourhandle' },
 ];
 
-function ToolPanel({ title, summary, open, onToggle, children }) {
+function ToolPanel({ title, summary, open, onToggle, children, className = '' }) {
   return (
-    <section className="profile-panel">
+    <section className={`profile-panel ${className}`.trim()}>
       <button type="button" className="profile-panel-trigger" onClick={onToggle} aria-expanded={open}>
         <span>
           <span className="profile-panel-title">{title}</span>
@@ -28,17 +29,35 @@ function ToolPanel({ title, summary, open, onToggle, children }) {
   );
 }
 
+function SourceMark({ source }) {
+  const meta = SOURCE_META[source] || {};
+  if (hasBrandIcon(source)) {
+    return (
+      <span className="home-feed-source-mark" style={{ color: meta.color || 'var(--primary)' }}>
+        <BrandIcon platform={source} size={15} />
+      </span>
+    );
+  }
+  return (
+    <span className="home-feed-source-mark home-feed-source-mark--fallback" style={{ color: '#fff', background: meta.color || 'var(--primary)' }}>
+      {String(meta.icon || source || 'SRC').slice(0, 3).toUpperCase()}
+    </span>
+  );
+}
+
 function scoreStyle(score) {
   if (score >= 80) return { color: '#047857', background: '#ECFDF5', border: '#A7F3D0' };
   if (score >= 50) return { color: '#B45309', background: '#FFFBEB', border: '#FDE68A' };
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools({ showSources = true }) {
+export default function HomeFeedTools({ showSources = true, sourceIds = [] }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [openPanel, setOpenPanel] = useState(null);
+  const [disabledSources, setDisabledSources] = useState(new Set());
+  const [savingSourceId, setSavingSourceId] = useState(null);
   const [skills, setSkills] = useState([]);
   const [skillInput, setSkillInput] = useState('');
   const [savingSkills, setSavingSkills] = useState(false);
@@ -51,6 +70,10 @@ export default function HomeFeedTools({ showSources = true }) {
   const [savingLinks, setSavingLinks] = useState(false);
 
   useEffect(() => { setSkills(Array.isArray(profile?.skills) ? profile.skills : []); }, [profile?.skills]);
+  useEffect(() => {
+    const stored = Array.isArray(profile?.roleSettings?.disabledSources) ? profile.roleSettings.disabledSources : [];
+    setDisabledSources(new Set(stored));
+  }, [profile?.roleSettings?.disabledSources]);
 
   useEffect(() => {
     if (openPanel !== 'files' || attachmentsLoading || attachments.length) return;
@@ -63,6 +86,30 @@ export default function HomeFeedTools({ showSources = true }) {
 
   const toggle = (key) => setOpenPanel(current => current === key ? null : key);
   const connected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
+  const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
+  const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;
+
+  async function toggleSource(source) {
+    if (!profile || savingSourceId) return;
+    const previous = new Set(disabledSources);
+    const next = new Set(previous);
+    if (next.has(source)) next.delete(source);
+    else next.add(source);
+    setDisabledSources(next);
+    setSavingSourceId(source);
+    try {
+      const { data } = await client.patch('/profile', {
+        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
+      });
+      updateProfileLocally(data.profile || data);
+      showToast(`${SOURCE_META[source]?.label || source} is ${next.has(source) ? 'off' : 'on'} for your feed.`, 'success');
+    } catch (error) {
+      setDisabledSources(previous);
+      showToast(error?.response?.data?.message || 'Could not save your source choice.', 'error');
+    } finally {
+      setSavingSourceId(null);
+    }
+  }
 
   function addSkill() {
     const value = skillInput.trim();
@@ -126,16 +173,41 @@ export default function HomeFeedTools({ showSources = true }) {
 
   return (
     <div className="home-feed-side-tools" aria-label="Home tools">
-      {showSources && <ToolPanel title="Feed sources" summary="Personalized for you" open={openPanel === 'sources'} onToggle={() => toggle('sources')}>
-        <p style={{ margin: '0 0 10px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>
-          Home balances your saved topics, role, activity, and connected accounts.
+      {showSources && <ToolPanel
+        className="home-feed-source-panel"
+        title="Feed sources"
+        summary={availableSources.length ? `${enabledSourceCount} of ${availableSources.length} on` : 'Personalized for you'}
+        open={openPanel === 'sources'}
+        onToggle={() => toggle('sources')}
+      >
+        <p className="home-feed-source-copy">
+          These choices are yours. Turn a source off to keep it out of this feed.
         </p>
-        {connected.length > 0 ? (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {connected.map(key => <span key={key} className="tag tag-primary" style={{ fontSize: '.74rem' }}>{SOURCE_META[key]?.label || key}</span>)}
-          </div>
-        ) : <p style={{ margin: 0, color: 'var(--muted)', fontSize: '.8rem' }}>No accounts connected yet.</p>}
-        <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none' }}>Source settings</Link>
+        <div className="home-feed-source-list" aria-label="Feed source controls">
+          {availableSources.map(source => {
+            const enabled = !disabledSources.has(source);
+            const saving = savingSourceId === source;
+            return (
+              <div className={`home-feed-source-row${enabled ? '' : ' is-off'}`} key={source}>
+                <SourceMark source={source} />
+                <span className="home-feed-source-name">{SOURCE_META[source]?.label || source}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={enabled}
+                  aria-label={`${enabled ? 'Turn off' : 'Turn on'} ${SOURCE_META[source]?.label || source}`}
+                  disabled={savingSourceId !== null}
+                  className={`home-feed-source-toggle${enabled ? ' is-on' : ''}`}
+                  onClick={() => toggleSource(source)}
+                >
+                  <span className="home-feed-source-toggle-track" aria-hidden="true"><span /></span>
+                  <span>{saving ? 'Saving' : enabled ? 'On' : 'Off'}</span>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none', alignSelf: 'flex-start' }}>All source details</Link>
       </ToolPanel>}
 
       <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>

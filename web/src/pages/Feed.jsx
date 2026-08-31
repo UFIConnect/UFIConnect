@@ -1642,6 +1642,11 @@ export default function Feed({ forcedMode } = {}) {
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(_saved?.location));
   const [locationSaving, setLocationSaving] = useState(false);
   const [locationMessage, setLocationMessage] = useState('');
+  const disabledSourceKey = useMemo(() => (
+    Array.isArray(profile?.roleSettings?.disabledSources)
+      ? [...new Set(profile.roleSettings.disabledSources.map(source => String(source).trim().toLowerCase()).filter(Boolean))].sort().join(',')
+      : ''
+  ), [profile?.roleSettings?.disabledSources]);
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -1677,6 +1682,7 @@ export default function Feed({ forcedMode } = {}) {
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
   const liveRefreshTimeoutRef = useRef(null);
+  const sourcePreferenceKeyRef = useRef(disabledSourceKey);
   // Sent as ?seed= on every feed request — the backend folds it into this
   // user's rotation offset into the shared pool (see rotateForUser
   // server-side). Regenerated only on an explicit refresh (inside loadFeed,
@@ -1855,6 +1861,28 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
   useEffect(() => { locationFiltersRef.current = locationFilters; }, [locationFilters]);
   useEffect(() => { searchRef.current = search; }, [search]);
+
+  // Source switches are saved per member in roleSettings. Clear any active
+  // source filters that were just turned off, then reload from the API so a
+  // disabled source cannot linger in the current personal feed.
+  useEffect(() => {
+    if (!profile?.id || sourcePreferenceKeyRef.current === disabledSourceKey) return;
+    sourcePreferenceKeyRef.current = disabledSourceKey;
+    if (!['feed', 'following'].includes(viewModeRef.current)) return;
+    const disabled = new Set(disabledSourceKey ? disabledSourceKey.split(',') : []);
+    const nextTabs = activeTabsRef.current.filter(source => !disabled.has(source));
+    const nextFilters = {
+      ...filtersRef.current,
+      sources: (filtersRef.current.sources || []).filter(source => !disabled.has(source)),
+    };
+    activeTabsRef.current = nextTabs;
+    filtersRef.current = nextFilters;
+    setActiveTabs(nextTabs);
+    setFilters(nextFilters);
+    setRemotePage(2);
+    setRemoteHasMore(true);
+    loadFeed(false, nextTabs, { filters: nextFilters, replace: true });
+  }, [disabledSourceKey, loadFeed, profile?.id]);
 
   // Persist filter state so the page reopens with the same settings
   useEffect(() => {
@@ -2478,7 +2506,7 @@ export default function Feed({ forcedMode } = {}) {
           <div style={{ flex: 1, position: 'relative' }}>
             <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.75rem', fontWeight: 800, opacity: 0.55, pointerEvents: 'none' }}>Q</span>
             <input
-              className="form-input"
+              className="form-input home-feed-search-input"
               placeholder="Search posts…"
               value={searchInput}
               onChange={e => {
@@ -2509,6 +2537,7 @@ export default function Feed({ forcedMode } = {}) {
           </div>
           <button
             type="button"
+            className="feed-toolbar-control"
             onClick={() => {
               const nextQ = searchInput.trim();
               searchRef.current = nextQ;
@@ -2531,6 +2560,7 @@ export default function Feed({ forcedMode } = {}) {
         <div style={{ position: 'relative' }}>
           <button
             ref={filterBtnRef}
+            className="feed-toolbar-control"
             aria-label="Open filter panel"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen(o => !o)}
@@ -3022,7 +3052,10 @@ export default function Feed({ forcedMode } = {}) {
               <span className="home-feed-command-center-arrow" aria-hidden="true">&rarr;</span>
             </Link>
           </div>
-          <HomeFeedTools showSources={usesSourceControls} />
+          <HomeFeedTools
+            showSources={usesSourceControls}
+            sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
+          />
         </aside>
       )}
       </div>

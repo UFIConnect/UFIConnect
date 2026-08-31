@@ -16903,6 +16903,15 @@ async function handleFeedRequest(req, res) {
   // branch that reads the shared snapshot, not just the one that builds it.
   const userTopics = userDeclaredFeedTopics(user, prefs);
   const hasSavedFeedScope = userTopics.length > 0;
+  // Persisted source choices are member-specific. Apply them at the final
+  // personalization stage so every home/following code path, including
+  // cached snapshots and cursor pagination, respects the same switches.
+  const disabledFeedSources = new Set(
+    asArray(user?.roleSettings?.disabledSources)
+      .filter(source => typeof source === 'string')
+      .map(source => source.trim().toLowerCase())
+      .filter(Boolean)
+  );
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -16931,7 +16940,9 @@ async function handleFeedRequest(req, res) {
     return jobRoleTerms.some(term => textMatchesPersonalizationTerm(text, term));
   };
   const filterForUser = (items) => {
-    const list = Array.isArray(items) ? items.filter(matchesTopic) : [];
+    const list = Array.isArray(items)
+      ? items.filter(item => !disabledFeedSources.has(String(item?.source || '').trim().toLowerCase())).filter(matchesTopic)
+      : [];
     if (!topicsFilter.length && !hasSavedFeedScope) return [];
     const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
