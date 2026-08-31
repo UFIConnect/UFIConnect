@@ -153,10 +153,43 @@ input, textarea, select { font-family: inherit; }
 
 /* ── Main content area ────────────────────────────────────── */
 .main {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  width: 100%;
   padding: 28px 32px;
   max-width: 860px;
+  margin: 0 auto;
+}
+
+.home-workspace-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 0 0 16px;
+  scrollbar-width: none;
+}
+.home-workspace-tabs::-webkit-scrollbar { display: none; }
+.home-workspace-tab {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.home-workspace-tab:hover,
+.home-workspace-tab:focus-visible {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-light);
+  outline: none;
 }
 
 .page-header {
@@ -1060,7 +1093,8 @@ input, textarea, select { font-family: inherit; }
 @media (max-width: 768px) {
   /* Hide sidebar, show bottom nav */
   .sidebar { display: none; }
-  .main { padding: 16px 12px; padding-bottom: 76px; }
+  .main { width: auto; margin: 0; padding: 16px 12px; padding-bottom: 76px; }
+  .home-workspace-tabs { justify-content: flex-start; padding-bottom: 14px; }
 
   /* Mobile browsers (iOS Safari, and Chromium's own mobile emulation) auto-
      zoom the page when a focused input's font-size is under 16px — .9rem

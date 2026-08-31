@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
@@ -31,20 +31,28 @@ function validateProfileImage(file) {
   return null;
 }
 
-const TABS = ['Overview', 'Connected Accounts', 'Sources', 'Posts', 'Skills', 'Attachments'];
-// These two navigate to their existing standalone pages instead of rendering inline.
-const NAV_TABS = { 'Connected Accounts': '/connected-accounts', 'Sources': '/sources' };
+const PROFILE_TAB_BY_QUERY = {
+  overview: 'Overview',
+  posts: 'Posts',
+  skills: 'Skills',
+  attachments: 'Attachments',
+};
+
+function profileTabFromQuery(value) {
+  return PROFILE_TAB_BY_QUERY[String(value || '').toLowerCase()] || 'Posts';
+}
 
 export default function Profile() {
   const { profile, updateProfileLocally, logout } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   function handleLogout() {
     logout();
     navigate('/login');
   }
-  const [tab,         setTab]         = useState('Overview');
+  const [tab,         setTab]         = useState(() => profileTabFromQuery(searchParams.get('tab')));
   const [editing,     setEditing]     = useState(false);
   const [form,        setForm]        = useState(null);
   const [links,       setLinks]       = useState(null);
@@ -73,6 +81,13 @@ export default function Profile() {
   const [expandedAttachment, setExpandedAttachment]  = useState(null);
   const [deletingAttachment, setDeletingAttachment]  = useState(null);
   const [selectingAttachment, setSelectingAttachment] = useState(null);
+
+  // Home owns navigation between account workspaces. Profile is the
+  // member's UFIconnect-post page unless a Home shortcut opens a workspace.
+  useEffect(() => {
+    setTab(profileTabFromQuery(searchParams.get('tab')));
+    setEditing(false);
+  }, [searchParams]);
 
   // Sync skills from profile when profile loads or tab changes
   useEffect(() => {
@@ -408,29 +423,6 @@ export default function Profile() {
           onClose={() => setFollowModal(null)}
         />
       )}
-
-      {/* Tabs */}
-      <div style={{ display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)', overflowX:'auto' }}>
-        {TABS.map((t) => {
-          const icons = { Overview: 'Profile', 'Connected Accounts': 'Links', Sources: 'Sources', Posts: 'Posts', Skills: 'Skills', Attachments: 'Files' };
-          return (
-            <button key={t} onClick={() => {
-              if (NAV_TABS[t]) { navigate(NAV_TABS[t]); return; }
-              setTab(t); setEditing(false);
-            }}
-              style={{
-                padding:'10px 16px', border:'none', background:'none', cursor:'pointer', whiteSpace:'nowrap',
-                fontWeight: tab === t ? 700 : 500,
-                color: tab === t ? 'var(--primary)' : 'var(--muted)',
-                borderBottom: tab === t ? '2px solid var(--primary)' : '2px solid transparent',
-                fontSize:'.875rem', marginBottom:'-1px', transition:'all .15s',
-                display:'flex', alignItems:'center', gap:6,
-              }}>
-              {icons[t]} {t}
-            </button>
-          );
-        })}
-      </div>
 
       {/* ── OVERVIEW TAB ─────────────────────────────────────── */}
       {tab === 'Overview' && !editing && (
