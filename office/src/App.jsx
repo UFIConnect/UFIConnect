@@ -815,18 +815,26 @@ function AnalyticsView() {
   const [users, setUsers] = useState(null);
   const [usersError, setUsersError] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
-  const visitorLabel = data?.visitorKey === 'ip-with-browser-fallback' ? 'unique visitors' : 'unique IPs';
+  const visitorLabel = data?.visitorKey === 'member-or-ip-with-browser-fallback' ? 'unique viewers' : 'unique IPs';
 
   const loadUsers = useCallback(() => {
     officeFetch(`${API}/office/users`)
-      .then(r => r.json())
+      .then(async r => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || 'Unable to load user analytics');
+        return body;
+      })
       .then(j => { setUsers(j); setUsersError(false); })
       .catch(() => setUsersError(true));
   }, []);
 
   const loadAnalytics = useCallback(() => {
     officeFetch(`${API}/office/analytics/pageviews`)
-      .then(r => r.json())
+      .then(async r => {
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || 'Unable to load pageview analytics');
+        return body;
+      })
       .then(j => { setData(j); setError(false); })
       .catch(() => setError(true));
   }, []);
@@ -856,7 +864,7 @@ function AnalyticsView() {
   return (
     <>
       <h1 style={H1}>Analytics</h1>
-      <p style={SUBTITLE}>First-party pageview counts, deduped by request IP with a stable browser fallback only when an IP is unavailable. See also GA4 at analytics.google.com.</p>
+      <p style={SUBTITLE}>First-party pageviews, deduped by member account when signed in and by a privacy-preserving IP/browser key for guests. See also GA4 at analytics.google.com.</p>
 
       {error && <Card style={{ maxWidth: 520 }}><div style={{ color: '#f87171', fontSize: 13 }}>Couldn't load analytics.</div></Card>}
 
@@ -2569,6 +2577,7 @@ function ViewedDetailCard({ pageviews }) {
   const daily = (pageviews.daily || []).slice(-14);
   const maxViews = Math.max(1, ...daily.map(d => d.views || 0));
   const topPaths = pageviews.topPaths || [];
+  const viewerLabel = pageviews.visitorKey === 'member-or-ip-with-browser-fallback' ? 'viewers' : 'IPs';
 
   return (
     <Card>
@@ -2580,8 +2589,8 @@ function ViewedDetailCard({ pageviews }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
         <DetailStat label="last 24h views" value={pageviews.today.toLocaleString()} color="#4ade80" />
-        <DetailStat label="24h unique IPs" value={(pageviews.todayVisitors ?? 0).toLocaleString()} />
-        <DetailStat label="30d unique IPs" value={(pageviews.last30Visitors ?? 0).toLocaleString()} />
+        <DetailStat label={`24h unique ${viewerLabel}`} value={(pageviews.todayVisitors ?? 0).toLocaleString()} />
+        <DetailStat label={`30d unique ${viewerLabel}`} value={(pageviews.last30Visitors ?? 0).toLocaleString()} />
         <DetailStat label="signed-in 24h" value={(pageviews.signedInTodayViews ?? 0).toLocaleString()} color="#c084fc" />
         <DetailStat label="registered 30d" value={(pageviews.signedInLast30Users ?? 0).toLocaleString()} />
       </div>

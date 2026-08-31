@@ -2195,8 +2195,14 @@ export default function Feed({ forcedMode } = {}) {
           try {
             const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
+            // Native posts are exclusive to Following, so Home does not
+            // reflow every time a member publishes one.
+            const relevantIncoming = viewModeRef.current === 'feed'
+              ? incoming.filter(post => post?.source !== 'uficonnect')
+              : incoming;
+            if (!relevantIncoming.length) return;
             let sawFresh = false;
-            incoming.forEach(p => {
+            relevantIncoming.forEach(p => {
               if (!p?.id) return;
               if (!knownIds.current.has(p.id)) sawFresh = true;
               markKnownId(p.id);

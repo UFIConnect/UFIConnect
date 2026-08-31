@@ -15288,12 +15288,13 @@ app.post('/analytics/pageview', authenticateOptional, async (req, res) => {
     const referrer  = req.body?.referrer ? String(req.body.referrer).slice(0, 500) : null;
     const clientVisitorId = req.body?.visitorId ? String(req.body.visitorId).slice(0, 100) : null;
     const ipKey = clientIpAnalyticsKey(req);
+    const visitorId = req.user?.id ? `member:${req.user.id}` : (ipKey || clientVisitorId);
     if (!path) return res.status(400).json({ error: 'path required' });
     recordRealUserActivity(req, 'pageview');
     if (db.isConnected()) {
       await db.query(
         `INSERT INTO page_views (path, referrer, visitor_id, ip_key, client_visitor_id, user_id) VALUES ($1,$2,$3,$4,$5,$6)`,
-        [path, referrer, ipKey || clientVisitorId, ipKey, clientVisitorId, req.user?.id || null]
+        [path, referrer, visitorId, ipKey, clientVisitorId, req.user?.id || null]
       );
     }
     res.status(204).end();
@@ -15362,7 +15363,7 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
     // number for "how many separate people were here."
     // Cloudflare/Render client IP is the primary visitor key. The browser ID
     // is only used when a deployment does not forward a trusted client IP.
-    const visitorKeySql = `COALESCE(NULLIF(ip_key, ''), NULLIF(client_visitor_id, ''), NULLIF(visitor_id, ''))`;
+    const visitorKeySql = `COALESCE('member:' || NULLIF(user_id, ''), NULLIF(ip_key, ''), NULLIF(client_visitor_id, ''), NULLIF(visitor_id, ''))`;
     const visitorSql = `COUNT(DISTINCT ${visitorKeySql}) FILTER (WHERE ${visitorKeySql} IS NOT NULL)`;
     const [today, last7, last30, topPaths, daily, signedIn] = await Promise.all([
       db.query(`SELECT COUNT(*), ${visitorSql} AS visitors FROM page_views WHERE created_at >= NOW() - INTERVAL '1 day'`),
@@ -15402,7 +15403,7 @@ app.get('/office/analytics/pageviews', requireOfficeToken, async (req, res) => {
       signedInTodayUsers: Number(signedIn.rows[0].today_users),
       signedInLast30Views: Number(signedIn.rows[0].last30_views),
       signedInLast30Users: Number(signedIn.rows[0].last30_users),
-      visitorKey: 'ip-with-browser-fallback',
+      visitorKey: 'member-or-ip-with-browser-fallback',
       topPaths: topPaths.rows.map(r => ({ path: r.path, views: Number(r.views), visitors: Number(r.visitors) })),
       daily: daily.rows.map(r => ({ day: r.day, views: Number(r.views), visitors: Number(r.visitors) })),
     });
@@ -15468,7 +15469,7 @@ app.get('/office/topics', requireOfficeToken, async (req, res) => {
 app.get('/office/users', requireOfficeToken, async (req, res) => {
   try {
     if (!db.isConnected()) return res.json({ available: false });
-    const [total, hidden, onboarded, today, last7, last30, recent, signIns] = await Promise.all([
+    const [total, hidden, onboarded, today, last7, last30, recent] = await Promise.all([
       db.query(`SELECT COUNT(*) FROM users`),
       db.query(`SELECT COUNT(*) FROM users WHERE profile_hidden = true`),
       db.query(`SELECT COUNT(*) FROM users WHERE onboarding_complete = true`),
@@ -15476,7 +15477,10 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'`),
       db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC LIMIT 20`),
-      db.query(`
+    ]);
+    let signIns = { rows: [{ all_time: 0, all_time_users: 0, today: 0, last7: 0, last30: 0 }] };
+    try {
+      signIns = await db.query(`
         SELECT
           COUNT(*) AS all_time,
           COUNT(DISTINCT user_id) AS all_time_users,
@@ -15484,8 +15488,12 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS last7,
           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') AS last30
         FROM user_sign_in_events
-      `),
-    ]);
+      `);
+    } catch (error) {
+      // Historical sign-in data is optional; a missing migration must never
+      // blank the source-of-truth accounts-created count in Office.
+      console.warn('GET /office/users sign-in history unavailable:', error.message);
+    }
     const totalCount = Number(total.rows[0].count);
     res.json({
       available: true,
@@ -16783,25 +16791,6 @@ async function handleFeedRequest(req, res) {
     // this path in line with every other sort mode.
     const cursorTimeRange = usesSavedTopicScope ? '20d' : dbTimeRange;
 
-    let extraLists = {};
-    if (isUnfiltered) {
-      // Native UFIconnect community posts aren't in feed_posts_cache, so
-      // they need their own fetch path — merged into the SAME recency pass
-      // as everything else (see getCursorFeedPage's extraLists) rather
-      // than force-pinned to the top regardless of actual age, which is
-      // what the old snapshot-based aggregate view did.
-      const uficonnectCursorTs = cursorTsOf(cursorMap.uficonnect);
-      const beforeMs = uficonnectCursorTs ? new Date(uficonnectCursorTs).getTime() : Infinity;
-      extraLists = {
-        uficonnect: posts
-          .filter(p => (p.source || 'uficonnect') === 'uficonnect' && postTimestamp(p) < beforeMs && matchesTopic(p))
-          .sort((a, b) => postTimestamp(b) - postTimestamp(a))
-          .slice(0, feedLimit)
-          .map(p => serializeCommunityPost(p, req.user.id))
-          .map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) })),
-      };
-    }
-
     const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
       sources: cursorSources,
       cursorMap,
@@ -16809,7 +16798,6 @@ async function handleFeedRequest(req, res) {
       topics: cursorTopics,
       topicBypassSources: usesSavedTopicScope ? JOB_LISTING_SOURCES : [],
       timeRange: cursorTimeRange,
-      extraLists,
       seenIds,
       freshOnly: req.query.bust === '1',
     });
@@ -17258,21 +17246,10 @@ async function handleFeedRequest(req, res) {
     return res.json({ posts: result, page: reqPage, hasMore, sort: sortMode });
   }
 
-  // Internal posts (user-created) — always computed live and per-user
-  // (likedByMe genuinely differs per user), so these are never part of the
-  // shared snapshot below; they're merged on top of it every request.
-  // Filtered through the same already-seen exclusion as external content —
-  // confirmed live that leaving internal posts out of this was exactly what
-  // let a real account see repeats: with a small community-post pool, the
-  // same handful of internal posts resurface at the top of every "newest"
-  // page since nothing else was rotating them out.
-  const internal = filterForUser(filterUnseen(posts.map((p) => {
-    const post = serializeCommunityPost(p, req.user.id);
-    return {
-      ...post,
-      fromJoinedGroup: joined.has(p.groupId),
-    };
-  }), seenIds));
+  // Native UFIconnect posts are exclusive to Following, where the follow
+  // graph scopes them to people this member chose to follow. Home stays a
+  // personalized external-source feed.
+  const internal = [];
 
   // Default aggregate view (no source filter, no multi-source, page 1 — the
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
@@ -21427,9 +21404,11 @@ async function getSearchMembersFromDatabase({ myId, q, role }) {
   if (!db.isConnected()) {
     return {
       members: users,
-      registeredCount: users.length,
+      // Never present the process cache as a real registration total. It is
+      // only a warm-start fallback and can be far smaller than the DB.
+      registeredCount: null,
       discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
-      countSource: 'memory',
+      countSource: 'unavailable',
     };
   }
 
@@ -21473,9 +21452,9 @@ async function getSearchMembersFromDatabase({ myId, q, role }) {
     console.error('[users/search] database lookup failed, using cache:', error.message);
     return {
       members: users,
-      registeredCount: users.length,
+      registeredCount: null,
       discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
-      countSource: 'memory',
+      countSource: 'unavailable',
     };
   }
 }

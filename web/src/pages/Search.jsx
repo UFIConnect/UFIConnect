@@ -72,7 +72,7 @@ export default function Search() {
       if (role && role !== 'All') params.set('role', role);
       const { data } = await client.get(`/users/search?${params}`);
       setResults(data.users || []);
-      setRegisteredCount(Number.isFinite(Number(data.registeredCount)) ? Number(data.registeredCount) : null);
+      setRegisteredCount(data.registeredCount != null && Number.isFinite(Number(data.registeredCount)) ? Number(data.registeredCount) : null);
       setCountSource(data.countSource || null);
     } catch {
       setResults([]);
@@ -291,6 +291,11 @@ export default function Search() {
                 ? ` · ${sortedResults.length} result${sortedResults.length !== 1 ? 's' : ''}`
                 : ` · ${sortedResults.length} available to connect${sortBy === 'followers' ? ', sorted by followers' : ''}`}
               {countSource === 'memory' && ' · count reconnecting'}
+            </div>
+          )}
+          {!loading && registeredCount === null && countSource === 'unavailable' && (
+            <div style={{ maxWidth: 640, marginBottom: 12, fontSize: '.78rem', color: 'var(--muted)', fontWeight: 500 }}>
+              Registered-member count is temporarily unavailable.
             </div>
           )}
 
