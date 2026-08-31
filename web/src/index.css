@@ -303,14 +303,14 @@ input, textarea, select { font-family: inherit; }
 .home-feed-command-center-link {
   min-height: 64px;
   justify-content: space-between;
-  border-color: #4F46E5;
-  background: #4F46E5;
+  border-color: var(--primary);
+  background: var(--primary);
   color: #fff;
 }
 .home-feed-command-center-link:hover,
 .home-feed-command-center-link:focus-visible {
-  border-color: #4338CA;
-  background: #4338CA;
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
   color: #fff;
 }
 .home-feed-command-center-title,
@@ -1840,9 +1840,9 @@ input, textarea, select { font-family: inherit; }
     height: 40px;
     gap: 6px;
     padding: 0 11px;
-    border: 1px solid #4F46E5;
+    border: 1px solid var(--primary);
     border-radius: 8px;
-    background: #4F46E5;
+    background: var(--primary);
     color: #fff;
     box-shadow: var(--shadow-sm);
     cursor: pointer;
@@ -1850,8 +1850,8 @@ input, textarea, select { font-family: inherit; }
     font-weight: 750;
   }
   .mobile-command-menu-trigger[aria-expanded="true"] {
-    background: #4338CA;
-    border-color: #4338CA;
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
   }
   .mobile-command-menu-trigger:focus-visible {
     outline: 2px solid var(--primary);
@@ -1924,13 +1924,13 @@ input, textarea, select { font-family: inherit; }
   }
   .mobile-command-menu-item--command {
     margin-top: 4px;
-    background: #4F46E5;
+    background: var(--primary);
     color: #fff;
     font-weight: 700;
   }
   .mobile-command-menu-item--command:active,
   .mobile-command-menu-item--command:focus-visible {
-    background: #4338CA;
+    background: var(--primary-hover);
     color: #fff;
   }
 
