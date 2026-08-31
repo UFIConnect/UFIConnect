@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -124,10 +125,15 @@ export default function ConnectedAccounts() {
     }
   }
 
-  const connectedList   = platforms.filter(([k]) =>  connected[k]);
+  const isCommandCenterOnly = ([key, platform]) => (
+    platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
+  );
+  const standardPlatforms = platforms.filter((entry) => !isCommandCenterOnly(entry));
+  const memberOnlyPlatforms = platforms.filter(isCommandCenterOnly);
+  const connectedList   = standardPlatforms.filter(([k]) => connected[k]);
   const membershipLocked = authProfile?.plan === 'free';
-  const availableList   = platforms.filter(([k, p]) => !connected[k] &&  p.configured && !p.forceComingSoon);
-  const comingSoonList  = platforms.filter(([k, p]) => !connected[k] && (!p.configured || p.forceComingSoon));
+  const availableList   = standardPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
+  const comingSoonList  = standardPlatforms.filter(([k, p]) => !connected[k] && (!p.configured || p.forceComingSoon));
 
   return (
     <Layout>
@@ -169,7 +175,7 @@ export default function ConnectedAccounts() {
             <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {connectedList.length} of {platforms.length} accounts connected
+                {connectedList.length} of {standardPlatforms.length} accounts connected
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
                 {connectedList.length === 0
@@ -194,6 +200,20 @@ export default function ConnectedAccounts() {
             )}
           </div>
 
+          {memberOnlyPlatforms.length > 0 && (
+            <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 750, fontSize: '.9rem', marginBottom: 3 }}>Command Center accounts</div>
+                <div style={{ color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
+                  Instagram and TikTok are managed separately because they only use posts from the account you authorize.
+                </div>
+              </div>
+              <Link to="/command-center?tab=accounts" className="btn btn-outline btn-sm">
+                {membershipLocked ? 'View Command Center' : 'Manage extra accounts'}
+              </Link>
+            </div>
+          )}
+
           {/* Connected section */}
           {connectedList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
@@ -212,7 +232,7 @@ export default function ConnectedAccounts() {
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
-                  locked={membershipLocked}
+                  locked={membershipLocked && !!p.requiresMembership}
                 />
               ))}
             </div>
@@ -234,7 +254,7 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
-                  locked={membershipLocked}
+                  locked={membershipLocked && !!p.requiresMembership}
                 />
               ))}
             </div>
@@ -254,7 +274,7 @@ export default function ConnectedAccounts() {
                   comingSoon
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
-                  locked={membershipLocked}
+                  locked={membershipLocked && !!p.requiresMembership}
                 />
               ))}
             </div>

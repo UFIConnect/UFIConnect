@@ -13566,6 +13566,111 @@ async function fetchTwitchOwnVideos(token, { bust = false, connectedAt = null } 
   }
 }
 
+async function fetchInstagramOwnPosts(token, { bust = false, connectedAt = null } = {}) {
+  if (!token) return [];
+  const key = connectedSourceCacheKey('instagram_own', token, connectedAt);
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    // Instagram Graph API with Facebook Login exposes professional accounts
+    // through their connected Facebook Page, then lists only that account's
+    // media. This is intentionally not a public-discovery query.
+    const pages = await fetchJSON(
+      `https://graph.facebook.com/v19.0/me/accounts?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`
+    );
+    const accountId = pages?.data
+      ?.map(page => page.instagram_business_account?.id)
+      .find(Boolean);
+    if (!accountId) { setCached(key, []); return []; }
+
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let next = `https://graph.facebook.com/v19.0/${encodeURIComponent(accountId)}/media?fields=id,caption,media_type,media_url,thumbnail_url,timestamp,permalink&limit=100&access_token=${encodeURIComponent(token)}`;
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES && next; page++) {
+      if (!next.startsWith('https://graph.facebook.com/')) break;
+      const result = await fetchJSON(next);
+      const pagePosts = (Array.isArray(result?.data) ? result.data : []).map(media => {
+        const isVideo = ['VIDEO', 'REELS'].includes(String(media.media_type || '').toUpperCase());
+        const caption = String(media.caption || '').trim();
+        return {
+          id: `instagram_own_${media.id}`,
+          source: 'instagram',
+          sourceLabel: 'Instagram',
+          title: caption.slice(0, 120) || 'Instagram post',
+          content: caption,
+          sourceUrl: media.permalink || null,
+          mediaUrl: isVideo ? (media.thumbnail_url || media.media_url || null) : (media.media_url || null),
+          mediaType: isVideo ? 'video_thumbnail_only' : (media.media_url ? 'image' : null),
+          createdAt: normalizeTimestamp(media.timestamp),
+        };
+      });
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt)) break;
+      next = result?.paging?.next || '';
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
+  } catch (e) {
+    console.warn('Instagram own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
+async function fetchTikTokOwnVideos(token, { bust = false, connectedAt = null } = {}) {
+  if (!token) return [];
+  const key = connectedSourceCacheKey('tiktok_own', token, connectedAt);
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let cursor = null;
+    const fields = 'id,title,video_description,create_time,cover_image_url,embed_link';
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES; page++) {
+      const body = { max_count: 20 };
+      if (cursor) body.cursor = cursor;
+      const result = await postJSONWithMeta(
+        `https://open.tiktokapis.com/v2/video/list/?fields=${encodeURIComponent(fields)}`,
+        body,
+        { Authorization: `Bearer ${token}` },
+      );
+      const providerError = result.data?.error;
+      if (result.status < 200 || result.status >= 300 || (providerError?.code && providerError.code !== 'ok')) {
+        throw new Error(`TikTok video list failed: ${providerError?.message || `HTTP ${result.status}`}`);
+      }
+      const data = result.data?.data || {};
+      const pagePosts = (Array.isArray(data.videos) ? data.videos : []).map(video => {
+        const title = String(video.title || video.video_description || '').trim();
+        return {
+          id: `tiktok_own_${video.id}`,
+          source: 'tiktok',
+          sourceLabel: 'TikTok',
+          title: title.slice(0, 120) || 'TikTok video',
+          content: String(video.video_description || title || ''),
+          sourceUrl: video.embed_link || null,
+          mediaUrl: video.cover_image_url || null,
+          mediaType: 'video_thumbnail_only',
+          createdAt: normalizeTimestamp(video.create_time),
+        };
+      });
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt) || !data.has_more || !data.cursor) break;
+      cursor = data.cursor;
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
+  } catch (e) {
+    console.warn('TikTok own videos fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   let session;
@@ -13630,6 +13735,8 @@ const OWN_CONTENT_FETCHERS = {
   youtube: fetchYouTubeOwnUploads,
   reddit: fetchRedditOwnPosts,
   twitch: fetchTwitchOwnVideos,
+  instagram: fetchInstagramOwnPosts,
+  tiktok: fetchTikTokOwnVideos,
   bluesky: fetchBlueskyOwnPosts,
   // dribbble/threads/medium: real own-content APIs exist (see the comment
   // above FOLLOWING_SOURCE_FETCHERS) but aren't wired up yet — "Coming
@@ -17550,9 +17657,9 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
-  if (user.plan === 'free') {
+  if (user.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)) {
     return res.status(403).json({
-      error: 'Connected accounts require an active membership.',
+      error: 'This account connection is part of Command Center membership.',
       code: 'membership_required',
     });
   }
@@ -17586,7 +17693,14 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   }
 
   // State is a signed JWT — survives server restarts, expires in 10 min
-  params.set('state', createOAuthState(req.user.id, platform, codeVerifier));
+  const returnToCommandCenter = req.query.returnTo === 'command-center'
+    && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform);
+  params.set('state', createOAuthState(
+    req.user.id,
+    platform,
+    codeVerifier,
+    returnToCommandCenter ? { returnTo: 'command-center' } : undefined,
+  ));
 
   res.json({ url: `${cfg.authUrl}?${params.toString()}` });
 });
@@ -17595,13 +17709,17 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
 app.get('/auth/social/:platform/callback', async (req, res) => {
   const { platform } = req.params;
   const { code, state, error: oauthError } = req.query;
-  const frontendProfile = `${FRONTEND_BASE}/connected-accounts`;
-
-  if (oauthError) return res.redirect(`${frontendProfile}?social_error=${platform}&reason=${oauthError}`);
-
   const entry = verifyOAuthState(state, platform);
+  const frontendProfile = entry?.extra?.returnTo === 'command-center'
+    && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)
+    ? `${FRONTEND_BASE}/command-center?tab=accounts`
+    : `${FRONTEND_BASE}/connected-accounts`;
+  const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
+
+  if (oauthError) return res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=${oauthError}`);
+
   if (!entry) {
-    return res.redirect(`${frontendProfile}?social_error=${platform}&reason=invalid_state`);
+    return res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=invalid_state`);
   }
 
   const cfg         = SOCIAL_CFG[platform];
@@ -17724,11 +17842,11 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     }
 
     logAgentAction('cache_helper', '??', `User connected ${platform} - social feed now active`, '#6366F1');
-    res.redirect(`${frontendProfile}?social_connected=${platform}`);
+    res.redirect(`${frontendProfile}${resultSeparator}social_connected=${platform}`);
   } catch (e) {
     console.error(`Social OAuth callback ${platform}:`, e.message);
     const detail = e.providerErrorCode ? `:${encodeURIComponent(String(e.providerErrorCode).slice(0, 60))}` : '';
-    res.redirect(`${frontendProfile}?social_error=${platform}&reason=token_exchange_failed${detail}`);
+    res.redirect(`${frontendProfile}${resultSeparator}social_error=${platform}&reason=token_exchange_failed${detail}`);
   }
 });
 
@@ -17751,8 +17869,9 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
       forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
-      requiresMembership: true,
-      locked: user?.plan === 'free',
+      commandCenterOnly: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
+      requiresMembership: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
+      locked: user?.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
     }];
   }));
   res.json({

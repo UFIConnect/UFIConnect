@@ -5,7 +5,7 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -15,7 +15,7 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 // CONNECTED_SOCIAL_PLATFORMS render as "Coming soon" in Your Feed instead,
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
-const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'bluesky'];
+const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'bluesky'];
 // Platforms with a real, working publish-on-your-behalf API. Other connected
 // platforms remain visible but are queued until their API path is available.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok'];
@@ -39,6 +39,7 @@ function SourceMark({ source, label, active = false }) {
 
 const SECTIONS = [
   { key: 'automation', label: 'Automation' },
+  { key: 'accounts',   label: 'Connected Accounts' },
   { key: 'jobs',       label: 'Job Tracker' },
   { key: 'yourfeed',   label: 'Your Feed' },
   { key: 'feed',       label: 'Following Feed' },
@@ -688,6 +689,127 @@ function YourFeedSection() {
   );
 }
 
+function MemberAccountsSection() {
+  const { showToast } = useToast();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [platforms, setPlatforms] = useState(null);
+  const [connected, setConnected] = useState({});
+  const [error, setError] = useState('');
+  const [connecting, setConnecting] = useState(null);
+  const [disconnecting, setDisconnecting] = useState(null);
+
+  const loadAccounts = useCallback(async () => {
+    setError('');
+    try {
+      const { data } = await client.get('/social/platforms');
+      setPlatforms(Object.entries(data.platforms || {}));
+      setConnected(data.connected || {});
+    } catch (requestError) {
+      setError(requestError?.response?.data?.message || 'Could not load Command Center accounts.');
+      setPlatforms([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAccounts();
+  }, [loadAccounts]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const connectedPlatform = params.get('social_connected');
+    const failedPlatform = params.get('social_error');
+    const reason = params.get('reason');
+    const target = connectedPlatform || failedPlatform;
+    if (!target || !COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(target)) return;
+
+    if (connectedPlatform) {
+      setConnected(current => ({ ...current, [connectedPlatform]: true }));
+      showToast(`${connectedPlatform} connected successfully.`, 'success');
+    } else {
+      showToast(reason
+        ? `Could not connect ${failedPlatform}: ${String(reason).split(':').pop()}.`
+        : `Could not connect ${failedPlatform}.`, 'error');
+    }
+    navigate({ pathname: location.pathname, search: '?tab=accounts' }, { replace: true });
+  }, [location.pathname, location.search, navigate, showToast]);
+
+  async function connectAccount(platform) {
+    setConnecting(platform);
+    try {
+      const { data } = await client.get(`/auth/social/${platform}/start`, { params: { returnTo: 'command-center' } });
+      if (!data?.url) throw new Error('Missing provider authorization URL.');
+      window.location.assign(data.url);
+    } catch (requestError) {
+      showToast(requestError?.response?.data?.detail || requestError?.response?.data?.error || 'Could not start this connection.', 'error');
+      setConnecting(null);
+    }
+  }
+
+  async function disconnectAccount(platform) {
+    setDisconnecting(platform);
+    try {
+      await client.delete(`/social/connect/${platform}`);
+      setConnected(current => ({ ...current, [platform]: false }));
+      showToast('Account disconnected.', 'success');
+    } catch (requestError) {
+      showToast(requestError?.response?.data?.error || 'Could not disconnect this account.', 'error');
+    } finally {
+      setDisconnecting(null);
+    }
+  }
+
+  if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
+
+  const memberPlatforms = platforms.filter(([key, platform]) => (
+    platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
+  ));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="card" style={{ padding: '18px 20px' }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>Member account connections</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
+          These sources only import or publish content from the account you explicitly authorize. They never enter the shared feed.
+        </p>
+      </div>
+      {error && <SectionError message={error} onRetry={loadAccounts} />}
+      {!memberPlatforms.length && !error && (
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>No member-only account connections are available yet.</div>
+      )}
+      {memberPlatforms.map(([key, platform]) => {
+        const isConnected = !!connected[key];
+        const unavailable = !platform.configured || platform.forceComingSoon;
+        return (
+          <div key={key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              {hasBrandIcon(key) ? <BrandIcon platform={key} size={23} /> : <span style={{ color: platform.color, fontWeight: 800 }}>{platform.name.slice(0, 2)}</span>}
+            </span>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
+                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>Own posts only</span>
+                {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
+                {!isConnected && unavailable && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
+              </div>
+              <p style={{ color: 'var(--muted)', fontSize: '.78rem', margin: '4px 0 0', lineHeight: 1.45 }}>{platform.description}</p>
+            </div>
+            {isConnected ? (
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={disconnecting === key}>
+                {disconnecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : 'Disconnect'}
+              </button>
+            ) : (
+              <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={unavailable || connecting === key}>
+                {connecting === key ? <span className="spinner" style={{ width: 12, height: 12, borderWidth: 1.5 }} /> : unavailable ? 'Coming soon' : 'Connect'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const JOB_STATUSES = ['saved', 'applied', 'viewed'];
 
 // Tracking only — the member sets their own status, nothing here submits an
@@ -1281,6 +1403,7 @@ function AutomationSection({ onSelectSection }) {
         loading: false,
         error: allFailed ? 'Command Center status could not be loaded.' : '',
         connectedPlatforms: Object.values(connected).filter(Boolean).length,
+        memberOnlyConnectedPlatforms: COMMAND_CENTER_ACCOUNT_PLATFORMS.filter(platform => connected[platform]).length,
         feedPosts: Number.isFinite(feedData.totalAvailable) ? feedData.totalAvailable : feedPosts.length,
         newestFeedAt: feedPosts[0]?.createdAt || null,
         crossPostRuns: history.length,
@@ -1337,20 +1460,6 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('feed')}
         />
         <AutomationToolCard
-          title="Travel"
-          description="Browse live views, destination guides, and travel ideas from around the world."
-          status="Worldwide discovery feed"
-          actionLabel="Open Travel"
-          to="/?feed=countries"
-        />
-        <AutomationToolCard
-          title="Restaurant Openings"
-          description="Browse fresh restaurant-opening reports from around the world."
-          status="Worldwide news"
-          actionLabel="Open Restaurants"
-          to="/?feed=restaurants"
-        />
-        <AutomationToolCard
           title="Your Content"
           description="Review and download your own connected-platform posts where the API supports it."
           status={`${metricValue(snapshot.connectedPlatforms)} connected`}
@@ -1387,10 +1496,10 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Connected Accounts"
-          description="Manage OAuth connections that power the personalized feed and content tools."
-          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
-          actionLabel="Manage Accounts"
-          to="/connected-accounts"
+          description="Manage Instagram and TikTok connections that only use your authorized account posts."
+          status={`${metricValue(snapshot.memberOnlyConnectedPlatforms)} connected`}
+          actionLabel="Open Accounts"
+          onClick={() => onSelectSection('accounts')}
         />
         <AutomationToolCard
           title="Resume Builder"
@@ -1497,6 +1606,7 @@ export default function CommandCenter() {
             {section === 'content' && <ContentHubSection />}
             {section === 'media' && <MediaStudioSection onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}
+            {section === 'accounts' && <MemberAccountsSection />}
             {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}
             {section === 'jobs' && <JobTrackerSection />}
             {section === 'crosspost' && <CrossPostSection />}

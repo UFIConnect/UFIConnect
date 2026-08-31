@@ -49,6 +49,10 @@ export const SOURCE_META = {
   uficonnect:    { label: 'UFIconnect',      color: 'var(--primary)', icon: 'UFI' },
 };
 
+// Account-owned integrations are managed in Command Center. They only use
+// content from the member who authorizes them and never enter shared feeds.
+export const COMMAND_CENTER_ACCOUNT_PLATFORMS = ['instagram', 'tiktok'];
+
 // Every platform a user can link via Connected Accounts (mirrors
 // CONNECTED_SOCIAL_PLATFORMS server-side). Not every entry has a live
 // "following timeline" fetcher wired up yet; platforms without one simply
