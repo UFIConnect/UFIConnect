@@ -132,7 +132,9 @@ export default function Opportunities() {
   const [totalCount, setTotalCount] = useState(0);
   const [hasMore,   setHasMore]   = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const silentRefreshRef = useRef(false);
+  const refreshRequestRef = useRef(null);
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef(null);
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
@@ -170,6 +172,13 @@ export default function Opportunities() {
   // in memory.
   useEffect(() => {
     const params = { sort, limit: PAGE_SIZE, offset: 0 };
+    const refreshRequest = refreshRequestRef.current;
+    if (refreshRequest) {
+      params.bust = '1';
+      params.refresh = refreshRequest.key;
+      if (refreshRequest.excludeIds.length) params.exclude = refreshRequest.excludeIds.join(',');
+      refreshRequestRef.current = null;
+    }
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
@@ -196,11 +205,27 @@ export default function Opportunities() {
       .catch(err => {
         console.error('Failed to load opportunities:', err);
         setError(true);
-        setAllOpps([]);
-        setHasMore(false);
+        if (!refreshRequest) {
+          setAllOpps([]);
+          setHasMore(false);
+        }
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        if (refreshRequest) setRefreshing(false);
+      });
   }, [filter, sort, remote, liveOnly, search, sourceFilter, refreshTick]);
+
+  const requestRefresh = useCallback(() => {
+    if (refreshing) return;
+    refreshRequestRef.current = {
+      key: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      excludeIds: allOpps.map((opportunity) => opportunity.id).filter(Boolean).slice(0, 100),
+    };
+    silentRefreshRef.current = true;
+    setRefreshing(true);
+    setRefreshTick((tick) => tick + 1);
+  }, [allOpps, refreshing]);
 
   const loadMore = useCallback(() => {
     if (loadingMoreRef.current || loading || !hasMore) return;
@@ -240,9 +265,8 @@ export default function Opportunities() {
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
   useScrollToRefresh(() => {
-    silentRefreshRef.current = true;
-    setRefreshTick(t => t + 1);
-  }, { enabled: !loading });
+    requestRefresh();
+  }, { enabled: !loading && !refreshing });
 
   const displayed = allOpps;
 
@@ -267,7 +291,12 @@ export default function Opportunities() {
               </span>
             )}
           </h1>
-          <Link to="/resume-builder" className="btn btn-primary btn-sm">Resume Builder</Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={requestRefresh} disabled={loading || refreshing}>
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <Link to="/resume-builder" className="btn btn-primary btn-sm">Resume Builder</Link>
+          </div>
         </div>
 
         {/* Search bar */}

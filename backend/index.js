@@ -22818,8 +22818,37 @@ const GOAL_TYPE_BOOST = {
   'expertise':   new Set(['event', 'learning']),
 };
 
+function requestOpportunityRefresh(reason) {
+  // Opportunities are served from the shared pipeline cache, not from a
+  // per-request job fetch. Clear the relevant fetch cache entries and nudge
+  // the pipeline-owned sources without reintroducing external requests on
+  // the public API service.
+  ['indeed', 'remoteok', 'usajobs'].forEach((source) => bustCachePrefix(CACHE_KEY_PREFIX[source]));
+  enqueueSourceRefresh(['indeed', 'remoteok', 'usajobs'], reason);
+}
+
+function reorderOpportunitiesForRefresh(results, shownIds, refreshKey) {
+  if (!refreshKey || results.length < 2) return { results, mode: null };
+  const unseen = results.filter((item) => !shownIds.has(item.id));
+  if (unseen.length) {
+    return {
+      results: [...unseen, ...results.filter((item) => shownIds.has(item.id))],
+      mode: 'unseen',
+    };
+  }
+  // Same listings is still a useful refresh: give every existing result a
+  // new deterministic order for this click, without inventing listings.
+  const shuffled = [...results].sort((a, b) => {
+    const aRank = crypto.createHash('sha256').update(`${refreshKey}:${a.id}`).digest('hex');
+    const bRank = crypto.createHash('sha256').update(`${refreshKey}:${b.id}`).digest('hex');
+    return aRank.localeCompare(bRank);
+  });
+  return { results: shuffled, mode: 'shuffled' };
+}
+
 app.get('/opportunities', authenticate, async (req, res) => {
-  if (req.query.bust === '1') { remotiveCache.clear(); museCache.clear(); }
+  const isRefresh = req.query.bust === '1';
+  if (isRefresh) requestOpportunityRefresh('opportunities refresh');
   const { type, remote, search } = req.query;
   // Comma-separated, same convention as the main feed's ?sources= (see
   // handleFeedRequest) — multi-select platform filter, same idea as
@@ -23050,6 +23079,16 @@ app.get('/opportunities', authenticate, async (req, res) => {
     results = diversifyBySource(results, results.length, 2, 0.4, false);
   }
 
+  const shownIds = new Set(
+    String(req.query.exclude || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, 100)
+  );
+  const refresh = reorderOpportunitiesForRefresh(results, shownIds, String(req.query.refresh || ''));
+  results = refresh.results;
+
   // Server-side page slice — added so the Opportunities page can scroll-load
   // more instead of fetching this entire (already fully scored/sorted/
   // equalized) array in one shot and paginating it client-side. Slicing
@@ -23072,6 +23111,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userRole: role,
     userTitle: userTitle || null,
     sort: sortMode,
+    refreshMode: refresh.mode,
     recommendationBasis: role || userTitle ? 'role' : resumeKeywords.size ? 'resume' : hasExplicitJobSignal ? 'profile' : usageTagSet.size ? 'usage' : 'recent listings',
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle, resumeKeywords) : null,
     availableSources: [...availableSources].sort(),
@@ -24240,11 +24280,12 @@ db.initDB().then(async () => {
     console.warn('[startup] Background initialization error:', err.message);
   }
 
-  // Weekly: clear opportunity caches so Remotive + Muse re-fetch fresh live jobs
+  // Weekly: clear the job-source fetch entries so the next pipeline cycle
+  // refreshes live listings. Remotive and The Muse are pipeline sweeps, not
+  // in-process request caches.
   scheduleRecurring(() => {
-    remotiveCache.clear();
-    museCache.clear();
-    logAgentAction('feed', '??', 'Weekly opportunity cache reset - live jobs will re-fetch on next visit', '#60A5FA');
+    requestOpportunityRefresh('weekly opportunity refresh');
+    logAgentAction('feed', '??', 'Weekly opportunity refresh queued', '#60A5FA');
   }, 7 * 24 * 60 * 60 * 1000);
 
   // Monthly: re-seed groups from ALL_GROUPS_SEED to pick up any new communities added to the list
