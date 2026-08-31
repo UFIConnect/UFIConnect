@@ -11532,7 +11532,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
-const FORCE_COMING_SOON_PLATFORMS = new Set();
+const FORCE_COMING_SOON_PLATFORMS = new Set(['tiktok']);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
