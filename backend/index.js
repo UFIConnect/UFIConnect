@@ -10368,7 +10368,6 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
   const [worldwideEntry, nearbyEntry] = await Promise.all([worldwideRequest, nearbyRequest]);
   const equalized = equalizeRestaurantDiscoveryPosts(nearbyEntry?.posts || [], worldwideEntry?.posts || []);
   const posts = rankFeedPostsForLocation(equalized, location, { preserveFirst: 0 });
-  const providerErrors = [worldwideEntry?.error, nearbyEntry?.error].filter(Boolean);
   return {
     posts,
     fetchedAt: [worldwideEntry?.fetchedAt, nearbyEntry?.fetchedAt].filter(Boolean).sort().at(-1) || null,
@@ -10377,7 +10376,9 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
       nearby: (nearbyEntry?.posts || []).length,
       worldwide: (worldwideEntry?.posts || []).length,
     },
-    providerError: providerErrors.length ? providerErrors.join('; ') : null,
+    // Nearby OpenStreetMap lookup is an optional local boost. A timeout there
+    // must not present the otherwise healthy worldwide opening feed as failed.
+    providerError: worldwideEntry?.error || (!worldwideEntry?.posts?.length ? nearbyEntry?.error || null : null),
   };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
