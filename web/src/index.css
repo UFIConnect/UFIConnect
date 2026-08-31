@@ -1206,6 +1206,10 @@ input, textarea, select { font-family: inherit; }
 .bottom-nav {
   display: none;
 }
+.mobile-command-menu,
+.mobile-command-menu-scrim {
+  display: none;
+}
 
 /* Settings/Log out fallback on Profile — see the comment at its JSX for
    why this exists; only shown once .sidebar (which normally holds these)
@@ -1217,7 +1221,7 @@ input, textarea, select { font-family: inherit; }
 @media (max-width: 768px) {
   /* Hide sidebar, show bottom nav */
   .sidebar { display: none; }
-  .main { padding: 16px 12px; padding-bottom: 76px; }
+  .main { padding: 64px 12px 76px; }
   .main-wide { max-width: none; }
   .home-feed-layout { display: flex; flex-direction: column; }
   .home-feed-right-tabs {
@@ -1229,6 +1233,7 @@ input, textarea, select { font-family: inherit; }
   }
   .home-feed-view-tabs { margin-bottom: 10px; }
   .home-feed-rail-tab { min-height: 38px; white-space: normal; }
+  .home-feed-command-center-link { display: none; }
   .home-feed-side-tools { margin-top: 0; }
   .profile-workspace { grid-template-columns: 1fr; }
   .profile-side-panels { position: static; }
@@ -1285,6 +1290,70 @@ input, textarea, select { font-family: inherit; }
   }
   .bottom-nav-item:active {
     opacity: 0.7;
+  }
+
+  .mobile-command-menu-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 220;
+    border: 0;
+    background: transparent;
+    cursor: default;
+  }
+  .mobile-command-menu {
+    display: block;
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    right: 12px;
+    z-index: 221;
+  }
+  .mobile-command-menu-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--text);
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
+  .mobile-command-menu-trigger:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  .mobile-command-menu-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: min(220px, calc(100vw - 24px));
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--card);
+    box-shadow: var(--shadow-md);
+  }
+  .mobile-command-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 42px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: var(--text);
+    font-size: .875rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .mobile-command-menu-item:active,
+  .mobile-command-menu-item:focus-visible {
+    background: var(--primary-light);
+    color: var(--primary);
+    outline: none;
   }
 
   /* Layout tweaks */

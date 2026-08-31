@@ -3006,6 +3006,7 @@ export default function Feed({ forcedMode } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
             ))}
+            <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">Command Center</Link>
           </div>
           <HomeFeedTools showSources={usesSourceControls} />
         </aside>

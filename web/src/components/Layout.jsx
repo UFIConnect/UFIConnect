@@ -18,6 +18,8 @@ function ShellIcon({ name, size = 20 }) {
     settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.03.03a2 2 0 1 1-2.83 2.83l-.03-.03A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.08V21a2 2 0 1 1-4 0v-.06A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.88.34l-.03.03a2 2 0 1 1-2.83-2.83l.03-.03A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.08-.4H3a2 2 0 1 1 0-4h.06A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.03-.03a2 2 0 1 1 2.83-2.83l.03.03A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.08V3a2 2 0 1 1 4 0v.06A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.88-.34l.03-.03a2 2 0 1 1 2.83 2.83l-.03.03A1.7 1.7 0 0 0 19.4 9c.23.36.6.6 1 .6h.6a2 2 0 1 1 0 4h-.06A1.7 1.7 0 0 0 19.4 15Z" /></>,
     logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>,
     install: <><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></>,
+    menu: <><path d="M4 7h16" /><path d="M4 12h16" /><path d="M4 17h16" /></>,
+    command: <><rect x="4" y="4" width="6" height="6" rx="1" /><rect x="14" y="4" width="6" height="6" rx="1" /><rect x="4" y="14" width="6" height="6" rx="1" /><path d="M14 17h6" /><path d="M17 14v6" /></>,
   };
   return <svg {...common}>{paths[name] || paths.home}</svg>;
 }
@@ -72,6 +74,7 @@ export default function Layout({ children, wide = false }) {
   // something new to look at in Notifications," not two separate numbers
   // competing for the same small dot.
   const [notifBadge, setNotifBadge] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Polled from the shell itself, not the Notifications page — the whole
   // point of a nav badge is being visible from anywhere else in the app,
@@ -91,6 +94,18 @@ export default function Layout({ children, wide = false }) {
     const id = setInterval(load, 30000);
     return () => { cancelled = true; clearInterval(id); };
   }, [profile]);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    }
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, []);
 
   function handleLogout() {
     logout();
@@ -184,6 +199,38 @@ export default function Layout({ children, wide = false }) {
       <main className={`main${wide ? ' main-wide' : ''}`}>
         {children}
       </main>
+
+      {profile && mobileMenuOpen && (
+        <button
+          type="button"
+          className="mobile-command-menu-scrim"
+          aria-label="Close app menu"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      {profile && (
+        <div className="mobile-command-menu">
+          <button
+            type="button"
+            className="mobile-command-menu-trigger"
+            aria-label="Open app menu"
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-command-menu-panel"
+            title="Open app menu"
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            <ShellIcon name="menu" size={20} />
+          </button>
+          {mobileMenuOpen && (
+            <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="menu" aria-label="App menu">
+              <NavLink to="/command-center" role="menuitem" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="command" size={18} />
+                Command Center
+              </NavLink>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Mobile bottom tab bar ── */}
       <nav className="bottom-nav">
