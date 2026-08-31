@@ -19,6 +19,7 @@ const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch'
 // Platforms with a real, working publish-on-your-behalf API. Other connected
 // platforms remain visible but are queued until their API path is available.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'linkedin', 'threads', 'instagram', 'tiktok'];
+const ACCOUNT_OWNED_CROSS_POST_PLATFORMS = ['instagram', 'tiktok', 'threads'];
 
 function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
@@ -1071,6 +1072,21 @@ function CrossPostSection() {
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
   const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+  const otherConnectedPlatforms = connectedPlatforms.filter(p => !ACCOUNT_OWNED_CROSS_POST_PLATFORMS.includes(p));
+  const platformTargetButton = (p) => {
+    const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+    const active = selected.has(p);
+    const real = REAL_PUBLISH_PLATFORMS.includes(p);
+    return (
+      <button
+        key={p} type="button" onClick={() => toggle(p)}
+        className="btn btn-sm"
+        style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
+      >
+        <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!real && ' · queued'}
+      </button>
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -1080,6 +1096,19 @@ function CrossPostSection() {
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
           Publish to the connected platforms whose official API supports your account. Photo-only destinations show a clear requirement, and unfinished integrations remain queued instead of being marked as posted.
         </p>
+        <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Your account channels</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {ACCOUNT_OWNED_CROSS_POST_PLATFORMS.map((p) => {
+              const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+              return connected[p] ? platformTargetButton(p) : (
+                <Link key={p} to="/connected-accounts" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+                  <SourceMark source={p} label={meta.icon} /> Connect {meta.label}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
             <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account</Link>
@@ -1107,9 +1136,9 @@ function CrossPostSection() {
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
             </div>
             <div>
-              <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Send to</div>
+              {otherConnectedPlatforms.length > 0 && <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Other connected platforms</div>}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {connectedPlatforms.map(p => {
+                {otherConnectedPlatforms.map(p => {
                   const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
                   const active = selected.has(p);
                   const real = REAL_PUBLISH_PLATFORMS.includes(p);

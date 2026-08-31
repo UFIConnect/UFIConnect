@@ -2142,7 +2142,6 @@ const SOURCE_CONFIG = {
   // then, so left untouched rather than guessed at ahead of real traffic.
   twitter:       { ttl: 90*60000, delay: 300000, shards: 1 },
   linkedin:      { ttl: 90*60000, delay: 300000, shards: 1 },
-  instagram:     { ttl: 90*60000, delay: 300000, shards: 1 },
   facebook:      { ttl: 90*60000, delay: 300000, shards: 1 },
 };
 
@@ -2182,7 +2181,6 @@ const CACHE_KEY_PREFIX = {
   usajobs:       'usajobs_kw_',
   twitter:       'twitter_kw_',
   linkedin:      'linkedin_kw_',
-  instagram:     'instagram_kw_',
   facebook:      'facebook_kw_',
 };
 
@@ -6286,7 +6284,6 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
 // and CONNECTED_SOCIAL_SEARCH_FETCHERS in getFollowingFeedPosts (Following).
 async function fetchTwitterShared(keyword)   { return fetchTwitter(keyword); }
 async function fetchLinkedInShared(keyword)  { return fetchLinkedIn(keyword); }
-async function fetchInstagramShared(keyword) { return fetchInstagram(keyword); }
 async function fetchFacebookShared(keyword)  { return fetchFacebook(keyword); }
 
 // --- Social search cards (LinkedIn, Twitter, Facebook - real search links) ---
@@ -7228,7 +7225,6 @@ function startContinuousWorkers() {
     // No free public API — app-level token only, see fetch*Shared above.
     ['twitter',       '??',  '#000000', fetchTwitterShared,       kw,  32000],
     ['linkedin',      '??', '#0A66C2', fetchLinkedInShared,      kw,  33000],
-    ['instagram',     '??', '#E1306C', fetchInstagramShared,     kw,  34000],
     ['facebook',      '??', '#1877F2', fetchFacebookShared,      kw,  35000],
   ];
 
@@ -12420,7 +12416,10 @@ const FORCE_COMING_SOON_PLATFORMS = new Set(['tiktok']);
 // further down) — that personal-OAuth path is unrelated to whether these
 // platforms join the general aggregate pool, so this set is kept separate
 // from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
-const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook']);
+// These networks are account-owned: their content is only shown to the
+// member who explicitly connected the account, never in the shared pool.
+const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok']);
+const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
 // (see getCursorFeedPage) and any other caller that needs "every real
@@ -12434,7 +12433,10 @@ const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'instagram', 'facebook'
 // token WAS set, never joining sort/rank or the composition cap like every
 // other source does.
 const PIPELINE_ONLY_FEED_SOURCES = ['remotive', 'muse'];
-const AGGREGATE_FEED_SOURCES = [...new Set([...Object.keys(SOURCE_CONFIG), ...PIPELINE_ONLY_FEED_SOURCES])];
+const AGGREGATE_FEED_SOURCES = [...new Set([...Object.keys(SOURCE_CONFIG), ...PIPELINE_ONLY_FEED_SOURCES])]
+  .filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
+const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
+const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(String(source || '').trim().toLowerCase());
 
 // The unfiltered video feed used to hand every one of AGGREGATE_FEED_SOURCES
 // (36) to getCursorFeedPage on every single request, even though only a
@@ -12456,9 +12458,14 @@ async function getVideoCapableSources() {
   if (!db.isConnected()) return null; // caller falls back to the full source list
   try {
     const { rows } = await db.query(
-      `SELECT DISTINCT source FROM feed_posts_cache WHERE media_type = 'video' AND post_created_at > NOW() - INTERVAL '7 days'`
+      `SELECT DISTINCT source
+       FROM feed_posts_cache
+       WHERE media_type = 'video'
+         AND post_created_at > NOW() - INTERVAL '7 days'
+         AND source = ANY($1::text[])`,
+      [AGGREGATE_FEED_SOURCES]
     );
-    const sources = rows.map(r => r.source).filter(Boolean);
+    const sources = rows.map(r => r.source).filter(isAggregateFeedSource);
     if (!sources.length) return null; // don't cache an empty result — likely a transient blip, not "no source has video"
     _videoCapableSources = sources;
     _videoCapableSourcesExpiry = Date.now() + VIDEO_CAPABLE_SOURCES_TTL;
@@ -16277,13 +16284,11 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     // bearer token is configured. Any row that actually lands in this table
     // under source='twitter' etc. can only have come from that second,
     // legitimate path, so there's no longer a reason to filter it out here.
-    if (Array.isArray(source) && source.length) {
-      params.push(source);
-      clauses.push(`source = ANY($${params.length}::text[])`);
-    } else if (source) {
-      params.push(source);
-      clauses.push(`source = $${params.length}`);
-    }
+    const requestedSources = Array.isArray(source) ? source : source ? [source] : AGGREGATE_FEED_SOURCES;
+    const selectedSources = requestedSources.filter(isAggregateFeedSource);
+    if (!selectedSources.length) return { posts: [], perSourceCount: 0 };
+    params.push(selectedSources);
+    clauses.push(`source = ANY($${params.length}::text[])`);
     if (mediaType) {
       params.push(mediaType);
       clauses.push(`media_type = $${params.length}`);
@@ -18013,6 +18018,7 @@ async function handleFeedRequest(req, res) {
       .map(source => source.trim().toLowerCase())
       .filter(Boolean)
   );
+  const isFollowingRequest = req.query.mode === 'following';
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -18045,7 +18051,13 @@ async function handleFeedRequest(req, res) {
   };
   const filterForUser = (items) => {
     const list = Array.isArray(items)
-      ? items.filter(item => !disabledFeedSources.has(String(item?.source || '').trim().toLowerCase())).filter(matchesTopic)
+      ? items
+        .filter((item) => {
+          const source = String(item?.source || '').trim().toLowerCase();
+          return !disabledFeedSources.has(source)
+            && (isFollowingRequest || !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
+        })
+        .filter(matchesTopic)
       : [];
     if (!topicsFilter.length && !hasSavedFeedScope) return [];
     const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
@@ -18059,10 +18071,18 @@ async function handleFeedRequest(req, res) {
   // for why this is what makes a refresh return substantially different
   // posts instead of re-displaying the same rotation of the same pool.
   const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
-  const sourceFilter = req.query.source || null;
-  const sourcesParam = req.query.sources
-    ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+  const requestedSourceFilter = String(req.query.source || '').trim().toLowerCase() || null;
+  const requestedSourcesParam = req.query.sources
+    ? req.query.sources.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
     : [];
+  const sourceFilter = isFollowingRequest || isAggregateFeedSource(requestedSourceFilter)
+    ? requestedSourceFilter
+    : null;
+  const sourcesParam = isFollowingRequest
+    ? requestedSourcesParam
+    : requestedSourcesParam.filter(isAggregateFeedSource);
+  const requestedMemberOnlySource = !isFollowingRequest
+    && [requestedSourceFilter, ...requestedSourcesParam].some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
   // Topic selector — picks any number of topics from FEED_TOPICS (multi-
   // select, same ?topics= comma convention as ?sources= above), distinct
   // from userTopics above (that's the viewer's own onboarding interests,
@@ -18139,6 +18159,13 @@ async function handleFeedRequest(req, res) {
     : '2d';
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
+
+  if (requestedMemberOnlySource && !sourceFilter && !sourcesParam.length) {
+    return res.json({
+      posts: [], hasMore: false, totalAvailable: 0,
+      source: requestedSourceFilter || 'instagram', memberOnly: true,
+    });
+  }
 
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
@@ -18267,7 +18294,7 @@ async function handleFeedRequest(req, res) {
   }
 
   if (feedMode === 'archive') {
-    const archiveSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    const archiveSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
     // Same date-cursor pagination as the main Feed's newest-sort scroll
     // (see getCursorFeedPage) — Feed Manager's own balanced-query approach
     // had the identical class of bug the main feed's old mainFeedSnapshots
@@ -18350,7 +18377,7 @@ async function handleFeedRequest(req, res) {
     // !topicsFilter.length too — getBalancedFeedPosts has no topic support
     // of its own, so an explicit topic pick falls through to the dbRows
     // path below instead, which applies matchesTopic directly.
-    const wantsMix = !archiveSources && !searchQuery && !topicsFilter.length;
+    const wantsMix = !sourceFilter && sourcesParam.length === 0 && !searchQuery && !topicsFilter.length;
 
     if (wantsMix) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 12));
@@ -18427,7 +18454,7 @@ async function handleFeedRequest(req, res) {
 
   // -- Full-text search across all sources ----------------------------------
   if (searchQuery) {
-    const searchSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    const searchSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
     const allCached = sortFeedBatch(realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
@@ -18491,7 +18518,7 @@ async function handleFeedRequest(req, res) {
   // -- Page 2+: serve from DB cache only (no live-API calls) ----------------
   if (reqPage > 1) {
     const offset     = (reqPage - 1) * feedLimit;
-    const pageSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter;
+    const pageSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
     // Feed Manager: no source filter means infinite scroll wants a true mix
     // too — same equal-pull-per-source approach as page 1 and archive mode,
     // just advanced by page instead of restarting from the top each time.
@@ -18921,7 +18948,7 @@ async function handleFeedRequest(req, res) {
     // Safety net — falls back to the flat query if the windowed one comes
     // back empty for any reason, same as before this change.
     const dbPostsRaw = await Promise.race([
-      getPostsFromDB([], 1200, 0, null, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
+      getPostsFromDB([], 1200, 0, AGGREGATE_FEED_SOURCES, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
     ]);
     dbPosts = dbPostsRaw.map(p => mapExternalPost(p, p.source || 'reddit'));
@@ -19276,10 +19303,20 @@ async function fetchPlayableVideoPage(params, attempts = 4) {
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
-    const sourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+    const requestedSourcesParam = req.query.sources
+      ? req.query.sources.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
       : [];
-    const sourceFilter = req.query.source || null;
+    const requestedSourceFilter = String(req.query.source || '').trim().toLowerCase() || null;
+    const sourceFilter = isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null;
+    const sourcesParam = requestedSourcesParam.filter(isAggregateFeedSource);
+    const requestedMemberOnlySource = [requestedSourceFilter, ...requestedSourcesParam]
+      .some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
+    if (requestedMemberOnlySource && !sourceFilter && !sourcesParam.length) {
+      return res.json({
+        posts: [], hasMore: false, totalAvailable: 0,
+        source: requestedSourceFilter || 'instagram', memberOnly: true,
+      });
+    }
     // Unfiltered: only the sources actually known to carry video content
     // (see getVideoCapableSources), not the full 36-source aggregate list —
     // querying sources with zero video posts was pure overhead. An explicit
@@ -19353,7 +19390,7 @@ async function handleVideoFeedRequest(req, res) {
     // insensitive) — matchesTopic below does that filtering instead, same
     // reasoning the main Feed's search branch already uses.
     if (searchQuery && db.isConnected()) {
-      const searchSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
+      const searchSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
       let rows = [];
       try {
         rows = await getPostsFromDB([], feedLimit * 4, 0, searchSources, {
@@ -19388,7 +19425,7 @@ async function handleVideoFeedRequest(req, res) {
     // a second, independent counter.
     if (req.query.sort === 'balanced') {
       const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
-      const balancedSource = sourcesParam.length > 1 ? sourcesParam : sourceFilter || null;
+      const balancedSource = sourcesParam.length > 1 ? sourcesParam : sourceFilter || AGGREGATE_FEED_SOURCES;
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 8));
       const { posts: balancedRaw } = await getBalancedFeedPosts({
         sortMode: 'balanced', mediaType: 'video', source: balancedSource,
@@ -21275,7 +21312,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // real "healthy" worker entry), which duplicated their id in
   // sources.workers, inflated total/healthy counts, and rendered two
   // conflicting cards for the same platform in the office Sources view.
-  for (const id of ['twitter', 'linkedin', 'instagram', 'facebook']) {
+  for (const id of ['twitter', 'linkedin', 'facebook']) {
     if (SOURCE_CONFIG[id]) continue;
     const def = AGENT_DEFS[id];
     if (def) sourceHealthArr.push({

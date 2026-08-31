@@ -63,7 +63,7 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
 // vocabulary here prevents the two controls from quietly drifting apart.
 export const HOME_FEED_SOURCE_IDS = [
   'reddit', 'github', 'youtube', 'hackernews',
-  'linkedin', 'twitter', 'instagram', 'facebook',
+  'linkedin', 'twitter', 'facebook',
   'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
   'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
   'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',

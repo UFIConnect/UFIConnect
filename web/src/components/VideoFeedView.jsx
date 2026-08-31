@@ -25,17 +25,8 @@ const VIDEO_ENGAGED_FRACTION = 0.5;
 // note below), so including it here would just be a permanently-empty
 // filter with no path to fix short of building a real aggregate one.
 //
-// Twitter/LinkedIn/Instagram/Facebook are a different situation from those
-// two: they DO have real SOURCE_CONFIG entries (see backend/index.js) — a
-// genuine shared, cached, app-level fetcher, architecturally identical to
-// every other source — just idling at 0 posts until an app bearer token is
-// configured, same as any source having a quiet cycle (see the commit that
-// brought them into the aggregate sort/rank pool). Instagram specifically
-// is pulled from this filter row for now — it was showing up as a
-// selectable platform with nothing behind it, which reads as broken rather
-// than quiet. Not worth an app-level Instagram token yet at current
-// traffic; the fetcher/SOURCE_CONFIG entry are untouched, so bringing it
-// back once that's worth doing is just removing it from this one array.
+// Instagram is account-owned and only appears after its owner connects it.
+// It is intentionally excluded from the shared Videos pool.
 //
 // Either way, this is entirely separate from Following mode's own path for
 // these same platforms (FOLLOWING_VIDEO_SOURCES below) — that one is a
@@ -55,7 +46,7 @@ const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'dribbble', 'instagram'];
 // different pool entirely.
 const FEED_VIDEO_SOURCE_ORDER = [
   'reddit', 'github', 'youtube', 'hackernews',
-  'linkedin', 'twitter', 'instagram', 'facebook',
+  'linkedin', 'twitter', 'facebook',
   'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
   'bluesky', 'devto', 'stackoverflow', 'gitlab', 'medium', 'hashnode', 'lobsters',
   'arxiv', 'producthunt', 'indiehackers', 'yc', 'crunchbase', 'techcrunch', 'theverge',

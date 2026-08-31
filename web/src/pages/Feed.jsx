@@ -146,14 +146,8 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
   return sortPostsForView([...byId.values()], sort);
 }
 
-// Twitter/LinkedIn/Instagram/Facebook are back as single-source tabs —
-// clicking one still routes through the backend's FEED_SOCIAL_TABS gate
-// (a completely separate query path from the aggregate true mix, see
-// getBalancedFeedPosts's exclusion of these sources), showing either the
-// SocialConnectGate wall or that platform's connected content. They were
-// pulled from here once under the mistaken idea that removing the *true
-// mix* leak also meant removing the tabs entirely — it didn't; only the
-// aggregate/Following mixing needed to change, not this single-source path.
+// Shared-source tabs deliberately exclude account-owned networks such as
+// Instagram. Those appear only in Following after the member connects them.
 // Kept as an explicit, hand-ordered list (most-recognizable platforms first)
 // rather than deriving straight from ALL_FILTER_SOURCES — this is the row
 // users scan first and scroll through on every visit, so display order
@@ -163,7 +157,7 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
 const SOURCE_TABS = [
   { key: 'all' },
   { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
-  { key: 'linkedin' }, { key: 'twitter' }, { key: 'instagram' }, { key: 'facebook' },
+  { key: 'linkedin' }, { key: 'twitter' }, { key: 'facebook' },
   { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
   { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
   { key: 'gitlab' }, { key: 'medium' }, { key: 'hashnode' }, { key: 'lobsters' },
@@ -214,14 +208,23 @@ function loadFeedState(userId) {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    const activeTabs = Array.isArray(s.activeTabs) ? s.activeTabs : [];
+    const viewMode = s.viewMode === 'local' ? 'countries' : ['following', 'countries', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed';
+    const allowedSourceIds = viewMode === 'following'
+      ? FOLLOWING_FEED_SOURCE_IDS
+      : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+    const activeTabs = Array.isArray(s.activeTabs)
+      ? s.activeTabs.filter(source => allowedSourceIds.includes(source))
+      : [];
     const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
+    filters.sources = Array.isArray(filters.sources)
+      ? filters.sources.filter(source => allowedSourceIds.includes(source))
+      : [];
     if (activeTabs.length) filters.sources = [];
     return {
       filters,
       activeTabs,
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   s.viewMode === 'local' ? 'countries' : ['following', 'countries', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed',
+      viewMode,
       location:   normalizeLocationFilters(s.location),
     };
   } catch { return null; }
@@ -235,13 +238,8 @@ function saveFeedState(userId, filters, activeTabs, search, viewMode, location) 
   } catch {}
 }
 
-// Twitter/LinkedIn/Instagram/Facebook are included here too (multi-select
-// filter panel) — selecting one alongside other sources just contributes
-// whatever's in that platform's worker cache (empty until connected/an
-// app-level token exists, same as any other source that's temporarily
-// thin), no lock wall in that combined view. The single-source lock wall
-// (SocialConnectGate) only applies via the SOURCE_TABS single-tab click
-// path above, not this multi-select one.
+// Home filters use the same shared-source allowlist as the quick tabs.
+// Account-owned networks appear only in Following after connection.
 const ALL_FILTER_SOURCES = HOME_FEED_SOURCE_IDS;
 
 // Following's filter-panel options — native UFIconnect posts from people you
