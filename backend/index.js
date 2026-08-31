@@ -16288,9 +16288,22 @@ async function handleFeedRequest(req, res) {
   // recordEngagementSignal) — same "applied fresh per request" treatment as
   // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
   const userAffinity = await getUserAffinity(req.user.id);
+  const jobRoleValues = [prefs.role, user?.title, ...asArray(user?.skills)].filter(Boolean);
+  const jobRoleTerms = uniquePersonalizationTerms([
+    ...jobRoleValues,
+    ...jobRoleValues.flatMap(value => normalizePersonalizationTerm(value).split(/\s+/).filter(term => term.length >= 3)),
+  ], 16);
+  const wantsMusic = asArray(prefs.interests).some(interest => /music/i.test(String(interest)));
+  const isMusicPost = (post) => /\b(?:music|musician|song|album|playlist)\b/i.test(`${post?.topic || ''} ${post?.title || ''}`);
+  const matchesMemberJob = (post) => {
+    if (!JOB_LISTING_SOURCES.includes(post?.source) || !jobRoleTerms.length) return true;
+    const text = feedPostPersonalizationText(post);
+    return jobRoleTerms.some(term => textMatchesPersonalizationTerm(text, term));
+  };
   const filterForUser = (items) => {
     const list = Array.isArray(items) ? items.filter(matchesTopic) : [];
-    return topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+    const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
+    return scoped.filter(post => (wantsMusic || !isMusicPost(post)) && matchesMemberJob(post));
   };
   const personalizeForUser = (items, options = {}) => (
     personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext })
@@ -17577,8 +17590,11 @@ async function handleVideoFeedRequest(req, res) {
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const scopedVideoTopics = topicsFilter.length ? topicsFilter : (userTopics.length ? userTopics : null);
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '7d' : videoTimeRange;
+    const wantsMusic = asArray(prefs.interests).some(interest => /music/i.test(String(interest)));
+    const isMusicPost = (post) => /\b(?:music|musician|song|album|playlist)\b/i.test(`${post?.topic || ''} ${post?.title || ''}`);
     const applyPersonalTopicFilter = (items) => (
-      topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false })
+      (topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false }))
+        .filter(post => wantsMusic || !isMusicPost(post))
     );
 
     // -- Full-text search across every cached video post, not just whatever
