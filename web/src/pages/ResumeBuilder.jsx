@@ -17,10 +17,34 @@ function emptyDraft() {
     experience: [],
     education: [],
     skills: [],
+    coverLetter: { role: '', company: '', jobDescription: '', tone: 'Warm and professional', body: '' },
+    outreach: { recipientName: '', recipientRole: '', company: '', context: '', tone: 'Warm and professional', body: '' },
   };
 }
 
-function LockedState({ onUnlock, unlocking, billingReady }) {
+function normalizeDraft(draft) {
+  const base = emptyDraft();
+  const next = draft && typeof draft === 'object' ? draft : {};
+  return {
+    ...base,
+    ...next,
+    contact: { ...base.contact, ...(next.contact || {}) },
+    experience: Array.isArray(next.experience) ? next.experience : base.experience,
+    education: Array.isArray(next.education) ? next.education : base.education,
+    skills: Array.isArray(next.skills) ? next.skills : base.skills,
+    coverLetter: { ...base.coverLetter, ...(next.coverLetter || {}) },
+    outreach: { ...base.outreach, ...(next.outreach || {}) },
+  };
+}
+
+function priceCadence(price) {
+  if (!price?.interval) return '';
+  const count = Math.max(1, Number(price.intervalCount) || 1);
+  return count === 1 ? ` / ${price.interval}` : ` every ${count} ${price.interval}s`;
+}
+
+function LockedState({ onUnlock, unlocking, billingReady, price }) {
+  const priceLabel = price?.active && price?.display ? `${price.display}${priceCadence(price)}` : null;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
@@ -28,8 +52,12 @@ function LockedState({ onUnlock, unlocking, billingReady }) {
         Build an ATS-friendly resume from scratch with original templates, AI-assisted writing help,
         and a one-click PDF export that's automatically scored and saved to your profile.
       </p>
+      <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
+        <span style={{ color: 'var(--muted)' }}>Resume Builder add-on</span>
+        <strong>{priceLabel || 'Price shown at checkout'}</strong>
+      </div>
       <button className="btn btn-primary" type="button" onClick={onUnlock} disabled={unlocking || billingReady === false}>
-        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === false ? 'Billing unavailable' : 'Unlock Resume Builder'}
+        {unlocking ? <span className="spinner" style={{ width: 14, height: 14 }} /> : billingReady === false ? 'Billing unavailable' : priceLabel ? `Unlock for ${priceLabel}` : 'Unlock Resume Builder'}
       </button>
     </div>
   );
@@ -73,12 +101,14 @@ export default function ResumeBuilder() {
   const { showToast } = useToast();
   const [loaded, setLoaded] = useState(false);
   const [billingReady, setBillingReady] = useState(null);
+  const [resumeBuilderPrice, setResumeBuilderPrice] = useState(null);
   const [unlocking, setUnlocking] = useState(false);
   const [template, setTemplate] = useState('modern');
   const [data, setData] = useState(emptyDraft());
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
+  const [drafting, setDrafting] = useState(null);
 
   const unlocked = !!profile?.resumeBuilderAddon;
 
@@ -86,7 +116,10 @@ export default function ResumeBuilder() {
     let cancelled = false;
     client.get('/billing/config')
       .then(({ data: config }) => {
-        if (!cancelled) setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder);
+        if (cancelled) return;
+        const price = config?.pricing?.resume_builder || null;
+        setResumeBuilderPrice(price);
+        setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder && price?.active !== false);
       })
       .catch(() => {
         if (!cancelled) setBillingReady(false);
@@ -116,7 +149,7 @@ export default function ResumeBuilder() {
     client.get('/resume-builder/draft')
       .then(({ data: res }) => {
         setTemplate(res.template || 'modern');
-        setData({ ...emptyDraft(), ...(res.data || {}) });
+        setData(normalizeDraft(res.data));
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
@@ -134,13 +167,15 @@ export default function ResumeBuilder() {
     }
   }
 
-  async function saveDraft() {
+  async function saveDraft(nextData = data, successMessage = 'All changes saved.') {
     setSaving(true);
     try {
-      await client.put('/resume-builder/draft', { template, data });
-      showToast('Draft saved.', 'success');
+      await client.put('/resume-builder/draft', { template, data: nextData });
+      showToast(successMessage, 'success');
+      return true;
     } catch (err) {
       showToast(err?.response?.data?.message || 'Could not save your draft.', 'error');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -193,6 +228,72 @@ export default function ResumeBuilder() {
     setData(prev => ({ ...prev, education: prev.education.filter((_, idx) => idx !== i) }));
   }
 
+  function updateWriting(section, field, value) {
+    setData(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
+  }
+
+  async function generateApplicationDraft(type) {
+    if (drafting) return;
+    const section = type === 'cover_letter' ? 'coverLetter' : 'outreach';
+    const writing = data[section];
+    setDrafting(type);
+    try {
+      const payload = type === 'cover_letter'
+        ? {
+          type,
+          resume: data,
+          role: writing.role,
+          company: writing.company,
+          jobDescription: writing.jobDescription,
+          tone: writing.tone,
+        }
+        : {
+          type,
+          resume: data,
+          recipientName: writing.recipientName,
+          recipientRole: writing.recipientRole,
+          company: writing.company,
+          context: writing.context,
+          tone: writing.tone,
+        };
+      const { data: response } = await client.post('/resume-builder/application-draft', payload);
+      const body = String(response?.draft || '').trim();
+      if (!body) throw new Error('No draft was returned.');
+      const nextData = { ...data, [section]: { ...writing, body } };
+      setData(nextData);
+      const label = type === 'cover_letter' ? 'Cover letter' : 'Outreach message';
+      const saved = await saveDraft(nextData, `${label} drafted and saved.`);
+      if (!saved) showToast(`${label} is ready here. Save it once storage is available.`, 'info');
+    } catch (err) {
+      showToast(err?.response?.data?.message || err.message || 'Could not generate a draft.', 'error');
+    } finally {
+      setDrafting(null);
+    }
+  }
+
+  async function copyWriting(text, label) {
+    const value = String(text || '').trim();
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const input = document.createElement('textarea');
+        input.value = value;
+        input.style.position = 'fixed';
+        input.style.opacity = '0';
+        document.body.appendChild(input);
+        input.select();
+        const copied = document.execCommand('copy');
+        input.remove();
+        if (!copied) throw new Error('Copy was blocked.');
+      }
+      showToast(`${label} copied.`, 'success');
+    } catch {
+      showToast('Copy was blocked. Select the text and copy it manually.', 'error');
+    }
+  }
+
   return (
     <>
       <Helmet><title>Resume Builder | UFIconnect</title></Helmet>
@@ -209,7 +310,7 @@ export default function ResumeBuilder() {
         {!profile ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : !unlocked ? (
-          <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} />
+          <LockedState onUnlock={unlockResumeBuilder} unlocking={unlocking} billingReady={billingReady} price={resumeBuilderPrice} />
         ) : !loaded ? (
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (
@@ -333,9 +434,100 @@ export default function ResumeBuilder() {
               />
             </div>
 
+            <div className="card">
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Application writing</h3>
+                <p style={{ margin: 0, fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Draft from the resume above, then edit the result. Each generated draft is saved with your resume.
+                </p>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 22 }}>
+                <div style={{ minWidth: 0 }}>
+                  <h4 style={{ margin: '0 0 12px', fontSize: '.86rem' }}>Cover letter</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                    <Field label="Role" value={data.coverLetter.role} onChange={e => updateWriting('coverLetter', 'role', e.target.value)} placeholder="e.g. Product Designer" />
+                    <Field label="Company" value={data.coverLetter.company} onChange={e => updateWriting('coverLetter', 'company', e.target.value)} />
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Tone</label>
+                    <select className="form-input" value={data.coverLetter.tone} onChange={e => updateWriting('coverLetter', 'tone', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
+                      <option>Warm and professional</option>
+                      <option>Confident and direct</option>
+                      <option>Thoughtful and conversational</option>
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Job description</label>
+                    <textarea
+                      value={data.coverLetter.jobDescription}
+                      onChange={e => updateWriting('coverLetter', 'jobDescription', e.target.value)}
+                      rows={4}
+                      placeholder="Paste the responsibilities or a few details to tailor the letter."
+                      style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.84rem', fontFamily: 'inherit', resize: 'vertical' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('cover_letter')} disabled={!!drafting}>
+                      {drafting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft cover letter'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyWriting(data.coverLetter.body, 'Cover letter')} disabled={!data.coverLetter.body}>Copy</button>
+                  </div>
+                  <textarea
+                    value={data.coverLetter.body}
+                    onChange={e => updateWriting('coverLetter', 'body', e.target.value)}
+                    rows={11}
+                    placeholder="Your cover letter will appear here."
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', lineHeight: 1.55, resize: 'vertical' }}
+                  />
+                </div>
+
+                <div style={{ minWidth: 0 }}>
+                  <h4 style={{ margin: '0 0 12px', fontSize: '.86rem' }}>Reach-out message</h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                    <Field label="Recipient" value={data.outreach.recipientName} onChange={e => updateWriting('outreach', 'recipientName', e.target.value)} placeholder="e.g. Alex Morgan" />
+                    <Field label="Their role" value={data.outreach.recipientRole} onChange={e => updateWriting('outreach', 'recipientRole', e.target.value)} placeholder="e.g. Design Director" />
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                    <Field label="Company" value={data.outreach.company} onChange={e => updateWriting('outreach', 'company', e.target.value)} />
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Tone</label>
+                      <select className="form-input" value={data.outreach.tone} onChange={e => updateWriting('outreach', 'tone', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
+                        <option>Warm and professional</option>
+                        <option>Confident and direct</option>
+                        <option>Thoughtful and conversational</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Why you are reaching out</label>
+                    <textarea
+                      value={data.outreach.context}
+                      onChange={e => updateWriting('outreach', 'context', e.target.value)}
+                      rows={4}
+                      placeholder="For example: their product talk stood out, and you would value a short conversation about the team."
+                      style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.84rem', fontFamily: 'inherit', resize: 'vertical' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                    <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('outreach')} disabled={!!drafting}>
+                      {drafting === 'outreach' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft message'}
+                    </button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyWriting(data.outreach.body, 'Reach-out message')} disabled={!data.outreach.body}>Copy</button>
+                  </div>
+                  <textarea
+                    value={data.outreach.body}
+                    onChange={e => updateWriting('outreach', 'body', e.target.value)}
+                    rows={11}
+                    placeholder="Your reach-out message will appear here."
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', lineHeight: 1.55, resize: 'vertical' }}
+                  />
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: 'flex', gap: 10 }}>
               <button className="btn btn-ghost" type="button" onClick={saveDraft} disabled={saving}>
-                {saving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save draft'}
+                {saving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save all changes'}
               </button>
               <button className="btn btn-primary" type="button" onClick={handleExport} disabled={exporting || !data.contact.name}>
                 {exporting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Export PDF'}
