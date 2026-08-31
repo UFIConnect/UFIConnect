@@ -21162,21 +21162,84 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
 app.post('/feed/:postId/like', authenticate, toggleCommunityPostLike);
 
 // --- People search & public profiles -----------------------------------------
-app.get('/users/search', authenticate, (req, res) => {
+// Search must not depend on the process-local users[] cache. A newly started
+// API instance can serve traffic before its background preload finishes, and
+// that made the People page look nearly empty even when the database had many
+// registered members. The database is the source of truth for both the list
+// and the member count; users[] remains only as an outage fallback.
+async function getSearchMembersFromDatabase({ myId, q, role }) {
+  if (!db.isConnected()) {
+    return {
+      members: users,
+      registeredCount: users.length,
+      discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
+      countSource: 'memory',
+    };
+  }
+
+  const params = [myId];
+  const conditions = [
+    `((u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false') OR u.id = $1)`,
+  ];
+  if (q) {
+    params.push(`%${q}%`, q);
+    const patternIndex = params.length - 1;
+    const exactIndex = params.length;
+    conditions.push(`(
+      LOWER(COALESCE(u.name, '')) LIKE $${patternIndex}
+      OR LOWER(COALESCE(u.title, '')) LIKE $${patternIndex}
+      OR LOWER(COALESCE(u.organization, '')) LIKE $${patternIndex}
+      OR LOWER(COALESCE(u.bio, '')) LIKE $${patternIndex}
+      OR COALESCE(u.skills::text, '') ILIKE $${patternIndex}
+      OR LOWER(COALESCE(u.role, '')) LIKE $${patternIndex}
+      OR COALESCE(array_to_string(u.interests, ' '), '') ILIKE $${patternIndex}
+      OR LOWER(COALESCE(u.email, '')) = $${exactIndex}
+    )`);
+  }
+  if (role) {
+    params.push(`%${role}%`);
+    conditions.push(`LOWER(COALESCE(u.role, '')) LIKE $${params.length}`);
+  }
+
+  try {
+    const [memberRows, totalRows, discoverableRows] = await Promise.all([
+      db.query(`SELECT u.* FROM users u WHERE ${conditions.join(' AND ')} ORDER BY u.created_at DESC LIMIT 500`, params),
+      db.query('SELECT COUNT(*) AS count FROM users'),
+      db.query(`SELECT COUNT(*) AS count FROM users u WHERE u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`),
+    ]);
+    return {
+      members: memberRows.rows.map(row => syncToMemory(dbRowToMemUser(row))),
+      registeredCount: Number(totalRows.rows[0]?.count || 0),
+      discoverableCount: Number(discoverableRows.rows[0]?.count || 0),
+      countSource: 'database',
+    };
+  } catch (error) {
+    console.error('[users/search] database lookup failed, using cache:', error.message);
+    return {
+      members: users,
+      registeredCount: users.length,
+      discoverableCount: users.filter(u => !isProfileHidden(u) || u.id === myId).length,
+      countSource: 'memory',
+    };
+  }
+}
+
+app.get('/users/search', authenticate, async (req, res) => {
   const q    = (req.query.q    || '').toLowerCase().trim();
   const role = (req.query.role || '').toLowerCase().trim();
   const myId = req.user.id;
 
-  const myUser      = users.find(u => u.id === myId);
+  const myUser      = await getUser(myId);
   const myInterests = new Set((myUser?.preferences?.interests || []).map(i => i.toLowerCase()));
   const myRole      = (myUser?.preferences?.role || '').toLowerCase();
+  const memberSearch = await getSearchMembersFromDatabase({ myId, q, role });
 
   // profileHidden opts a user out of search/discovery entirely — still
   // shows up for themselves (browsing your own listing while hidden
   // shouldn't look broken) and doesn't touch existing relationships
   // (follows/connections list him fine; this is about not being found by
   // people who don't already know the id, not erasing the account).
-  let results = users.filter(u => u.id && u.email && (!isProfileHidden(u) || u.id === myId));
+  let results = memberSearch.members.filter(u => u.id && u.email && (!isProfileHidden(u) || u.id === myId));
 
   if (q) {
     results = results.filter(u =>
@@ -21245,6 +21308,9 @@ app.get('/users/search', authenticate, (req, res) => {
   scored.sort((a, b) => b.score - a.score);
 
   res.json({
+    registeredCount: memberSearch.registeredCount,
+    discoverableCount: memberSearch.discoverableCount,
+    countSource: memberSearch.countSource,
     users: scored.map(({ u, sharedInterests }) => ({
       id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
       organization: u.organization || '', skills: asArray(u.skills),

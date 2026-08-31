@@ -52,6 +52,8 @@ export default function Search() {
   const [sortBy,      setSortBy]      = useState('relevance');
   const [results,     setResults]     = useState([]);
   const [loading,     setLoading]     = useState(false);
+  const [registeredCount, setRegisteredCount] = useState(null);
+  const [countSource, setCountSource] = useState(null);
 
   // Groups state
   const [allGroups,     setAllGroups]     = useState([]);
@@ -70,8 +72,12 @@ export default function Search() {
       if (role && role !== 'All') params.set('role', role);
       const { data } = await client.get(`/users/search?${params}`);
       setResults(data.users || []);
+      setRegisteredCount(Number.isFinite(Number(data.registeredCount)) ? Number(data.registeredCount) : null);
+      setCountSource(data.countSource || null);
     } catch {
       setResults([]);
+      setRegisteredCount(null);
+      setCountSource(null);
     } finally {
       setLoading(false);
     }
@@ -278,11 +284,13 @@ export default function Search() {
           </div>
 
           {/* Count */}
-          {!loading && sortedResults.length > 0 && (
+          {!loading && registeredCount !== null && (
             <div style={{ maxWidth: 640, marginBottom: 12, fontSize: '.78rem', color: 'var(--muted)', fontWeight: 500 }}>
+              {registeredCount.toLocaleString()} registered member{registeredCount !== 1 ? 's' : ''}
               {hasQuery
-                ? `${sortedResults.length} result${sortedResults.length !== 1 ? 's' : ''}`
-                : `${sortedResults.length} professional${sortedResults.length !== 1 ? 's' : ''} — ${sortBy === 'followers' ? 'sorted by followers' : 'suggested for you'}`}
+                ? ` · ${sortedResults.length} result${sortedResults.length !== 1 ? 's' : ''}`
+                : ` · ${sortedResults.length} available to connect${sortBy === 'followers' ? ', sorted by followers' : ''}`}
+              {countSource === 'memory' && ' · count reconnecting'}
             </div>
           )}
 
