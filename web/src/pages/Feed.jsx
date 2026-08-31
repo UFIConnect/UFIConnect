@@ -2443,22 +2443,6 @@ export default function Feed({ forcedMode } = {}) {
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
-      {!forcedMode && (
-        <aside className="home-feed-left-tabs" aria-label="Home feed controls">
-          <div className="home-feed-view-tabs">
-            {[
-              { key: 'feed', label: 'Home' },
-              { key: 'following', label: 'Following' },
-              { key: 'local', label: 'Local' },
-              { key: 'restaurants', label: 'Restaurants' },
-            ].map(({ key, label }) => (
-              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
-            ))}
-            <Link to="/command-center" className="home-feed-rail-tab">Command Center</Link>
-          </div>
-          <HomeFeedTools showSources={usesSourceControls} />
-        </aside>
-      )}
       <div className="home-feed-content">
       <div className="page-header">
         <h1 className="page-title">
@@ -3011,6 +2995,21 @@ export default function Feed({ forcedMode } = {}) {
         />
       )}
       </div>
+      {!forcedMode && (
+        <aside className="home-feed-right-tabs" aria-label="Home feed controls">
+          <div className="home-feed-view-tabs">
+            {[
+              { key: 'feed', label: 'Home' },
+              { key: 'following', label: 'Following' },
+              { key: 'local', label: 'Local' },
+              { key: 'restaurants', label: 'Restaurants' },
+            ].map(({ key, label }) => (
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
+            ))}
+          </div>
+          <HomeFeedTools showSources={usesSourceControls} />
+        </aside>
+      )}
       </div>
 
       <style>{`
