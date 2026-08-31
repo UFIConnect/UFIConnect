@@ -9153,7 +9153,9 @@ function uniquePersonalizationTerms(values, max = PERSONALIZED_FEED_MAX_TERMS) {
 
 function userDeclaredFeedTopics(user, prefs = user?.preferences || {}) {
   return uniquePersonalizationTerms([
+    ...asArray(prefs.interests),
     ...asArray(prefs.interests).map(interestKeyword),
+    prefs.role,
     ...asArray(user?.skills),
   ]);
 }
@@ -14327,7 +14329,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
+async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _freshRetried = false, _wrapRetried = false }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -14426,7 +14428,13 @@ async function getCursorFeedPage({ sources, cursorMap = {}, limit = 20, mediaTyp
         // missed real, matching content for any topic whose stored casing
         // had drifted from the display string.
         params.push(topics.map(t => t.toLowerCase()));
-        clauses.push(`LOWER(fp.topic) = ANY($${params.length}::text[])`);
+        const topicsParam = params.length;
+        if (topicBypassSources.length) {
+          params.push(topicBypassSources);
+          clauses.push(`(LOWER(fp.topic) = ANY($${topicsParam}::text[]) OR fp.source = ANY($${params.length}::text[]))`);
+        } else {
+          clauses.push(`LOWER(fp.topic) = ANY($${topicsParam}::text[])`);
+        }
       }
       const rangeMs = feedTimeRangeMs(timeRange);
       if (rangeMs > 0) {
@@ -16263,10 +16271,7 @@ async function handleFeedRequest(req, res) {
   // connected-social keyword search further down — moved up here (used to
   // live right before the balanced-query call) so it's available to every
   // branch that reads the shared snapshot, not just the one that builds it.
-  const userTopics = [
-    ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-    ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
-  ];
+  const userTopics = userDeclaredFeedTopics(user, prefs);
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -16387,6 +16392,8 @@ async function handleFeedRequest(req, res) {
     const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
     const cursorMap = decodeFeedCursor(req.query.cursor);
+    const usesSavedTopicScope = !topicsFilter.length && userTopics.length > 0;
+    const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? userTopics : null);
     // Was null (fully unbounded) for 'all' — getCursorFeedPage's query is a
     // PARTITION BY window function, same cost profile as getBalancedFeedPosts
     // above (see its own dbTimeRange comment), so leaving 'all' unbounded here
@@ -16398,7 +16405,7 @@ async function handleFeedRequest(req, res) {
     // into an empty feed. Reusing dbTimeRange (already computed above for
     // this exact reason) instead of a separate null-for-'all' rule brings
     // this path in line with every other sort mode.
-    const cursorTimeRange = dbTimeRange;
+    const cursorTimeRange = usesSavedTopicScope ? '20d' : dbTimeRange;
 
     let extraLists = {};
     if (isUnfiltered) {
@@ -16423,7 +16430,8 @@ async function handleFeedRequest(req, res) {
       sources: cursorSources,
       cursorMap,
       limit: feedLimit,
-      topics: topicsFilter.length ? topicsFilter : null,
+      topics: cursorTopics,
+      topicBypassSources: usesSavedTopicScope ? JOB_LISTING_SOURCES : [],
       timeRange: cursorTimeRange,
       extraLists,
       seenIds,
@@ -16882,13 +16890,13 @@ async function handleFeedRequest(req, res) {
   // let a real account see repeats: with a small community-post pool, the
   // same handful of internal posts resurface at the top of every "newest"
   // page since nothing else was rotating them out.
-  const internal = filterUnseen(posts.map((p) => {
+  const internal = filterForUser(filterUnseen(posts.map((p) => {
     const post = serializeCommunityPost(p, req.user.id);
     return {
       ...post,
       fromJoinedGroup: joined.has(p.groupId),
     };
-  }), seenIds);
+  }), seenIds));
 
   // Default aggregate view (no source filter, no multi-source, page 1 — the
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
@@ -17329,11 +17337,12 @@ async function handleFeedRequest(req, res) {
   };
 
   if (isDefaultAggregateView) {
+    const memberSnapshotPosts = filterForUser(externalDiversified);
     mainFeedSnapshots.set(mainFeedSnapshotKey(req.user.id, sortMode, timeRange), {
       computedAt: Date.now(),
-      posts: externalDiversified,
-      hasMore: externalDiversified.length > 0,
-      totalAvailable: externalDiversified.length,
+      posts: memberSnapshotPosts,
+      hasMore: memberSnapshotPosts.length > 0,
+      totalAvailable: memberSnapshotPosts.length,
       sources: sourcesBreakdown,
       refresh: refreshMeta,
     });
@@ -17565,10 +17574,9 @@ async function handleVideoFeedRequest(req, res) {
     const personalizeVideosForUser = (items, options = {}) => (
       personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
     );
-    const userTopics = [
-      ...(prefs.interests || []).map(interestKeyword).filter(Boolean),
-      ...asArray(user?.skills).filter(s => typeof s === 'string').map(s => s.trim()).filter(s => s.length > 1).slice(0, 4),
-    ];
+    const userTopics = userDeclaredFeedTopics(user, prefs);
+    const scopedVideoTopics = topicsFilter.length ? topicsFilter : (userTopics.length ? userTopics : null);
+    const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '7d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => (
       topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false })
     );
@@ -17626,7 +17634,7 @@ async function handleVideoFeedRequest(req, res) {
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 8));
       const { posts: balancedRaw } = await getBalancedFeedPosts({
         sortMode: 'balanced', mediaType: 'video', source: balancedSource,
-        timeRange: videoTimeRange || 'all', page: reqPage, perSourcePageSize,
+        timeRange: scopedVideoTimeRange || 'all', page: reqPage, perSourcePageSize,
       });
       const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
@@ -17642,7 +17650,7 @@ async function handleVideoFeedRequest(req, res) {
     if (!isUnfilteredVideo) {
       const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: feedLimit,
-        mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       const filtered = personalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch)));
       return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
@@ -17660,7 +17668,7 @@ async function handleVideoFeedRequest(req, res) {
     if (isFreshSession && cursorSources.length) {
       const intro = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap, limit: cursorSources.length,
-        mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       introPosts = applyPersonalTopicFilter(intro.posts.filter(matchesSearch));
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
@@ -17686,7 +17694,7 @@ async function handleVideoFeedRequest(req, res) {
     if (remaining > 0) {
       const mix = await fetchPlayableVideoPage({
         sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
-        mediaType: 'video', topics: topicsFilter.length ? topicsFilter : null, timeRange: videoTimeRange, seenIds, freshOnly,
+        mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
       const mixCandidates = mix.posts.filter(p => !introIds.has(p.id)).filter(matchesSearch);
       mixPosts = applyPersonalTopicFilter(mixCandidates).slice(0, remaining);
