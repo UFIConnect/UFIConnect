@@ -304,9 +304,9 @@ export default function Onboarding() {
       const ctx = loadSignupCtx();
       if (ctx?.bio)   payload.bio   = ctx.bio;
       if (ctx?.title) payload.title = ctx.title;
-      await client.post('/profile/onboarding', payload);
+      const { data } = await client.post('/profile/onboarding', payload);
       localStorage.removeItem('ufi_signup_ctx');
-      updateProfileLocally({ onboardingComplete: true });
+      updateProfileLocally(data.profile || data);
       navigate('/', { replace: true });
     } catch {
       setError('We could not save your setup. Check your connection and try again.');

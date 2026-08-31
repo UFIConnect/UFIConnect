@@ -15543,7 +15543,9 @@ app.get('/auth/config', (_req, res) => {
 });
 
 app.get('/auth/me', authenticate, async (req, res) => {
-  const user = await getUser(req.user.id);
+  const user = (isDBId(req.user.id) && db.isConnected())
+    ? (await fetchAndSyncUser(req.user.id) || await getUser(req.user.id))
+    : await getUser(req.user.id);
   if (!user) return res.status(401).json({ message: 'User not found.' });
   res.json({ profile: fullProfile(user) });
 });
@@ -16043,8 +16045,11 @@ app.delete('/social/connect/:platform', authenticate, async (req, res) => {
 });
 
 app.get('/profile', authenticate, async (req, res) => {
-  // Always try to refresh from DB so data survives restarts
-  const user = await getUser(req.user.id);
+  // Profile reads are the account source of truth. Refresh DB-backed users
+  // so a save made through another Render instance is immediately visible.
+  const user = (isDBId(req.user.id) && db.isConnected())
+    ? (await fetchAndSyncUser(req.user.id) || await getUser(req.user.id))
+    : await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });
   res.json(fullProfile(user));
 });
