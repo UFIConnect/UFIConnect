@@ -8896,6 +8896,20 @@ try {
   countryDisplayNames = new Intl.DisplayNames(['en'], { type: 'region' });
 } catch {}
 
+function countryCodeFromInput(value) {
+  const input = String(value || '').trim();
+  if (!input) return null;
+  return /^[a-z]{2}$/i.test(input) ? input.toUpperCase() : null;
+}
+
+function cleanLocationInput(value) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
 function countryName(countryCode) {
   if (!countryCode) return null;
   try {
@@ -8912,15 +8926,21 @@ function countryName(countryCode) {
 // changing the feed API again. Missing or invalid location simply disables
 // this signal and leaves the existing feed order untouched.
 function getFeedLocationContext(req, user = null) {
-  const country = getUserCountry(req);
-  const city = cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
+  const saved = user?.roleSettings?.feedLocation || {};
+  const requestedCountry = cleanLocationInput(req.query?.country);
+  const requestedCity = cleanLocationInput(req.query?.city);
+  const savedCountry = cleanLocationInput(saved.country);
+  const savedCity = cleanLocationInput(saved.city);
+  const selectedCountry = requestedCountry || savedCountry;
+  const country = countryCodeFromInput(selectedCountry) || (selectedCountry ? null : getUserCountry(req));
+  const city = requestedCity || savedCity || cleanGeoHeader(req, ['cf-ipcity', 'x-vercel-ip-city', 'x-appengine-city', 'x-geo-city']);
   const region = cleanGeoHeader(req, ['cf-region', 'x-vercel-ip-country-region', 'x-appengine-region', 'x-geo-region']);
-  const declared = [user?.location, user?.preferences?.location]
-    .map(value => String(value || '').trim().slice(0, 80))
+  const declared = [selectedCountry, city, user?.location, user?.preferences?.location]
+    .map(cleanLocationInput)
     .filter(Boolean);
   return {
     country,
-    countryName: countryName(country),
+    countryName: selectedCountry || countryName(country),
     city,
     region,
     declared,
@@ -9053,6 +9073,220 @@ function rankFeedPostsForLocation(posts, locationContext, options = {}) {
     ranked.push(...chunk.map(item => withFeedLocationMatch(item.post, item.match)));
   }
   return ranked;
+}
+
+// Local discovery is intentionally provider-backed and cache-bounded: a
+// request never starts an unbounded crawl, while a busy city shares one
+// short-lived provider response across every member viewing it.
+const locationLiveFeedCache = new Map();
+const LOCATION_LIVE_CACHE_MAX = 160;
+const LOCATION_ACTIVITY_CACHE_MS = 3 * 60 * 1000;
+const LOCATION_RESTAURANT_CACHE_MS = 10 * 60 * 1000;
+const LOCATION_GEOCODE_CACHE_MS = 24 * 60 * 60 * 1000;
+const LOCATION_PROVIDER_MAX_IN_FLIGHT = 4;
+let locationProviderInFlight = 0;
+
+async function withLocationProviderSlot(task) {
+  if (locationProviderInFlight >= LOCATION_PROVIDER_MAX_IN_FLIGHT) {
+    throw new Error('Local discovery is briefly at capacity. Please retry shortly.');
+  }
+  locationProviderInFlight += 1;
+  try {
+    return await task();
+  } finally {
+    locationProviderInFlight = Math.max(0, locationProviderInFlight - 1);
+  }
+}
+
+function fetchLocationJSON(url, extraHeaders = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      fn(value);
+    };
+    const request = https.get(url, {
+      headers: {
+        'User-Agent': 'UFIconnect-LocalDiscovery/1.0 (https://uficonnect.org)',
+        Accept: 'application/json',
+        ...extraHeaders,
+      },
+    }, (response) => {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        finish(reject, new Error(`HTTP ${response.statusCode} for local discovery provider`));
+        return;
+      }
+      let body = '';
+      response.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 2_000_000) request.destroy(new Error('Local discovery response exceeded the size limit.'));
+      });
+      response.on('end', () => {
+        try { finish(resolve, JSON.parse(body)); }
+        catch (error) { finish(reject, new Error(`Local discovery JSON parse failed: ${error.message}`)); }
+      });
+    });
+    request.once('error', (error) => finish(reject, error));
+    request.setTimeout(6000, () => request.destroy(new Error('Local discovery provider timed out.')));
+  });
+}
+
+function locationScopeLabel(location) {
+  return [location?.city, location?.countryName].filter(Boolean).join(', ');
+}
+
+function locationCacheKey(kind, location) {
+  return `${kind}:${String(location?.city || '').toLowerCase()}:${String(location?.countryName || '').toLowerCase()}`;
+}
+
+async function readLocationLiveCache(key, ttl, loader) {
+  const now = Date.now();
+  const cached = locationLiveFeedCache.get(key);
+  if (cached?.posts && cached.expiresAt > now) return cached;
+  if (cached?.pending) return cached.posts ? cached : cached.pending;
+
+  const entry = cached || { posts: [], fetchedAt: null, expiresAt: 0, pending: null };
+  entry.pending = Promise.resolve()
+    .then(loader)
+    .then((posts) => {
+      entry.posts = Array.isArray(posts) ? posts : [];
+      entry.fetchedAt = new Date().toISOString();
+      entry.expiresAt = Date.now() + ttl;
+      entry.error = null;
+      return entry;
+    })
+    .catch((error) => {
+      entry.error = error?.message || 'Location provider unavailable';
+      entry.expiresAt = Date.now() + Math.min(ttl, 60 * 1000);
+      return entry;
+    })
+    .finally(() => { entry.pending = null; });
+  locationLiveFeedCache.set(key, entry);
+  trimOldestMapEntries(locationLiveFeedCache, LOCATION_LIVE_CACHE_MAX);
+  return entry.posts.length ? entry : entry.pending;
+}
+
+function locationFeedTimestamp(value, fallback = Date.now()) {
+  const raw = String(value || '').trim();
+  const gdelt = raw.match(/^(\d{4})(\d{2})(\d{2})T?(\d{2})(\d{2})(\d{2})?/);
+  if (gdelt) {
+    const [, year, month, day, hour = '00', minute = '00', second = '00'] = gdelt;
+    return new Date(Date.UTC(+year, +month - 1, +day, +hour, +minute, +second)).toISOString();
+  }
+  return normalizeTimestamp(raw, fallback);
+}
+
+async function fetchLocalActivityPosts(location) {
+  const scope = locationScopeLabel(location);
+  if (!scope) return [];
+  const params = new URLSearchParams({
+    query: location.city ? `\"${location.city}\"` : `\"${location.countryName}\"`,
+    mode: 'artlist',
+    format: 'json',
+    maxrecords: '100',
+    timespan: '3h',
+    sort: 'HybridRel',
+  });
+  const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://api.gdeltproject.org/api/v2/doc/doc?${params.toString()}`));
+  const articles = Array.isArray(data?.articles) ? data.articles : [];
+  return articles
+    .filter(article => article?.url && article?.title)
+    .map((article, index) => ({
+      id: `gdelt:${crypto.createHash('sha1').update(article.url).digest('hex')}`,
+      source: 'localpulse',
+      sourceLabel: 'Local Pulse',
+      sourceUrl: article.url,
+      title: decodeHTMLEntities(article.title).slice(0, 500),
+      content: `Live coverage from ${article.domain || 'the web'} for ${scope}.`,
+      author: { name: article.domain || 'GDELT' },
+      authorName: article.domain || 'GDELT',
+      mediaUrl: article.socialimage || null,
+      mediaType: article.socialimage ? 'image' : null,
+      createdAt: locationFeedTimestamp(article.seendate || article.datetime),
+      isExternal: true,
+      location: scope,
+      city: location.city || null,
+      country: location.countryName || null,
+      topic: 'Local Activity',
+      activityScore: Math.max(1, 100 - index),
+      matchedByLocation: true,
+      locationMatch: 'local',
+      locationMatchLabel: `Live in ${scope}`,
+      group: { id: 'local_activity', name: 'Local Activity', category: 'Community', externalUrl: article.url },
+    }));
+}
+
+async function geocodeLocation(location) {
+  const scope = locationScopeLabel(location);
+  if (!scope) return null;
+  const key = `geocode:${scope.toLowerCase()}`;
+  const entry = await readLocationLiveCache(key, LOCATION_GEOCODE_CACHE_MS, async () => {
+    const params = new URLSearchParams({ format: 'jsonv2', limit: '1', q: scope });
+    const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://nominatim.openstreetmap.org/search?${params.toString()}`));
+    const first = Array.isArray(data) ? data[0] : null;
+    if (!first || !Number.isFinite(Number(first.lat)) || !Number.isFinite(Number(first.lon))) return [];
+    return [{ lat: Number(first.lat), lon: Number(first.lon) }];
+  });
+  return entry?.posts?.[0] || null;
+}
+
+async function fetchLocalRestaurantPosts(location) {
+  if (!location?.city) return [];
+  const point = await geocodeLocation(location);
+  if (!point) return [];
+  const query = `[out:json][timeout:15];nwr[\"amenity\"~\"^(restaurant|cafe|fast_food)$\"](around:8000,${point.lat},${point.lon});out center meta 80;`;
+  const data = await withLocationProviderSlot(() => fetchLocationJSON(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`));
+  const scope = locationScopeLabel(location);
+  const elements = Array.isArray(data?.elements) ? data.elements : [];
+  return elements
+    .filter(element => element?.id && (element.tags?.name || element.tags?.brand))
+    .map((element) => {
+      const tags = element.tags || {};
+      const openedAt = tags.opening_date && !Number.isNaN(new Date(tags.opening_date).getTime())
+        ? new Date(tags.opening_date).toISOString()
+        : null;
+      const updatedAt = locationFeedTimestamp(openedAt || element.timestamp);
+      const address = [tags['addr:housenumber'], tags['addr:street'], tags['addr:city']].filter(Boolean).join(' ');
+      const details = [tags.cuisine && `${tags.cuisine.replace(/;/g, ', ')} cuisine`, address, tags.opening_hours].filter(Boolean).join(' · ');
+      return {
+        id: `osm:${element.type}:${element.id}`,
+        source: 'restaurants',
+        sourceLabel: 'Restaurants',
+        sourceUrl: `https://www.openstreetmap.org/${element.type}/${element.id}`,
+        title: tags.name || tags.brand,
+        content: details || `Local restaurant in ${scope}.`,
+        author: { name: 'OpenStreetMap' },
+        authorName: 'OpenStreetMap',
+        createdAt: updatedAt,
+        isExternal: true,
+        location: scope,
+        city: location.city,
+        country: location.countryName || null,
+        topic: 'Restaurant Culture',
+        activityScore: openedAt ? new Date(openedAt).getTime() : new Date(updatedAt).getTime(),
+        matchedByLocation: true,
+        locationMatch: 'local',
+        locationMatchLabel: `Updated near ${location.city}`,
+        group: { id: 'local_restaurants', name: 'Local Restaurants', category: 'Community', externalUrl: `https://www.openstreetmap.org/#map=14/${point.lat}/${point.lon}` },
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+async function getLocationLiveFeed(kind, location) {
+  const scope = locationScopeLabel(location);
+  if (!scope || (kind === 'restaurants' && !location?.city)) {
+    return { posts: [], fetchedAt: null, locationRequired: kind === 'restaurants' ? 'Choose a city to see nearby restaurants.' : 'Choose a country or city to see local activity.' };
+  }
+  const key = locationCacheKey(kind, location);
+  const ttl = kind === 'restaurants' ? LOCATION_RESTAURANT_CACHE_MS : LOCATION_ACTIVITY_CACHE_MS;
+  const loader = kind === 'restaurants'
+    ? () => fetchLocalRestaurantPosts(location)
+    : () => fetchLocalActivityPosts(location);
+  const entry = await readLocationLiveCache(key, ttl, loader);
+  return { posts: entry?.posts || [], fetchedAt: entry?.fetchedAt || null, providerError: entry?.error || null };
 }
 // Hard per-user topic filter — runs ahead of buildTwoPhaseMix below, so
 // only posts matching one of the viewer's own onboarding-selected
@@ -16443,7 +16677,9 @@ async function handleFeedRequest(req, res) {
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
   ), 250);
-  const feedMode = req.query.mode === 'archive' ? 'archive' : req.query.mode === 'following' ? 'following' : 'feed';
+  const feedMode = ['archive', 'following', 'local', 'restaurants'].includes(req.query.mode)
+    ? req.query.mode
+    : 'feed';
   const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
   const timeRange = normalizeFeedTimeRange(req.query.timeRange || req.query.range);
   // 'ranked' sort computes its score per row with no supporting index, so an
@@ -16495,6 +16731,26 @@ async function handleFeedRequest(req, res) {
     : '2d';
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
+
+  if (feedMode === 'local' || feedMode === 'restaurants') {
+    const localFeed = await getLocationLiveFeed(feedMode, locationContext);
+    const available = filterUnseen(localFeed.posts, seenIds);
+    const offset = (reqPage - 1) * feedLimit;
+    const pageRows = available.slice(offset, offset + feedLimit);
+    trackPostsSeen(pageRows);
+    return res.json({
+      posts: pageRows,
+      mode: feedMode,
+      sort: feedMode === 'local' ? 'activity' : 'newest',
+      page: reqPage,
+      hasMore: offset + pageRows.length < available.length,
+      totalAvailable: available.length,
+      fetchedAt: localFeed.fetchedAt,
+      location: { country: locationContext.countryName || null, city: locationContext.city || null },
+      locationRequired: localFeed.locationRequired || null,
+      providerError: localFeed.providerError || null,
+    });
+  }
 
   // True chronological infinite scroll (see getCursorFeedPage) — the
   // client's own default sort, so this covers the primary Feed experience,

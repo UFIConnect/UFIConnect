@@ -1174,6 +1174,20 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('feed')}
         />
         <AutomationToolCard
+          title="Local Pulse"
+          description="Open the provider-backed live activity stream for your saved country and city."
+          status="Live provider cache"
+          actionLabel="Open Local Feed"
+          to="/?feed=local"
+        />
+        <AutomationToolCard
+          title="Restaurant Finder"
+          description="Review recently updated nearby restaurant listings using your saved city."
+          status="Location aware"
+          actionLabel="Open Restaurants"
+          to="/?feed=restaurants"
+        />
+        <AutomationToolCard
           title="Your Content"
           description="Review and download your own connected-platform posts where the API supports it."
           status={`${metricValue(snapshot.connectedPlatforms)} connected`}

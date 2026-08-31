@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, Component, memo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -196,6 +196,13 @@ const FEED_DEDUP_WINDOW = 600;
 
 const FEED_STATE_KEY = 'ufi_feed_state';
 
+function normalizeLocationFilters(value = {}) {
+  return {
+    country: String(value?.country || '').replace(/[<>]/g, '').trim().slice(0, 80),
+    city: String(value?.city || '').replace(/[<>]/g, '').trim().slice(0, 80),
+  };
+}
+
 function loadFeedState() {
   try {
     const raw = sessionStorage.getItem(FEED_STATE_KEY);
@@ -208,14 +215,15 @@ function loadFeedState() {
       filters,
       activeTabs,
       search:     typeof s.search === 'string' ? s.search : '',
-      viewMode:   s.viewMode === 'following' ? 'following' : 'feed',
+      viewMode:   ['following', 'local', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed',
+      location:   normalizeLocationFilters(s.location),
     };
   } catch { return null; }
 }
 
-function saveFeedState(filters, activeTabs, search, viewMode) {
+function saveFeedState(filters, activeTabs, search, viewMode, location) {
   try {
-    sessionStorage.setItem(FEED_STATE_KEY, JSON.stringify({ filters, activeTabs, search, viewMode }));
+    sessionStorage.setItem(FEED_STATE_KEY, JSON.stringify({ filters, activeTabs, search, viewMode, location }));
   } catch {}
 }
 
@@ -1582,7 +1590,8 @@ function writeFeedCache(posts) {
 // than a second feed engine; the toggle pill below is just hidden so /you
 // can't be switched away from it mid-visit.
 export default function Feed({ forcedMode } = {}) {
-  const { profile } = useAuth();
+  const { profile, updateProfileLocally } = useAuth();
+  const routeLocation = useLocation();
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
@@ -1613,6 +1622,9 @@ export default function Feed({ forcedMode } = {}) {
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(forcedMode || _saved?.viewMode || 'feed');
+  const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(_saved?.location));
+  const [locationSaving, setLocationSaving] = useState(false);
+  const [locationMessage, setLocationMessage] = useState('');
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
@@ -1643,6 +1655,7 @@ export default function Feed({ forcedMode } = {}) {
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
   const viewModeRef   = useRef(forcedMode || _saved?.viewMode || 'feed');
+  const locationFiltersRef = useRef(normalizeLocationFilters(_saved?.location));
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
@@ -1692,7 +1705,9 @@ export default function Feed({ forcedMode } = {}) {
     const activeMode = requestedMode || viewModeRef.current;
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
-    const requestedSources = activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs;
+    const requestedSources = ['feed', 'following'].includes(activeMode)
+      ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
+      : [];
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
@@ -1709,6 +1724,8 @@ export default function Feed({ forcedMode } = {}) {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
+      if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
+      if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
       if (bust) {
         params.set('bust', '1');
       }
@@ -1797,6 +1814,9 @@ export default function Feed({ forcedMode } = {}) {
       setRemoteHasMore(data.hasMore !== false);
       setLastRefresh(new Date(refreshTimestamp));
       setSourceErrors(data.sourceErrors || {});
+      if (['local', 'restaurants'].includes(activeMode)) {
+        setLocationMessage(data.locationRequired || data.providerError || '');
+      }
     } catch (e) {
       console.error(e);
       const status = e?.response?.status;
@@ -1814,15 +1834,27 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => { postsRef.current = posts; }, [posts]);
   useEffect(() => { filtersRef.current = filters; }, [filters]);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  useEffect(() => { locationFiltersRef.current = locationFilters; }, [locationFilters]);
   useEffect(() => { searchRef.current = search; }, [search]);
 
   // Persist filter state so the page reopens with the same settings
   useEffect(() => {
-    saveFeedState(filters, activeTabs, search, viewMode);
-  }, [filters, activeTabs, search, viewMode]);
+    saveFeedState(filters, activeTabs, search, viewMode, locationFilters);
+  }, [filters, activeTabs, search, viewMode, locationFilters]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
+
+  const profileLocationKey = `${profile?.id || ''}:${profile?.roleSettings?.feedLocation?.country || ''}:${profile?.roleSettings?.feedLocation?.city || ''}`;
+  useEffect(() => {
+    if (!profile?.id) return;
+    const saved = normalizeLocationFilters(profile.roleSettings?.feedLocation);
+    const current = locationFiltersRef.current;
+    if (saved.country === current.country && saved.city === current.city) return;
+    locationFiltersRef.current = saved;
+    setLocationFilters(saved);
+    loadFeed(false, activeTabsRef.current, { replace: true });
+  }, [profileLocationKey, profile?.id, profile?.roleSettings?.feedLocation, loadFeed]);
 
   // This is now the app's one real "refresh" action — clicking Feed (while
   // already on Feed) re-pulls the current view exactly as filtered, rather
@@ -1833,7 +1865,7 @@ export default function Feed({ forcedMode } = {}) {
   // fresh, freshly-sorted data instead of several buttons each doing their
   // own version of it.
   const switchViewMode = useCallback((mode) => {
-    const nextMode = mode === 'following' ? 'following' : 'feed';
+    const nextMode = ['following', 'local', 'restaurants'].includes(mode) ? mode : 'feed';
     viewModeRef.current = nextMode;
     setViewMode(nextMode);
     setRemotePage(2);
@@ -1866,6 +1898,13 @@ export default function Feed({ forcedMode } = {}) {
     });
   }, [loadFeed]);
 
+  useEffect(() => {
+    if (forcedMode) return;
+    const requested = new URLSearchParams(routeLocation.search).get('feed');
+    if (!['local', 'restaurants', 'following', 'feed'].includes(requested) || requested === viewModeRef.current) return;
+    switchViewMode(requested);
+  }, [forcedMode, routeLocation.search, switchViewMode]);
+
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
     next.sort = normalizeFeedSort(next.sort);
@@ -1897,6 +1936,29 @@ export default function Feed({ forcedMode } = {}) {
     setRemoteHasMore(true);
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
   }, [loadFeed]);
+
+  const applyLocationFilters = useCallback(async (event) => {
+    event?.preventDefault();
+    const next = normalizeLocationFilters(locationFiltersRef.current);
+    locationFiltersRef.current = next;
+    setLocationFilters(next);
+    setLocationSaving(true);
+    setLocationMessage('');
+    try {
+      const { data } = await client.patch('/profile', {
+        roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
+      });
+      updateProfileLocally({ roleSettings: data.roleSettings || { ...(profile?.roleSettings || {}), feedLocation: next } });
+      setLocationMessage(next.country || next.city ? 'Location saved for your feeds.' : 'Location filter cleared.');
+    } catch {
+      setLocationMessage('Location saved for this session. Try again later to sync it across devices.');
+    } finally {
+      setLocationSaving(false);
+      setRemotePage(2);
+      setRemoteHasMore(true);
+      loadFeed(false, activeTabsRef.current, { replace: true });
+    }
+  }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
 
   // Debounced search handler
   const debouncedSearch = useMemo(
@@ -1969,7 +2031,9 @@ export default function Feed({ forcedMode } = {}) {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
       activeFilters.sort = normalizeFeedSort(activeFilters.sort);
-      const requestedSources = activeFilters.sources?.length ? activeFilters.sources : tabs;
+      const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
+        ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
+        : [];
       const q = searchRef.current.trim();
       const useCursor = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
       const params = new URLSearchParams({
@@ -1995,6 +2059,8 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
+      if (locationFiltersRef.current.country) params.set('country', locationFiltersRef.current.country);
+      if (locationFiltersRef.current.city) params.set('city', locationFiltersRef.current.city);
       const { data } = await client.get(`/office/feed?${params.toString()}`);
       // A flat all-time dedup here used to make infinite scroll dead-end
       // (once a user had paged through the whole shared pool once, every
@@ -2052,7 +2118,7 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (viewModeRef.current !== 'feed') return;
+      if (!['feed', 'local', 'restaurants'].includes(viewModeRef.current)) return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -2076,7 +2142,7 @@ export default function Feed({ forcedMode } = {}) {
       const y = window.scrollY;
       const pulledToTop = y <= 0 && lastScrollY > 40;
       lastScrollY = y;
-      if (!pulledToTop || viewModeRef.current !== 'feed') return;
+      if (!pulledToTop || !['feed', 'local', 'restaurants'].includes(viewModeRef.current)) return;
       const state = loadStateRef.current;
       if (state.loading || state.refreshing || state.loadingMore) return;
       if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
@@ -2334,7 +2400,11 @@ export default function Feed({ forcedMode } = {}) {
           </span>
         </h1>
         <p className="page-subtitle">
-          Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.
+          {viewMode === 'local'
+            ? 'Fresh local coverage, ranked by live activity so the city has something new to say.'
+            : viewMode === 'restaurants'
+              ? 'Recently updated local restaurant listings, ready for the important work of deciding where to eat.'
+              : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
         </p>
       </div>
 
@@ -2416,7 +2486,7 @@ export default function Feed({ forcedMode } = {}) {
             <FilterPanel
               filters={filters}
               onChange={applyFilters}
-              sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
+              sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : viewMode === 'feed' ? ALL_FILTER_SOURCES : []}
               onClose={() => setFilterOpen(false)}
               panelRef={panelRef}
             />
@@ -2437,6 +2507,8 @@ export default function Feed({ forcedMode } = {}) {
           {[
             { key: 'feed',      label: 'Home' },
             { key: 'following', label: 'Following' },
+            { key: 'local',     label: 'Local' },
+            { key: 'restaurants', label: 'Restaurants' },
           ].map(({ key, label }) => {
             const active = viewMode === key;
             return (
@@ -2458,10 +2530,55 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       )}
 
+      {viewMode !== 'following' && (
+        <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>Location</span>
+          <input
+            className="form-input"
+            aria-label="Country filter"
+            placeholder="Country"
+            value={locationFilters.country}
+            maxLength={80}
+            onChange={(event) => {
+              const next = { ...locationFiltersRef.current, country: event.target.value };
+              locationFiltersRef.current = next;
+              setLocationFilters(next);
+            }}
+            style={{ width: 150, minWidth: 120, padding: '7px 11px', fontSize: '.8rem', borderRadius: 18 }}
+          />
+          <input
+            className="form-input"
+            aria-label="City filter"
+            placeholder="City"
+            value={locationFilters.city}
+            maxLength={80}
+            onChange={(event) => {
+              const next = { ...locationFiltersRef.current, city: event.target.value };
+              locationFiltersRef.current = next;
+              setLocationFilters(next);
+            }}
+            style={{ width: 150, minWidth: 120, padding: '7px 11px', fontSize: '.8rem', borderRadius: 18 }}
+          />
+          <button type="submit" className="btn btn-primary btn-sm" disabled={locationSaving}>
+            {locationSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Apply'}
+          </button>
+          {(locationFilters.country || locationFilters.city) && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
+              const next = { country: '', city: '' };
+              locationFiltersRef.current = next;
+              setLocationFilters(next);
+            }}>
+              Clear
+            </button>
+          )}
+          {locationMessage && <span style={{ fontSize: '.76rem', color: 'var(--muted)' }}>{locationMessage}</span>}
+        </form>
+      )}
+
       {/* Source tabs — Feed and Following each filter over their own
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
           list of sources can appear in the other view. */}
-      <div style={{
+      {viewMode === 'following' && (<div style={{
         display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
         paddingBottom: 4, scrollbarWidth: 'none',
         WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
@@ -2489,7 +2606,7 @@ export default function Feed({ forcedMode } = {}) {
             </button>
           );
         })}
-      </div>
+      </div>)}
 
       {(activeTabs.length > 0 || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
@@ -2670,7 +2787,11 @@ export default function Feed({ forcedMode } = {}) {
             gap: 8
           }}>
             <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
-            {activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
+            {viewMode === 'local'
+              ? 'Loading local activity...'
+              : viewMode === 'restaurants'
+                ? 'Loading nearby restaurants...'
+                : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
           </div>
           <PostCardSkeleton />
           <PostCardSkeleton />
@@ -2693,10 +2814,10 @@ export default function Feed({ forcedMode } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'local' ? 'Local' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'local' ? 'No local activity yet' : viewMode === 'restaurants' ? 'No nearby restaurants yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -2738,6 +2859,15 @@ export default function Feed({ forcedMode } = {}) {
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
                 </div>
+              </>
+            ) : (viewMode === 'local' || viewMode === 'restaurants') ? (
+              <>
+                <p style={{ marginBottom: 12 }}>
+                  {locationMessage || (viewMode === 'restaurants'
+                    ? 'Add your city above to see recently updated nearby restaurant listings.'
+                    : 'Add a country or city above to tune this live local stream.')}
+                </p>
+                <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
             ) : viewMode === 'following' ? (
               <>
