@@ -3,7 +3,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import FollowListModal from '../components/FollowListModal';
-import PostList from '../components/PostList';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
@@ -110,35 +109,6 @@ export default function Profile() {
       .then(({ data }) => setFollowStats({ followersCount: data.followersCount, followingCount: data.followingCount }))
       .catch(() => {});
   }, [profile?.id]);
-
-  // Load posts created by this member
-  useEffect(() => {
-    if (!profile?.id) return;
-    setPostsLoading(true);
-    client.get(`/users/${profile.id}/posts`)
-      .then(({ data }) => { setPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
-      .catch(() => { setPosts([]); setPostsHasMore(false); })
-      .finally(() => setPostsLoading(false));
-  }, [profile?.id]);
-
-  // See PostList's onNearEnd / ImageLightbox's "max view" — same reasoning
-  // as GroupDetail's loadMoreGroupPosts: without this, scrolling through
-  // this member's photos/videos in the fullscreen viewer dead-ended at
-  // whatever the initial fetch happened to return.
-  async function loadMorePosts() {
-    if (postsLoadingMore || !postsHasMore || !profile?.id) return;
-    setPostsLoadingMore(true);
-    try {
-      const { data } = await client.get(`/users/${profile.id}/posts`, { params: { offset: posts.length } });
-      const incoming = data.posts || [];
-      setPosts(prev => {
-        const knownIds = new Set(prev.map(p => p.id));
-        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
-      });
-      setPostsHasMore(!!data.hasMore);
-    } catch {}
-    finally { setPostsLoadingMore(false); }
-  }
 
   function fetchAttachments() {
     setAttachmentsLoading(true);
@@ -463,7 +433,7 @@ export default function Profile() {
         />
       )}
 
-      <div className="profile-workspace">
+      <div className="profile-workspace profile-workspace--details">
         <section className="profile-posts-column">
           {editing === 'profile' ? (
             <form className="card" onSubmit={handleSave}>
@@ -502,30 +472,11 @@ export default function Profile() {
                   {profile.bio || 'Add a short bio so people know what you are building and learning.'}
                 </p>
               </div>
-              <div className="card" style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                  <div>
-                    <h2 style={{ fontSize: '1rem', margin: '0 0 4px' }}>Your UFIconnect posts</h2>
-                    <p style={{ fontSize: '.84rem', color: 'var(--muted)', margin: 0 }}>Only posts you share with the UFIconnect community live here.</p>
-                  </div>
-                  <Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>Write a post</Link>
-                </div>
-              </div>
-              <PostList
-                posts={posts}
-                loading={postsLoading}
-                emptyTitle="No posts yet"
-                emptyDesc="Write your first community post and it will appear on your profile."
-                emptyAction={<Link to="/post" className="btn btn-primary btn-sm" style={{ textDecoration: 'none' }}>Write a post</Link>}
-                currentUserId={profile?.id}
-                onPostDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
-                onNearEnd={loadMorePosts}
-              />
             </>
           )}
         </section>
 
-        <aside className="profile-side-panels" aria-label="Profile tools">
+        {false && <aside className="profile-side-panels" aria-label="Profile tools">
           <ProfilePanel
             title="Connected accounts"
             summary="Manage the sources you bring into UFIconnect"
@@ -632,7 +583,7 @@ export default function Profile() {
               <button className="btn btn-ghost btn-sm" type="button" onClick={startFileEdit}>Add profile links</button>
             )}
           </ProfilePanel>
-        </aside>
+        </aside>}
       </div>
 
       {/* ── OVERVIEW TAB ─────────────────────────────────────── */}

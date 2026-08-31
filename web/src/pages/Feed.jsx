@@ -7,6 +7,7 @@ import client from '../api/client';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import HomeFeedTools from '../components/HomeFeedTools';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
 import { reportEngagementSignal } from '../api/engagement';
@@ -2384,6 +2385,22 @@ export default function Feed({ forcedMode } = {}) {
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
+      {!forcedMode && (
+        <aside className="home-feed-left-tabs" aria-label="Home feed views">
+          <span className="home-feed-rail-label">Browse</span>
+          {[
+            { key: 'feed', label: 'Home' },
+            { key: 'following', label: 'Following' },
+            { key: 'local', label: 'Local' },
+            { key: 'restaurants', label: 'Restaurants' },
+          ].map(({ key, label }) => (
+            <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
+          ))}
+          <span className="home-feed-rail-label" style={{ marginTop: 14 }}>Workspace</span>
+          <Link to="/you" className="home-feed-rail-tab">Your feed</Link>
+          <Link to="/command-center" className="home-feed-rail-tab">Command Center</Link>
+        </aside>
+      )}
       <div className="home-feed-content">
       <div className="page-header">
         <h1 className="page-title">
@@ -2494,41 +2511,6 @@ export default function Feed({ forcedMode } = {}) {
         </div>
 
       </div>
-
-      {/* View-mode tabs: Feed (Personal Feed + All Collected merged into one
-          stable, server-sorted view) and Following (posts from people you
-          follow on UFIconnect). Videos lives as its own top-level nav item
-          (see Layout.jsx / pages/Videos.jsx) rather than nested in here.
-          Hidden entirely under forcedMode (the /you route) — that page IS
-          Following mode as its own dedicated tab, so switching away from it
-          in place would leave the URL and the content mismatched. */}
-      {!forcedMode && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-          {[
-            { key: 'feed',      label: 'Home' },
-            { key: 'following', label: 'Following' },
-            { key: 'local',     label: 'Local' },
-            { key: 'restaurants', label: 'Restaurants' },
-          ].map(({ key, label }) => {
-            const active = viewMode === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                onClick={() => switchViewMode(key)}
-                style={{
-                  padding: '7px 14px', borderRadius: 20, fontWeight: 700, fontSize: '.82rem', cursor: 'pointer',
-                  border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-                  background: active ? 'var(--primary)' : 'var(--surface)',
-                  color: active ? '#fff' : 'var(--text)',
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {viewMode !== 'following' && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -2971,6 +2953,7 @@ export default function Feed({ forcedMode } = {}) {
         />
       )}
       </div>
+      {!forcedMode && <HomeFeedTools />}
       </div>
 
       <style>{`
