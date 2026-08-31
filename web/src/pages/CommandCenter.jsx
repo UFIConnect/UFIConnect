@@ -15,7 +15,7 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 // CONNECTED_SOCIAL_PLATFORMS render as "Coming soon" in Your Feed instead,
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
-const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'bluesky'];
+const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky'];
 // Platforms with a real, working publish-on-your-behalf API. Other connected
 // platforms remain visible but are queued until their API path is available.
 const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok'];
@@ -1496,7 +1496,7 @@ function AutomationSection({ onSelectSection }) {
         />
         <AutomationToolCard
           title="Connected Accounts"
-          description="Manage Instagram and TikTok connections that only use your authorized account posts."
+          description="Manage Instagram, TikTok, and Threads connections that only use your authorized account posts."
           status={`${metricValue(snapshot.memberOnlyConnectedPlatforms)} connected`}
           actionLabel="Open Accounts"
           onClick={() => onSelectSection('accounts')}

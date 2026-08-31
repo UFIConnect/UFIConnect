@@ -51,7 +51,7 @@ export const SOURCE_META = {
 
 // Account-owned integrations are managed in Command Center. They only use
 // content from the member who authorizes them and never enter shared feeds.
-export const COMMAND_CENTER_ACCOUNT_PLATFORMS = ['instagram', 'tiktok'];
+export const COMMAND_CENTER_ACCOUNT_PLATFORMS = ['instagram', 'tiktok', 'threads'];
 
 // Every platform a user can link via Connected Accounts (mirrors
 // CONNECTED_SOCIAL_PLATFORMS server-side). Not every entry has a live

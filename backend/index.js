@@ -12704,7 +12704,7 @@ const PLATFORMS = {
   },
   threads: {
     name: 'Threads', color: '#000000', icon: 'threads',
-    description: 'Pull in your Threads posts and conversations.',
+    description: 'Import posts from your authorized Threads account and cross-post from Command Center.',
     scopes: ['threads_basic', 'threads_read_replies', 'threads_content_publish'],
     authUrl: 'https://threads.net/oauth/authorize',
     loginUrl: 'https://www.threads.net/login',
@@ -12759,10 +12759,10 @@ const PLATFORMS = {
 // team_id — neither could ever pull real content no matter how the OAuth
 // side was wired up. bluesky has a real following-feed fetcher
 // (fetchBlueskyFollowingTimeline, wired into FOLLOWING_SOURCE_FETCHERS
-// below); dribbble and threads stay listed for identity/profile purposes
-// only — see FOLLOWING_SOURCE_FETCHERS' own comment for why neither has a
-// real following-feed fetcher (their APIs genuinely don't expose one, own-
-// content-only); medium still feeds the app-level aggregate feed via its
+// below); dribbble stays listed for identity/profile purposes only.
+// Threads is an account-owned Command Center integration with its own-post
+// fetcher, while neither platform has a real following-feed API. Medium
+// still feeds the app-level aggregate feed via its
 // own tag-based fetcher, just not Following specifically, same reason.
 const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'linkedin', 'twitter', 'facebook', 'instagram', 'tiktok',
@@ -12782,7 +12782,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin', 'tiktok']);
 // from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
 // These networks are account-owned: their content is only shown to the
 // member who explicitly connected the account, never in the shared pool.
-const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok']);
+const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads']);
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
@@ -13671,6 +13671,51 @@ async function fetchTikTokOwnVideos(token, { bust = false, connectedAt = null } 
   }
 }
 
+async function fetchThreadsOwnPosts(token, { bust = false, connectedAt = null } = {}) {
+  if (!token) return [];
+  const key = connectedSourceCacheKey('threads_own', token, connectedAt);
+  const cached = !bust && getCached(key);
+  if (cached) return cached;
+  try {
+    // The Threads API returns only the authenticated member's Threads from
+    // /me/threads. This must remain separate from shared-feed ingestion.
+    const window = connectedSourceWindow(connectedAt);
+    const posts = [];
+    let next = `https://graph.threads.net/me/threads?fields=id,text,timestamp,permalink,media_type,media_url,thumbnail_url&limit=100&access_token=${encodeURIComponent(token)}`;
+    for (let page = 0; page < CONNECTED_ACCOUNT_HISTORY_MAX_PAGES && next; page++) {
+      if (!next.startsWith('https://graph.threads.net/')) break;
+      const result = await fetchJSON(next);
+      const pagePosts = (Array.isArray(result?.data) ? result.data : []).map(thread => {
+        const mediaType = String(thread.media_type || '').toUpperCase();
+        const isVideo = mediaType === 'VIDEO';
+        const text = String(thread.text || '').trim();
+        return {
+          id: `threads_own_${thread.id}`,
+          source: 'threads',
+          sourceLabel: 'Threads',
+          title: text.slice(0, 120) || 'Threads post',
+          content: text,
+          sourceUrl: thread.permalink || null,
+          mediaUrl: isVideo ? (thread.thumbnail_url || thread.media_url || null) : (thread.media_url || null),
+          mediaType: isVideo ? 'video_thumbnail_only' : (thread.media_url ? 'image' : null),
+          createdAt: normalizeTimestamp(thread.timestamp),
+        };
+      });
+      posts.push(...pagePosts);
+      if (pageReachedConnectedStart(pagePosts, connectedAt)) break;
+      next = result?.paging?.next || '';
+    }
+    const scoped = capFollowingPosts(posts, { sinceMs: window.startMs, untilMs: window.untilMs, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    setCached(key, scoped, CONNECTED_ACCOUNT_CACHE_TTL_MS);
+    return scoped;
+  } catch (e) {
+    console.warn('Threads own posts fetch:', e.message);
+    const stale = postCache.get(key)?.v;
+    if (stale) return stale;
+    throw e;
+  }
+}
+
 async function fetchBlueskyOwnPosts(token, { bust = false, connectedAt = null } = {}) {
   if (!token) return [];
   let session;
@@ -13737,8 +13782,9 @@ const OWN_CONTENT_FETCHERS = {
   twitch: fetchTwitchOwnVideos,
   instagram: fetchInstagramOwnPosts,
   tiktok: fetchTikTokOwnVideos,
+  threads: fetchThreadsOwnPosts,
   bluesky: fetchBlueskyOwnPosts,
-  // dribbble/threads/medium: real own-content APIs exist (see the comment
+  // dribbble/medium: real own-content APIs exist (see the comment
   // above FOLLOWING_SOURCE_FETCHERS) but aren't wired up yet — "Coming
   // soon" in Your Feed rather than an unverified integration.
 };
