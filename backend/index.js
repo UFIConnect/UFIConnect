@@ -22141,9 +22141,8 @@ app.post('/push/unsubscribe', authenticate, async (req, res) => {
   try {
     const { endpoint } = req.body || {};
     if (!endpoint) return res.status(400).json({ message: 'endpoint required.' });
-    if (db.isConnected()) {
-      await db.query(`DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2`, [endpoint, req.user.id]);
-    }
+    if (!db.isConnected()) return res.status(503).json({ message: 'Temporarily unavailable - please try again in a moment.' });
+    await db.query(`DELETE FROM push_subscriptions WHERE endpoint=$1 AND user_id=$2`, [endpoint, req.user.id]);
     res.json({ ok: true });
   } catch (e) {
     console.error('POST /push/unsubscribe:', e);

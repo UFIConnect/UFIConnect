@@ -49,6 +49,9 @@ export async function disablePush() {
   const subscription = registration ? await registration.pushManager.getSubscription() : null;
   if (!subscription) return;
   const endpoint = subscription.endpoint;
+  // Account state comes first: do not claim notifications are off while the
+  // server can still target this device. The browser unsubscribe is a local
+  // cleanup after the durable subscription row is gone.
+  await client.post('/push/unsubscribe', { endpoint });
   await subscription.unsubscribe().catch(() => {});
-  await client.post('/push/unsubscribe', { endpoint }).catch(() => {});
 }
