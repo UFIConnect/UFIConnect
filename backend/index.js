@@ -24042,8 +24042,43 @@ app.delete('/profile/attachments/:id', authenticate, async (req, res) => {
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Deleting is temporarily unavailable — please try again in a moment.' });
     }
-    await db.query(`DELETE FROM attachments WHERE id=$1 AND user_id=$2`, [req.params.id, req.user.id]);
-    res.json({ deleted: true });
+    const result = await db.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        const { rows } = await client.query(
+          `DELETE FROM attachments WHERE id=$1 AND user_id=$2 RETURNING id, is_primary`,
+          [req.params.id, req.user.id]
+        );
+        if (!rows[0]) {
+          await client.query('ROLLBACK');
+          return null;
+        }
+
+        let primaryId = null;
+        if (rows[0].is_primary) {
+          const { rows: replacements } = await client.query(
+            `SELECT id FROM attachments
+             WHERE user_id=$1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1
+             FOR UPDATE`,
+            [req.user.id]
+          );
+          if (replacements[0]) {
+            primaryId = replacements[0].id;
+            await client.query(`UPDATE attachments SET is_primary=true WHERE id=$1`, [primaryId]);
+          }
+        }
+
+        await client.query('COMMIT');
+        return { id: rows[0].id, primaryId };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
+    if (!result) return res.status(404).json({ message: 'Resume not found.' });
+    res.json({ deleted: true, id: result.id, primaryId: result.primaryId });
   } catch (e) { console.error('DELETE /profile/attachments/:id:', e.message); res.status(500).json({ message: 'Failed to delete.' }); }
 });
 

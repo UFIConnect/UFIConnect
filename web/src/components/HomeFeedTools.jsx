@@ -65,6 +65,8 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [selectingAttachmentId, setSelectingAttachmentId] = useState(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState(null);
   const [links, setLinks] = useState(null);
   const [editingLinks, setEditingLinks] = useState(false);
   const [savingLinks, setSavingLinks] = useState(false);
@@ -164,6 +166,42 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
     } catch { showToast('Could not download this file.', 'error'); }
   }
 
+  async function selectAttachment(attachment) {
+    if (!attachment?.id || attachment.isPrimary || selectingAttachmentId || deletingAttachmentId) return;
+    setSelectingAttachmentId(attachment.id);
+    try {
+      await client.post(`/profile/attachments/${encodeURIComponent(attachment.id)}/select`);
+      setAttachments(current => current.map(item => ({ ...item, isPrimary: item.id === attachment.id })));
+      showToast('Resume selected for matching.', 'success');
+    } catch (error) {
+      showToast(error?.response?.data?.message || 'Could not select this resume.', 'error');
+    } finally {
+      setSelectingAttachmentId(null);
+    }
+  }
+
+  async function deleteAttachment(attachment) {
+    if (!attachment?.id || deletingAttachmentId || selectingAttachmentId) return;
+    const filename = attachment.filename || 'this resume';
+    if (!window.confirm(`Delete "${filename}"? This cannot be undone.`)) return;
+    setDeletingAttachmentId(attachment.id);
+    try {
+      const { data } = await client.delete(`/profile/attachments/${encodeURIComponent(attachment.id)}`);
+      const nextPrimaryId = data?.primaryId || null;
+      setAttachments(current => current
+        .filter(item => item.id !== attachment.id)
+        .map(item => ({
+          ...item,
+          isPrimary: nextPrimaryId ? item.id === nextPrimaryId : (attachment.isPrimary ? false : item.isPrimary),
+        })));
+      showToast('Resume deleted.', 'success');
+    } catch (error) {
+      showToast(error?.response?.data?.message || 'Could not delete this resume.', 'error');
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  }
+
   async function saveLinks(event) {
     event.preventDefault();
     setSavingLinks(true);
@@ -242,10 +280,29 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         {uploadError && <div className="auth-error" style={{ marginTop: 8 }}>{uploadError}</div>}
         {attachmentsLoading ? <div style={{ padding: '12px 0', textAlign: 'center' }}><span className="spinner spinner-primary" /></div> : attachments.map(attachment => {
           const score = scoreStyle(attachment.atsScore);
-          return <div key={attachment.id} style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 8, fontSize: '.78rem' }}>
-            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{attachment.filename}</span>
-            <span style={{ color: score.color, background: score.background, border: `1px solid ${score.border}`, padding: '2px 5px', borderRadius: 4, fontWeight: 700 }}>{attachment.atsScore}/100</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadAttachment(attachment)} style={{ padding: '4px 7px' }}>Get</button>
+          const selecting = selectingAttachmentId === attachment.id;
+          const deleting = deletingAttachmentId === attachment.id;
+          return <div key={attachment.id} style={{ marginTop: 8, padding: 8, border: '1px solid var(--border)', borderRadius: 6, background: attachment.isPrimary ? 'var(--primary-light)' : 'var(--card)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: '.78rem' }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: attachment.isPrimary ? 700 : 500 }}>{attachment.filename}</span>
+              {Number.isFinite(Number(attachment.atsScore)) && <span style={{ color: score.color, background: score.background, border: `1px solid ${score.border}`, padding: '2px 5px', borderRadius: 4, fontWeight: 700, whiteSpace: 'nowrap' }}>{attachment.atsScore}/100</span>}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+              <button
+                type="button"
+                className={`btn btn-sm${attachment.isPrimary ? ' btn-primary' : ' btn-ghost'}`}
+                onClick={() => selectAttachment(attachment)}
+                disabled={attachment.isPrimary || selectingAttachmentId !== null || deletingAttachmentId !== null}
+                title={attachment.isPrimary ? 'Used for job matching' : 'Use this resume for job matching'}
+                style={{ padding: '4px 7px' }}
+              >
+                {selecting ? <span className="spinner" style={{ width: 11, height: 11 }} /> : attachment.isPrimary ? 'Selected' : 'Use'}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => downloadAttachment(attachment)} disabled={selectingAttachmentId !== null || deletingAttachmentId !== null} style={{ padding: '4px 7px' }}>Get</button>
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => deleteAttachment(attachment)} disabled={selectingAttachmentId !== null || deletingAttachmentId !== null} style={{ padding: '4px 7px' }}>
+                {deleting ? <span className="spinner" style={{ width: 11, height: 11 }} /> : 'Delete'}
+              </button>
+            </div>
           </div>;
         })}
         {!editingLinks ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setLinks({ ...(profile?.links || {}) }); setEditingLinks(true); }} style={{ marginTop: 10 }}>Edit links</button> : (
