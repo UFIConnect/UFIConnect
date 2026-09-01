@@ -406,8 +406,8 @@ export default function ResumeBuilder() {
       };
     });
 
-  function useTrackedJobForWriting(job) {
-    if (activeBuilderTab === 'cover-letter') {
+  function useTrackedJobForWriting(job, destination) {
+    if (destination === 'cover-letter') {
       setData(prev => ({
         ...prev,
         coverLetter: {
@@ -417,6 +417,7 @@ export default function ResumeBuilder() {
           jobDescription: job.content || prev.coverLetter.jobDescription,
         },
       }));
+      setActiveBuilderTab('cover-letter');
       showToast('Job details added to your cover letter.', 'success');
       return;
     }
@@ -430,6 +431,7 @@ export default function ResumeBuilder() {
         context: `I am interested in the ${job.title || 'open'} role${job.org ? ` at ${job.org}` : ''}.`,
       },
     }));
+    setActiveBuilderTab('outreach');
     showToast('Job and contact details added to your message.', 'success');
   }
 
@@ -532,6 +534,7 @@ export default function ResumeBuilder() {
                 ['resume', 'Resume'],
                 ['cover-letter', 'Cover letter'],
                 ['outreach', 'Reach-out messages'],
+                ['jobs', 'Jobs & contacts'],
               ].map(([key, label]) => (
                 <button
                   key={key}
@@ -692,43 +695,45 @@ export default function ResumeBuilder() {
             </div>
             </>}
 
-            {activeBuilderTab !== 'resume' && <div className="card">
+            {activeBuilderTab === 'jobs' && <div className="card">
+              <div style={{ marginBottom: 16 }}>
+                <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Jobs and people to reach out to</h3>
+                <p style={{ margin: 0, fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Saved and applied roles from your Job Tracker. Use one to tailor a cover letter or reach-out message.
+                </p>
+              </div>
+              {trackedJobsLoading ? (
+                <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Loading your tracked jobs...</div>
+              ) : trackedJobContacts.length === 0 ? (
+                <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Save or mark a job applied in Job Tracker to prepare a tailored draft here.</div>
+              ) : (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  {trackedJobContacts.map(job => (
+                    <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <div style={{ minWidth: 0 }}>
+                        <strong style={{ display: 'block', fontSize: '.86rem' }}>{job.title || 'Tracked role'}</strong>
+                        <span style={{ display: 'block', fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
+                          {[job.org || 'Hiring team', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' | ')}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
+                        {job.sourceUrl && <a className="btn btn-ghost btn-sm" href={job.sourceUrl} target="_blank" rel="noreferrer">Job</a>}
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => useTrackedJobForWriting(job, 'cover-letter')}>Copy for letter</button>
+                        <button type="button" className="btn btn-primary btn-sm" onClick={() => useTrackedJobForWriting(job, 'outreach')}>Copy for message</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>}
+
+            {(activeBuilderTab === 'cover-letter' || activeBuilderTab === 'outreach') && <div className="card">
               <div style={{ marginBottom: 16 }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{activeBuilderTab === 'cover-letter' ? 'Cover letter' : 'Reach-out messages'}</h3>
                 <p style={{ margin: 0, fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>
                   Draft from the resume above, then edit the result. Each generated draft is saved with your resume.
                 </p>
               </div>
-              <section aria-label="Saved and applied jobs" style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '12px 0', marginBottom: 18 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', marginBottom: 8 }}>
-                  <strong style={{ fontSize: '.82rem' }}>Jobs and people to reach out to</strong>
-                  <span style={{ fontSize: '.72rem', color: 'var(--muted)' }}>From your Job Tracker</span>
-                </div>
-                {trackedJobsLoading ? (
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Loading your tracked jobs...</div>
-                ) : trackedJobContacts.length === 0 ? (
-                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Save or mark a job applied in Job Tracker to prepare a tailored draft here.</div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 8, maxHeight: 250, overflowY: 'auto', paddingRight: 2 }}>
-                    {trackedJobContacts.map(job => (
-                      <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--border)' }}>
-                        <div style={{ minWidth: 0 }}>
-                          <strong style={{ display: 'block', fontSize: '.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.title || 'Tracked role'}</strong>
-                          <span style={{ display: 'block', fontSize: '.74rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {[job.org || 'Hiring team', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' · ')}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          {job.sourceUrl && <a className="btn btn-ghost btn-sm" href={job.sourceUrl} target="_blank" rel="noreferrer">Job</a>}
-                          <button type="button" className="btn btn-primary btn-sm" onClick={() => useTrackedJobForWriting(job)}>
-                            {activeBuilderTab === 'cover-letter' ? 'Use for letter' : 'Use for message'}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </section>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 22 }}>
                 {activeBuilderTab === 'cover-letter' && (
                   <div style={{ minWidth: 0 }}>
