@@ -361,7 +361,15 @@ function ContentHubSection() {
 
   async function handleHashtagDraft(e) {
     e.preventDefault();
-    if (!hashtagTopic.trim() || draftingHashtags) return;
+    if (!drafts?.length) {
+      showToast('Draft your content first, then create matching hashtags.', 'error');
+      return;
+    }
+    if (!hashtagTopic.trim()) {
+      showToast('Add a topic before drafting hashtags.', 'error');
+      return;
+    }
+    if (draftingHashtags) return;
     setDraftingHashtags(true);
     setHashtagGroups(null);
     setNotConfigured(false);
@@ -465,7 +473,7 @@ function ContentHubSection() {
               style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem' }}
             />
           </div>
-          <button className="btn btn-primary" type="submit" disabled={draftingHashtags || !hashtagTopic.trim()} style={{ alignSelf: 'flex-start' }}>
+          <button className="btn btn-primary" type="submit" disabled={draftingHashtags} style={{ alignSelf: 'flex-start' }}>
             {draftingHashtags ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Draft hashtags'}
           </button>
         </form>
