@@ -279,7 +279,7 @@ export default function Opportunities() {
         <link rel="canonical" href="https://uficonnect.org/opportunities" />
       </Helmet>
       <Layout>
-        <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+        <div className="page-header opportunities-page-header">
           <h1 className="page-title">
             All Opportunities
             {liveCount > 0 && (
@@ -291,12 +291,7 @@ export default function Opportunities() {
               </span>
             )}
           </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={requestRefresh} disabled={loading || refreshing}>
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
-            <Link to="/resume-builder" className="btn btn-primary btn-sm">Resume Builder</Link>
-          </div>
+          <Link to="/resume-builder" className="btn btn-primary btn-sm opportunities-resume-builder">Resume Builder</Link>
         </div>
 
         {/* Search bar */}
@@ -475,27 +470,47 @@ export default function Opportunities() {
             <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
               Search more platforms
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {Object.entries(PLATFORM_META).map(([key, meta]) => (
+            <div className="opportunities-platform-links">
+              {Object.entries(PLATFORM_META).filter(([key]) => key !== 'google').map(([key, meta]) => (
                 platformSearchUrls[key] && (
                   <a
                     key={key}
                     href={platformSearchUrls[key]}
                     target="_blank"
                     rel="noopener noreferrer"
+                    className="opportunities-platform-link"
                     title={meta.loginRequired ? `${meta.label} requires a school or employer login to search` : undefined}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
-                      background: meta.bg, color: meta.color,
-                      fontSize: '.78rem', fontWeight: 700, textDecoration: 'none',
-                      border: `1.5px solid ${meta.color}55`,
-                    }}
+                    style={{ background: meta.bg, color: meta.color, borderColor: `${meta.color}55` }}
                   >
                     {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''}
                   </a>
                 )
               ))}
+              <div className="opportunities-google-refresh">
+                {platformSearchUrls.google && (
+                  <a
+                    href={platformSearchUrls.google}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="opportunities-platform-link"
+                    style={{
+                      background: PLATFORM_META.google.bg,
+                      color: PLATFORM_META.google.color,
+                      borderColor: `${PLATFORM_META.google.color}55`,
+                    }}
+                  >
+                    {PLATFORM_META.google.icon} Search {PLATFORM_META.google.label}
+                  </a>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm opportunities-refresh-btn"
+                  onClick={requestRefresh}
+                  disabled={loading || refreshing}
+                >
+                  {refreshing ? 'Refreshing...' : 'Refresh'}
+                </button>
+              </div>
             </div>
           </div>
         )}

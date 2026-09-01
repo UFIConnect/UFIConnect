@@ -657,6 +657,42 @@ input, textarea, select { font-family: inherit; }
 .page-header {
   margin-bottom: 20px;
 }
+.opportunities-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.opportunities-resume-builder {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.opportunities-platform-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.opportunities-platform-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1.5px solid;
+  border-radius: var(--radius-sm);
+  font-size: .78rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.opportunities-google-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.opportunities-refresh-btn { white-space: nowrap; }
 .page-title {
   font-size: 1.4rem;
   font-weight: 800;
@@ -2031,6 +2067,41 @@ input, textarea, select { font-family: inherit; }
   /* Page header tighter */
   .page-header { margin-bottom: 16px; }
   .page-title  { font-size: 1.3rem; }
+  .opportunities-page-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+  }
+  .opportunities-page-header .page-title { min-width: 0; }
+  .opportunities-resume-builder {
+    margin-left: 0;
+    align-self: start;
+  }
+  .opportunities-platform-links {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 8px;
+  }
+  .opportunities-platform-link {
+    width: 100%;
+    min-height: 36px;
+    padding-inline: 8px;
+    text-align: center;
+    white-space: normal;
+  }
+  .opportunities-google-refresh {
+    grid-column: 1 / -1;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .opportunities-google-refresh .opportunities-platform-link,
+  .opportunities-refresh-btn {
+    width: 100%;
+    min-height: 36px;
+    justify-content: center;
+  }
 
   /* Cards full-width */
   .card { border-radius: 10px; }
