@@ -67,7 +67,9 @@ export default function ConnectedAccounts() {
       // instead of needing server log access.
       const [reasonBase, providerCode] = (errReason || '').split(':');
       const msg = reasonBase === 'invalid_state' ? 'Connection expired — please try again.'
-        : reasonBase === 'access_denied'          ? 'You cancelled the connection.'
+        : reasonBase === 'access_denied' && errPlatform === 'youtube'
+          ? 'YouTube did not grant access. In Google Cloud, publish the OAuth app or add this Google account as a test user, then try again.'
+        : reasonBase === 'access_denied'          ? 'The provider did not grant access. Please try again.'
         : providerCode                            ? `Could not connect ${errPlatform}: ${decodeURIComponent(providerCode)}.`
         : `Could not connect ${errPlatform}.`;
       flash_('error', msg, 8000);
