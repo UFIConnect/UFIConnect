@@ -28020,6 +28020,19 @@ function isCloudinaryCrossPostImageUrl(url) {
   }
 }
 
+function isCloudinaryCrossPostVideoUrl(url) {
+  const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || '').trim();
+  if (!cloudName) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:'
+      && parsed.hostname === 'res.cloudinary.com'
+      && parsed.pathname.startsWith(`/${cloudName}/video/upload/`);
+  } catch {
+    return false;
+  }
+}
+
 function cloudinaryJpegVariant(mediaUrl) {
   const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || '').trim();
   const marker = `/${cloudName}/image/upload/`;
@@ -28404,13 +28417,16 @@ async function refreshCrossPostAccessToken(userId, platform) {
   }
 }
 
-async function publishCrossPostTarget(user, platform, { content, mediaUrl }) {
+async function publishCrossPostTarget(user, platform, { content, mediaUrl, mediaType = null }) {
   const capability = getCrossPostCapability(platform);
   if (!capability.supported) {
     return { platform, status: 'unsupported', error: 'UFIconnect cannot publish to this connected account yet.' };
   }
   const token = user.socialTokens?.[platform];
   if (!token) return { platform, status: 'failed', error: 'Not connected.' };
+  if (mediaType === 'video' && capability.media !== 'link') {
+    return { platform, status: 'failed', error: 'This platform needs a native video publishing connection.' };
+  }
   if (capability.requiresPhoto && !mediaUrl) {
     const label = platform === 'instagram' ? 'Instagram' : 'TikTok';
     return { platform, status: 'failed', error: `${label} requires a photo.` };
@@ -28514,16 +28530,19 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
   }
   const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
   const requestedMediaUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
-  const mediaUrl = isCloudinaryCrossPostImageUrl(requestedMediaUrl) ? requestedMediaUrl.slice(0, 1000) : null;
+  const mediaType = req.body?.mediaType === 'video' ? 'video' : 'image';
+  const mediaUrl = (mediaType === 'video'
+    ? isCloudinaryCrossPostVideoUrl(requestedMediaUrl)
+    : isCloudinaryCrossPostImageUrl(requestedMediaUrl)) ? requestedMediaUrl.slice(0, 1000) : null;
   const platforms = [...new Set((Array.isArray(req.body?.platforms) ? req.body.platforms : [])
     .map(platform => String(platform || '').trim().toLowerCase())
     .filter(platform => CONNECTED_SOCIAL_PLATFORMS.has(platform)))]
     .slice(0, MAX_CROSS_POST_TARGETS);
-  if (!content && !mediaUrl) return res.status(400).json({ message: 'Write something or add a photo.' });
+  if (!content && !mediaUrl) return res.status(400).json({ message: 'Write something or add media.' });
   if (content.length > 4000) return res.status(400).json({ message: 'Keep the post under 4,000 characters.' });
-  if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'The photo must be uploaded through UFIconnect first.' });
+  if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'Media must be uploaded through UFIconnect first.' });
   if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
-  const screening = await screenMemberContent({ content, mediaUrl, mediaType: mediaUrl ? 'image' : null, kind: 'cross_post', maxLength: 4000 });
+  const screening = await screenMemberContent({ content, mediaUrl, mediaType: mediaUrl ? mediaType : null, kind: 'cross_post', maxLength: 4000 });
   if (!screening.allowed) {
     const unavailable = screening.reason === 'screening_unavailable';
     return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Post screening is temporarily unavailable. Please try again shortly.' : 'This post cannot be cross-posted.' });
@@ -28542,7 +28561,11 @@ app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, a
     return res.status(503).json({ message: 'Cross-post history could not be prepared. Nothing was sent; please try again shortly.' });
   }
 
-  const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, { content: screenedContent, mediaUrl })));
+  const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, {
+    content: screenedContent,
+    mediaUrl,
+    mediaType: mediaUrl ? mediaType : null,
+  })));
   let historySaved = true;
   try {
     await db.query(`UPDATE cross_posts SET targets=$1 WHERE id=$2 AND user_id=$3`, [JSON.stringify(targets), id, req.user.id]);

@@ -678,7 +678,7 @@ function MediaStudioSection({ onOpenCrossPost }) {
           {asset.type === 'video'
             ? <video src={asset.url} controls playsInline style={{ width: '100%', maxHeight: 420, borderRadius: 8, background: '#111' }} />
             : <img src={asset.url} alt="Generated for your post" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 8, background: 'var(--bg-secondary)' }} />}
-          {asset.type === 'image' && (
+          {(asset.type === 'image' || asset.type === 'video') && (
             <button type="button" className="btn btn-primary btn-sm" onClick={sendToCrossPost} style={{ alignSelf: 'flex-start' }}>
               Use in Cross-Post
             </button>
@@ -1328,13 +1328,17 @@ function CrossPostSection() {
     loadCrossPostData();
     try {
       const stored = JSON.parse(sessionStorage.getItem('ufi_crosspost_media') || 'null');
-      if (stored?.url && stored?.type === 'image') setMedia(stored);
+      if (stored?.url && (stored?.type === 'image' || stored?.type === 'video')) setMedia(stored);
       sessionStorage.removeItem('ufi_crosspost_media');
     } catch {}
   }, [loadCrossPostData]);
 
   function toggle(platform) {
     const capability = platforms[platform]?.crossPost;
+    if (media?.type === 'video' && capability?.media !== 'link') {
+      showToast(`${SOURCE_META[platform]?.label || platform} needs a native video publishing connection.`, 'error');
+      return;
+    }
     if (capability?.requiresPhoto && !media) {
       showToast(`Add a photo before selecting ${SOURCE_META[platform]?.label || platform}.`, 'error');
       return;
@@ -1385,7 +1389,12 @@ function CrossPostSection() {
     setPosting(true);
     setLastResult(null);
     try {
-      const { data } = await client.post('/command-center/cross-post', { content: content.trim(), mediaUrl: media?.url, platforms: [...selected] });
+      const { data } = await client.post('/command-center/cross-post', {
+        content: content.trim(),
+        mediaUrl: media?.url,
+        mediaType: media?.type,
+        platforms: [...selected],
+      });
       setLastResult(data.targets || []);
       setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
       if (!data.historySaved) showToast('Your post was sent, but its history will finish syncing shortly.', 'error');
@@ -1481,7 +1490,9 @@ function CrossPostSection() {
               />
               {media && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <img src={media.url} alt="Selected for cross-posting" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6 }} />
+                  {media.type === 'video'
+                    ? <video src={media.url} muted playsInline style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6, background: '#111' }} />
+                    : <img src={media.url} alt="Selected for cross-posting" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6 }} />}
                   <button type="button" className="btn btn-ghost btn-sm" onClick={removePhoto}>Remove photo</button>
                 </div>
               )}
@@ -1526,7 +1537,9 @@ function CrossPostSection() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {history.map(h => (
               <div key={h.id} className="card">
-                {h.mediaUrl && <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />}
+                {h.mediaUrl && (h.mediaUrl.includes('/video/upload/')
+                  ? <video src={h.mediaUrl} controls playsInline style={{ width: '100%', maxHeight: 280, borderRadius: 6, marginBottom: 10, background: '#111' }} />
+                  : <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />)}
                 <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}>{h.content}</p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
                   {(h.targets || []).map(t => {
