@@ -129,6 +129,8 @@ function resolveVideoSource(post) {
     const playlist = deriveBlueskyPlaylistUrl(post.mediaUrl);
     return playlist ? { kind: 'hls', src: playlist, poster: post.mediaPoster || null } : null;
   }
+  const hlsUrl = [post.mediaUrl, post.sourceUrl].find(url => /\.m3u8(\?|$)/i.test(String(url || '')));
+  if (hlsUrl) return { kind: 'hls', src: hlsUrl, poster: post.mediaPoster || null };
   if (isDirectVideoUrl(post.mediaUrl)) {
     // mediaPoster is a real static preview frame server-side extracts
     // alongside the video itself where the source actually has one (Reddit's

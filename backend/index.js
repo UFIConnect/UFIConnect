@@ -9715,6 +9715,7 @@ const COUNTRIES_SELECTED_DISCOVERY_CACHE_MS = 15 * 60 * 1000;
 const COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE = 2;
 const COUNTRIES_DISCOVERY_NEWS_MAX_POSTS = 220;
 const COUNTRIES_SELECTED_NEWS_MAX_POSTS = 24;
+const COUNTRIES_SELECTED_EVENTS_MAX_POSTS = 24;
 const COUNTRIES_SELECTED_GUIDES_MAX = 4;
 const COUNTRIES_GUIDES_PER_REFRESH = 15;
 const COUNTRIES_GUIDE_BATCH_SIZE = 4;
@@ -10317,6 +10318,88 @@ async function fetchSelectedTravelNewsPosts(location) {
     .slice(0, COUNTRIES_SELECTED_NEWS_MAX_POSTS);
 }
 
+function selectedTravelEventsEdition(location) {
+  const scope = locationScopeLabel(location);
+  if (!scope) return null;
+  const countryCode = /^[A-Z]{2}$/i.test(String(location?.country || ''))
+    ? String(location.country).toUpperCase()
+    : 'US';
+  const placeTerms = [location?.city, location?.countryName]
+    .map(cleanLocationInput)
+    .filter(Boolean)
+    .map(value => `\"${value.replace(/\"/g, '')}\"`);
+  return {
+    label: `Events near ${scope}`,
+    gl: countryCode,
+    hl: 'en',
+    ceid: `${countryCode}:en`,
+    query: `(${placeTerms.join(' OR ')}) (event OR events OR festival OR concert OR exhibition OR market OR fair OR \"things to do\" OR \"what's on\") -\"tourism tax\" -\"travel ban\" when:30d`,
+    location: {
+      scope,
+      city: location?.city || null,
+      country: location?.countryName || null,
+      countryCode: location?.country || null,
+    },
+  };
+}
+
+function isSelectedTravelEventItem(item) {
+  const text = `${item?.title || ''} ${item?.desc || ''}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const eventTerms = /\b(event|events|festival|concert|exhibition|market|fair|parade|celebration|workshop|performance|what'?s on|things to do)\b/;
+  const exclusions = /\b(tourism tax|travel ban|visa scam|ticket scam|stock|earnings)\b/;
+  return eventTerms.test(text) && !exclusions.test(text);
+}
+
+function selectedTravelEventPost(item, edition) {
+  const publisher = item.source || 'Google News';
+  const storyKey = countryDiscoveryStoryKey(item) || item.link || `${publisher}:${item.title}`;
+  const articleHash = crypto.createHash('md5').update(storyKey).digest('hex').slice(0, 20);
+  const suffix = ` - ${publisher}`;
+  const title = String(item.title || '').endsWith(suffix)
+    ? String(item.title).slice(0, -suffix.length)
+    : item.title;
+  return {
+    id: `travel_event_${articleHash}`,
+    source: 'travelevents',
+    sourceLabel: 'Local Events',
+    sourceUrl: item.link,
+    title,
+    content: item.desc || `A current event update near ${edition.location.scope}.`,
+    author: { id: `travel_event_${articleHash}`, name: publisher, title: 'Local events', organization: publisher },
+    authorName: publisher,
+    createdAt: normalizeTimestamp(item.pubDate),
+    isExternal: true,
+    topic: 'Travel & Adventure',
+    coverageRegion: edition.label,
+    location: edition.location?.scope || null,
+    city: edition.location?.city || null,
+    country: edition.location?.country || null,
+    countryCode: edition.location?.countryCode || null,
+    activityScore: parseTimestampMs(item.pubDate) || Date.now(),
+    mediaType: null,
+    mediaUrl: null,
+    group: {
+      id: 'country_travel_events',
+      name: 'Events Near Your Travel Pick',
+      category: 'Travel',
+      externalUrl: item.link,
+    },
+  };
+}
+
+async function fetchSelectedTravelEventPosts(location) {
+  const edition = selectedTravelEventsEdition(location);
+  if (!edition) return [];
+  const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+  return parseRSSItems(xml)
+    .filter(item => item?.title && item?.link && isSelectedTravelEventItem(item))
+    .map(item => selectedTravelEventPost(item, edition))
+    .slice(0, COUNTRIES_SELECTED_EVENTS_MAX_POSTS);
+}
+
 function sortDiscoveryPostsNewest(posts) {
   return [...(Array.isArray(posts) ? posts : [])]
     .filter(Boolean)
@@ -10464,14 +10547,17 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       locationCacheKey('countries:selected', location),
       COUNTRIES_SELECTED_DISCOVERY_CACHE_MS,
       async () => {
-        const [guideResult, newsResult] = await Promise.allSettled([
+        const [guideResult, eventResult, newsResult] = await Promise.allSettled([
           fetchSelectedTravelGuides(location),
+          fetchSelectedTravelEventPosts(location),
           fetchSelectedTravelNewsPosts(location),
         ]);
         if (guideResult.status === 'rejected') console.warn('[Travel] selected guide search failed:', guideResult.reason?.message || guideResult.reason);
+        if (eventResult.status === 'rejected') console.warn('[Travel] selected event search failed:', eventResult.reason?.message || eventResult.reason);
         if (newsResult.status === 'rejected') console.warn('[Travel] selected travel-news search failed:', newsResult.reason?.message || newsResult.reason);
         return weightedRoundRobinDiscoveryQueues([
           { posts: guideResult.status === 'fulfilled' ? guideResult.value : [], weight: 1 },
+          { posts: eventResult.status === 'fulfilled' ? eventResult.value : [], weight: 2 },
           { posts: newsResult.status === 'fulfilled' ? newsResult.value : [], weight: 2 },
         ]);
       },
@@ -10503,6 +10589,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
       liveCameras: liveFeeds.length,
       destinationGuides: travelPosts.filter(post => post?.source === 'wikivoyage').length,
       travelNews: travelPosts.filter(post => post?.source === 'travelnews').length,
+      travelEvents: travelPosts.filter(post => post?.source === 'travelevents').length,
       regionalPosts: regionalPosts.length,
       selectedLocation: selectedLocation ? locationScopeLabel(location) : null,
     },
@@ -19764,8 +19851,8 @@ async function handleFeedRequest(req, res) {
   const dbTimeRange = timeRange !== 'all' ? timeRange
     : !isSourceFiltered ? '1h'
     : filteredSourceCount <= 3 ? '20d'
-    : filteredSourceCount <= 8 ? '7d'
-    : '2d';
+    : filteredSourceCount <= 8 ? '24h'
+    : '6h';
   const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
   const searchQuery = (req.query.q || '').trim().toLowerCase();
 
@@ -19838,7 +19925,12 @@ async function handleFeedRequest(req, res) {
     // into an empty feed. Reusing dbTimeRange (already computed above for
     // this exact reason) instead of a separate null-for-'all' rule brings
     // this path in line with every other sort mode.
-    const cursorTimeRange = usesSavedTopicScope ? '20d' : dbTimeRange;
+    // A member's interests must not turn a broad source selection into a
+    // twenty-day backlog. Keep a deliberately selected single source deep,
+    // but keep Home's multi-source mix fresh enough to feel live.
+    const cursorTimeRange = usesSavedTopicScope && !isSourceFiltered
+      ? '24h'
+      : dbTimeRange;
 
     const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
       userId: req.user.id,
@@ -20850,6 +20942,7 @@ function isPlayableVideoPost(p) {
   // embedded-video URL are treated consistently with the client resolver.
   if (videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url))) return true;
   if (videoUrls.some(url => /vimeo\.com\/(?:video\/)?\d+/.test(url))) return true;
+  if (videoUrls.some(url => /\.m3u8(\?|$)/i.test(url))) return true;
   if (videoUrls.some(url => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url))) return true;
   return false;
 }
@@ -20913,18 +21006,23 @@ function sendVideoPage(req, res, posts, meta) {
   res.json({ posts, ...meta });
 }
 
-async function fetchPlayableVideoPage(params, attempts = 4) {
+async function fetchPlayableVideoPage(params, attempts = 8) {
   let cursorMap = params.cursorMap;
   let result = { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: true };
+  const playable = [];
+  const emitted = new Set();
   for (let i = 0; i < attempts; i++) {
     result = await getCursorFeedPage({ ...params, cursorMap });
-    const playable = result.posts.filter(isPlayableVideoPost);
-    if (playable.length > 0 || !result.hasMore) {
-      return { posts: playable, nextCursor: result.nextCursor, hasMore: result.hasMore };
+    for (const post of result.posts) {
+      if (!isPlayableVideoPost(post) || !post?.id || emitted.has(post.id)) continue;
+      emitted.add(post.id);
+      playable.push(post);
+      if (playable.length >= params.limit) break;
     }
+    if (playable.length >= params.limit || !result.hasMore) break;
     cursorMap = decodeFeedCursor(result.nextCursor);
   }
-  return { posts: [], nextCursor: result.nextCursor, hasMore: result.hasMore };
+  return { posts: playable, nextCursor: result.nextCursor, hasMore: result.hasMore };
 }
 
 async function handleVideoFeedRequest(req, res) {
