@@ -2454,7 +2454,7 @@ export default function VideoFeedView({ onExit }) {
           // it to 'grabbing' for the duration of an actual drag.
           style={{
             height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch',
-            userSelect: 'none', cursor: 'grab',
+            overscrollBehaviorY: 'contain', touchAction: 'pan-y', userSelect: 'none', cursor: 'grab',
           }}
         >
           {videoPosts.map((post, idx) => (
