@@ -36,8 +36,10 @@ function ShellIcon({ name, size = 20 }) {
 // row at .62rem leaves each column ~40-47px wide, and "Notifications" /
 // "Opportunities" (13 characters each) wrap badly at that width. The
 // desktop sidebar has room to spare, so it always uses the full label.
+const HOME_FEED_PATH = '/?feed=feed&all=1';
+
 const NAV = [
-  { to: '/?feed=feed&all=1', icon: 'home',       label: 'Home'         },
+  { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
   { to: '/post',          icon: 'posts',         label: 'Posts'        },
   { to: '/search',        icon: 'search',        label: 'Search'       },
@@ -120,13 +122,13 @@ export default function Layout({ children, wide = false }) {
     navigate('/login');
   }
 
-  // Clicking Feed while already on the feed page is a no-op for NavLink
-  // (same route, no navigation fires) — this is the only nav item where
-  // "go back to where this takes you" and "you're already there, scroll
-  // up" are both things a user reasonably expects from one click.
-  function handleNavClick(to) {
-    if (to.startsWith('/?feed=feed') && location.pathname === '/') {
+  // Home is a reliable reset point. Re-selecting it opens a new route entry
+  // so Feed clears any remembered filters and reloads the full Home mix.
+  function handleNavClick(event, to) {
+    if (to === HOME_FEED_PATH && location.pathname === '/') {
+      event.preventDefault();
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      navigate(HOME_FEED_PATH, { replace: true, state: { refreshHomeAt: Date.now() } });
     }
   }
 
@@ -142,7 +144,7 @@ export default function Layout({ children, wide = false }) {
     <div className="shell">
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <Link to="/?feed=feed&all=1" className="sidebar-logo" onClick={() => handleNavClick('/?feed=feed&all=1')} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={event => handleNavClick(event, HOME_FEED_PATH)} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-logo-icon">UFI</div>
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
@@ -155,7 +157,7 @@ export default function Layout({ children, wide = false }) {
               end={icon === 'home'}
               aria-label={label}
               title={label}
-              onClick={() => handleNavClick(to)}
+              onClick={event => handleNavClick(event, to)}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
@@ -219,11 +221,11 @@ export default function Layout({ children, wide = false }) {
       {profile && (
         <header className="mobile-app-header">
           <Link
-            to="/"
+            to={HOME_FEED_PATH}
             className="mobile-app-header-brand"
-            onClick={() => {
+            onClick={event => {
               setMobileMenuOpen(false);
-              handleNavClick('/');
+              handleNavClick(event, HOME_FEED_PATH);
             }}
           >
             <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
@@ -297,7 +299,7 @@ export default function Layout({ children, wide = false }) {
             key={to}
             to={to}
             end={icon === 'home'}
-            onClick={() => handleNavClick(to)}
+            onClick={event => handleNavClick(event, to)}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon" style={{ position: 'relative' }}>
