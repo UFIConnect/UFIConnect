@@ -361,10 +361,6 @@ function ContentHubSection() {
 
   async function handleHashtagDraft(e) {
     e.preventDefault();
-    if (!drafts?.length) {
-      showToast('Draft your content first, then create matching hashtags.', 'error');
-      return;
-    }
     if (!hashtagTopic.trim()) {
       showToast('Add a topic before drafting hashtags.', 'error');
       return;
