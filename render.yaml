@@ -164,9 +164,12 @@ services:
         sync: false
       - key: STRIPE_PRICE_ID_BUSINESS
         sync: false
-      # Resume Builder is an independent recurring add-on. The backend also
-      # recognizes STRIPE_RESUME_BUILDER_PRICE_ID and RESUME_BUILDER_PRICE_ID
-      # for values that may already have been entered in the Render dashboard.
+      # Resume Builder is an independent recurring add-on. Set the preferred
+      # value below to an active USD $149.94 Price billed every 6 months.
+      - key: STRIPE_RESUME_BUILDER_PRICE_ID
+        sync: false
+      # Legacy fallback for a pre-existing Price ID. It is only used when the
+      # preferred value above is absent and still must match the same price.
       - key: STRIPE_PRICE_ID_RESUME_BUILDER
         sync: false
       # Web Push (VAPID). Until both are set, pushConfigured() is false and

@@ -18367,17 +18367,33 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
-  // Keep the canonical name first, while accepting the two names people
-  // commonly use when adding this value directly in Render.
-  resume_builder: () => process.env.STRIPE_PRICE_ID_RESUME_BUILDER
-    || process.env.STRIPE_RESUME_BUILDER_PRICE_ID
-    || process.env.RESUME_BUILDER_PRICE_ID,
+  // The explicit Resume Builder override is first so a newly-created Stripe
+  // Price in Render replaces the legacy add-on price without changing any
+  // existing subscriptions already attached to that legacy Price.
+  resume_builder: () => process.env.STRIPE_RESUME_BUILDER_PRICE_ID
+    || process.env.RESUME_BUILDER_PRICE_ID
+    || process.env.STRIPE_PRICE_ID_RESUME_BUILDER,
 };
 
 const STRIPE_PRICE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
 const stripePriceSummaryCache = new Map();
+const RESUME_BUILDER_PRICE_REQUIREMENT = Object.freeze({
+  currency: 'usd',
+  unitAmount: 14994,
+  interval: 'month',
+  intervalCount: 6,
+});
 
-function summarizeStripePrice(price) {
+function isConfiguredResumeBuilderPrice(price) {
+  return !!price
+    && price.active !== false
+    && String(price.currency || '').toLowerCase() === RESUME_BUILDER_PRICE_REQUIREMENT.currency
+    && Number(price.unit_amount) === RESUME_BUILDER_PRICE_REQUIREMENT.unitAmount
+    && String(price.recurring?.interval || '').toLowerCase() === RESUME_BUILDER_PRICE_REQUIREMENT.interval
+    && Number(price.recurring?.interval_count || 1) === RESUME_BUILDER_PRICE_REQUIREMENT.intervalCount;
+}
+
+function summarizeStripePrice(price, tier) {
   const currency = String(price?.currency || '').toUpperCase();
   const unitAmount = Number(price?.unit_amount);
   if (!currency || !Number.isFinite(unitAmount)) return null;
@@ -18390,6 +18406,7 @@ function summarizeStripePrice(price) {
       currency,
       interval: price.recurring?.interval || null,
       intervalCount: Number(price.recurring?.interval_count || 1),
+      ...(tier === 'resume_builder' ? { matchesRequiredPrice: isConfiguredResumeBuilderPrice(price) } : {}),
     };
   } catch {
     return null;
@@ -18403,7 +18420,7 @@ async function getStripePriceSummary(tier) {
   const cached = stripePriceSummaryCache.get(cacheKey);
   if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
   try {
-    const value = summarizeStripePrice(await stripe.prices.retrieve(priceId));
+    const value = summarizeStripePrice(await stripe.prices.retrieve(priceId), tier);
     stripePriceSummaryCache.set(cacheKey, { value, at: Date.now() });
     return value;
   } catch (error) {
@@ -18463,7 +18480,7 @@ app.get('/billing/config', async (_req, res) => {
     tiers: {
       pro: !!TIER_PRICE_IDS.pro(),
       business: !!TIER_PRICE_IDS.business(),
-      resume_builder: !!TIER_PRICE_IDS.resume_builder(),
+      resume_builder: resumeBuilderPrice?.matchesRequiredPrice === true,
     },
     pricing: {
       resume_builder: resumeBuilderPrice,
@@ -18480,8 +18497,12 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
     return res.status(400).json({ message: 'Business is not available yet.' });
   }
   const priceId = TIER_PRICE_IDS[tier]();
+  const resumeBuilderPrice = tier === 'resume_builder' ? await getStripePriceSummary('resume_builder') : null;
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET || !priceId) {
     return res.status(503).json({ message: 'Billing is not configured yet.' });
+  }
+  if (tier === 'resume_builder' && resumeBuilderPrice?.matchesRequiredPrice !== true) {
+    return res.status(503).json({ message: 'Resume Builder must be configured with an active $149.94 USD Stripe Price billed every 6 months.' });
   }
   const user = await getUser(req.user.id);
   if (!user) return res.status(404).json({ message: 'Not found.' });

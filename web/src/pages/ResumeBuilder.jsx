@@ -44,7 +44,7 @@ function priceCadence(price) {
 }
 
 function LockedState({ onUnlock, unlocking, billingReady, price }) {
-  const priceLabel = price?.active && price?.display ? `${price.display}${priceCadence(price)}` : null;
+  const priceLabel = price?.active && price?.matchesRequiredPrice && price?.display ? price.display + priceCadence(price) : null;
   return (
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
@@ -119,7 +119,7 @@ export default function ResumeBuilder() {
         if (cancelled) return;
         const price = config?.pricing?.resume_builder || null;
         setResumeBuilderPrice(price);
-        setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder && price?.active !== false);
+        setBillingReady(!!config?.stripeConfigured && !!config?.webhookConfigured && !!config?.tiers?.resume_builder && price?.matchesRequiredPrice === true);
       })
       .catch(() => {
         if (!cancelled) setBillingReady(false);
