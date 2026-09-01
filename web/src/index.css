@@ -687,15 +687,18 @@ input, textarea, select { font-family: inherit; }
   text-decoration: none;
   white-space: nowrap;
 }
-.opportunities-refresh-row {
+.opportunities-sort-row {
   display: flex;
-  margin-bottom: 8px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 .opportunities-refresh-btn {
-  width: 100%;
-  min-height: 36px;
+  min-height: 32px;
   justify-content: center;
+  white-space: nowrap;
 }
+.opportunities-refresh-btn--sort { width: auto; }
 .page-title {
   font-size: 1.4rem;
   font-weight: 800;
@@ -2093,6 +2096,14 @@ input, textarea, select { font-family: inherit; }
     padding-inline: 8px;
     text-align: center;
     white-space: normal;
+  }
+  .opportunities-sort-row {
+    flex-wrap: wrap;
+  }
+  .opportunities-refresh-btn--sort {
+    flex-basis: 100%;
+    width: 100%;
+    min-height: 36px;
   }
   /* Cards full-width */
   .card { border-radius: 10px; }

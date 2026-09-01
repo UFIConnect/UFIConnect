@@ -436,7 +436,7 @@ export default function Opportunities() {
         )}
 
         {/* Sort */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        <div className="opportunities-sort-row">
           <label htmlFor="opp-sort" style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>
             Sort by
           </label>
@@ -450,6 +450,14 @@ export default function Opportunities() {
             <option value="newest">Newest</option>
             <option value="match">Best match</option>
           </select>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm opportunities-refresh-btn opportunities-refresh-btn--sort"
+            onClick={requestRefresh}
+            disabled={loading || refreshing}
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
         </div>
 
         {/* LinkedIn/Glassdoor/Handshake/Wellfound/Google don't offer a
@@ -467,16 +475,6 @@ export default function Opportunities() {
             real aggregated listings like the tabs next to them. */}
         {platformSearchUrls && (
           <div style={{ marginBottom: 20 }}>
-            <div className="opportunities-refresh-row">
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm opportunities-refresh-btn"
-                onClick={requestRefresh}
-                disabled={loading || refreshing}
-              >
-                {refreshing ? 'Refreshing...' : 'Refresh'}
-              </button>
-            </div>
             <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
               Search more platforms
             </div>
