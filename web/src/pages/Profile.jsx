@@ -485,7 +485,7 @@ export default function Profile() {
               ariaLabel="Change profile photo"
               removeLabel="Remove profile photo"
               label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Photo'}
-              menuStyle={{ right: 0, left: 'auto' }}
+              menuStyle={{ left: 0, right: 'auto' }}
             />
           </div>
         </div>
