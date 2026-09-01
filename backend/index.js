@@ -26916,7 +26916,7 @@ async function screenMemberContent({ content, mediaUrl = null, mediaType = null,
   return { allowed: true, content: local.text, reason: null, method: 'openai' };
 }
 
-function callOpenAIText(apiKey, prompt, model) {
+function callOpenAITextOnce(apiKey, prompt, model) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model,
@@ -26959,6 +26959,25 @@ function callOpenAIText(apiKey, prompt, model) {
     request.write(body);
     request.end();
   });
+}
+
+function isRetryableOpenAITextError(error) {
+  const message = String(error?.message || '');
+  return /OpenAI HTTP (408|409|429|5\d\d)|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN/i.test(message);
+}
+
+async function callOpenAIText(apiKey, prompt, model) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await callOpenAITextOnce(apiKey, prompt, model);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableOpenAITextError(error) || attempt === 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 function configuredOpenAITextProvider() {
