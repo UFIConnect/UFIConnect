@@ -207,6 +207,42 @@ function ResumePreviewModal({ data, template, onClose }) {
   );
 }
 
+function WritingPreviewModal({ title, body, onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="resume-preview-backdrop" role="dialog" aria-modal="true" aria-label={`${title} preview`} onMouseDown={event => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <div className="resume-preview-modal">
+        <div className="resume-preview-modal-header">
+          <div>
+            <strong>{title} preview</strong>
+            <span>Ready to export</span>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="resume-preview-scroll">
+          <article style={{ background: '#fff', color: '#172033', minHeight: '100%', padding: '48px 52px', whiteSpace: 'pre-wrap', fontSize: '.95rem', lineHeight: 1.75 }}>
+            {body}
+          </article>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ResumeBuilder() {
   const navigate = useNavigate();
   const { profile, refreshProfile } = useAuth();
@@ -223,6 +259,8 @@ export default function ResumeBuilder() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
   const [activeBuilderTab, setActiveBuilderTab] = useState('resume');
+  const [writingPreviewType, setWritingPreviewType] = useState(null);
+  const [writingExporting, setWritingExporting] = useState(null);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [liveJobs, setLiveJobs] = useState([]);
   const [trackedJobsLoading, setTrackedJobsLoading] = useState(false);
@@ -298,7 +336,7 @@ export default function ResumeBuilder() {
     setTrackedJobsLoading(true);
     Promise.allSettled([
       client.get('/jobs/tracking'),
-      client.get('/opportunities'),
+      client.get('/opportunities', { params: { limit: 500 } }),
     ]).then(([trackedResponse, opportunitiesResponse]) => {
       if (cancelled) return;
       setTrackedJobs(trackedResponse.status === 'fulfilled' && Array.isArray(trackedResponse.value?.data?.jobs)
@@ -353,6 +391,46 @@ export default function ResumeBuilder() {
     }
   }
 
+  function writingFor(type) {
+    return type === 'cover_letter' ? data.coverLetter : data.outreach;
+  }
+
+  function previewWriting(type) {
+    if (!String(writingFor(type)?.body || '').trim()) {
+      showToast('Draft the writing first, then preview it here.', 'info');
+      return;
+    }
+    setWritingPreviewType(type);
+  }
+
+  async function exportWriting(type) {
+    const writing = writingFor(type);
+    if (!String(writing?.body || '').trim() || writingExporting) {
+      if (!String(writing?.body || '').trim()) showToast('Draft the writing first, then export it.', 'info');
+      return;
+    }
+    setWritingExporting(type);
+    try {
+      const response = await client.post('/resume-builder/application-export', { type, data }, { responseType: 'blob' });
+      const blob = response.data;
+      if (!blob?.size) throw new Error('The exported file was empty.');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const prefix = type === 'cover_letter' ? 'cover-letter' : 'reach-out-message';
+      link.href = url;
+      link.download = `${prefix}-${(writing.company || data.contact.name || 'uficonnect').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'uficonnect'}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showToast(`${type === 'cover_letter' ? 'Cover letter' : 'Reach-out message'} exported.`, 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.message || err?.message || 'Could not export the writing.', 'error');
+    } finally {
+      setWritingExporting(null);
+    }
+  }
+
   function setContact(field, value) {
     setData(prev => ({ ...prev, contact: { ...prev.contact, [field]: value } }));
   }
@@ -390,21 +468,27 @@ export default function ResumeBuilder() {
     setData(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
   }
 
+  function toJobContact(listing) {
+    const content = String(listing.content || listing.jobContent || '');
+    const publicContact = listing.contactEmail || content.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
+    return {
+      ...listing,
+      content,
+      publicContact,
+      recipientName: listing.recruiterName || '',
+      recipientRole: listing.recruiterRole || (publicContact ? 'Recruiter' : 'Recruiting team'),
+    };
+  }
+
+  const liveJobsById = new Map(liveJobs.filter(job => job?.id).map(job => [job.id, job]));
   const trackedJobContacts = trackedJobs
     .filter(job => job.status === 'saved' || job.status === 'applied')
-    .map(job => {
-      const live = liveJobs.find(item => item?.id === job.id) || {};
-      const listing = { ...job, ...live };
-      const content = String(listing.content || listing.jobContent || '');
-      const publicContact = listing.contactEmail || content.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
-      return {
-        ...listing,
-        content,
-        publicContact,
-        recipientName: listing.recruiterName || '',
-        recipientRole: listing.recruiterRole || (publicContact ? 'Recruiter' : 'Recruiting team'),
-      };
-    });
+    .map(job => toJobContact({ ...job, ...(liveJobsById.get(job.id) || {}) }));
+  const trackedJobIds = new Set(trackedJobContacts.map(job => job.id));
+  const jobContactOptions = [
+    ...trackedJobContacts,
+    ...liveJobs.filter(job => job?.id && !trackedJobIds.has(job.id)).map(toJobContact),
+  ].slice(0, 500);
 
   function useTrackedJobForWriting(job, destination) {
     if (destination === 'cover-letter') {
@@ -699,21 +783,21 @@ export default function ResumeBuilder() {
               <div style={{ marginBottom: 16 }}>
                 <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Jobs and people to reach out to</h3>
                 <p style={{ margin: 0, fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>
-                  Saved and applied roles from your Job Tracker. Use one to tailor a cover letter or reach-out message.
+                  Up to 500 relevant listings, with saved and applied jobs first. Public contacts appear only when a listing provides one.
                 </p>
               </div>
               {trackedJobsLoading ? (
                 <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Loading your tracked jobs...</div>
-              ) : trackedJobContacts.length === 0 ? (
-                <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Save or mark a job applied in Job Tracker to prepare a tailored draft here.</div>
+              ) : jobContactOptions.length === 0 ? (
+                <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>No live listings are available yet. Refresh Job Tracker and try again.</div>
               ) : (
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {trackedJobContacts.map(job => (
+                <div style={{ display: 'grid', gap: 10, maxHeight: 640, overflowY: 'auto', paddingRight: 4 }}>
+                  {jobContactOptions.map(job => (
                     <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <div style={{ minWidth: 0 }}>
                         <strong style={{ display: 'block', fontSize: '.86rem' }}>{job.title || 'Tracked role'}</strong>
                         <span style={{ display: 'block', fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
-                          {[job.org || 'Hiring team', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' | ')}
+                          {[job.org || 'Hiring team', job.status === 'saved' ? 'Saved' : job.status === 'applied' ? 'Applied' : 'Live listing', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' | ')}
                         </span>
                       </div>
                       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
@@ -759,11 +843,15 @@ export default function ResumeBuilder() {
                       style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.84rem', fontFamily: 'inherit', resize: 'vertical' }}
                     />
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                     <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('cover_letter')} disabled={!!drafting}>
                       {drafting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft cover letter'}
                     </button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => previewWriting('cover_letter')} disabled={!data.coverLetter.body}>Preview</button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyWriting(data.coverLetter.body, 'Cover letter')} disabled={!data.coverLetter.body}>Copy</button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => exportWriting('cover_letter')} disabled={!data.coverLetter.body || writingExporting !== null}>
+                      {writingExporting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Export PDF'}
+                    </button>
                   </div>
                   <textarea
                     value={data.coverLetter.body}
@@ -802,11 +890,15 @@ export default function ResumeBuilder() {
                       style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.84rem', fontFamily: 'inherit', resize: 'vertical' }}
                     />
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
                     <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('outreach')} disabled={!!drafting}>
                       {drafting === 'outreach' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft message'}
                     </button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => previewWriting('outreach')} disabled={!data.outreach.body}>Preview</button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyWriting(data.outreach.body, 'Reach-out message')} disabled={!data.outreach.body}>Copy</button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => exportWriting('outreach')} disabled={!data.outreach.body || writingExporting !== null}>
+                      {writingExporting === 'outreach' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Export PDF'}
+                    </button>
                   </div>
                   <textarea
                     value={data.outreach.body}
@@ -823,6 +915,11 @@ export default function ResumeBuilder() {
           </div>
         )}
         {previewOpen && <ResumePreviewModal data={data} template={template} onClose={() => setPreviewOpen(false)} />}
+        {writingPreviewType && <WritingPreviewModal
+          title={writingPreviewType === 'cover_letter' ? 'Cover letter' : 'Reach-out message'}
+          body={writingFor(writingPreviewType).body}
+          onClose={() => setWritingPreviewType(null)}
+        />}
       </Layout>
     </>
   );

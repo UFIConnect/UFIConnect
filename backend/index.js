@@ -26130,8 +26130,8 @@ async function fetchJobBoardListings(source, label, { excludeUrl = null, limit =
     return [];
   }
 }
-async function fetchRemoteOKOpportunities() {
-  return fetchJobBoardListings('remoteok', 'Remote OK');
+async function fetchRemoteOKOpportunities(limit = 150) {
+  return fetchJobBoardListings('remoteok', 'Remote OK', { limit });
 }
 
 // "Indeed" here is Remotive's API + WeWorkRemotely's RSS relabeled (see
@@ -26143,8 +26143,8 @@ async function fetchRemoteOKOpportunities() {
 // dedup in getLiveJobs wouldn't have caught it. getLiveJobs dedupes the
 // combined list by sourceUrl for exactly this reason — same real posting,
 // same landing-page URL, regardless of which label fetched it first.
-async function fetchIndeedOpportunities() {
-  return fetchJobBoardListings('indeed', 'Indeed');
+async function fetchIndeedOpportunities(limit = 150) {
+  return fetchJobBoardListings('indeed', 'Indeed', { limit });
 }
 
 // USAJobs: the official U.S. federal government jobs API — genuinely free,
@@ -26152,19 +26152,19 @@ async function fetchIndeedOpportunities() {
 // USAJOBS_USER_AGENT are set (see fetchUSAJobsByKeyword above). Federal
 // listings only, not a general-purpose board, but as an official government
 // source it's about as verifiable as a job posting gets.
-async function fetchUSAJobsOpportunities() {
-  return fetchJobBoardListings('usajobs', 'USAJobs', { excludeUrl: 'https://www.usajobs.gov' });
+async function fetchUSAJobsOpportunities(limit = 150) {
+  return fetchJobBoardListings('usajobs', 'USAJobs', { excludeUrl: 'https://www.usajobs.gov', limit });
 }
 
 // Same move as RemoteOK/Indeed/USAJobs above, now applied to the two
 // sources that used to live-fetch on every /opportunities request (see
 // startJobBoardSweeps) — reads whatever the pipeline has already
 // accumulated instead.
-async function fetchRemotiveOpportunities() {
-  return fetchJobBoardListings('remotive', 'Remotive');
+async function fetchRemotiveOpportunities(limit = 150) {
+  return fetchJobBoardListings('remotive', 'Remotive', { limit });
 }
-async function fetchMuseOpportunities() {
-  return fetchJobBoardListings('muse', 'The Muse');
+async function fetchMuseOpportunities(limit = 150) {
+  return fetchJobBoardListings('muse', 'The Muse', { limit });
 }
 
 // Baseline legitimacy bar every live job listing has to clear regardless of
@@ -26200,13 +26200,13 @@ function isLegitimateJobListing(j) {
 // USAJobs already did) — any real per-viewer relevance still comes from
 // this function's own scoring pass further down, same as it always did for
 // those three sources.
-async function getLiveJobs(role, experience) {
+async function getLiveJobs(role, experience, sourceLimit = 150) {
   const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
-    fetchRemotiveOpportunities(),
-    fetchMuseOpportunities(),
-    fetchRemoteOKOpportunities(),
-    fetchUSAJobsOpportunities(),
-    fetchIndeedOpportunities(),
+    fetchRemotiveOpportunities(sourceLimit),
+    fetchMuseOpportunities(sourceLimit),
+    fetchRemoteOKOpportunities(sourceLimit),
+    fetchUSAJobsOpportunities(sourceLimit),
+    fetchIndeedOpportunities(sourceLimit),
   ]);
   const seenIds = new Set();
   const seenUrls = new Set();
@@ -26361,6 +26361,9 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const isRefresh = req.query.bust === '1';
   if (isRefresh) requestOpportunityRefresh('opportunities refresh');
   const { type, remote, search } = req.query;
+  const requestedOpportunityLimit = req.query.limit != null
+    ? Math.max(0, parseInt(req.query.limit, 10) || 0)
+    : 0;
   // Comma-separated, same convention as the main feed's ?sources= (see
   // handleFeedRequest) — multi-select platform filter, same idea as
   // Feed's source chips, applied after type/remote/search narrow things
@@ -26421,7 +26424,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   let liveJobs = [];
   try {
     liveJobs = await Promise.race([
-      getLiveJobs(role, experience),
+      getLiveJobs(role, experience, requestedOpportunityLimit >= 500 ? 250 : 150),
       new Promise((resolve) => setTimeout(() => resolve([]), 6000)),
     ]);
   } catch (e) { /* silently skip */ }
@@ -26632,7 +26635,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // wants that.
   const totalCount = results.length;
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-  const limit = req.query.limit != null ? Math.max(0, parseInt(req.query.limit, 10) || 0) : 0;
+  const limit = requestedOpportunityLimit;
   const page = limit > 0 ? results.slice(offset, offset + limit) : results;
 
   res.json({
@@ -27702,6 +27705,33 @@ function renderResumePDF(data, template) {
   });
 }
 
+function renderApplicationWritingPDF(data, type) {
+  return new Promise((resolve, reject) => {
+    const writing = type === 'cover_letter' ? (data.coverLetter || {}) : (data.outreach || {});
+    const contact = data.contact || {};
+    const title = type === 'cover_letter' ? 'Cover Letter' : 'Reach-out Message';
+    const details = type === 'cover_letter'
+      ? [writing.role, writing.company].filter(Boolean).join(' | ')
+      : [writing.recipientName, writing.recipientRole, writing.company].filter(Boolean).join(' | ');
+    const doc = new PDFDocument({ size: 'LETTER', margin: 56 });
+    const chunks = [];
+    doc.on('data', chunk => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.font('Helvetica-Bold').fontSize(20).fillColor('#102A6B').text(contact.name || 'UFIconnect Member');
+    if (contact.title) doc.font('Helvetica').fontSize(10.5).fillColor('#4B5563').text(contact.title);
+    const contactLine = [contact.email, contact.phone, contact.location].filter(Boolean).join(' | ');
+    if (contactLine) doc.font('Helvetica').fontSize(9.5).fillColor('#4B5563').text(contactLine);
+    doc.moveDown(1.3);
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#172033').text(title);
+    if (details) doc.font('Helvetica').fontSize(10).fillColor('#4B5563').text(details);
+    doc.moveDown(1);
+    doc.font('Helvetica').fontSize(11).fillColor('#172033').text(String(writing.body || '').trim(), { lineGap: 4 });
+    doc.end();
+  });
+}
+
 app.get('/resume-builder/draft', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on — unlock it to continue.' });
@@ -27820,6 +27850,31 @@ app.post('/resume-builder/application-draft', authenticate, resumeAIDraftLimiter
   } catch (error) {
     console.error('[/resume-builder/application-draft] error:', error.message);
     res.status(502).json({ message: 'Could not generate a draft right now. Please try again.' });
+  }
+});
+
+app.post('/resume-builder/application-export', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user?.resumeBuilderAddon) return res.status(403).json({ message: 'Resume Builder is a paid add-on - unlock it to continue.' });
+  const type = resumeDraftInput(req.body?.type, 40);
+  if (!RESUME_APPLICATION_DRAFT_TYPES.has(type)) return res.status(400).json({ message: 'Unsupported application draft type.' });
+  const data = req.body?.data && typeof req.body.data === 'object' && !Array.isArray(req.body.data)
+    ? req.body.data
+    : emptyResumeDraft();
+  const writing = type === 'cover_letter' ? data.coverLetter : data.outreach;
+  if (!resumeDraftInput(writing?.body, 5000)) {
+    return res.status(400).json({ message: 'Draft the writing before exporting it.' });
+  }
+  try {
+    const pdfBuffer = await renderApplicationWritingPDF(data, type);
+    const baseName = (type === 'cover_letter' ? 'cover-letter' : 'reach-out-message');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.pdf"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(pdfBuffer);
+  } catch (error) {
+    console.error('[/resume-builder/application-export] error:', error.message);
+    res.status(500).json({ message: 'Could not export the writing.' });
   }
 });
 
