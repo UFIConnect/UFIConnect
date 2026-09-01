@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node --max-old-space-size=768 server.js",
     "start:single": "node --max-old-space-size=768 index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test:screening": "node --test content-screening.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

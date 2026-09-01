@@ -21,6 +21,11 @@ const PDFDocument = require('pdfkit');
 const v8 = require('v8');
 const db        = require('./db');
 const filestore  = require('./filestore');
+const {
+  localTextScreen,
+  screenImportedFeedPost,
+  screenExternalComment,
+} = require('./content-screening');
 
 dotenv.config();
 
@@ -135,6 +140,11 @@ function buildHealthPayload() {
     payload.pipelineState = buildPipelineHealthSummary();
   } catch {
     payload.pipelineState = null;
+  }
+  try {
+    payload.contentScreening = buildContentScreeningSummary();
+  } catch {
+    payload.contentScreening = null;
   }
   try {
     payload.dbSize = {
@@ -352,6 +362,17 @@ const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: rateLimitKey,
   message: { message: 'Too many password reset attempts. Please try again later.' },
+});
+// Moderation is deliberately limited separately from ordinary feed reads.
+// A busy member can still scroll freely, while a broken client or abuse burst
+// cannot create an unbounded queue of paid moderation requests.
+const contentSubmissionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: envNumber('CONTENT_SUBMISSION_RATE_LIMIT', 30, 5, 200),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { message: 'Please slow down before posting again.' },
 });
 // General floor, applied to every route below — distinct from the
 // abuse-specific limiters above (which stay tight and route-scoped; the
@@ -6699,6 +6720,52 @@ function normalizeFeedPost(p, fallback = Date.now()) {
   };
 }
 
+// `realFeedPosts` is called by every serving path (cursor pages, video feed,
+// SSE, cache recovery, connected sources). Keep its screening deterministic
+// and memoized: the pipeline may evaluate the same cached item many times,
+// while freshly-read DB rows are still checked before they reach a response.
+const externalFeedScreeningMemo = new WeakMap();
+function feedScreeningSnapshot(post) {
+  return {
+    id: post?.id,
+    source: post?.source,
+    title: post?.title,
+    content: post?.content,
+    sourceUrl: post?.sourceUrl,
+    mediaUrl: post?.mediaUrl,
+    mediaPoster: post?.mediaPoster,
+    authorName: post?.author?.name,
+    screeningStatus: post?.screeningStatus,
+    dbScreeningStatus: post?.screening_status,
+  };
+}
+
+function matchesFeedScreeningSnapshot(snapshot, post) {
+  return snapshot?.id === post?.id
+    && snapshot?.source === post?.source
+    && snapshot?.title === post?.title
+    && snapshot?.content === post?.content
+    && snapshot?.sourceUrl === post?.sourceUrl
+    && snapshot?.mediaUrl === post?.mediaUrl
+    && snapshot?.mediaPoster === post?.mediaPoster
+    && snapshot?.authorName === post?.author?.name
+    && snapshot?.screeningStatus === post?.screeningStatus
+    && snapshot?.dbScreeningStatus === post?.screening_status;
+}
+
+function screenFeedPost(post) {
+  if (!post || typeof post !== 'object') return { allowed: false, reason: 'invalid_post', post };
+  const cached = externalFeedScreeningMemo.get(post);
+  if (matchesFeedScreeningSnapshot(cached?.snapshot, post)) return cached.result;
+  const result = screenImportedFeedPost(post);
+  const entry = { snapshot: feedScreeningSnapshot(post), result };
+  externalFeedScreeningMemo.set(post, entry);
+  if (result.post && result.post !== post) {
+    externalFeedScreeningMemo.set(result.post, { snapshot: feedScreeningSnapshot(result.post), result });
+  }
+  return result;
+}
+
 function isFallbackFeedPost(p) {
   const id = String(p?.id || '');
   if (!id) return true;
@@ -6713,7 +6780,13 @@ function isFallbackFeedPost(p) {
 }
 
 function realFeedPosts(posts = []) {
-  return (posts || []).filter(p => p?.id && !isFallbackFeedPost(p));
+  const approved = [];
+  for (const rawPost of posts || []) {
+    if (!rawPost?.id || isFallbackFeedPost(rawPost)) continue;
+    const screened = screenFeedPost(rawPost);
+    if (screened.allowed) approved.push(screened.post);
+  }
+  return approved;
 }
 
 // SSE batch buffer: collect posts for 2s (debounce) and flush in batches of up to 10
@@ -6758,16 +6831,18 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   const started = Date.now();
   const passed = [];
   const acceptedIds = new Set();
-  let droppedInvalid = 0, droppedDuplicate = 0;
+  let droppedInvalid = 0, droppedDuplicate = 0, droppedScreened = 0;
   for (const p of incoming) {
     const src = p?.source || 'unknown';
-    const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0 });
+    const bucket = filterAgentState.bySource[src] || (filterAgentState.bySource[src] = { input: 0, output: 0, droppedInvalid: 0, droppedDuplicate: 0, droppedScreened: 0 });
     bucket.input++;
     if (!p?.id || isFallbackFeedPost(p)) { bucket.droppedInvalid++; droppedInvalid++; continue; }
-    if (seenPostIds.has(p.id) || acceptedIds.has(p.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
-    acceptedIds.add(p.id);
+    const screened = screenFeedPost(p);
+    if (!screened.allowed) { bucket.droppedScreened++; droppedScreened++; continue; }
+    if (seenPostIds.has(screened.post.id) || acceptedIds.has(screened.post.id)) { bucket.droppedDuplicate++; droppedDuplicate++; continue; }
+    acceptedIds.add(screened.post.id);
     bucket.output++;
-    passed.push(p);
+    passed.push(screened.post);
   }
   const fresh = passed.map(p => trimPostContent(normalizeFeedPost(p)));
 
@@ -6779,6 +6854,8 @@ function addAndBroadcast(incoming, { includeAccepted = false } = {}) {
   filterAgentState.lastOutput = fresh.length;
   filterAgentState.lastDroppedInvalid = droppedInvalid;
   filterAgentState.lastDroppedDuplicate = droppedDuplicate;
+  filterAgentState.lastDroppedScreened = droppedScreened;
+  filterAgentState.totalDroppedScreened = (filterAgentState.totalDroppedScreened || 0) + droppedScreened;
   filterAgentState.lastDurationMs = Date.now() - started;
   filterAgentState.lastRun = Date.now();
 
@@ -8228,11 +8305,17 @@ function indexPostUrls(posts) {
 function findPostById(postId) {
   // Fast path: check global feed cache
   const g = globalFeedCache.posts.find(p => p.id === postId);
-  if (g) return g;
+  if (g) {
+    const screened = screenFeedPost(g);
+    return screened.allowed ? screened.post : null;
+  }
   // Check per-source caches
   for (const cache of agentSourceCache.values()) {
     const hit = (cache.posts || []).find(p => p.id === postId);
-    if (hit) return hit;
+    if (hit) {
+      const screened = screenFeedPost(hit);
+      return screened.allowed ? screened.post : null;
+    }
   }
   // Fall back to URL-only stub from persistent index
   const url = postUrlIndex.get(postId);
@@ -8252,16 +8335,19 @@ function findPostById(postId) {
 // need sourceUrl and can afford the extra round trip.
 async function findPostByIdWithDbFallback(postId) {
   const memPost = findPostById(postId);
-  if (memPost?.sourceUrl) return memPost;
+  if (memPost?.sourceUrl && memPost.title) return memPost;
   if (db.isConnected()) {
     try {
       const { rows } = await db.query('SELECT * FROM feed_posts_cache WHERE id = $1 LIMIT 1', [postId]);
-      if (rows.length) return dbRowToFeedPost(rows[0]);
+      if (rows.length) {
+        const screened = screenFeedPost(dbRowToFeedPost(rows[0]));
+        return screened.allowed ? screened.post : null;
+      }
     } catch (e) {
       console.warn('findPostByIdWithDbFallback:', e.message);
     }
   }
-  return memPost;
+  return memPost?.title ? memPost : null;
 }
 
 // Per-worker circuit-breaker health: agentId ? { consecutiveErrors, totalErrors, fetchCount, lastSuccess, paused, pauseUntil }
@@ -8471,6 +8557,8 @@ const filterAgentState = {
   lastOutput: 0,
   lastDroppedInvalid: 0,
   lastDroppedDuplicate: 0,
+  lastDroppedScreened: 0,
+  totalDroppedScreened: 0,
   lastDurationMs: 0,
   lastRun: null,
   lastError: null,
@@ -14124,6 +14212,24 @@ function dbCommunityPostToMemPost(row) {
   });
 }
 
+function screenStoredCommunityPost(post) {
+  if (!post || typeof post !== 'object') return { allowed: false, post };
+  const title = localTextScreen(post.title, { maxLength: 500, allowEmpty: true });
+  const content = localTextScreen(post.content, { maxLength: 2000, allowEmpty: Boolean(post.mediaUrl) });
+  if (!title.allowed || !content.allowed) return { allowed: false, post };
+  return {
+    allowed: true,
+    post: { ...post, title: title.text || null, content: content.text },
+  };
+}
+
+function screenStoredPostComment(comment) {
+  if (!comment || typeof comment !== 'object') return { allowed: false, comment };
+  const content = localTextScreen(comment.content, { maxLength: 1000, allowEmpty: false });
+  if (!content.allowed) return { allowed: false, comment };
+  return { allowed: true, comment: { ...comment, content: content.text } };
+}
+
 async function seedLiveCameraPosts() {
   if (!db.isConnected() || liveCameraPostsSeeded) return;
   if (liveCameraPostsSeedPromise) return liveCameraPostsSeedPromise;
@@ -14164,7 +14270,10 @@ function boundedLimit(raw, fallback = 50, max = 100) {
 
 async function getCommunityPostById(postId) {
   let post = posts.find((p) => p.id === postId && isInteractiveCommunitySource(p.source));
-  if (post) return post;
+  if (post) {
+    const screened = screenStoredCommunityPost(post);
+    return screened.allowed ? screened.post : null;
+  }
 
   if (db.isConnected()) {
     try {
@@ -14176,6 +14285,9 @@ async function getCommunityPostById(postId) {
       );
       if (rows[0]) {
         post = dbCommunityPostToMemPost(rows[0]);
+        const screened = screenStoredCommunityPost(post);
+        if (!screened.allowed) return null;
+        post = screened.post;
         posts.unshift(post);
         return post;
       }
@@ -14233,10 +14345,11 @@ async function getCommentsForPost(postId, limit = 50, offset = 0) {
   const seen = new Set();
   const all = result
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
-    .filter((comment) => {
-      if (seen.has(comment.id)) return false;
+    .flatMap((comment) => {
+      if (seen.has(comment.id)) return [];
       seen.add(comment.id);
-      return true;
+      const screened = screenStoredPostComment(comment);
+      return screened.allowed ? [screened.comment] : [];
     });
   return {
     comments: all.slice(offset, offset + limit).map(serializePostComment),
@@ -14350,10 +14463,14 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
       seen.add(p.id);
       return true;
     });
-  const page = deduped.slice(offset, offset + limit);
+  const screened = deduped.flatMap((post) => {
+    const result = screenStoredCommunityPost(post);
+    return result.allowed ? [result.post] : [];
+  });
+  const page = screened.slice(offset, offset + limit);
   return {
     posts: page.map((p) => serializeCommunityPost(p, viewerId)),
-    hasMore: deduped.length > offset + limit,
+    hasMore: screened.length > offset + limit,
   };
 }
 
@@ -16578,7 +16695,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       params
     );
-    return rows.map(dbRowToFeedPost).filter(p => !isFallbackFeedPost(p));
+    return realFeedPosts(rows.map(dbRowToFeedPost));
   } catch { return []; }
 }
 
@@ -16780,10 +16897,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       );
       const bySourceIdx = new Map(sources.map((src, i) => [src, i]));
       for (const r of rows) {
-        const post = dbRowToFeedPost(r);
-        if (isFallbackFeedPost(post)) continue;
+        const screened = screenFeedPost(dbRowToFeedPost(r));
+        if (!screened.allowed || isFallbackFeedPost(screened.post)) continue;
         const idx = bySourceIdx.get(r.source);
-        if (idx != null) bySource[idx].push(normalizeFeedPost(post));
+        if (idx != null) bySource[idx].push(normalizeFeedPost(screened.post));
       }
     } catch (e) {
       console.error('[getCursorFeedPage] query failed:', e.message);
@@ -17003,7 +17120,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
        ORDER BY ${order}`,
       params
     );
-    const mapped = rows.map(r => ({
+    const mapped = realFeedPosts(rows.map(r => ({
       id:          r.id,
       source:      r.source,
       title:       r.title,
@@ -17019,7 +17136,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
       author:      { name: r.author_name },
       isExternal:  true,
-    })).filter(p => !isFallbackFeedPost(p));
+    })));
 
     // Trim every source down to whichever source came back with the fewest
     // rows — the actual "pull the same amount as the least platform" step.
@@ -20653,22 +20770,26 @@ app.get('/feed/:postId', authenticateOptional, async (req, res) => {
     return res.json({ post: serializeCommunityPost(communityPost, req.user?.id) });
   }
 
-  const memPost = findPostById(postId);
+  const rawMemPost = findPostById(postId);
+  const memPost = rawMemPost ? screenFeedPost(rawMemPost) : null;
   // findPostById can return a URL-only stub (id + sourceUrl) once a post has
   // aged out of every in-memory cache but is still in the persistent URL
   // index — not enough to actually render, so that case falls through to
   // the DB lookup below instead of returning a near-empty post.
-  if (memPost && memPost.title) {
-    const group = groups.find(g => g.id === memPost.groupId);
+  if (memPost?.allowed && memPost.post.title) {
+    const group = groups.find(g => g.id === memPost.post.groupId);
     return res.json({
-      post: { ...memPost, group: group ? { id: group.id, name: group.name, category: group.category } : memPost.group },
+      post: { ...memPost.post, group: group ? { id: group.id, name: group.name, category: group.category } : memPost.post.group },
     });
   }
 
   if (db.isConnected()) {
     try {
       const { rows } = await db.query('SELECT * FROM feed_posts_cache WHERE id = $1 LIMIT 1', [postId]);
-      if (rows.length) return res.json({ post: dbRowToFeedPost(rows[0]) });
+      if (rows.length) {
+        const screened = screenFeedPost(dbRowToFeedPost(rows[0]));
+        if (screened.allowed) return res.json({ post: screened.post });
+      }
     } catch (e) {
       console.warn('GET /feed/:postId DB lookup:', e.message);
     }
@@ -20908,7 +21029,14 @@ const COMMENT_CACHE_TTL_MS = envNumber('COMMENT_CACHE_TTL_MS', 2 * 60 * 1000, 30
 async function paginateComments(cacheKey, fetchFullList, offset, limit) {
   let full = getCached(cacheKey);
   if (!full) {
-    full = await fetchFullList();
+    const fetched = await fetchFullList();
+    // Third-party replies are not trusted simply because the parent post was
+    // accepted. Screen the complete fetched list before it is cached, then
+    // paginate the screened result so counts and "load more" stay truthful.
+    full = (Array.isArray(fetched) ? fetched : []).flatMap(comment => {
+      const screened = screenExternalComment(comment);
+      return screened.allowed ? [screened.comment] : [];
+    });
     setCached(cacheKey, full, COMMENT_CACHE_TTL_MS);
   }
   return {
@@ -22346,6 +22474,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastOutput: filterAgentState.lastOutput,
       lastDroppedInvalid: filterAgentState.lastDroppedInvalid,
       lastDroppedDuplicate: filterAgentState.lastDroppedDuplicate,
+      lastDroppedScreened: filterAgentState.lastDroppedScreened,
+      totalDroppedScreened: filterAgentState.totalDroppedScreened,
       lastDurationMs: filterAgentState.lastDurationMs,
       lastRun: filterAgentState.lastRun,
       lastError: filterAgentState.lastError,
@@ -22356,6 +22486,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
         .map(([source, s]) => ({ source, ...s }))
         .sort((a, b) => b.input - a.input),
     },
+    contentScreening: buildContentScreeningSummary(),
     sortAgent: {
       status: sortAgentState.status,
       totalRuns: sortAgentState.totalRuns,
@@ -22796,15 +22927,26 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           );
           if (!rows.length) {
             await client.query('COMMIT');
-            return { rows: [], saved: 0, deleted: 0 };
+            return { rows: [], approvedPosts: [], saved: 0, deleted: 0, screenedOut: 0 };
           }
-          const saved = await savePostsToDBFast(rows.map(dbRowToFeedPost), 'feed_posts_cache', client, { skipTrim: true });
+          // Stage rows are screened again at the final promotion boundary.
+          // That catches anything written by an older pipeline deployment and
+          // makes the visible-transfer count honest: filtered rows are
+          // drained from staging, but never reported as live posts.
+          const approvedPosts = rows.flatMap(row => {
+            const screened = screenFeedPost(dbRowToFeedPost(row));
+            return screened.allowed ? [screened.post] : [];
+          });
+          const screenedOut = rows.length - approvedPosts.length;
+          const saved = approvedPosts.length
+            ? await savePostsToDBFast(approvedPosts, 'feed_posts_cache', client, { skipTrim: true })
+            : 0;
           const deleted = await client.query(
             `DELETE FROM feed_posts_staging WHERE id = ANY($1::text[])`,
             [rows.map(r => r.id)]
           );
           await client.query('COMMIT');
-          return { rows, saved, deleted: deleted.rowCount || 0 };
+          return { rows, approvedPosts, saved, deleted: deleted.rowCount || 0, screenedOut };
         } catch (e) {
           await client.query('ROLLBACK').catch(() => {});
           throw e;
@@ -22812,11 +22954,11 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       });
       stagingTransferState.lastRun = new Date().toISOString();
       if (!result.rows.length) { stagingTransferState.lastCount = 0; break; }
-      const count = result.saved || result.rows.length;
-      const batchSources = summarizeRowsBySource(result.rows);
+      const count = result.saved;
+      const batchSources = summarizeRowsBySource(result.approvedPosts);
       addSourceCounts(sourceCounts, batchSources);
       batchCount += 1;
-      totalMoved += result.rows.length;
+      totalMoved += result.saved;
       totalSaved += result.saved;
       totalDeleted += result.deleted;
       stagingTransferState.lastCount = count;
@@ -22831,8 +22973,9 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
           ...summarizeStagingClearedRows(result.rows),
         ].slice(0, 16);
       }
-      broadcastSSE(result.rows.map(dbRowToFeedPost));
-      logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache`, '#38BDF8');
+      broadcastSSE(result.approvedPosts);
+      const withheld = result.screenedOut ? `; withheld ${result.screenedOut} screened post(s)` : '';
+      logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache${withheld}`, '#38BDF8');
       if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
     trimFeedPostsCache({ reason: 'after-transfer' });
@@ -23294,9 +23437,14 @@ async function createRestaurantPostComment(req, res) {
   if (!isRestaurantDiscoveryPostId(postId)) {
     return res.status(404).json({ message: 'Restaurant post not found.' });
   }
-  const content = String(req.body?.content || '').trim();
+  const rawContent = typeof req.body?.content === 'string' ? req.body.content : '';
+  const content = rawContent.trim();
   if (!content) return res.status(400).json({ message: 'Comment is required.' });
-  if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+  const screening = await screenMemberContent({ content, kind: 'restaurant_comment', maxLength: 1000 });
+  if (!screening.allowed) {
+    const unavailable = screening.reason === 'screening_unavailable';
+    return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Comment screening is temporarily unavailable. Please try again shortly.' : 'This comment cannot be published.' });
+  }
   if (!db.isConnected()) {
     return res.status(503).json({ message: 'Commenting is temporarily unavailable — please try again in a moment.' });
   }
@@ -23306,7 +23454,7 @@ async function createRestaurantPostComment(req, res) {
       id: 'restaurant_comment_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
       postId,
       authorId: req.user.id,
-      content,
+      content: screening.content,
       createdAt: new Date().toISOString(),
     };
     await db.query(
@@ -23332,7 +23480,7 @@ async function createRestaurantPostComment(req, res) {
 }
 
 app.post('/restaurants/:postId/like', authenticate, toggleRestaurantPostLike);
-app.post('/restaurants/:postId/comments', authenticate, createRestaurantPostComment);
+app.post('/restaurants/:postId/comments', authenticate, contentSubmissionLimiter, createRestaurantPostComment);
 
 // Who liked a native UFIconnect post — post.likes is already a plain array
 // of user ids (see toggleCommunityPostLike), this just resolves it to
@@ -23371,14 +23519,19 @@ app.get('/posts/:postId/comments', authenticate, async (req, res) => {
   } catch (e) { console.error('GET /posts/:postId/comments:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-app.post('/posts/:postId/comments', authenticate, async (req, res) => {
+app.post('/posts/:postId/comments', authenticate, contentSubmissionLimiter, async (req, res) => {
   try {
     const post = await getCommunityPostById(req.params.postId);
     if (!post) return res.status(404).json({ message: 'Post not found.' });
 
-    const content = (req.body.content || '').trim();
+    const rawContent = typeof req.body?.content === 'string' ? req.body.content : '';
+    const content = rawContent.trim();
     if (!content) return res.status(400).json({ message: 'Comment is required.' });
-    if (content.length > 1000) return res.status(400).json({ message: 'Comment must be 1000 characters or less.' });
+    const screening = await screenMemberContent({ content, kind: 'comment', maxLength: 1000 });
+    if (!screening.allowed) {
+      const unavailable = screening.reason === 'screening_unavailable';
+      return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Comment screening is temporarily unavailable. Please try again shortly.' : 'This comment cannot be published.' });
+    }
     if (!db.isConnected()) {
       return res.status(503).json({ message: 'Commenting is temporarily unavailable — please try again in a moment.' });
     }
@@ -23389,7 +23542,7 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
       id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       postId: post.id,
       authorId: req.user.id,
-      content,
+      content: screening.content,
       createdAt: new Date().toISOString(),
     };
     postComments.push(comment);
@@ -23414,8 +23567,8 @@ app.post('/posts/:postId/comments', authenticate, async (req, res) => {
       if (!commenter) return;
       createNotification({
         userId: post.authorId, type: 'comment', actorId: req.user.id,
-        targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(content, 120),
-        pushTitle: 'New comment', pushBody: `${commenter.name} commented on your post: "${truncateWithEllipsis(content, 60)}"`, pushUrl: `/p/${post.id}`,
+        targetType: 'post', targetId: post.id, preview: truncateWithEllipsis(comment.content, 120),
+        pushTitle: 'New comment', pushBody: `${commenter.name} commented on your post: "${truncateWithEllipsis(comment.content, 60)}"`, pushUrl: `/p/${post.id}`,
       });
     }).catch(() => {});
 
@@ -23739,7 +23892,7 @@ app.get('/media/upload-signature', authenticate, (req, res) => {
   res.json({ cloudName, apiKey, timestamp, folder, signature });
 });
 
-app.post('/groups/:id/posts', authenticate, async (req, res) => {
+app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req, res) => {
   try {
     const user  = await getUser(req.user.id);
     const group = groups.find((g) => g.id === req.params.id);
@@ -23752,6 +23905,7 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
       return res.status(403).json({ message: 'Join the group before posting.' });
     }
     const { content, mediaUrl, mediaType } = req.body;
+    const rawContent = typeof content === 'string' ? content : '';
     // mediaUrl is only ever trusted if it's a URL we just handed a signed
     // upload signature for (Cloudinary's cloud name is baked into the
     // expected host), not an arbitrary client-supplied string — otherwise
@@ -23767,12 +23921,23 @@ app.post('/groups/:id/posts', authenticate, async (req, res) => {
     // A caption is genuinely optional once there's a real, verified
     // photo/video attached — matches how every social platform this feed
     // already aggregates from treats media posts.
-    if (!content?.trim() && !safeMediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
+    if (!rawContent.trim() && !safeMediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
+    const screening = await screenMemberContent({
+      content: rawContent,
+      mediaUrl: safeMediaUrl,
+      mediaType: safeMediaType,
+      kind: 'post',
+      maxLength: 2000,
+    });
+    if (!screening.allowed) {
+      const unavailable = screening.reason === 'screening_unavailable';
+      return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Post screening is temporarily unavailable. Please try again shortly.' : 'This post cannot be published.' });
+    }
 
     const id = `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const post = {
       id, authorId: user.id, groupId: group.id,
-      content: (content || '').trim(), likes: [], commentsCount: 0,
+      content: screening.content, likes: [], commentsCount: 0,
       createdAt: new Date().toISOString(),
       source: 'uficonnect', sourceLabel: 'UFIconnect',
       mediaUrl: safeMediaUrl, mediaType: safeMediaType,
@@ -25598,6 +25763,208 @@ app.delete('/jobs/tracking/:jobId', authenticate, async (req, res) => {
 // for the same constraint on the read side). Text is generated server-side
 // through OpenAI, so the provider key is never exposed to the browser.
 
+// External feeds are screened by the deterministic hot-path checks above.
+// Member-created content gets an additional policy decision from the
+// Moderations API. The bounded queue means a sudden posting burst cannot
+// exhaust sockets/memory or starve the feed pipeline.
+const CONTENT_SCREENING_TIMEOUT_MS = envNumber('CONTENT_SCREENING_TIMEOUT_MS', 8000, 2000, 20000);
+const CONTENT_SCREENING_MAX_CONCURRENT = envNumber('CONTENT_SCREENING_MAX_CONCURRENT', 4, 1, 20);
+const CONTENT_SCREENING_MAX_QUEUED = envNumber('CONTENT_SCREENING_MAX_QUEUED', 100, 10, 1000);
+const CONTENT_SCREENING_CACHE_TTL_MS = envNumber('CONTENT_SCREENING_CACHE_TTL_MS', 6 * 60 * 60 * 1000, 60 * 1000, 24 * 60 * 60 * 1000);
+const CONTENT_SCREENING_CACHE_MAX = envNumber('CONTENT_SCREENING_CACHE_MAX', 5000, 100, 20000);
+const contentScreeningState = {
+  total: 0,
+  approved: 0,
+  blocked: 0,
+  localOnly: 0,
+  providerChecks: 0,
+  providerFailures: 0,
+  queueRejected: 0,
+  lastAt: null,
+  lastKind: null,
+  lastStatus: null,
+  lastReason: null,
+  lastError: null,
+  byKind: {},
+};
+const contentScreeningQueue = [];
+const contentScreeningCache = new Map();
+let contentScreeningActive = 0;
+
+function configuredOpenAIModerationProvider() {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return null;
+  return {
+    apiKey,
+    model: String(process.env.CONTENT_SCREENING_OPENAI_MODEL || 'omni-moderation-latest').trim() || 'omni-moderation-latest',
+  };
+}
+
+function buildContentScreeningSummary() {
+  const provider = configuredOpenAIModerationProvider();
+  return {
+    status: provider ? (contentScreeningState.lastError ? 'degraded' : 'active') : 'local-only',
+    provider: provider ? 'openai-moderation' : null,
+    model: provider?.model || null,
+    total: contentScreeningState.total,
+    approved: contentScreeningState.approved,
+    blocked: contentScreeningState.blocked,
+    localOnly: contentScreeningState.localOnly,
+    providerChecks: contentScreeningState.providerChecks,
+    providerFailures: contentScreeningState.providerFailures,
+    queueRejected: contentScreeningState.queueRejected,
+    queued: contentScreeningQueue.length,
+    active: contentScreeningActive,
+    maxConcurrent: CONTENT_SCREENING_MAX_CONCURRENT,
+    lastAt: contentScreeningState.lastAt,
+    lastKind: contentScreeningState.lastKind,
+    lastStatus: contentScreeningState.lastStatus,
+    lastReason: contentScreeningState.lastReason,
+    lastError: contentScreeningState.lastError,
+    byKind: contentScreeningState.byKind,
+  };
+}
+
+function recordContentScreening({ kind, allowed, method, reason = null, error = null }) {
+  const state = contentScreeningState;
+  state.total += 1;
+  if (allowed) state.approved += 1;
+  else state.blocked += 1;
+  if (method === 'local') state.localOnly += 1;
+  if (method === 'openai') state.providerChecks += 1;
+  if (error) state.providerFailures += 1;
+  state.lastAt = new Date().toISOString();
+  state.lastKind = kind;
+  state.lastStatus = allowed ? 'approved' : 'blocked';
+  state.lastReason = reason;
+  state.lastError = error ? String(error).slice(0, 180) : null;
+  const bucket = state.byKind[kind] || (state.byKind[kind] = { approved: 0, blocked: 0 });
+  if (allowed) bucket.approved += 1;
+  else bucket.blocked += 1;
+}
+
+function contentScreeningFingerprint(content, mediaUrl, mediaType) {
+  return crypto.createHash('sha256')
+    .update(`${content}\u0000${mediaType || ''}\u0000${mediaUrl || ''}`)
+    .digest('hex');
+}
+
+function pruneContentScreeningCache(now = Date.now()) {
+  for (const [key, entry] of contentScreeningCache) {
+    if (entry.expiresAt <= now) contentScreeningCache.delete(key);
+  }
+  while (contentScreeningCache.size > CONTENT_SCREENING_CACHE_MAX) {
+    const oldestKey = contentScreeningCache.keys().next().value;
+    if (!oldestKey) break;
+    contentScreeningCache.delete(oldestKey);
+  }
+}
+
+function callOpenAIModeration(apiKey, model, input) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ model, input });
+    const request = https.request('https://api.openai.com/v1/moderations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }, response => {
+      let data = '';
+      response.on('data', chunk => { data += chunk; });
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return reject(new Error(`OpenAI moderation HTTP ${response.statusCode}: ${data.slice(0, 240)}`));
+        }
+        try {
+          const parsed = JSON.parse(data);
+          const results = Array.isArray(parsed?.results) ? parsed.results : [];
+          if (!results.length) throw new Error('OpenAI moderation returned no result.');
+          const categories = [...new Set(results.flatMap(result => Object.entries(result?.categories || {})
+            .filter(([, flagged]) => flagged)
+            .map(([category]) => category)))];
+          resolve({ flagged: results.some(result => result?.flagged === true), categories });
+        } catch (error) { reject(error); }
+      });
+    });
+    request.on('error', reject);
+    request.setTimeout(CONTENT_SCREENING_TIMEOUT_MS, () => request.destroy(new Error('OpenAI moderation request timeout')));
+    request.write(body);
+    request.end();
+  });
+}
+
+function drainContentScreeningQueue() {
+  while (contentScreeningActive < CONTENT_SCREENING_MAX_CONCURRENT && contentScreeningQueue.length) {
+    const job = contentScreeningQueue.shift();
+    contentScreeningActive += 1;
+    Promise.resolve()
+      .then(job.run)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        contentScreeningActive -= 1;
+        drainContentScreeningQueue();
+      });
+  }
+}
+
+function queueContentScreening(run) {
+  return new Promise((resolve, reject) => {
+    if (contentScreeningActive >= CONTENT_SCREENING_MAX_CONCURRENT
+      && contentScreeningQueue.length >= CONTENT_SCREENING_MAX_QUEUED) {
+      contentScreeningState.queueRejected += 1;
+      const error = new Error('Content screening is temporarily busy.');
+      error.code = 'SCREENING_BUSY';
+      reject(error);
+      return;
+    }
+    contentScreeningQueue.push({ run, resolve, reject });
+    drainContentScreeningQueue();
+  });
+}
+
+async function screenMemberContent({ content, mediaUrl = null, mediaType = null, kind = 'post', maxLength = 4000 } = {}) {
+  const local = localTextScreen(content, { maxLength, allowEmpty: Boolean(mediaUrl) });
+  if (!local.allowed) {
+    recordContentScreening({ kind, allowed: false, method: 'local', reason: local.reason });
+    return { allowed: false, content: local.text, reason: local.reason, method: 'local' };
+  }
+
+  const provider = configuredOpenAIModerationProvider();
+  const canScreenImage = mediaType === 'image' && /^https:\/\//i.test(String(mediaUrl || ''));
+  if (!provider || (!local.text && !canScreenImage)) {
+    recordContentScreening({ kind, allowed: true, method: 'local', reason: provider ? 'media_text_unavailable' : 'provider_unavailable' });
+    return { allowed: true, content: local.text, reason: null, method: 'local' };
+  }
+
+  const fingerprint = contentScreeningFingerprint(local.text, canScreenImage ? mediaUrl : null, canScreenImage ? mediaType : null);
+  pruneContentScreeningCache();
+  let result = contentScreeningCache.get(fingerprint)?.result;
+  try {
+    if (!result) {
+      const input = [];
+      if (local.text) input.push({ type: 'text', text: local.text });
+      if (canScreenImage) input.push({ type: 'image_url', image_url: { url: mediaUrl } });
+      result = await queueContentScreening(() => callOpenAIModeration(provider.apiKey, provider.model, input));
+      contentScreeningCache.set(fingerprint, { result, expiresAt: Date.now() + CONTENT_SCREENING_CACHE_TTL_MS });
+    }
+  } catch (error) {
+    // With a configured provider, fail closed rather than publishing content
+    // that did not receive the required review. Local-only mode is explicit
+    // and observable in Office/health for environments without a key.
+    recordContentScreening({ kind, allowed: false, method: 'openai', reason: 'screening_unavailable', error: error.message });
+    return { allowed: false, content: local.text, reason: 'screening_unavailable', method: 'openai' };
+  }
+
+  if (result.flagged) {
+    recordContentScreening({ kind, allowed: false, method: 'openai', reason: result.categories.slice(0, 3).join(',') || 'policy' });
+    return { allowed: false, content: local.text, reason: 'policy', method: 'openai' };
+  }
+  recordContentScreening({ kind, allowed: true, method: 'openai' });
+  return { allowed: true, content: local.text, reason: null, method: 'openai' };
+}
+
 function callOpenAIText(apiKey, prompt, model) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
@@ -26730,7 +27097,7 @@ async function synchronizeTikTokCrossPosts(user, rows) {
   };
 }
 
-app.post('/command-center/cross-post', authenticate, async (req, res) => {
+app.post('/command-center/cross-post', authenticate, contentSubmissionLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
@@ -26749,20 +27116,26 @@ app.post('/command-center/cross-post', authenticate, async (req, res) => {
   if (content.length > 4000) return res.status(400).json({ message: 'Keep the post under 4,000 characters.' });
   if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'The photo must be uploaded through UFIconnect first.' });
   if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
+  const screening = await screenMemberContent({ content, mediaUrl, mediaType: mediaUrl ? 'image' : null, kind: 'cross_post', maxLength: 4000 });
+  if (!screening.allowed) {
+    const unavailable = screening.reason === 'screening_unavailable';
+    return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Post screening is temporarily unavailable. Please try again shortly.' : 'This post cannot be cross-posted.' });
+  }
+  const screenedContent = screening.content;
 
   const id = `xp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const initialTargets = platforms.map(platform => ({ platform, status: 'processing', error: 'Preparing delivery.' }));
   try {
     await db.query(
       `INSERT INTO cross_posts (id, user_id, content, media_url, targets, created_at) VALUES ($1,$2,$3,$4,$5,NOW())`,
-      [id, req.user.id, content, mediaUrl, JSON.stringify(initialTargets)]
+      [id, req.user.id, screenedContent, mediaUrl, JSON.stringify(initialTargets)]
     );
   } catch (error) {
     console.error('[cross_posts insert]', error.message);
     return res.status(503).json({ message: 'Cross-post history could not be prepared. Nothing was sent; please try again shortly.' });
   }
 
-  const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, { content, mediaUrl })));
+  const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, { content: screenedContent, mediaUrl })));
   let historySaved = true;
   try {
     await db.query(`UPDATE cross_posts SET targets=$1 WHERE id=$2 AND user_id=$3`, [JSON.stringify(targets), id, req.user.id]);
@@ -26989,12 +27362,14 @@ app.get('/messages/:userId', authenticate, async (req, res) => {
   } catch (e) { console.error('GET /messages/:userId:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
-app.post('/messages/:userId', authenticate, async (req, res) => {
+app.post('/messages/:userId', authenticate, contentSubmissionLimiter, async (req, res) => {
   try {
     const uid = req.user.id;
     const otherId = req.params.userId;
     const { content, attachment } = req.body;
-    if (!content?.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
+    const rawContent = typeof content === 'string' ? content : '';
+    if (!rawContent.trim() && !attachment) return res.status(400).json({ message: 'content or attachment required.' });
+    if (rawContent.length > 2000) return res.status(400).json({ message: 'Messages must be 2000 characters or less.' });
     if (uid === otherId) return res.status(400).json({ message: "You can't message yourself." });
     const otherUser = await getUser(otherId);
     if (!otherUser) return res.status(404).json({ message: 'User not found.' });
@@ -27007,6 +27382,13 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
       && !conversations.some(c => c.participants.includes(uid) && c.participants.includes(otherId))) {
       return res.status(403).json({ message: 'This person only accepts messages from their connections.' });
     }
+    const screening = rawContent.trim()
+      ? await screenMemberContent({ content: rawContent, kind: 'message', maxLength: 2000 })
+      : { allowed: true, content: '' };
+    if (!screening.allowed) {
+      const unavailable = screening.reason === 'screening_unavailable';
+      return res.status(unavailable ? 503 : 422).json({ message: unavailable ? 'Message screening is temporarily unavailable. Please try again shortly.' : 'This message cannot be sent.' });
+    }
 
     let conv = conversations.find((c) => c.participants.includes(uid) && c.participants.includes(otherId));
     if (!conv) {
@@ -27017,7 +27399,7 @@ app.post('/messages/:userId', authenticate, async (req, res) => {
     const newMsg = {
       id: `m_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       senderId: uid,
-      content: content?.trim() || '',
+      content: screening.content,
       attachment: attachment || null,
       createdAt: new Date().toISOString(),
       read: false,

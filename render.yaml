@@ -200,6 +200,20 @@ services:
       # drafting. The key stays server-side.
       - key: OPENAI_API_KEY
         sync: false
+      # Content screening uses the same server-side key for member-created
+      # posts, comments, messages, and cross-posts. Imported feed content is
+      # screened locally in the pipeline so a source burst never turns into
+      # an unbounded moderation queue.
+      - key: CONTENT_SCREENING_OPENAI_MODEL
+        value: omni-moderation-latest
+      - key: CONTENT_SCREENING_TIMEOUT_MS
+        value: '8000'
+      - key: CONTENT_SCREENING_MAX_CONCURRENT
+        value: '4'
+      - key: CONTENT_SCREENING_MAX_QUEUED
+        value: '100'
+      - key: CONTENT_SUBMISSION_RATE_LIMIT
+        value: '30'
       # Optional video provider adapter. The provider receives POST {prompt}
       # with Bearer auth and must return {mediaUrl} (or {url}).
       - key: VIDEO_GENERATION_API_URL
