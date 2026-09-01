@@ -345,6 +345,7 @@ function ContentHubSection() {
     try {
       const { data } = await client.post('/command-center/content-draft', { platform, topic, tone });
       setDrafts(data.drafts || []);
+      setHashtagTopic(current => current.trim() ? current : topic.trim());
     } catch (err) {
       if (err?.response?.status === 503) setNotConfigured(true);
       else showToast(err?.response?.data?.message || 'Could not generate drafts. Please try again.', 'error');
@@ -361,7 +362,8 @@ function ContentHubSection() {
 
   async function handleHashtagDraft(e) {
     e.preventDefault();
-    if (!hashtagTopic.trim()) {
+    const topicForHashtags = hashtagTopic.trim() || topic.trim();
+    if (!topicForHashtags) {
       showToast('Add a topic before drafting hashtags.', 'error');
       return;
     }
@@ -372,7 +374,7 @@ function ContentHubSection() {
     try {
       const { data } = await client.post('/command-center/hashtag-draft', {
         platform: hashtagPlatform,
-        topic: hashtagTopic,
+        topic: topicForHashtags,
         audience: hashtagAudience,
         location: hashtagLocation,
       });
