@@ -1492,8 +1492,7 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [videoPosts.length]);
 
-  // Mouse click-and-drag scrolling, PLUS touch forwarding for the one place
-  // touch does NOT get real scrolling for free (see below). A mouse drag
+  // Mouse click-and-drag scrolling. A mouse drag
   // over a plain overflow:auto container does nothing by default; the
   // browser instead tries to *select text*, which is exactly what showed up
   // as a stray text-caret cursor over the video on desktop and why nothing
@@ -1505,19 +1504,10 @@ export default function VideoFeedView({ onExit }) {
   // exactly like it does after a wheel scroll, settling on the nearest
   // slide without any extra code here.
   //
-  // Attached to BOTH the scroll container and the shared YouTube overlay
-  // (sharedYtWrapperRef, declared further below) — that overlay renders as
-  // a sibling of the scroll container in the DOM, not a descendant of it
-  // (deliberately, so it stays fixed in place across slide transitions
-  // instead of scrolling away with them — see its own top comment), so a
-  // pointerdown that lands on the actual video pixels never bubbles up to
-  // a listener on the container alone. Confirmed live as "can't drag to
-  // scroll while hovering the video specifically" — dragging anywhere else
-  // on the same slide worked, only the video's own area didn't.
-  //
+  // The shared YouTube layer is click-through, so input over video pixels
+  // reaches this native scroll container as well.
   useEffect(() => {
     const container = containerRef.current;
-    const ytOverlay = sharedYtWrapperRef.current;
     if (!container) return;
     function handlePointerDown(e) {
       if (e.pointerType !== 'mouse' || e.button !== 0) return;
@@ -1549,10 +1539,8 @@ export default function VideoFeedView({ onExit }) {
       document.addEventListener('pointerup', handleUp, { once: true });
     }
     container.addEventListener('pointerdown', handlePointerDown);
-    ytOverlay?.addEventListener('pointerdown', handlePointerDown);
     return () => {
       container.removeEventListener('pointerdown', handlePointerDown);
-      ytOverlay?.removeEventListener('pointerdown', handlePointerDown);
     };
   }, [videoPosts.length]);
 
@@ -2623,13 +2611,11 @@ export default function VideoFeedView({ onExit }) {
         <div ref={sharedYtWrapperRef} className="video-feed-youtube-player" style={{
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
-          touchAction: 'none',
+          // This player is a visual sibling of the scroll container. Let
+          // native wheel, trackpad, and touch input pass through to it.
+          pointerEvents: 'none',
           opacity: activeSrc?.kind === 'youtube' && !isScrolling ? 1 : 0,
           transition: 'opacity .15s ease-out',
-        }} onClick={(e) => {
-          e.stopPropagation();
-          if (!suppressSharedYtClickRef.current) sharedYtTogglePlay();
         }}>
           <div
             // Explicit pixel width/height from ytBoxSize (measured off this

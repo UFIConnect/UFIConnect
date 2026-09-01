@@ -2357,10 +2357,9 @@ input, textarea, select { font-family: inherit; }
 }
 .video-feed-youtube-player iframe {
   pointer-events: none !important;
-  touch-action: none;
 }
 .video-feed-youtube-player {
-  touch-action: none;
+  pointer-events: none;
 }
 
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep

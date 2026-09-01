@@ -13311,6 +13311,10 @@ const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(String(s
 let _videoCapableSources = null;
 let _videoCapableSourcesExpiry = 0;
 const VIDEO_CAPABLE_SOURCES_TTL = 15 * 60 * 1000;
+// A short source-discovery window must not turn Videos into a one-platform
+// feed when another reliable source has a quiet day.
+const VIDEO_SOURCE_BASELINE = ['youtube', 'mastodon', 'bluesky', 'reddit', 'devto', 'designweb'];
+const VIDEO_DISCOVERY_WINDOW = '30 days';
 async function getVideoCapableSources() {
   if (_videoCapableSources && Date.now() < _videoCapableSourcesExpiry) return _videoCapableSources;
   if (!db.isConnected()) return null; // caller falls back to the full source list
@@ -13319,11 +13323,14 @@ async function getVideoCapableSources() {
       `SELECT DISTINCT source
        FROM feed_posts_cache
        WHERE media_type = 'video'
-         AND post_created_at > NOW() - INTERVAL '7 days'
+         AND post_created_at > NOW() - INTERVAL '${VIDEO_DISCOVERY_WINDOW}'
          AND source = ANY($1::text[])`,
       [AGGREGATE_FEED_SOURCES]
     );
-    const sources = rows.map(r => r.source).filter(isAggregateFeedSource);
+    const sources = [...new Set([
+      ...VIDEO_SOURCE_BASELINE,
+      ...rows.map(r => r.source),
+    ])].filter(isAggregateFeedSource);
     if (!sources.length) return null; // don't cache an empty result — likely a transient blip, not "no source has video"
     _videoCapableSources = sources;
     _videoCapableSourcesExpiry = Date.now() + VIDEO_CAPABLE_SOURCES_TTL;
@@ -20737,7 +20744,9 @@ async function handleVideoFeedRequest(req, res) {
     // selective enough on its own to stay unbounded; the many-source
     // unfiltered case needs the same kind of floor that fix already
     // established elsewhere.
-    const videoTimeRange = isUnfilteredVideo ? '24h' : null;
+    // Newest clips still lead the result, while a bounded 30-day window
+    // keeps one quiet day from hiding every other playable source.
+    const videoTimeRange = isUnfilteredVideo ? '30d' : null;
     // Manual refresh (see VideoFeedView's handleRefresh, which sets both
     // reset:true and bust:true) pulls only from what Sort & Rank has already
     // produced — getCursorFeedPage below always reads the live current pool
@@ -20774,7 +20783,7 @@ async function handleVideoFeedRequest(req, res) {
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
     const scopedVideoTopics = topicsFilter.length ? topicsFilter : (userTopics.length ? userTopics : null);
-    const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '7d' : videoTimeRange;
+    const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '30d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => {
       if (!topicsFilter.length && !hasSavedVideoScope) return [];
       return topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false });
