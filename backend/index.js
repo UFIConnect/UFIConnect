@@ -26354,7 +26354,7 @@ app.post('/command-center/media-generate', authenticate, async (req, res) => {
 // existing attachments/ATS pipeline (see POST /profile/attachments) rather
 // than building a second resume system: /resume-builder/export renders the
 // draft to a PDF and inserts it as a normal attachment row.
-const RESUME_TEMPLATES = new Set(['modern', 'minimal']);
+const RESUME_TEMPLATES = new Set(['modern', 'minimal', 'classic', 'executive', 'studio']);
 
 function emptyResumeDraft() {
   return {
@@ -26401,11 +26401,10 @@ function resumeDraftToText(data) {
   return lines.join('\n');
 }
 
-// Two original layouts (own colors/typography/spacing, built-in Helvetica —
-// no third-party template design or font licensing involved anywhere here,
-// per the "no copyright" requirement). 'modern' gets a colored header band;
-// 'minimal' is plain black-on-white — both entirely original arrangements,
-// not a copy of any specific product's resume template.
+// Five original layouts using PDFKit's built-in fonts only. They share the
+// same structured resume data, but their headers, typography, and section
+// treatment are intentionally distinct so the picker changes the real PDF,
+// not just its label in the editor.
 function renderResumePDF(data, template) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
@@ -26415,40 +26414,74 @@ function renderResumePDF(data, template) {
     doc.on('error', reject);
 
     const c = data.contact || {};
-    const accent = template === 'minimal' ? '#111111' : '#2563EB';
+    const templateStyle = {
+      modern:    { accent: '#2563EB', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      minimal:   { accent: '#111827', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      classic:   { accent: '#9A3412', bodyFont: 'Times-Roman', headingFont: 'Times-Bold' },
+      executive: { accent: '#0F766E', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      studio:    { accent: '#B45309', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+    }[template] || { accent: '#2563EB', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' };
+    const { accent, bodyFont, headingFont } = templateStyle;
 
     if (template === 'modern') {
       doc.rect(0, 0, doc.page.width, 92).fill(accent);
-      doc.fillColor('#fff').fontSize(22).font('Helvetica-Bold').text(c.name || 'Your Name', 50, 28);
-      doc.fontSize(11).font('Helvetica').text(c.title || '', 50, 56);
+      doc.fillColor('#fff').fontSize(22).font(headingFont).text(c.name || 'Your Name', 50, 28);
+      doc.fontSize(11).font(bodyFont).text(c.title || '', 50, 56);
       doc.fillColor('#000');
       doc.y = 112;
+    } else if (template === 'executive') {
+      doc.rect(0, 0, doc.page.width, 104).fill('#172033');
+      doc.rect(0, 99, doc.page.width, 5).fill(accent);
+      doc.fillColor('#fff').fontSize(23).font(headingFont).text(c.name || 'Your Name', 50, 31);
+      doc.fontSize(10.5).font(bodyFont).fillColor('#DCE7E5').text(c.title || '', 50, 63);
+      doc.fillColor('#000');
+      doc.y = 125;
+    } else if (template === 'studio') {
+      doc.rect(0, 0, 16, doc.page.height).fill(accent);
+      doc.fontSize(23).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 50, 52);
+      doc.fontSize(11).font(bodyFont).fillColor(accent).text(c.title || '', 50, 82);
+      doc.moveTo(50, 105).lineTo(doc.page.width - doc.page.margins.right, 105).strokeColor(accent).lineWidth(1).stroke();
+      doc.y = 124;
+    } else if (template === 'classic') {
+      doc.rect(50, 50, doc.page.width - 100, 4).fill(accent);
+      doc.fontSize(24).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 50, 70, { align: 'center' });
+      doc.fontSize(10.5).font(bodyFont).fillColor('#5C4337').text(c.title || '', { align: 'center' });
+      doc.moveDown(0.4);
     } else {
-      doc.fontSize(22).font('Helvetica-Bold').fillColor('#000').text(c.name || 'Your Name');
-      doc.fontSize(11).font('Helvetica').fillColor('#333').text(c.title || '');
+      doc.fontSize(22).font(headingFont).fillColor('#000').text(c.name || 'Your Name');
+      doc.fontSize(11).font(bodyFont).fillColor('#333').text(c.title || '');
       doc.moveDown(0.3);
     }
 
     const contactBits = [c.email, c.phone, c.location].filter(Boolean).join('   |   ');
     if (contactBits) {
-      doc.fontSize(9.5).font('Helvetica').fillColor('#555').text(contactBits);
+      doc.fontSize(9.5).font(bodyFont).fillColor('#555').text(contactBits, { align: template === 'classic' ? 'center' : 'left' });
     }
     if (Array.isArray(c.links) && c.links.length) {
-      doc.fontSize(9.5).fillColor(accent).text(c.links.map(l => l.url || l.label).filter(Boolean).join('   |   '));
+      doc.fontSize(9.5).font(bodyFont).fillColor(accent).text(c.links.map(l => l.url || l.label).filter(Boolean).join('   |   '), { align: template === 'classic' ? 'center' : 'left' });
     }
     doc.moveDown(1);
 
     function sectionHeading(label) {
       doc.moveDown(0.6);
-      doc.fontSize(12).font('Helvetica-Bold').fillColor(accent).text(label.toUpperCase(), { characterSpacing: 0.5 });
-      doc.moveTo(doc.x, doc.y + 2).lineTo(doc.page.width - doc.page.margins.right, doc.y + 2).strokeColor(accent).lineWidth(1).stroke();
+      const isExecutive = template === 'executive';
+      const isClassic = template === 'classic';
+      doc.fontSize(isExecutive ? 10.5 : 12)
+        .font(headingFont)
+        .fillColor(isClassic ? '#172033' : accent)
+        .text(label.toUpperCase(), { characterSpacing: isExecutive ? 1.1 : 0.5 });
+      doc.moveTo(doc.x, doc.y + 2)
+        .lineTo(doc.page.width - doc.page.margins.right, doc.y + 2)
+        .strokeColor(isClassic ? '#BCA99A' : accent)
+        .lineWidth(isExecutive ? 2 : 1)
+        .stroke();
       doc.moveDown(0.4);
       doc.fillColor('#000');
     }
 
     if (data.summary) {
       sectionHeading('Summary');
-      doc.fontSize(10).font('Helvetica').fillColor('#222').text(data.summary, { lineGap: 2 });
+      doc.fontSize(10).font(bodyFont).fillColor('#222').text(data.summary, { lineGap: 2 });
     }
 
     if (Array.isArray(data.experience) && data.experience.length) {
@@ -26493,7 +26526,10 @@ app.get('/resume-builder/draft', authenticate, async (req, res) => {
   try {
     const { rows } = await db.query(`SELECT template, data FROM resume_drafts WHERE user_id=$1`, [req.user.id]);
     if (!rows[0]) return res.json({ template: 'modern', data: emptyResumeDraft() });
-    res.json({ template: rows[0].template, data: { ...emptyResumeDraft(), ...rows[0].data } });
+    res.json({
+      template: RESUME_TEMPLATES.has(rows[0].template) ? rows[0].template : 'modern',
+      data: { ...emptyResumeDraft(), ...rows[0].data },
+    });
   } catch (e) {
     console.error('[GET /resume-builder/draft]', e.message);
     res.status(500).json({ message: 'Could not load your draft.' });

@@ -6,8 +6,11 @@ import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
 
 const TEMPLATES = [
-  { key: 'modern',  label: 'Modern',  desc: 'Colored header band, clean sections.' },
-  { key: 'minimal', label: 'Minimal', desc: 'Plain black-on-white, no color.' },
+  { key: 'modern',    label: 'Modern',    desc: 'Color header with clear section breaks.', accent: '#2563EB' },
+  { key: 'minimal',   label: 'Minimal',   desc: 'Quiet black-and-white, built for focus.', accent: '#111827' },
+  { key: 'classic',   label: 'Classic',   desc: 'Traditional type with a refined top rule.', accent: '#9A3412' },
+  { key: 'executive', label: 'Executive', desc: 'A decisive dark header for senior roles.', accent: '#0F766E' },
+  { key: 'studio',    label: 'Studio',    desc: 'A lively accent rail with spacious detail.', accent: '#B45309' },
 ];
 
 function emptyDraft() {
@@ -96,6 +99,112 @@ function Field({ label, ...props }) {
   );
 }
 
+function ResumePreview({ data, template }) {
+  const contact = data.contact || {};
+  const contactBits = [contact.email, contact.phone, contact.location].filter(Boolean);
+  const title = contact.name || 'Your Name';
+  const role = contact.title || 'Professional title';
+  const templateMeta = TEMPLATES.find(item => item.key === template) || TEMPLATES[0];
+  const datesFor = (entry) => [entry.startDate, entry.current ? 'Present' : entry.endDate].filter(Boolean).join(' - ');
+
+  return (
+    <article className={`resume-preview-paper resume-preview--${template}`} style={{ '--resume-accent': templateMeta.accent }}>
+      <header className="resume-preview-header">
+        <div>
+          <h1>{title}</h1>
+          <p className="resume-preview-title">{role}</p>
+        </div>
+        {contactBits.length > 0 && <p className="resume-preview-contact">{contactBits.join(' | ')}</p>}
+      </header>
+
+      {data.summary && (
+        <section className="resume-preview-section">
+          <h2>Summary</h2>
+          <p>{data.summary}</p>
+        </section>
+      )}
+
+      {data.experience.length > 0 && (
+        <section className="resume-preview-section">
+          <h2>Experience</h2>
+          {data.experience.map((job, index) => (
+            <div className="resume-preview-entry" key={`${job.company}-${job.role}-${index}`}>
+              <div className="resume-preview-entry-head">
+                <strong>{[job.role, job.company].filter(Boolean).join(' at ') || 'Role and company'}</strong>
+                <span>{datesFor(job)}</span>
+              </div>
+              {job.location && <small>{job.location}</small>}
+              {job.bullets.filter(Boolean).length > 0 && (
+                <ul>{job.bullets.filter(Boolean).map((bullet, bulletIndex) => <li key={bulletIndex}>{bullet}</li>)}</ul>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {data.education.length > 0 && (
+        <section className="resume-preview-section">
+          <h2>Education</h2>
+          {data.education.map((education, index) => (
+            <div className="resume-preview-entry" key={`${education.school}-${education.degree}-${index}`}>
+              <div className="resume-preview-entry-head">
+                <strong>{[education.degree, education.field].filter(Boolean).join(', ') || 'Degree'}</strong>
+                <span>{[education.startDate, education.endDate].filter(Boolean).join(' - ')}</span>
+              </div>
+              {education.school && <small>{education.school}</small>}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {data.skills.length > 0 && (
+        <section className="resume-preview-section">
+          <h2>Skills</h2>
+          <p className="resume-preview-skills">{data.skills.join('  |  ')}</p>
+        </section>
+      )}
+
+      {!data.summary && data.experience.length === 0 && data.education.length === 0 && data.skills.length === 0 && (
+        <p className="resume-preview-empty">Add your details to see the full layout take shape.</p>
+      )}
+    </article>
+  );
+}
+
+function ResumePreviewModal({ data, template, onClose }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = event => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="resume-preview-backdrop" role="dialog" aria-modal="true" aria-label="Resume preview" onMouseDown={event => {
+      if (event.target === event.currentTarget) onClose();
+    }}>
+      <div className="resume-preview-modal">
+        <div className="resume-preview-modal-header">
+          <div>
+            <strong>Resume preview</strong>
+            <span>{(TEMPLATES.find(item => item.key === template) || TEMPLATES[0]).label} template</span>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="resume-preview-scroll">
+          <ResumePreview data={data} template={template} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ResumeBuilder() {
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
@@ -108,6 +217,7 @@ export default function ResumeBuilder() {
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
 
   const unlocked = !!profile?.resumeBuilderAddon;
@@ -153,6 +263,22 @@ export default function ResumeBuilder() {
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
+  }, [unlocked]);
+
+  useEffect(() => {
+    if (!unlocked) return undefined;
+    let cancelled = false;
+    client.get('/profile/attachments')
+      .then(({ data: response }) => {
+        if (cancelled) return;
+        const attachments = Array.isArray(response?.attachments) ? response.attachments : [];
+        const primary = attachments.find(item => item.isPrimary) || attachments[0];
+        if (primary && primary.atsScore !== null && primary.atsScore !== undefined && Number.isFinite(Number(primary.atsScore))) {
+          setExportResult(primary);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [unlocked]);
 
   async function unlockResumeBuilder() {
@@ -317,15 +443,18 @@ export default function ResumeBuilder() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 760 }}>
             <div className="card">
               <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Template</div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div className="resume-template-grid" role="group" aria-label="Resume template">
                 {TEMPLATES.map(t => (
                   <button
                     key={t.key} type="button" onClick={() => setTemplate(t.key)}
-                    className="btn btn-sm"
-                    style={{ background: template === t.key ? 'var(--primary)' : 'var(--bg-secondary)', color: template === t.key ? '#fff' : 'var(--text)', border: 'none' }}
-                    title={t.desc}
+                    className={`resume-template-option${template === t.key ? ' is-selected' : ''}`}
+                    aria-pressed={template === t.key}
                   >
-                    {t.label}
+                    <span className="resume-template-swatch" style={{ background: t.accent }} aria-hidden="true" />
+                    <span>
+                      <strong>{t.label}</strong>
+                      <small>{t.desc}</small>
+                    </span>
                   </button>
                 ))}
               </div>
@@ -432,6 +561,26 @@ export default function ResumeBuilder() {
                 onChange={e => setData(prev => ({ ...prev, skills: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))}
                 placeholder="Comma-separated, e.g. React, Figma, SQL"
               />
+              <div className="resume-builder-actions">
+                <button className="btn btn-ghost" type="button" onClick={() => saveDraft()} disabled={saving}>
+                  {saving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save all changes'}
+                </button>
+                <button className="btn btn-outline" type="button" onClick={() => setPreviewOpen(true)}>
+                  Preview resume
+                </button>
+                <button className="btn btn-primary" type="button" onClick={handleExport} disabled={exporting || !data.contact.name}>
+                  {exporting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Export PDF'}
+                </button>
+              </div>
+              {exportResult && (
+                <div className="resume-builder-score">
+                  <div>
+                    <strong>ATS score {exportResult.atsScore}/100</strong>
+                    <span>{exportResult.filename ? `Primary resume: ${exportResult.filename}` : 'Saved with your primary resume.'}</span>
+                  </div>
+                  <span className="resume-builder-score-note">Updates after each export</span>
+                </div>
+              )}
             </div>
 
             <div className="card">
@@ -525,25 +674,9 @@ export default function ResumeBuilder() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-ghost" type="button" onClick={() => saveDraft()} disabled={saving}>
-                {saving ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Save all changes'}
-              </button>
-              <button className="btn btn-primary" type="button" onClick={handleExport} disabled={exporting || !data.contact.name}>
-                {exporting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Export PDF'}
-              </button>
-            </div>
-
-            {exportResult && (
-              <div className="card" style={{ background: 'var(--primary-light)', border: '1px solid var(--primary)' }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>Exported - ATS score {exportResult.atsScore}/100</div>
-                <p style={{ margin: 0, fontSize: '.82rem', color: 'var(--muted)' }}>
-                    Saved to your Attachments as your primary resume. Visit Profile attachments to review, re-select, or download it.
-                </p>
-              </div>
-            )}
           </div>
         )}
+        {previewOpen && <ResumePreviewModal data={data} template={template} onClose={() => setPreviewOpen(false)} />}
       </Layout>
     </>
   );
