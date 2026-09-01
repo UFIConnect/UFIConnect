@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet-async';
+import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -206,6 +207,7 @@ function ResumePreviewModal({ data, template, onClose }) {
 }
 
 export default function ResumeBuilder() {
+  const navigate = useNavigate();
   const { profile, refreshProfile } = useAuth();
   const { showToast } = useToast();
   const [loaded, setLoaded] = useState(false);
@@ -420,11 +422,22 @@ export default function ResumeBuilder() {
     }
   }
 
+  function goBack() {
+    if (window.history.state?.idx > 0) {
+      navigate(-1);
+      return;
+    }
+    navigate('/');
+  }
+
   return (
     <>
       <Helmet><title>Resume Builder | UFIconnect</title></Helmet>
       <Layout>
         <div style={{ marginBottom: 20 }}>
+          <button type="button" className="btn-back" onClick={goBack} style={{ marginBottom: 14 }}>
+            <span className="btn-back-icon" aria-hidden="true">&#8249;</span> Back
+          </button>
           <h1 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
             Resume Builder
           </h1>
