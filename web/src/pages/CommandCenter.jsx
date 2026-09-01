@@ -424,7 +424,6 @@ function ContentHubSection() {
           AI content drafting isn't configured yet — check back soon.
         </div>
       )}
-      <ContentDraftResults drafts={drafts} hashtagGroups={hashtagGroups} onCopy={copyDraft} />
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
@@ -466,6 +465,7 @@ function ContentHubSection() {
           </button>
         </form>
       </div>
+      <ContentDraftResults drafts={drafts} onCopy={copyDraft} />
 
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Hashtag creator</h3>
@@ -512,6 +512,7 @@ function ContentHubSection() {
           </button>
         </form>
       </div>
+      <ContentDraftResults hashtagGroups={hashtagGroups} onCopy={copyDraft} />
 
     </div>
   );
