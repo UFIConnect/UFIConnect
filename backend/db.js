@@ -181,11 +181,13 @@ async function initBackupDB() {
     backupPool = backup;
     _backupConnected = true;
     await pruneBackupFeedCache();
+    backupState.lastError = null;
     console.log('✅ Backup PostgreSQL (read failover) connected and indexed');
   } catch (err) {
     console.warn(`⚠️  Backup PostgreSQL unreachable: ${err.message}`);
     backupPool = null;
     _backupConnected = false;
+    backupState.lastError = err.message;
   }
 }
 
