@@ -84,6 +84,14 @@ services:
       # no failover, same as before this existed.
       - key: DATABASE_URL_BACKUP
         sync: false
+      - key: BACKUP_FEED_RETENTION_DAYS
+        value: '14'
+      - key: BACKUP_FEED_MAX_ROWS
+        value: '40000'
+      - key: BACKUP_DB_LIMIT_MB
+        value: '5120'
+      - key: BACKUP_DB_RESET_PCT
+        value: '85'
       - key: ALLOWED_ORIGINS
         value: https://uficonnect.org,https://www.uficonnect.org,https://uficonnect.pro,https://www.uficonnect.pro,https://uficonnect-web.onrender.com,https://office.uficonnect.org,https://uficonnect-office.onrender.com
       - key: API_BASE_URL

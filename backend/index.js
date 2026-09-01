@@ -93,6 +93,7 @@ function buildHealthPayload() {
     db: db.isConnected(),
     dbBackup: db.isBackupConnected(),
     dbReadFailoverActive: db.isReadFailoverActive(),
+    dbBackupStatus: db.getBackupStatus(),
   };
   try {
     payload.staging = {
@@ -28968,8 +28969,10 @@ db.initDB().then(async () => {
     // Optional read-failover DB — see db.js. No-ops entirely if
     // DATABASE_URL_BACKUP isn't set. Only starts the sync loop once the
     // backup itself is confirmed reachable and indexed.
-    await db.initBackupDB();
-    db.startBackupSync();
+    if (!IS_PIPELINE_ROLE) {
+      await db.initBackupDB();
+      db.startBackupSync();
+    }
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
     globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
