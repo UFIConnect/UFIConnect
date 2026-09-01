@@ -7519,6 +7519,96 @@ const MAIN_FEED_SNAPSHOT_MAX_KEYS = 4000;
 const FEED_SNAPSHOT_CACHE_SWEEP_MS = envNumber('FEED_SNAPSHOT_CACHE_SWEEP_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
 const FEED_SNAPSHOT_MAX_IDLE_MS = envNumber('FEED_SNAPSHOT_MAX_IDLE_MS', MAIN_FEED_SNAPSHOT_TTL * 2, MAIN_FEED_SNAPSHOT_TTL, 24 * 60 * 60 * 1000);
 const mainFeedSnapshots = new Map();
+// This holds only the database candidate list used to start a member's feed,
+// never a personalized response. A login burst used to make every new member
+// run the same expensive per-source window query before their own preferences
+// were applied. Coalescing that shared read keeps the final feed personal while
+// keeping the database work flat during a burst.
+const AGGREGATE_FEED_CANDIDATE_CACHE_MS = envNumber('AGGREGATE_FEED_CANDIDATE_CACHE_MS', 30 * 1000, 5 * 1000, 5 * 60 * 1000);
+const AGGREGATE_FEED_CANDIDATE_CACHE_MAX = 16;
+const aggregateFeedCandidateCache = new Map();
+const aggregateFeedCandidateBuilds = new Map();
+
+function aggregateFeedCandidateKey(sortMode, timeRange) {
+  return `${sortMode}::${timeRange || 'all'}`;
+}
+
+function clearAggregateFeedCandidateCache() {
+  aggregateFeedCandidateCache.clear();
+}
+
+async function getAggregateFeedCandidates(sortMode, timeRange) {
+  const key = aggregateFeedCandidateKey(sortMode, timeRange);
+  const cached = aggregateFeedCandidateCache.get(key);
+  if (cached && Date.now() - cached.computedAt < AGGREGATE_FEED_CANDIDATE_CACHE_MS) {
+    return cached.posts;
+  }
+  const pending = aggregateFeedCandidateBuilds.get(key);
+  if (pending) return pending;
+
+  const build = (async () => {
+    const { posts } = await Promise.race([
+      getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
+      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
+    ]);
+    const candidatePosts = realFeedPosts(posts);
+    if (candidatePosts.length) {
+      aggregateFeedCandidateCache.set(key, { computedAt: Date.now(), posts: candidatePosts });
+      trimOldestMapEntries(aggregateFeedCandidateCache, AGGREGATE_FEED_CANDIDATE_CACHE_MAX);
+    }
+    return candidatePosts;
+  })();
+  aggregateFeedCandidateBuilds.set(key, build);
+  try {
+    return await build;
+  } finally {
+    aggregateFeedCandidateBuilds.delete(key);
+  }
+}
+
+// Guests do not have user-specific preferences or read state, so their raw
+// cursor pages can be short-lived shared reads. Location ranking remains after
+// this cache, keeping the response appropriate for each visitor's location.
+const GUEST_FEED_PAGE_CACHE_MS = envNumber('GUEST_FEED_PAGE_CACHE_MS', 30 * 1000, 5 * 1000, 5 * 60 * 1000);
+const GUEST_FEED_PAGE_CACHE_MAX = 120;
+const guestFeedPageCache = new Map();
+const guestFeedPageBuilds = new Map();
+
+function guestFeedPageCacheKey(cursor, limit) {
+  const cursorHash = crypto.createHash('sha256')
+    .update(String(cursor || 'first').slice(0, 4096))
+    .digest('hex')
+    .slice(0, 24);
+  return `${limit}:${cursorHash}`;
+}
+
+function clearGuestFeedPageCache() {
+  guestFeedPageCache.clear();
+}
+
+async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
+  const key = guestFeedPageCacheKey(cursor, limit);
+  const cached = guestFeedPageCache.get(key);
+  if (cached && Date.now() - cached.computedAt < GUEST_FEED_PAGE_CACHE_MS) return cached.page;
+  const pending = guestFeedPageBuilds.get(key);
+  if (pending) return pending;
+
+  const build = getCursorFeedPage({
+    sources: AGGREGATE_FEED_SOURCES,
+    cursorMap,
+    limit,
+  }).then((page) => {
+    guestFeedPageCache.set(key, { computedAt: Date.now(), page });
+    trimOldestMapEntries(guestFeedPageCache, GUEST_FEED_PAGE_CACHE_MAX);
+    return page;
+  });
+  guestFeedPageBuilds.set(key, build);
+  try {
+    return await build;
+  } finally {
+    guestFeedPageBuilds.delete(key);
+  }
+}
 // Keyed by userId first (was sortMode/timeRange alone, shared by every
 // user) — the default "Personal Feed" view used to read one pool computed
 // generically across all 206 FEED_TOPICS, with only rotateForUser's
@@ -16212,6 +16302,8 @@ function invalidateDeletedFeedPosts(postIds) {
   for (const id of ids) postUrlIndex.delete(id);
   mainFeedSnapshots.clear();
   filteredFeedSnapshots.clear();
+  clearAggregateFeedCandidateCache();
+  clearGuestFeedPageCache();
 }
 
 async function reconcileDeletedSourcePost(post) {
@@ -19008,7 +19100,16 @@ async function handleFeedRequest(req, res) {
     }
   }
 
-  const user   = await getUser(req.user.id);
+  // These reads are independent and are all cache-backed after the first
+  // request. Run cold lookups together so a new session pays one database
+  // round-trip window instead of three serial ones before its feed can render.
+  const passivePreview = req.query.passive === '1';
+  const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
+  const [user, seenIds, userAffinity] = await Promise.all([
+    getUser(req.user.id),
+    passivePreview || hasExplicitSearch ? Promise.resolve(new Set()) : getUserSeenSet(req.user.id),
+    getUserAffinity(req.user.id),
+  ]);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
   const locationContext = getFeedLocationContext(req, user);
@@ -19035,18 +19136,14 @@ async function handleFeedRequest(req, res) {
   // not consume posts from the member's real unseen queue. The route stays
   // authenticated and returns the same content; it simply skips read-state
   // filtering/writes for that non-scrolling preview request.
-  const passivePreview = req.query.passive === '1';
   // Search deliberately permits a previously consumed post; all normal
   // feeds and filters remain unseen-only for this individual member.
-  const hasExplicitSearch = Boolean(String(req.query.q || '').trim());
-  const seenIds = passivePreview || hasExplicitSearch ? new Set() : await getUserSeenSet(req.user.id);
   const trackPostsSeen = (items) => {
     if (!passivePreview) markPostsSeen(req.user.id, items);
   };
   // Behavioral affinity (real watch/comment/link time — see
   // recordEngagementSignal) — same "applied fresh per request" treatment as
   // userTopics, feeding buildTwoPhaseMix's topic-group ranking.
-  const userAffinity = await getUserAffinity(req.user.id);
   const jobRoleValues = [prefs.role, user?.title, ...asArray(user?.skills)].filter(Boolean);
   const jobRoleTerms = uniquePersonalizationTerms([
     ...jobRoleValues,
@@ -19090,6 +19187,7 @@ async function handleFeedRequest(req, res) {
   const sourcesParam = isFollowingRequest
     ? requestedSourcesParam
     : requestedSourcesParam.filter(isAggregateFeedSource);
+  const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   const requestedMemberOnlySource = !isFollowingRequest
     && [requestedSourceFilter, ...requestedSourcesParam].some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
   // Topic selector — picks any number of topics from FEED_TOPICS (multi-
@@ -19705,7 +19803,6 @@ async function handleFeedRequest(req, res) {
   // Default aggregate view (no source filter, no multi-source, page 1 — the
   // merged Personal Feed / All Collected view): serve the shared pre-sorted
   // snapshot instead of resorting hundreds of posts on every request.
-  const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
   if (isDefaultAggregateView) {
     const snap = mainFeedSnapshots.get(mainFeedSnapshotKey(req.user.id, sortMode, timeRange));
     if (snap && (Date.now() - snap.computedAt) < MAIN_FEED_SNAPSHOT_TTL) {
@@ -19960,10 +20057,12 @@ async function handleFeedRequest(req, res) {
   // below is no longer skewed to begin with, rather than skewed-then-capped.
   // 40, not just enough for one page, because this result gets cached as the
   // shared snapshot (below) that every page of infinite-scroll slices from.
-  const { posts: balancedDbPosts } = await Promise.race([
-    getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
-    new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
-  ]);
+  const balancedDbPosts = isDefaultAggregateView && !IS_PIPELINE_ROLE
+    ? await getAggregateFeedCandidates(sortMode, timeRange)
+    : (await Promise.race([
+      getBalancedFeedPosts({ sortMode, timeRange, page: 1, perSourcePageSize: 40 }),
+      new Promise((resolve) => setTimeout(() => resolve({ posts: [] }), 6000)),
+    ])).posts;
   let dbPosts = balancedDbPosts.map(p => mapExternalPost(p, p.source || 'reddit'));
   if (!dbPosts.length) {
     // Safety net — falls back to the flat query if the windowed one comes
@@ -20194,8 +20293,10 @@ app.get('/feed/guest', async (req, res) => {
     }
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const cursorMap = decodeFeedCursor(req.query.cursor);
-    const { posts, nextCursor, hasMore } = await getCursorFeedPage({
-      sources: AGGREGATE_FEED_SOURCES, cursorMap, limit: feedLimit,
+    const { posts, nextCursor, hasMore } = await getCachedGuestFeedPage({
+      cursor: req.query.cursor,
+      cursorMap,
+      limit: feedLimit,
     });
     const locationContext = getFeedLocationContext(req);
     const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts), locationContext);
