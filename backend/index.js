@@ -18430,10 +18430,37 @@ async function resolveResumeBuilderPrice() {
   const candidates = [];
   for (const priceId of candidateIds) {
     try {
-      const summary = summarizeStripePrice(await stripe.prices.retrieve(priceId), 'resume_builder');
-      if (summary) candidates.push({ priceId, summary });
+      const price = await stripe.prices.retrieve(priceId);
+      const summary = summarizeStripePrice(price, 'resume_builder');
+      if (summary) candidates.push({ priceId, price, summary });
     } catch (error) {
       console.warn('[billing/config] Could not read Resume Builder price:', error.message);
+    }
+  }
+
+  // Render can retain a legacy Price ID while a replacement Price is created
+  // on the same Stripe Product. Inspect that Product as well, so checkout
+  // finds the exact configured cadence even before the old variable is removed.
+  const productIds = [...new Set(candidates
+    .map(candidate => typeof candidate.price?.product === 'string'
+      ? candidate.price.product
+      : candidate.price?.product?.id)
+    .filter(Boolean))];
+  for (const productId of productIds) {
+    try {
+      const productPrices = await stripe.prices.list({
+        product: productId,
+        active: true,
+        type: 'recurring',
+        limit: 100,
+      });
+      for (const price of productPrices.data || []) {
+        if (candidates.some(candidate => candidate.priceId === price.id)) continue;
+        const summary = summarizeStripePrice(price, 'resume_builder');
+        if (summary) candidates.push({ priceId: price.id, price, summary });
+      }
+    } catch (error) {
+      console.warn('[billing/config] Could not inspect Resume Builder product prices:', error.message);
     }
   }
   // Match by amount and cadence, not simply by environment-variable order.
