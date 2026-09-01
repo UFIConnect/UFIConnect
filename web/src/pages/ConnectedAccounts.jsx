@@ -1,10 +1,8 @@
 ﻿import { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 
 const PLATFORM_BENEFITS = {
   linkedin:  ['Import your work history & headline', 'Show LinkedIn posts in your feed', 'Get matched with relevant jobs'],
@@ -24,7 +22,6 @@ const PLATFORM_BENEFITS = {
 };
 
 export default function ConnectedAccounts() {
-  const { profile: authProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [platforms, setPlatforms]       = useState([]);
   const [connected, setConnected]       = useState({});
@@ -130,15 +127,12 @@ export default function ConnectedAccounts() {
     }
   }
 
-  const isCommandCenterOnly = ([key, platform]) => (
-    platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
-  );
-  const standardPlatforms = platforms.filter((entry) => !isCommandCenterOnly(entry));
-  const memberOnlyPlatforms = platforms.filter(isCommandCenterOnly);
-  const connectedList   = standardPlatforms.filter(([k, p]) => connected[k] && !p.forceComingSoon);
-  const membershipLocked = authProfile?.plan === 'free';
-  const availableList   = standardPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
-  const comingSoonList  = standardPlatforms.filter(([k, p]) => p.forceComingSoon || (!connected[k] && !p.configured));
+  // Every social account a member can authorize belongs here. Command Center
+  // features may use a subset of these connections, but the connection flow
+  // itself must never become a dead-end behind a membership screen.
+  const connectedList   = platforms.filter(([k, p]) => connected[k] && !p.forceComingSoon);
+  const availableList   = platforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
+  const comingSoonList  = platforms.filter(([k, p]) => p.forceComingSoon || (!connected[k] && !p.configured));
 
   return (
     <Layout>
@@ -180,7 +174,7 @@ export default function ConnectedAccounts() {
             <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {connectedList.length} of {standardPlatforms.length} accounts connected
+                {connectedList.length} of {platforms.length} accounts connected
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
                 {connectedList.length === 0
@@ -205,20 +199,6 @@ export default function ConnectedAccounts() {
             )}
           </div>
 
-          {memberOnlyPlatforms.length > 0 && (
-            <div className="card" style={{ marginBottom: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap' }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 750, fontSize: '.9rem', marginBottom: 3 }}>Command Center accounts</div>
-                <div style={{ color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
-                  Account-only sources and publisher integrations are managed separately because they use only the account and destination you authorize.
-                </div>
-              </div>
-              <Link to="/command-center?tab=accounts" className="btn btn-outline btn-sm">
-                {membershipLocked ? 'View Command Center' : 'Manage extra accounts'}
-              </Link>
-            </div>
-          )}
-
           {/* Connected section */}
           {connectedList.length > 0 && (
             <div style={{ marginBottom: 28 }}>
@@ -237,7 +217,7 @@ export default function ConnectedAccounts() {
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
                   disconnecting={disconnecting === key}
-                  locked={membershipLocked && !!p.requiresMembership}
+                  locked={Boolean(p.locked)}
                 />
               ))}
             </div>
@@ -259,7 +239,7 @@ export default function ConnectedAccounts() {
                   onToggle={() => setExpanded(expanded === key ? null : key)}
                   onConnect={() => handleConnect(key)}
                   connecting={connecting === key}
-                  locked={membershipLocked && !!p.requiresMembership}
+                  locked={Boolean(p.locked)}
                 />
               ))}
             </div>
@@ -279,7 +259,7 @@ export default function ConnectedAccounts() {
                   comingSoon
                   expanded={expanded === key}
                   onToggle={() => setExpanded(expanded === key ? null : key)}
-                  locked={membershipLocked && !!p.requiresMembership}
+                  locked={Boolean(p.locked)}
                 />
               ))}
             </div>

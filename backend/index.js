@@ -11193,14 +11193,55 @@ function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) 
 // guarantees that part) — it only decides which topic's post lands first
 // within each round, so a topic the viewer actually engages with more
 // tends to surface earlier without breaking equal representation.
-function buildTwoPhaseMix(pool, userTopics, userAffinity) {
-  if (!pool.length) return pool;
+function equalizerPostKey(post) {
+  if (post?.id) return `id:${post.id}`;
+  if (post?.sourceUrl) return `url:${post.sourceUrl}`;
+  return `content:${post?.source || 'unknown'}:${post?.title || ''}:${post?.createdAt || ''}`;
+}
+
+function uniqueEqualizerPosts(posts) {
+  const seen = new Set();
+  return (Array.isArray(posts) ? posts : []).filter((post) => {
+    if (!post) return false;
+    const key = equalizerPostKey(post);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// This is deliberately applied after a surface has selected that member's
+// candidates, never to a shared cache. It balances source and topic turns
+// inside the member's own scope without adding content they did not select.
+function buildFullMemberFeedEqualizer(posts, userTopics, userAffinity, options = {}) {
+  return buildTwoPhaseMix(uniqueEqualizerPosts(posts), userTopics, userAffinity, options);
+}
+
+// Travel and Restaurants are location-led discovery surfaces. Keep the
+// selected-place items as their own leading band, but fully equalize sources
+// and topics inside that band and the remaining discovery feed separately.
+function buildLocationAwareMemberEqualizer(posts, userAffinity) {
+  const list = uniqueEqualizerPosts(posts);
+  const local = list.filter(post => post.matchedByLocation || post.locationMatch === 'local');
+  const remainder = list.filter(post => !local.includes(post));
+  if (!local.length) return buildFullMemberFeedEqualizer(list, [], userAffinity, { filterTopics: false });
+  return uniqueEqualizerPosts([
+    ...buildFullMemberFeedEqualizer(local, [], userAffinity, { filterTopics: false }),
+    ...buildFullMemberFeedEqualizer(remainder, [], userAffinity, { filterTopics: false }),
+  ]);
+}
+
+function buildTwoPhaseMix(pool, userTopics, userAffinity, options = {}) {
+  const uniquePool = uniqueEqualizerPosts(pool);
+  if (!uniquePool.length) return uniquePool;
 
   // A source introduction must obey the same declared-topic boundary as the
   // rest of a personalized feed. Otherwise one unrelated post per source
   // leaks through before filtering (for example, music for a member who did
   // not select it).
-  const topicFiltered = filterByUserTopics(pool, userTopics, { fallbackToInput: false });
+  const topicFiltered = options.filterTopics === false
+    ? uniquePool
+    : filterByUserTopics(uniquePool, userTopics, { fallbackToInput: false });
   const bySource = new Map();
   for (const p of topicFiltered) {
     const src = p?.source || 'unknown';
@@ -11209,13 +11250,13 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
   }
   const sourceLists = [...bySource.values()];
   const intro = roundRobinMerge(sourceLists).slice(0, sourceLists.length);
-  const introIds = new Set(intro.map(p => p?.id));
+  const introKeys = new Set(intro.map(equalizerPostKey));
 
-  const rest = topicFiltered.filter(p => !introIds.has(p?.id));
+  const rest = topicFiltered.filter(p => !introKeys.has(equalizerPostKey(p)));
   const topicAffinity = userAffinity?.topic;
 
   const byTopic = new Map();
-  for (const p of topicFiltered) {
+  for (const p of rest) {
     const t = p?.topic || 'unknown';
     if (!byTopic.has(t)) byTopic.set(t, new Map());
     const srcMap = byTopic.get(t);
@@ -11228,7 +11269,7 @@ function buildTwoPhaseMix(pool, userTopics, userAffinity) {
     .map(([, srcMap]) => roundRobinMerge([...srcMap.values()]));
   const topicMixed = roundRobinMerge(topicGroups);
 
-  return [...intro, ...topicMixed];
+  return uniqueEqualizerPosts([...intro, ...topicMixed]);
 }
 
 const PERSONALIZED_FEED_CHUNK_SIZE = 12;
@@ -18551,12 +18592,11 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
-  if (user.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)) {
-    return res.status(403).json({
-      error: 'This account connection is part of Command Center membership.',
-      code: 'membership_required',
-    });
-  }
+  // Linking an account is available to every signed-in member. Paid plans
+  // still gate the cost-bearing Command Center actions that may use the
+  // connection (AI drafting, media generation, and publishing); a plan must
+  // never prevent a member from authorizing, reviewing, or disconnecting
+  // their own social account.
 
   const status = socialCredentialStatus(platform, req);
   if (!status.configured) return res.status(501).json({
@@ -18760,8 +18800,11 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
       forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
       commandCenterOnly,
-      requiresMembership: commandCenterOnly,
-      locked: user?.plan === 'free' && commandCenterOnly,
+      // Account connections themselves are not membership-gated. Keep the
+      // commandCenterOnly flag as catalog metadata for the workspace, while
+      // the paid-only actions remain protected at their own API routes.
+      requiresMembership: false,
+      locked: false,
       crossPost: getCrossPostCapability(key),
     }];
   }));
@@ -19758,9 +19801,12 @@ async function handleFeedRequest(req, res) {
     const scoped = topicsFilter.length ? list : filterByUserTopics(list, userTopics, { fallbackToInput: false });
     return scoped.filter(matchesMemberJob);
   };
-  const personalizeForUser = (items, options = {}) => (
-    personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext, request: req })
-  );
+  const personalizeForUser = (items, options = {}) => {
+    const scoped = filterForUser(items);
+    const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
+    const equalized = buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity);
+    return personalizeAuthenticatedFeedPosts(equalized, user, prefs, userAffinity, { ...options, locationContext, request: req });
+  };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
   // for why this is what makes a refresh return substantially different
@@ -19865,7 +19911,10 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
-    const available = filterUnseen(filterPostsForMemberLanguages(localFeed.posts, user, req), seenIds);
+    const available = buildLocationAwareMemberEqualizer(
+      filterUnseen(filterPostsForMemberLanguages(localFeed.posts, user, req), seenIds),
+      userAffinity,
+    );
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = available.slice(offset, offset + feedLimit);
     const hydratedPageRows = feedMode === 'restaurants'
@@ -19884,7 +19933,11 @@ async function handleFeedRequest(req, res) {
       hasMore: offset + pageRows.length < available.length,
       totalAvailable: available.length,
       fetchedAt: localFeed.fetchedAt,
-      equalizer: localFeed.equalizer || null,
+      equalizer: {
+        ...(localFeed.equalizer || {}),
+        memberMode: 'topic-source',
+        memberPosts: available.length,
+      },
       location: {
         country: locationContext.countryName || null,
         city: locationContext.city || null,
@@ -20271,7 +20324,7 @@ async function handleFeedRequest(req, res) {
         // offset already guarantees no repeats within a lap on its own —
         // filterUnseen was pure double-counting here, not an extra
         // safeguard.
-        let personalized = filterUnseen(buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
+        let personalized = filterUnseen(rotateForUser(snap.posts, req.user.id, refreshSeed), seenIds);
         // See applyResumeMatchedJobs's own comment — swaps whichever posts
         // already landed in a job-source slot for a better resume match,
         // same slot, same mix shape.
@@ -20407,7 +20460,7 @@ async function handleFeedRequest(req, res) {
       // rotateForUser — so different users don't all land on the exact same
       // slice/order of the shared pool, and a refresh actually surfaces
       // different posts instead of the same rotation every time.
-      let personalized = filterUnseen(buildTwoPhaseMix(rotateForUser(snap.posts, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
+      let personalized = filterUnseen(rotateForUser(snap.posts, req.user.id, refreshSeed), seenIds);
       const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       personalized = personalizeForUser(personalized);
@@ -20776,7 +20829,7 @@ async function handleFeedRequest(req, res) {
   // treatment as the cached-snapshot read paths above, so this request's
   // user sees a consistent rotation whether
   // it hit the cache or triggered the recompute.
-  let personalizedExternal = filterUnseen(buildTwoPhaseMix(rotateForUser(externalDiversified, req.user.id, refreshSeed), userTopics, userAffinity), seenIds);
+  let personalizedExternal = filterUnseen(rotateForUser(externalDiversified, req.user.id, refreshSeed), seenIds);
   if (isDefaultAggregateView) {
     // Reuses the wide-window job fetch already done above (extraJobPosts)
     // instead of a second, separate query for the same data.
@@ -21111,6 +21164,15 @@ async function handleVideoFeedRequest(req, res) {
       if (topicsFilter.length) return items;
       return items.filter(post => feedPostPersonalizationScore(post, videoPreferenceContext) > 0);
     };
+    const equalizeVideosForUser = (items) => buildFullMemberFeedEqualizer(
+      items,
+      topicsFilter.length ? topicsFilter : userTopics,
+      userAffinity,
+      // Video matching already uses title/content as well as a source topic.
+      // Arrange that eligible member pool; do not discard a text match whose
+      // imported topic field is incomplete.
+      { filterTopics: false },
+    );
 
     // -- Full-text search across every cached video post, not just whatever
     // a single getCursorFeedPage page happened to return — the comment
@@ -21142,7 +21204,7 @@ async function handleVideoFeedRequest(req, res) {
         diversify: true,
       });
       const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic));
-      const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
+      const pageRows = personalizeVideosForUser(equalizeVideosForUser(playable)).slice(0, feedLimit);
       return sendVideoPage(req, res, pageRows, { hasMore: playable.length > pageRows.length, search: searchQuery });
     }
 
@@ -21169,7 +21231,7 @@ async function handleVideoFeedRequest(req, res) {
       });
       const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
-      const pageRows = personalizeVideosForUser(playable).slice(0, feedLimit);
+      const pageRows = personalizeVideosForUser(equalizeVideosForUser(playable)).slice(0, feedLimit);
       const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
       return sendVideoPage(req, res, pageRows, { page: reqPage, hasMore });
     }
@@ -21183,7 +21245,7 @@ async function handleVideoFeedRequest(req, res) {
         userId: req.user.id, sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
       });
-      const filtered = personalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch)));
+      const filtered = personalizeVideosForUser(equalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch))));
       return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
     }
 
@@ -21233,7 +21295,7 @@ async function handleVideoFeedRequest(req, res) {
       hasMore = mix.hasMore;
     }
 
-    const posts = personalizeVideosForUser([...introPosts, ...mixPosts], { preserveFirst: introPosts.length });
+    const posts = personalizeVideosForUser(equalizeVideosForUser([...introPosts, ...mixPosts]));
     sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
@@ -21287,7 +21349,12 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
     const equalized = personalizeAuthenticatedFeedPosts(
-      buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+      buildFullMemberFeedEqualizer(
+        buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
+        topicsFilter.length ? topicsFilter : userTopics,
+        userAffinity,
+        { filterTopics: false },
+      ),
       user,
       prefs,
       userAffinity,
