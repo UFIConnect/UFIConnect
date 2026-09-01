@@ -82,6 +82,10 @@ export default function Profile() {
   // Avatar / cover photo upload
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingCover,  setUploadingCover]  = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const [coverPreview, setCoverPreview] = useState('');
+  const [avatarLoadFailed, setAvatarLoadFailed] = useState(false);
+  const [coverLoadFailed, setCoverLoadFailed] = useState(false);
   // Attachments (resume upload + ATS score)
   const [attachments,        setAttachments]        = useState([]);
   const [attachmentsLoading, setAttachmentsLoading]  = useState(false);
@@ -90,6 +94,25 @@ export default function Profile() {
   const [expandedAttachment, setExpandedAttachment]  = useState(null);
   const [deletingAttachment, setDeletingAttachment]  = useState(null);
   const [selectingAttachment, setSelectingAttachment] = useState(null);
+
+  const avatarImageUrl = avatarPreview || profile?.avatarUrl || '';
+  const coverImageUrl = coverPreview || profile?.coverUrl || '';
+
+  useEffect(() => {
+    setAvatarLoadFailed(false);
+  }, [avatarImageUrl]);
+
+  useEffect(() => {
+    setCoverLoadFailed(false);
+  }, [coverImageUrl]);
+
+  useEffect(() => () => {
+    if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+  }, [avatarPreview]);
+
+  useEffect(() => () => {
+    if (coverPreview) URL.revokeObjectURL(coverPreview);
+  }, [coverPreview]);
 
   // Old profile deep links still open the corresponding right-side panel.
   useEffect(() => {
@@ -165,15 +188,18 @@ export default function Profile() {
       showToast(validationError, 'error');
       return;
     }
+    setAvatarPreview(URL.createObjectURL(file));
     setUploadingAvatar(true);
     try {
-      const { url } = await uploadMedia(file, null, 'avatars');
-      const { data } = await client.patch('/profile', { avatarUrl: url });
+      const uploaded = await uploadMedia(file, null, 'avatars');
+      if (!uploaded?.url || uploaded.type !== 'image') throw new Error('The selected file was not uploaded as an image.');
+      const { data } = await client.patch('/profile', { avatarUrl: uploaded.url });
       updateProfileLocally(data.profile || data);
       showToast('Profile photo updated', 'success');
     } catch (err) {
-      showToast(err?.message || 'Failed to upload photo - please try again.', 'error');
+      showToast(err?.response?.data?.message || err?.message || 'Failed to upload photo - please try again.', 'error');
     } finally {
+      setAvatarPreview('');
       setUploadingAvatar(false);
     }
   }
@@ -185,16 +211,43 @@ export default function Profile() {
       showToast(validationError, 'error');
       return;
     }
+    setCoverPreview(URL.createObjectURL(file));
     setUploadingCover(true);
     try {
-      const { url } = await uploadMedia(file, null, 'covers');
-      const { data } = await client.patch('/profile', { coverUrl: url });
+      const uploaded = await uploadMedia(file, null, 'covers');
+      if (!uploaded?.url || uploaded.type !== 'image') throw new Error('The selected file was not uploaded as an image.');
+      const { data } = await client.patch('/profile', { coverUrl: uploaded.url });
       updateProfileLocally(data.profile || data);
       showToast('Cover photo updated', 'success');
     } catch (err) {
-      showToast(err?.message || 'Failed to upload cover photo - please try again.', 'error');
+      showToast(err?.response?.data?.message || err?.message || 'Failed to upload cover photo - please try again.', 'error');
     } finally {
+      setCoverPreview('');
       setUploadingCover(false);
+    }
+  }
+
+  async function clearProfileImage(kind) {
+    const isAvatar = kind === 'avatar';
+    const hasImage = isAvatar ? avatarImageUrl : coverImageUrl;
+    const isUploading = isAvatar ? uploadingAvatar : uploadingCover;
+    if (!hasImage || isUploading) return;
+
+    const label = isAvatar ? 'profile photo' : 'cover photo';
+    if (!window.confirm(`Remove your ${label}?`)) return;
+
+    const setUploading = isAvatar ? setUploadingAvatar : setUploadingCover;
+    const setPreview = isAvatar ? setAvatarPreview : setCoverPreview;
+    setUploading(true);
+    try {
+      const { data } = await client.patch('/profile', { [isAvatar ? 'avatarUrl' : 'coverUrl']: '' });
+      setPreview('');
+      updateProfileLocally(data.profile || data);
+      showToast(`${isAvatar ? 'Profile photo' : 'Cover photo'} removed`, 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.message || err?.message || `Failed to remove ${label}.`, 'error');
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -319,11 +372,20 @@ export default function Profile() {
 
   async function handleSave(e) {
     e.preventDefault();
+    const name = form.name.trim();
+    if (!name) {
+      setError('Enter your name before saving.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
       const payload = {
         ...form,
+        name,
+        title: form.title.trim(),
+        bio: form.bio.trim(),
+        organization: form.organization.trim(),
         skills: form.skills.split(',').map((s) => s.trim()).filter(Boolean),
         links,
       };
@@ -332,8 +394,8 @@ export default function Profile() {
       updateProfileLocally(data.profile || data);
       setEditing(null);
       showToast('Profile saved', 'success');
-    } catch {
-      setError('Failed to save. Please try again.');
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -356,8 +418,8 @@ export default function Profile() {
       updateProfileLocally(data.profile || data);
       setEditing(null);
       showToast('Files and links saved', 'success');
-    } catch {
-      setError('Failed to save. Please try again.');
+    } catch (err) {
+      setError(err?.response?.data?.message || 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -375,45 +437,57 @@ export default function Profile() {
   return (
     <Layout>
       {/* Cover */}
-      <div
-        className="profile-cover"
-        style={{
-          position: 'relative',
-          ...(profile.coverUrl ? { backgroundImage: `url(${profile.coverUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}),
-        }}
-      >
-        <PhotoPickerButton
-          onFileSelected={handleCoverUpload}
-          disabled={uploadingCover}
-          label={<>{uploadingCover && <span className="spinner" style={{ width: 12, height: 12 }} />} {uploadingCover ? 'Uploading...' : 'Change cover'}</>}
-          style={{
-            position: 'absolute', right: 10, bottom: 10, cursor: uploadingCover ? 'default' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20,
-            background: 'rgba(0,0,0,.45)', color: '#fff', fontSize: '.72rem', fontWeight: 700,
-            backdropFilter: 'blur(4px)', border: 'none',
-          }}
-        />
+      <div className="profile-cover">
+        {coverImageUrl && !coverLoadFailed && (
+          <img
+            className="profile-cover-image"
+            src={coverImageUrl}
+            alt=""
+            onError={() => setCoverLoadFailed(true)}
+          />
+        )}
+        <div className="profile-cover-actions">
+          <PhotoPickerButton
+            className="profile-cover-photo-button"
+            onFileSelected={handleCoverUpload}
+            onRemove={coverImageUrl ? () => clearProfileImage('cover') : undefined}
+            capture="environment"
+            disabled={uploadingCover}
+            ariaLabel="Change cover photo"
+            removeLabel="Remove cover photo"
+            label={<>{uploadingCover && <span className="spinner" style={{ width: 12, height: 12 }} />} {uploadingCover ? 'Uploading...' : 'Change cover'}</>}
+            menuStyle={{ right: 0, left: 'auto' }}
+          />
+        </div>
       </div>
 
       {/* Header card */}
       <div className="profile-header">
-        <div className="profile-avatar-wrap" style={{ position: 'relative', width: 80 }}>
-          {profile.avatarUrl ? (
-            <img src={profile.avatarUrl} alt="" className="avatar-xl" style={{ borderRadius: '50%', objectFit: 'cover', display: 'block' }} />
+        <div className="profile-avatar-wrap">
+          {avatarImageUrl && !avatarLoadFailed ? (
+            <img
+              src={avatarImageUrl}
+              alt=""
+              className="avatar-xl"
+              onError={() => setAvatarLoadFailed(true)}
+              style={{ borderRadius: '50%', objectFit: 'cover', display: 'block' }}
+            />
           ) : (
             <div className="avatar avatar-xl">{initials(profile.name)}</div>
           )}
-          <PhotoPickerButton
-            onFileSelected={handleAvatarUpload}
-            disabled={uploadingAvatar}
-            label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'P'}
-            style={{
-              position: 'absolute', right: -2, bottom: -2, width: 28, height: 28, borderRadius: '50%',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingAvatar ? 'default' : 'pointer',
-              background: 'var(--primary)', color: '#fff', fontSize: '.75rem',
-              border: '2px solid var(--card)',
-            }}
-          />
+          <div className="profile-avatar-actions">
+            <PhotoPickerButton
+              className="profile-avatar-photo-button"
+              onFileSelected={handleAvatarUpload}
+              onRemove={avatarImageUrl ? () => clearProfileImage('avatar') : undefined}
+              capture="user"
+              disabled={uploadingAvatar}
+              ariaLabel="Change profile photo"
+              removeLabel="Remove profile photo"
+              label={uploadingAvatar ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Photo'}
+              menuStyle={{ right: 0, left: 'auto' }}
+            />
+          </div>
         </div>
         <div className="profile-name">{profile.name}</div>
         <div className="profile-title">{profile.title || 'UFIconnect Member'}</div>
@@ -440,9 +514,7 @@ export default function Profile() {
 
         <div className="profile-actions" style={{ marginTop: 14 }}>
           {!editing && <button className="btn btn-primary btn-sm" onClick={startEdit}>Edit profile</button>}
-          <Link to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">
-            <button className="btn btn-ghost btn-sm">Preview as public</button>
-          </Link>
+          <Link className="btn btn-ghost btn-sm" to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">Preview as public</Link>
         </div>
 
         {/* Settings/Log out live in the desktop sidebar, which is hidden on
@@ -450,9 +522,7 @@ export default function Profile() {
             bottom-nav destination every mobile user can already reach, so
             it's the fallback entry point for both on small screens. */}
         <div className="profile-mobile-account-actions">
-          <Link to="/settings">
-            <button className="btn btn-ghost btn-sm">Settings</button>
-          </Link>
+          <Link className="btn btn-ghost btn-sm" to="/settings">Settings</Link>
           <button className="btn btn-ghost btn-sm profile-mobile-logout" onClick={handleLogout}>⎋ Log out</button>
         </div>
       </div>
@@ -508,7 +578,7 @@ export default function Profile() {
                 </p>
               </div>
               <div style={{ marginTop: 18 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                <div className="profile-posts-heading">
                   <div>
                     <h2 style={{ fontSize: '1rem', margin: 0 }}>Your UFIconnect posts</h2>
                     <p style={{ color: 'var(--muted)', fontSize: '.82rem', margin: '3px 0 0' }}>Posts you share with the community live here.</p>

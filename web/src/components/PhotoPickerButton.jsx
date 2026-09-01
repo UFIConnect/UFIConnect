@@ -10,7 +10,20 @@ import { useState, useRef, useEffect } from 'react';
 // Self-contained (owns its own menu open/close + outside-click, same
 // pattern as EmojiPicker) so any upload area just drops this in instead of
 // wiring two file inputs and a menu itself.
-export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', label = 'Photo', disabled = false, className, style }) {
+export default function PhotoPickerButton({
+  onFileSelected,
+  onRemove,
+  accept = 'image/*',
+  capture = 'environment',
+  label = 'Photo',
+  removeLabel = 'Remove photo',
+  ariaLabel = 'Add a photo',
+  disabled = false,
+  className,
+  style,
+  wrapperStyle,
+  menuStyle,
+}) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
   const btnRef = useRef(null);
@@ -34,9 +47,9 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
   }
 
   return (
-    <div ref={wrapRef} style={{ position: 'relative', display: 'inline-block' }}>
+    <div ref={wrapRef} style={{ position: 'relative', display: 'inline-block', ...wrapperStyle }}>
       <input ref={libraryInputRef} type="file" accept={accept} onChange={handleChange} style={{ display: 'none' }} />
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={handleChange} style={{ display: 'none' }} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture={capture} onChange={handleChange} style={{ display: 'none' }} />
       <button
         ref={btnRef}
         type="button"
@@ -45,7 +58,8 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
         disabled={disabled}
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
-        title="Add a photo"
+        aria-label={ariaLabel}
+        title={ariaLabel}
       >
         {label}
       </button>
@@ -57,6 +71,7 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
             minWidth: 180, background: 'var(--card-bg, var(--surface))', border: '1px solid var(--border)',
             borderRadius: 'var(--radius)', boxShadow: '0 12px 32px rgba(0,0,0,.18)',
             padding: 6, display: 'flex', flexDirection: 'column', gap: 2,
+            ...menuStyle,
           }}
         >
           <button
@@ -87,6 +102,22 @@ export default function PhotoPickerButton({ onFileSelected, accept = 'image/*', 
           >
             Take a photo
           </button>
+          {onRemove && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => { setOpen(false); onRemove(); }}
+              style={{
+                all: 'unset', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 10,
+                width: '100%', padding: '9px 10px', borderRadius: 'var(--radius-sm)',
+                fontSize: '.85rem', fontWeight: 600, color: 'var(--danger)', cursor: 'pointer',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = '#FEE2E2'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              {removeLabel}
+            </button>
+          )}
         </div>
       )}
     </div>

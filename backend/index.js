@@ -14619,6 +14619,19 @@ function normalizeMemberPhone(value) {
   return /^\+[1-9]\d{7,14}$/.test(compact) ? compact : null;
 }
 
+function normalizeProfileImageUrl(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw || raw.length > 2_000) return raw ? null : '';
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'https:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function isDBId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(id));
 }
@@ -18283,17 +18296,32 @@ app.patch('/profile', authenticate, async (req, res) => {
     return res.status(503).json({ message: 'Saving is temporarily unavailable. Please try again in a moment.' });
   }
   const { name, title, bio, skills, organization, links, roleSettings, profileHidden, avatarUrl, coverUrl } = req.body;
+  const hasNameUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'name');
   const hasPhoneUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'phone');
+  const hasAvatarUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'avatarUrl');
+  const hasCoverUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'coverUrl');
+  const normalizedName = hasNameUpdate ? String(name || '').trim() : undefined;
   const normalizedPhone = hasPhoneUpdate ? normalizeMemberPhone(req.body.phone) : undefined;
+  const normalizedAvatarUrl = hasAvatarUpdate ? normalizeProfileImageUrl(avatarUrl) : undefined;
+  const normalizedCoverUrl = hasCoverUpdate ? normalizeProfileImageUrl(coverUrl) : undefined;
+  if (hasNameUpdate && !normalizedName) {
+    return res.status(400).json({ message: 'Enter your name before saving.' });
+  }
   if (hasPhoneUpdate && String(req.body.phone || '').trim() && !normalizedPhone) {
     return res.status(400).json({ message: 'Enter a valid phone number with country code, such as +1 555 123 4567.' });
+  }
+  if (hasAvatarUpdate && normalizedAvatarUrl === null) {
+    return res.status(400).json({ message: 'Profile photos must use a valid HTTPS image URL.' });
+  }
+  if (hasCoverUpdate && normalizedCoverUrl === null) {
+    return res.status(400).json({ message: 'Cover photos must use a valid HTTPS image URL.' });
   }
   // Snapshot in case the DB write fails and in-memory needs to roll back to
   // what's actually durable — an "ok" response should mean it's really saved.
   const prev = { name: user.name, title: user.title, bio: user.bio, skills: user.skills,
     organization: user.organization, links: user.links, roleSettings: user.roleSettings,
     profileHidden: user.profileHidden, avatarUrl: user.avatarUrl, coverUrl: user.coverUrl, phone: user.phone };
-  if (name) user.name = name;
+  if (hasNameUpdate) user.name = normalizedName;
   if (title !== undefined) user.title = title;
   if (bio !== undefined) user.bio = bio;
   if (skills !== undefined) user.skills = asArray(skills).filter(s => typeof s === 'string');
@@ -18313,8 +18341,8 @@ app.patch('/profile', authenticate, async (req, res) => {
   // (see POST /groups/:id/posts), which takes Cloudinary's signed-upload
   // response at face value too. A forged non-Cloudinary URL here just means
   // a broken-looking avatar for that one user, not a security issue.
-  if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
-  if (coverUrl !== undefined) user.coverUrl = coverUrl;
+  if (hasAvatarUpdate) user.avatarUrl = normalizedAvatarUrl;
+  if (hasCoverUpdate) user.coverUrl = normalizedCoverUrl;
   if (hasPhoneUpdate) user.phone = normalizedPhone || '';
   // Was unconditionally reset to false on every save regardless of what the
   // request sent — meaning even a real "hide my profile" toggle could never
