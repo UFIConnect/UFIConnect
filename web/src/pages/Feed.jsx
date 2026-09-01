@@ -1730,6 +1730,9 @@ export default function Feed({ forcedMode } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const routeLocation = useLocation();
   const navigate = useNavigate();
+  const routeFeedParams = new URLSearchParams(routeLocation.search);
+  const routeRequestedFeed = routeFeedParams.get('feed');
+  const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
   const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
   const [connecting,    setConnecting]   = useState(false);
@@ -1752,7 +1755,9 @@ export default function Feed({ forcedMode } = {}) {
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
   const [remoteHasMore, setRemoteHasMore]= useState(true);
-  const _saved = loadFeedState(profile?.id);
+  // A direct Home action must not restore the last saved mode or source
+  // filters. It opens the member's full personalized Home mix instead.
+  const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
@@ -1797,6 +1802,7 @@ export default function Feed({ forcedMode } = {}) {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
+  const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
   const liveRefreshTimeoutRef = useRef(null);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
   // Sent as ?seed= on every feed request — the backend folds it into this
@@ -2052,17 +2058,25 @@ export default function Feed({ forcedMode } = {}) {
   // there's one clear path responsible for going back to the server for
   // fresh, freshly-sorted data instead of several buttons each doing their
   // own version of it.
-  const switchViewMode = useCallback((mode) => {
+  const switchViewMode = useCallback((mode, { resetHome = false } = {}) => {
     const requestedMode = mode === 'local' ? 'countries' : mode;
     const nextMode = ['following', 'countries', 'restaurants'].includes(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
-    const nextTabs = usesSources ? activeTabsRef.current : [];
-    const nextFilters = usesSources
+    const nextTabs = resetHome ? [] : (usesSources ? activeTabsRef.current : []);
+    const nextFilters = resetHome
+      ? { ...DEFAULT_FILTERS, sources: [], topics: [] }
+      : usesSources
       ? filtersRef.current
       : { ...filtersRef.current, sources: [] };
+    const nextSearch = resetHome ? '' : searchRef.current;
     viewModeRef.current = nextMode;
     activeTabsRef.current = nextTabs;
     filtersRef.current = nextFilters;
+    if (resetHome) {
+      searchRef.current = '';
+      setSearch('');
+      setSearchInput('');
+    }
     setViewMode(nextMode);
     setActiveTabs(nextTabs);
     setFilters(nextFilters);
@@ -2075,7 +2089,7 @@ export default function Feed({ forcedMode } = {}) {
     loadFeed(true, nextTabs, {
       mode: nextMode,
       filters: nextFilters,
-      q: searchRef.current,
+      q: nextSearch,
       // Always a full replace now, whether this is a real context switch
       // (Feed vs Following — obviously different data) or clicking the tab
       // you're already on as a refresh. Refresh used to merge the fresh
@@ -2102,11 +2116,20 @@ export default function Feed({ forcedMode } = {}) {
 
   useEffect(() => {
     if (forcedMode) return;
-    const requestedParam = new URLSearchParams(routeLocation.search).get('feed');
+    const params = new URLSearchParams(routeLocation.search);
+    const requestedParam = params.get('feed');
     const requested = requestedParam === 'local' ? 'countries' : requestedParam;
+    const requestsAllHome = requested === 'feed' && params.get('all') === '1';
+    if (requestsAllHome) {
+      if (allHomeRouteKeyRef.current === routeLocation.key) return;
+      allHomeRouteKeyRef.current = routeLocation.key;
+      switchViewMode('feed', { resetHome: true });
+      return;
+    }
+    allHomeRouteKeyRef.current = null;
     if (!['countries', 'restaurants', 'following', 'feed'].includes(requested) || requested === viewModeRef.current) return;
     switchViewMode(requested);
-  }, [forcedMode, routeLocation.search, switchViewMode]);
+  }, [forcedMode, routeLocation.key, routeLocation.search, switchViewMode]);
 
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };

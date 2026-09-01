@@ -37,7 +37,7 @@ function ShellIcon({ name, size = 20 }) {
 // "Opportunities" (13 characters each) wrap badly at that width. The
 // desktop sidebar has room to spare, so it always uses the full label.
 const NAV = [
-  { to: '/',              icon: 'home',          label: 'Home'         },
+  { to: '/?feed=feed&all=1', icon: 'home',       label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
   { to: '/post',          icon: 'posts',         label: 'Posts'        },
   { to: '/search',        icon: 'search',        label: 'Search'       },
@@ -125,7 +125,7 @@ export default function Layout({ children, wide = false }) {
   // "go back to where this takes you" and "you're already there, scroll
   // up" are both things a user reasonably expects from one click.
   function handleNavClick(to) {
-    if (to === '/' && location.pathname === '/') {
+    if (to.startsWith('/?feed=feed') && location.pathname === '/') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
@@ -142,7 +142,7 @@ export default function Layout({ children, wide = false }) {
     <div className="shell">
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <Link to="/" className="sidebar-logo" onClick={() => handleNavClick('/')} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link to="/?feed=feed&all=1" className="sidebar-logo" onClick={() => handleNavClick('/?feed=feed&all=1')} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-logo-icon">UFI</div>
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
@@ -152,7 +152,7 @@ export default function Layout({ children, wide = false }) {
             <NavLink
               key={to}
               to={to}
-              end={to === '/'}
+              end={icon === 'home'}
               aria-label={label}
               title={label}
               onClick={() => handleNavClick(to)}
@@ -296,7 +296,7 @@ export default function Layout({ children, wide = false }) {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={icon === 'home'}
             onClick={() => handleNavClick(to)}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >

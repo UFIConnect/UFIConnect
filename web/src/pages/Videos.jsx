@@ -51,7 +51,7 @@ export default function Videos() {
       <Helmet>
         <title>Videos | UFIconnect</title>
       </Helmet>
-      <VideoFeedErrorBoundary onExit={() => navigate('/?feed=feed')} />
+      <VideoFeedErrorBoundary onExit={() => navigate('/?feed=feed&all=1')} />
     </>
   );
 }
