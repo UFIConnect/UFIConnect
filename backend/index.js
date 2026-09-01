@@ -21096,11 +21096,20 @@ async function handleVideoFeedRequest(req, res) {
     );
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
-    const scopedVideoTopics = topicsFilter.length ? topicsFilter : (userTopics.length ? userTopics : null);
+    const videoPreferenceContext = {
+      declaredTopics: userTopics,
+      roleTerms: userRoleFeedTerms(user, prefs),
+      affinity: userAffinity,
+    };
+    // Imported video rows are not consistently tagged with the source
+    // topic that found them. Only an explicit filter belongs in SQL; a
+    // member's saved scope is matched against the actual title/content too.
+    const scopedVideoTopics = topicsFilter.length ? topicsFilter : null;
     const scopedVideoTimeRange = !topicsFilter.length && userTopics.length ? '30d' : videoTimeRange;
     const applyPersonalTopicFilter = (items) => {
       if (!topicsFilter.length && !hasSavedVideoScope) return [];
-      return topicsFilter.length ? items : filterByUserTopics(items, userTopics, { fallbackToInput: false });
+      if (topicsFilter.length) return items;
+      return items.filter(post => feedPostPersonalizationScore(post, videoPreferenceContext) > 0);
     };
 
     // -- Full-text search across every cached video post, not just whatever
