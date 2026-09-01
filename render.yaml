@@ -507,6 +507,7 @@ services:
   - type: web
     name: uficonnect-office
     runtime: static
+    autoDeployTrigger: commit
     domains:
       - office.uficonnect.org
     rootDir: office
