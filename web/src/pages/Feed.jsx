@@ -1802,6 +1802,10 @@ export default function Feed({ forcedMode } = {}) {
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
   const loadStateRef  = useRef({ loading: false, refreshing: false, loadingMore: false });
+  // Feed view changes can overlap an already-running request (for example,
+  // Following finishing just after Home is selected). Only the most recently
+  // started request is allowed to update the visible feed state.
+  const feedRequestIdRef = useRef(0);
   const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
   const liveRefreshTimeoutRef = useRef(null);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
@@ -1853,6 +1857,8 @@ export default function Feed({ forcedMode } = {}) {
     const requestedSources = ['feed', 'following'].includes(activeMode)
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
       : [];
+    const requestId = ++feedRequestIdRef.current;
+    const isCurrentRequest = () => requestId === feedRequestIdRef.current;
     if (!silent) {
       if (manual) setRefreshing(true);
       else setLoading(true);
@@ -1874,6 +1880,9 @@ export default function Feed({ forcedMode } = {}) {
       }
       const url = `/office/feed?${params.toString()}`;
       const { data } = await client.get(url);
+      // A response from the view the member just left must never replace the
+      // newer Home/Following/Travel response that is already on screen.
+      if (!isCurrentRequest()) return;
       if (data.locked) {
         setFeedError(null);
         // Single gated-source tab, not connected — show the connect wall
@@ -1966,6 +1975,7 @@ export default function Feed({ forcedMode } = {}) {
         setLocationMessage(data.locationRequired || data.providerError || '');
       }
     } catch (e) {
+      if (!isCurrentRequest()) return;
       console.error(e);
       const status = e?.response?.status;
       const message = status === 401
@@ -1975,7 +1985,12 @@ export default function Feed({ forcedMode } = {}) {
           : 'The feed request did not complete. Check the API connection and try again.';
       if (!silent || postsRef.current.length === 0) setFeedError(message);
     }
-    finally { setLoading(false); setRefreshing(false); }
+    finally {
+      if (isCurrentRequest()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
   }, [profile?.id]);
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
@@ -2256,6 +2271,7 @@ export default function Feed({ forcedMode } = {}) {
     if (loadingMoreRef.current || !remoteHasMore) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
+    const requestIdAtStart = feedRequestIdRef.current;
     try {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
@@ -2289,6 +2305,7 @@ export default function Feed({ forcedMode } = {}) {
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
       const { data } = await client.get(`/office/feed?${params.toString()}`);
+      if (requestIdAtStart !== feedRequestIdRef.current) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
       }
