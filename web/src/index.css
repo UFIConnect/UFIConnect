@@ -687,10 +687,10 @@ input, textarea, select { font-family: inherit; }
   text-decoration: none;
   white-space: nowrap;
 }
-.opportunities-google-refresh {
+.opportunities-refresh-row {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  margin-bottom: 8px;
 }
 .opportunities-refresh-btn { white-space: nowrap; }
 .page-title {
@@ -2091,17 +2091,8 @@ input, textarea, select { font-family: inherit; }
     text-align: center;
     white-space: normal;
   }
-  .opportunities-google-refresh {
-    grid-column: 1 / -1;
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .opportunities-google-refresh .opportunities-platform-link,
-  .opportunities-refresh-btn {
-    width: 100%;
-    min-height: 36px;
-    justify-content: center;
-  }
+  .opportunities-refresh-row { justify-content: flex-end; }
+  .opportunities-refresh-btn { min-height: 36px; }
 
   /* Cards full-width */
   .card { border-radius: 10px; }

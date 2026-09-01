@@ -467,6 +467,16 @@ export default function Opportunities() {
             real aggregated listings like the tabs next to them. */}
         {platformSearchUrls && (
           <div style={{ marginBottom: 20 }}>
+            <div className="opportunities-refresh-row">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm opportunities-refresh-btn"
+                onClick={requestRefresh}
+                disabled={loading || refreshing}
+              >
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
             <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
               Search more platforms
             </div>
@@ -486,31 +496,21 @@ export default function Opportunities() {
                   </a>
                 )
               ))}
-              <div className="opportunities-google-refresh">
-                {platformSearchUrls.google && (
-                  <a
-                    href={platformSearchUrls.google}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="opportunities-platform-link"
-                    style={{
-                      background: PLATFORM_META.google.bg,
-                      color: PLATFORM_META.google.color,
-                      borderColor: `${PLATFORM_META.google.color}55`,
-                    }}
-                  >
-                    {PLATFORM_META.google.icon} Search {PLATFORM_META.google.label}
-                  </a>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm opportunities-refresh-btn"
-                  onClick={requestRefresh}
-                  disabled={loading || refreshing}
+              {platformSearchUrls.google && (
+                <a
+                  href={platformSearchUrls.google}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="opportunities-platform-link"
+                  style={{
+                    background: PLATFORM_META.google.bg,
+                    color: PLATFORM_META.google.color,
+                    borderColor: `${PLATFORM_META.google.color}55`,
+                  }}
                 >
-                  {refreshing ? 'Refreshing...' : 'Refresh'}
-                </button>
-              </div>
+                  {PLATFORM_META.google.icon} Search {PLATFORM_META.google.label}
+                </a>
+              )}
             </div>
           </div>
         )}
