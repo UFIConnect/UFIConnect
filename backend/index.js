@@ -17602,7 +17602,10 @@ app.get('/office/users', requireOfficeToken, async (req, res) => {
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day'`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'`),
       db.query(`SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'`),
-      db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC LIMIT 20`),
+      // Office is the protected account-management surface. Return the full
+      // registered-user list here so its view and the database total cannot
+      // silently disagree after the first twenty accounts.
+      db.query(`SELECT id, name, email, created_at, onboarding_complete, profile_hidden FROM users ORDER BY created_at DESC`),
     ]);
     let signIns = { rows: [{ all_time: 0, all_time_users: 0, today: 0, last7: 0, last30: 0 }] };
     try {

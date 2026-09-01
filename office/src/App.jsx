@@ -914,7 +914,7 @@ function AnalyticsView() {
           </div>
 
           <div style={{ fontSize: 11.5, color: '#64748b', margin: '-8px 0 18px' }}>
-            Account totals come from the users table. Sign-ins are tracked separately from this release forward; the recent list shows the newest 20 accounts only.
+            Account totals come from the users table. Sign-ins are tracked separately from this release forward; all registered accounts are shown below, newest first.
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, margin: '12px 0 28px', maxWidth: 680 }}>
