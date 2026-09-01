@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..', '..');
 const twaRes = path.join(root, 'android-twa', 'app', 'src', 'main', 'res');
 
-const COLOR = '#20157B';
+const COLOR = '#102A6B';
 
 function drawIcon(size, { padded = false } = {}) {
   const canvas = createCanvas(size, size);

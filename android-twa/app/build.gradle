@@ -26,9 +26,9 @@ def twaManifest = [
     launchUrl: '/', // The start path for the TWA. Must be relative to the domain.
     name: 'UFconnect', // The application name.
     launcherName: 'UFconnect', // The name shown on the Android Launcher.
-    themeColor: '#20157B', // The color used for the status bar.
-    themeColorDark: '#170F5C', // The color used for the dark status bar.
-    navigationColor: '#20157B', // The color used for the navigation bar.
+    themeColor: '#102A6B', // The color used for the status bar.
+    themeColorDark: '#0B1E4D', // The color used for the dark status bar.
+    navigationColor: '#102A6B', // The color used for the navigation bar.
     navigationColorDark: '#000000', // The color used for the dark navbar.
     navigationDividerColor: '#000000', // The navbar divider color.
     navigationDividerColorDark: '#000000', // The dark navbar divider color.

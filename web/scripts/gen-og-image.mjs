@@ -9,11 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const canvas = createCanvas(1200, 630);
 const ctx = canvas.getContext('2d');
 
-// Background: navy to purple gradient
-const gradient = ctx.createLinearGradient(0, 0, 1200, 630);
-gradient.addColorStop(0, '#1e3a8a');
-gradient.addColorStop(1, '#5b21b6');
-ctx.fillStyle = gradient;
+// Public brand background.
+ctx.fillStyle = '#102A6B';
 ctx.fillRect(0, 0, 1200, 630);
 
 // Subtle grid pattern
@@ -42,7 +39,7 @@ ctx.fillText('UFconnect', 600, 260);
 // Tagline
 ctx.fillStyle = 'rgba(255,255,255,0.85)';
 ctx.font = 'regular 36px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
-ctx.fillText('Professional Networking · No Ads', 600, 380);
+ctx.fillText('Professional Networking - No Ads', 600, 380);
 
 // Save to file
 const publicDir = path.join(__dirname, '..', 'public');

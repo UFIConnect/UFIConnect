@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outPath = path.join(__dirname, '..', 'public', 'favicon.ico');
 
-const COLOR = '#20157B';
+const COLOR = '#102A6B';
 
 function drawIcon(size) {
   const canvas = createCanvas(size, size);

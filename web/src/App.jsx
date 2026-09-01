@@ -23,7 +23,7 @@ function MaintenancePage() {
       <div style={{
         display: 'inline-flex', alignItems: 'center', gap: 8,
         padding: '10px 20px', borderRadius: 24,
-        background: 'var(--primary, #6366f1)', color: '#fff',
+        background: 'var(--primary, #102A6B)', color: '#fff',
         fontSize: '.875rem', fontWeight: 600,
       }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fff', opacity: 0.7,
