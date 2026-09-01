@@ -22,8 +22,8 @@ function emptyDraft() {
     experience: [],
     education: [],
     skills: [],
-    coverLetter: { role: '', company: '', jobDescription: '', tone: 'Warm and professional', body: '' },
-    outreach: { recipientName: '', recipientRole: '', company: '', context: '', tone: 'Warm and professional', body: '' },
+    coverLetter: { role: '', company: '', jobDescription: '', tone: 'Warm and professional', format: 'modern', body: '' },
+    outreach: { recipientName: '', recipientRole: '', company: '', context: '', tone: 'Warm and professional', format: 'modern', body: '' },
   };
 }
 
@@ -207,7 +207,7 @@ function ResumePreviewModal({ data, template, onClose }) {
   );
 }
 
-function WritingPreviewModal({ title, body, onClose }) {
+function WritingPreviewModal({ title, body, format, onClose }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     const handleKeyDown = event => {
@@ -220,6 +220,12 @@ function WritingPreviewModal({ title, body, onClose }) {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [onClose]);
+
+  const styles = {
+    modern: { fontFamily: 'Arial, sans-serif', accent: '#102A6B', borderTop: '6px solid #102A6B' },
+    classic: { fontFamily: 'Georgia, serif', accent: '#172033', borderTop: '1px solid #172033' },
+    minimal: { fontFamily: 'Arial, sans-serif', accent: '#4B5563', borderTop: '1px solid #D1D5DB' },
+  }[format] || { fontFamily: 'Arial, sans-serif', accent: '#102A6B', borderTop: '6px solid #102A6B' };
 
   return (
     <div className="resume-preview-backdrop" role="dialog" aria-modal="true" aria-label={`${title} preview`} onMouseDown={event => {
@@ -234,7 +240,8 @@ function WritingPreviewModal({ title, body, onClose }) {
           <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>
         </div>
         <div className="resume-preview-scroll">
-          <article style={{ background: '#fff', color: '#172033', minHeight: '100%', padding: '48px 52px', whiteSpace: 'pre-wrap', fontSize: '.95rem', lineHeight: 1.75 }}>
+          <article style={{ background: '#fff', color: '#172033', minHeight: '100%', padding: '48px 52px', whiteSpace: 'pre-wrap', fontFamily: styles.fontFamily, fontSize: '.95rem', lineHeight: 1.75, borderTop: styles.borderTop }}>
+            <strong style={{ display: 'block', color: styles.accent, fontSize: '.78rem', letterSpacing: 0, marginBottom: 28, textTransform: 'uppercase' }}>{title}</strong>
             {body}
           </article>
         </div>
@@ -258,7 +265,10 @@ export default function ResumeBuilder() {
   const [exportResult, setExportResult] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
-  const [activeBuilderTab, setActiveBuilderTab] = useState('resume');
+  const [activeBuilderTab, setActiveBuilderTab] = useState(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    return ['resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'resume';
+  });
   const [writingPreviewType, setWritingPreviewType] = useState(null);
   const [writingExporting, setWritingExporting] = useState(null);
   const [trackedJobs, setTrackedJobs] = useState([]);
@@ -403,6 +413,15 @@ export default function ResumeBuilder() {
     setWritingPreviewType(type);
   }
 
+  async function openCoverLetterPreview() {
+    if (!String(data.coverLetter?.body || '').trim()) {
+      showToast('Draft the cover letter first, then preview it.', 'info');
+      return;
+    }
+    const saved = await saveDraft(data, 'Cover letter saved.');
+    if (saved) navigate('/resume-builder/cover-letter/preview');
+  }
+
   async function exportWriting(type) {
     const writing = writingFor(type);
     if (!String(writing?.body || '').trim() || writingExporting) {
@@ -533,6 +552,7 @@ export default function ResumeBuilder() {
           company: writing.company,
           jobDescription: writing.jobDescription,
           tone: writing.tone,
+          format: writing.format,
         }
         : {
           type,
@@ -542,6 +562,7 @@ export default function ResumeBuilder() {
           company: writing.company,
           context: writing.context,
           tone: writing.tone,
+          format: writing.format,
         };
       const { data: response } = await client.post('/resume-builder/application-draft', payload);
       const body = String(response?.draft || '').trim();
@@ -791,7 +812,7 @@ export default function ResumeBuilder() {
               ) : jobContactOptions.length === 0 ? (
                 <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>No live listings are available yet. Refresh Job Tracker and try again.</div>
               ) : (
-                <div style={{ display: 'grid', gap: 10, maxHeight: 640, overflowY: 'auto', paddingRight: 4 }}>
+                <div style={{ display: 'grid', gap: 10, maxHeight: 'min(78vh, 980px)', overflowY: 'auto', paddingRight: 4 }}>
                   {jobContactOptions.map(job => (
                     <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <div style={{ minWidth: 0 }}>
@@ -825,13 +846,23 @@ export default function ResumeBuilder() {
                     <Field label="Role" value={data.coverLetter.role} onChange={e => updateWriting('coverLetter', 'role', e.target.value)} placeholder="e.g. Product Designer" />
                     <Field label="Company" value={data.coverLetter.company} onChange={e => updateWriting('coverLetter', 'company', e.target.value)} />
                   </div>
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Tone</label>
-                    <select className="form-input" value={data.coverLetter.tone} onChange={e => updateWriting('coverLetter', 'tone', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
-                      <option>Warm and professional</option>
-                      <option>Confident and direct</option>
-                      <option>Thoughtful and conversational</option>
-                    </select>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Tone</label>
+                      <select className="form-input" value={data.coverLetter.tone} onChange={e => updateWriting('coverLetter', 'tone', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
+                        <option>Warm and professional</option>
+                        <option>Confident and direct</option>
+                        <option>Thoughtful and conversational</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Template</label>
+                      <select className="form-input" value={data.coverLetter.format} onChange={e => updateWriting('coverLetter', 'format', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
+                        <option value="modern">Modern</option>
+                        <option value="classic">Classic</option>
+                        <option value="minimal">Minimal</option>
+                      </select>
+                    </div>
                   </div>
                   <div style={{ marginBottom: 10 }}>
                     <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Job description</label>
@@ -847,7 +878,7 @@ export default function ResumeBuilder() {
                     <button className="btn btn-primary btn-sm" type="button" onClick={() => generateApplicationDraft('cover_letter')} disabled={!!drafting}>
                       {drafting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Draft cover letter'}
                     </button>
-                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => previewWriting('cover_letter')} disabled={!data.coverLetter.body}>Preview</button>
+                    <button className="btn btn-ghost btn-sm" type="button" onClick={openCoverLetterPreview} disabled={!data.coverLetter.body || saving}>Preview page</button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyWriting(data.coverLetter.body, 'Cover letter')} disabled={!data.coverLetter.body}>Copy</button>
                     <button className="btn btn-ghost btn-sm" type="button" onClick={() => exportWriting('cover_letter')} disabled={!data.coverLetter.body || writingExporting !== null}>
                       {writingExporting === 'cover_letter' ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Export PDF'}
@@ -877,6 +908,14 @@ export default function ResumeBuilder() {
                         <option>Warm and professional</option>
                         <option>Confident and direct</option>
                         <option>Thoughtful and conversational</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 140 }}>
+                      <label style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 4 }}>Format</label>
+                      <select className="form-input" value={data.outreach.format} onChange={e => updateWriting('outreach', 'format', e.target.value)} style={{ fontSize: '.85rem', padding: '8px 10px' }}>
+                        <option value="modern">Modern</option>
+                        <option value="classic">Classic</option>
+                        <option value="minimal">Minimal</option>
                       </select>
                     </div>
                   </div>
@@ -918,6 +957,7 @@ export default function ResumeBuilder() {
         {writingPreviewType && <WritingPreviewModal
           title={writingPreviewType === 'cover_letter' ? 'Cover letter' : 'Reach-out message'}
           body={writingFor(writingPreviewType).body}
+          format={writingFor(writingPreviewType).format}
           onClose={() => setWritingPreviewType(null)}
         />}
       </Layout>

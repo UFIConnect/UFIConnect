@@ -62,6 +62,7 @@ const ChildSafety    = lazy(() => import('./pages/ChildSafety'));
 const Sources        = lazy(() => import('./pages/Sources'));
 const CommandCenter  = lazy(() => import('./pages/CommandCenter'));
 const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
+const CoverLetterPreview = lazy(() => import('./pages/CoverLetterPreview'));
 const YourPostsFeed  = lazy(() => import('./pages/YourPostsFeed'));
 
 function RequireAuth({ children }) {
@@ -147,6 +148,9 @@ export default function App() {
       }/>
       <Route path="/resume-builder" element={
         <RequireAuth><RequireOnboarding><ResumeBuilder /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/resume-builder/cover-letter/preview" element={
+        <RequireAuth><RequireOnboarding><CoverLetterPreview /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/messages" element={
         <RequireAuth><RequireOnboarding><Messages /></RequireOnboarding></RequireAuth>
