@@ -2117,6 +2117,10 @@ export default function VideoFeedView({ onExit }) {
                 onPointerDown={event => event.stopPropagation()}
                 onClick={event => {
                   event.stopPropagation();
+                  if (key === 'feed') {
+                    onExit();
+                    return;
+                  }
                   switchViewMode(key);
                 }}
                 style={{
