@@ -433,6 +433,19 @@ const resumeAIDraftLimiter = rateLimit({
   message: { message: 'Too many resume writing requests. Please try again in a little while.' },
 });
 
+// Video creation is both slower and materially more expensive than text or
+// image generation. Keep the allowance per member, rather than per IP, so a
+// shared network cannot exhaust another member's video quota.
+const mediaGenerationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: envNumber('MEDIA_GENERATION_RATE_LIMIT', 6, 1, 100),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.body?.type !== 'video',
+  keyGenerator: (req) => req.user?.id || rateLimitKey(req),
+  message: { message: 'Video generation is limited to a few requests per hour. Please try again later.' },
+});
+
 // Holomine brain service (simulated or external via HOLOMINE_URL)
 try {
   const holomine = require('./holomine');
@@ -26876,10 +26889,247 @@ function callConfiguredVideoGenerator(endpoint, apiKey, prompt) {
   });
 }
 
-// Separate from caption drafting: the Media Studio can return an actual image
-// through GPT Image, or delegate a video job to the configured provider. Both
-// paths stay server-side so vendor keys never reach the browser.
-app.post('/command-center/media-generate', authenticate, async (req, res) => {
+const OPENAI_VIDEO_MODELS = new Set(['sora-2', 'sora-2-pro']);
+const OPENAI_VIDEO_SECONDS = new Set(['4', '8', '12']);
+const OPENAI_VIDEO_SIZES = new Set(['720x1280', '1280x720', '1024x1792', '1792x1024']);
+const OPENAI_VIDEO_JOB_TICKET_PURPOSE = 'openai-video-generation';
+const OPENAI_VIDEO_JOB_ID = /^video_[A-Za-z0-9_-]{1,200}$/;
+
+function configuredOpenAIVideoProvider() {
+  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return null;
+  const requestedModel = String(process.env.VIDEO_GENERATION_OPENAI_MODEL || 'sora-2').trim();
+  const requestedSeconds = String(process.env.VIDEO_GENERATION_OPENAI_SECONDS || '4').trim();
+  const requestedSize = String(process.env.VIDEO_GENERATION_OPENAI_SIZE || '720x1280').trim();
+  return {
+    apiKey,
+    model: OPENAI_VIDEO_MODELS.has(requestedModel) ? requestedModel : 'sora-2',
+    seconds: OPENAI_VIDEO_SECONDS.has(requestedSeconds) ? requestedSeconds : '4',
+    size: OPENAI_VIDEO_SIZES.has(requestedSize) ? requestedSize : '720x1280',
+  };
+}
+
+function openAIVideoFormBody(fields) {
+  const boundary = `----uficonnect-${crypto.randomBytes(12).toString('hex')}`;
+  const parts = [];
+  for (const [name, value] of Object.entries(fields)) {
+    if (value === undefined || value === null || value === '') continue;
+    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n`));
+    parts.push(Buffer.from(String(value)));
+    parts.push(Buffer.from('\r\n'));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    body: Buffer.concat(parts),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
+function requestOpenAIVideoJson(apiKey, method, requestPath, { body = null, headers = {}, timeoutMs = 30000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      hostname: 'api.openai.com',
+      port: 443,
+      path: requestPath,
+      method,
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...headers,
+        ...(body ? { 'Content-Length': Buffer.isBuffer(body) ? body.length : Buffer.byteLength(body) } : {}),
+      },
+    }, response => {
+      let data = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => {
+        if (data.length < 1024 * 1024) data += chunk;
+      });
+      response.on('error', reject);
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          return reject(new Error(`OpenAI video HTTP ${response.statusCode}: ${data.slice(0, 300)}`));
+        }
+        try {
+          resolve(JSON.parse(data));
+        } catch (error) {
+          reject(new Error('OpenAI video response was invalid.'));
+        }
+      });
+    });
+    request.on('error', reject);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error('OpenAI video request timed out.')));
+    if (body) request.write(body);
+    request.end();
+  });
+}
+
+function createOpenAIVideoJob(provider, prompt) {
+  const form = openAIVideoFormBody({
+    prompt,
+    model: provider.model,
+    seconds: provider.seconds,
+    size: provider.size,
+  });
+  return requestOpenAIVideoJson(provider.apiKey, 'POST', '/v1/videos', {
+    body: form.body,
+    headers: { 'Content-Type': form.contentType },
+    timeoutMs: 60000,
+  });
+}
+
+function getOpenAIVideoJob(provider, videoId) {
+  return requestOpenAIVideoJson(provider.apiKey, 'GET', `/v1/videos/${encodeURIComponent(videoId)}`);
+}
+
+function isOpenAIVideoJobId(videoId) {
+  return typeof videoId === 'string' && OPENAI_VIDEO_JOB_ID.test(videoId);
+}
+
+function createOpenAIVideoTicket(userId, videoId) {
+  return jwt.sign({
+    purpose: OPENAI_VIDEO_JOB_TICKET_PURPOSE,
+    userId,
+    videoId,
+  }, JWT_SECRET, { expiresIn: '30m' });
+}
+
+function hasOpenAIVideoTicket(ticket, userId, videoId) {
+  if (typeof ticket !== 'string' || !ticket) return false;
+  try {
+    const payload = jwt.verify(ticket, JWT_SECRET);
+    return payload?.purpose === OPENAI_VIDEO_JOB_TICKET_PURPOSE
+      && payload.userId === userId
+      && payload.videoId === videoId;
+  } catch {
+    return false;
+  }
+}
+
+function openAIVideoFailureMessage(video) {
+  const error = video?.error;
+  const message = typeof error === 'string' ? error : error?.message;
+  return typeof message === 'string' && message.trim()
+    ? message.trim().slice(0, 240)
+    : 'OpenAI could not generate this video.';
+}
+
+function publicOpenAIVideoJob(video) {
+  const knownStatuses = new Set(['queued', 'in_progress', 'completed', 'failed']);
+  const status = knownStatuses.has(video?.status) ? video.status : 'queued';
+  const progress = Number(video?.progress);
+  return {
+    id: video?.id,
+    status,
+    progress: Number.isFinite(progress) ? Math.max(0, Math.min(100, progress)) : 0,
+    createdAt: Number.isFinite(Number(video?.created_at)) ? Number(video.created_at) : null,
+    error: status === 'failed' ? openAIVideoFailureMessage(video) : null,
+  };
+}
+
+function readOpenAIVideoError(response, maxLength = 300) {
+  return new Promise(resolve => {
+    let text = '';
+    response.setEncoding('utf8');
+    response.on('data', chunk => {
+      if (text.length < maxLength) text += chunk.slice(0, maxLength - text.length);
+    });
+    response.once('end', () => resolve(text));
+    response.once('error', () => resolve(text));
+  });
+}
+
+// The completed video content endpoint may redirect to a short-lived asset
+// URL. The redirect is received only from OpenAI, and credentials are never
+// forwarded off api.openai.com.
+function streamOpenAIVideoContent(provider, videoId, res) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let activeRequest = null;
+    let clientClosed = false;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      res.removeListener('close', onClientClose);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onClientClose = () => {
+      if (res.writableEnded) return;
+      clientClosed = true;
+      activeRequest?.destroy();
+      finish();
+    };
+    res.once('close', onClientClose);
+
+    const requestContent = (target, includeAuthorization, redirects) => {
+      if (clientClosed) return finish();
+      if (target.protocol !== 'https:') return finish(new Error('OpenAI returned an insecure video URL.'));
+      const request = https.request({
+        hostname: target.hostname,
+        port: target.port || 443,
+        path: `${target.pathname}${target.search}`,
+        method: 'GET',
+        headers: {
+          Accept: 'video/mp4, application/octet-stream;q=0.9',
+          ...(includeAuthorization ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+        },
+      }, response => {
+        const handleResponse = async () => {
+          const status = response.statusCode || 502;
+          const location = response.headers.location;
+          if (status >= 300 && status < 400 && location && redirects < 2) {
+            response.resume();
+            try {
+              return requestContent(new URL(location, target), false, redirects + 1);
+            } catch {
+              return finish(new Error('OpenAI returned an invalid video URL.'));
+            }
+          }
+          if (status < 200 || status >= 300) {
+            const detail = await readOpenAIVideoError(response);
+            return finish(new Error(`OpenAI video download HTTP ${status}: ${detail.slice(0, 300)}`));
+          }
+          if (clientClosed) {
+            response.resume();
+            return finish();
+          }
+          res.status(status);
+          for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges']) {
+            if (response.headers[header]) res.setHeader(header, response.headers[header]);
+          }
+          res.setHeader('Cache-Control', 'private, no-store');
+          response.once('error', error => {
+            if (!res.headersSent) return finish(error);
+            if (!res.writableEnded) res.destroy(error);
+            finish();
+          });
+          response.once('end', () => finish());
+          response.pipe(res);
+        };
+        handleResponse().catch(finish);
+      });
+      activeRequest = request;
+      request.on('error', error => {
+        if (clientClosed || error?.code === 'ECONNRESET') return finish();
+        finish(error);
+      });
+      request.setTimeout(90000, () => request.destroy(new Error('OpenAI video download timed out.')));
+      request.end();
+    };
+
+    requestContent(new URL(`https://api.openai.com/v1/videos/${encodeURIComponent(videoId)}/content`), true, 0);
+  });
+}
+
+function mediaGenerationMessage(error) {
+  const message = String(error?.message || '').trim();
+  return message ? message.slice(0, 240) : 'Could not generate media right now.';
+}
+
+// Images return immediately. OpenAI video requests are queued, so the client
+// receives a signed, member-bound ticket and polls status without exposing an
+// OpenAI credential to the browser.
+app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Media Studio is a Pro feature - upgrade to use it.' });
@@ -26888,19 +27138,91 @@ app.post('/command-center/media-generate', authenticate, async (req, res) => {
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, 1000) : '';
   if (!prompt) return res.status(400).json({ message: 'Describe what you want to create.' });
   try {
+    const screening = await screenMemberContent({ content: prompt, kind: 'media_prompt', maxLength: 1000 });
+    if (!screening.allowed) {
+      const status = screening.reason === 'screening_unavailable' ? 503 : 422;
+      return res.status(status).json({
+        message: status === 503
+          ? 'Media prompt screening is temporarily unavailable. Please try again shortly.'
+          : 'That media prompt cannot be used.',
+      });
+    }
     if (type === 'image') {
       if (!process.env.OPENAI_API_KEY) return res.status(503).json({ message: 'Image generation needs OPENAI_API_KEY in Render.' });
-      const mediaUrl = await callOpenAIImage(process.env.OPENAI_API_KEY, prompt);
+      const mediaUrl = await callOpenAIImage(process.env.OPENAI_API_KEY, screening.content);
       return res.json({ mediaUrl, mediaType: 'image' });
     }
-    if (!process.env.VIDEO_GENERATION_API_URL) {
-      return res.status(503).json({ message: 'Video generation needs VIDEO_GENERATION_API_URL in Render.' });
+
+    const openAIProvider = configuredOpenAIVideoProvider();
+    if (openAIProvider) {
+      const video = await createOpenAIVideoJob(openAIProvider, screening.content);
+      if (!isOpenAIVideoJobId(video?.id)) throw new Error('OpenAI did not return a valid video job.');
+      const ticket = createOpenAIVideoTicket(req.user.id, video.id);
+      return res.status(202).json({
+        mediaType: 'video',
+        provider: 'openai',
+        job: { ...publicOpenAIVideoJob(video), ticket },
+      });
     }
-    const mediaUrl = await callConfiguredVideoGenerator(process.env.VIDEO_GENERATION_API_URL, process.env.VIDEO_GENERATION_API_KEY, prompt);
-    res.json({ mediaUrl, mediaType: 'video' });
-  } catch (e) {
-    console.error('[/command-center/media-generate] error:', e.message);
-    res.status(502).json({ message: e.message.slice(0, 240) || 'Could not generate media right now.' });
+
+    const customProviderUrl = String(process.env.VIDEO_GENERATION_API_URL || '').trim();
+    if (!customProviderUrl) {
+      return res.status(503).json({ message: 'Video generation needs OPENAI_API_KEY with access to OpenAI video generation.' });
+    }
+    const mediaUrl = await callConfiguredVideoGenerator(customProviderUrl, process.env.VIDEO_GENERATION_API_KEY, screening.content);
+    return res.json({ mediaUrl, mediaType: 'video', provider: 'custom' });
+  } catch (error) {
+    console.error('[/command-center/media-generate] error:', error.message);
+    return res.status(502).json({ message: mediaGenerationMessage(error) });
+  }
+});
+
+app.get('/command-center/media-generate/:jobId', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  const videoId = String(req.params.jobId || '');
+  const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+  if (!user || user.plan === 'free') return res.status(403).json({ message: 'Media Studio is a Pro feature - upgrade to use it.' });
+  if (!isOpenAIVideoJobId(videoId) || !hasOpenAIVideoTicket(ticket, req.user.id, videoId)) {
+    return res.status(403).json({ message: 'This video generation request is not available.' });
+  }
+  const provider = configuredOpenAIVideoProvider();
+  if (!provider) return res.status(503).json({ message: 'OpenAI video generation is not configured in Render.' });
+  try {
+    const video = await getOpenAIVideoJob(provider, videoId);
+    const job = publicOpenAIVideoJob(video);
+    if (!isOpenAIVideoJobId(job.id)) throw new Error('OpenAI returned an invalid video job.');
+    return res.json({
+      mediaType: 'video',
+      provider: 'openai',
+      job,
+      downloadPath: job.status === 'completed'
+        ? `/command-center/media-generate/${encodeURIComponent(videoId)}/content?ticket=${encodeURIComponent(ticket)}`
+        : null,
+    });
+  } catch (error) {
+    console.error('[/command-center/media-generate/:jobId] error:', error.message);
+    return res.status(502).json({ message: mediaGenerationMessage(error) });
+  }
+});
+
+app.get('/command-center/media-generate/:jobId/content', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  const videoId = String(req.params.jobId || '');
+  const ticket = typeof req.query.ticket === 'string' ? req.query.ticket : '';
+  if (!user || user.plan === 'free') return res.status(403).json({ message: 'Media Studio is a Pro feature - upgrade to use it.' });
+  if (!isOpenAIVideoJobId(videoId) || !hasOpenAIVideoTicket(ticket, req.user.id, videoId)) {
+    return res.status(403).json({ message: 'This video generation request is not available.' });
+  }
+  const provider = configuredOpenAIVideoProvider();
+  if (!provider) return res.status(503).json({ message: 'OpenAI video generation is not configured in Render.' });
+  try {
+    const video = await getOpenAIVideoJob(provider, videoId);
+    if (video?.status === 'failed') return res.status(422).json({ message: openAIVideoFailureMessage(video) });
+    if (video?.status !== 'completed') return res.status(409).json({ message: 'This video is still being prepared.' });
+    await streamOpenAIVideoContent(provider, videoId, res);
+  } catch (error) {
+    console.error('[/command-center/media-generate/:jobId/content] error:', error.message);
+    if (!res.headersSent) res.status(502).json({ message: mediaGenerationMessage(error) });
   }
 });
 

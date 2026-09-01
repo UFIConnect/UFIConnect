@@ -440,25 +440,76 @@ function MediaStudioSection({ onOpenCrossPost }) {
   const [uploading, setUploading] = useState(false);
   const [asset, setAsset] = useState(null);
   const [error, setError] = useState('');
+  const [generationStatus, setGenerationStatus] = useState('');
+  const generationRequest = useRef(0);
+
+  useEffect(() => () => {
+    generationRequest.current += 1;
+  }, []);
+
+  async function waitForOpenAIVideo(job, requestId) {
+    for (let attempt = 0; attempt < 240; attempt += 1) {
+      if (requestId !== generationRequest.current) return null;
+      const { data } = await client.get(`/command-center/media-generate/${encodeURIComponent(job.id)}`, {
+        params: { ticket: job.ticket },
+      });
+      if (requestId !== generationRequest.current) return null;
+      const latest = data.job || {};
+      if (latest.status === 'failed') throw new Error(latest.error || 'Video generation failed.');
+      if (latest.status === 'completed') {
+        if (!data.downloadPath) throw new Error('The finished video is not available yet. Please try again.');
+        setGenerationStatus('Saving your finished video...');
+        setUploading(true);
+        const download = await client.get(data.downloadPath, { responseType: 'blob' });
+        if (requestId !== generationRequest.current) return null;
+        const blob = download.data;
+        if (!blob?.size) throw new Error('The finished video download was empty. Please try again.');
+        if (blob.size > MAX_UPLOAD_BYTES) throw new Error('The finished video is larger than the upload limit.');
+        const file = new File([blob], `ufi-video-${Date.now()}.mp4`, { type: blob.type || 'video/mp4' });
+        const uploaded = await uploadMedia(file, null, 'crossposts');
+        if (requestId !== generationRequest.current) return null;
+        return { url: uploaded.url, type: 'video' };
+      }
+      const progress = Number(latest.progress);
+      const percentage = Number.isFinite(progress) && progress > 0 ? ` (${Math.round(progress)}%)` : '';
+      setGenerationStatus(latest.status === 'queued'
+        ? `Your video is queued${percentage}`
+        : `Creating your video${percentage}`);
+      await new Promise(resolve => window.setTimeout(resolve, 2500));
+    }
+    throw new Error('Video generation is taking longer than expected. Please try again shortly.');
+  }
 
   async function generate(e) {
     e.preventDefault();
     if (!prompt.trim() || generating) return;
-    setGenerating(true); setError(''); setAsset(null);
+    const requestId = generationRequest.current + 1;
+    generationRequest.current = requestId;
+    setGenerating(true); setUploading(false); setError(''); setAsset(null); setGenerationStatus('Preparing your request...');
     try {
       const { data } = await client.post('/command-center/media-generate', { type, prompt: prompt.trim() });
+      if (data.job?.id && data.job?.ticket) {
+        const video = await waitForOpenAIVideo(data.job, requestId);
+        if (video && requestId === generationRequest.current) setAsset(video);
+        return;
+      }
       let url = data.mediaUrl;
       if (data.mediaType === 'image' && url?.startsWith('data:')) {
+        setGenerationStatus('Saving your image...');
         setUploading(true);
         const uploaded = await uploadMedia(dataUrlToFile(url, `ufi-media-${Date.now()}.png`), null, 'crossposts');
         url = uploaded.url;
         setUploading(false);
       }
-      setAsset({ url, type: data.mediaType || type });
+      if (requestId === generationRequest.current) setAsset({ url, type: data.mediaType || type });
     } catch (err) {
-      setError(err?.response?.data?.message || err?.message || 'Could not create media right now.');
+      if (requestId === generationRequest.current) {
+        setError(err?.response?.data?.message || err?.message || 'Could not create media right now.');
+      }
     } finally {
-      setGenerating(false); setUploading(false);
+      if (requestId === generationRequest.current) {
+        setGenerating(false); setUploading(false); setGenerationStatus('');
+      }
     }
   }
 
@@ -473,13 +524,14 @@ function MediaStudioSection({ onOpenCrossPost }) {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Create media</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.55 }}>
-          Create a share-ready image, or send a prompt to your configured video provider. Generated images are saved into Cross-Post automatically.
+          Create a share-ready image or short video with OpenAI. Generated images are ready to use in Cross-Post.
         </p>
         <form onSubmit={generate} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
           <div style={{ display: 'flex', gap: 8 }}>
             {['image', 'video'].map(option => (
               <button
-                key={option} type="button" className="btn btn-sm" onClick={() => setType(option)}
+                key={option} type="button" className="btn btn-sm" disabled={generating || uploading}
+                onClick={() => { setType(option); setError(''); setGenerationStatus(''); }}
                 style={{ border: 'none', textTransform: 'capitalize', background: type === option ? 'var(--primary)' : 'var(--bg-secondary)', color: type === option ? '#fff' : 'var(--text)' }}
               >
                 {option}
@@ -494,6 +546,7 @@ function MediaStudioSection({ onOpenCrossPost }) {
           <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim()} style={{ alignSelf: 'flex-start' }}>
             {generating || uploading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Generate ${type}`}
           </button>
+          {generationStatus && <div role="status" style={{ color: 'var(--muted)', fontSize: '.8rem' }}>{generationStatus}</div>}
         </form>
       </div>
 
