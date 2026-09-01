@@ -208,7 +208,7 @@ export default function ConnectedAccounts() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontWeight: 750, fontSize: '.9rem', marginBottom: 3 }}>Command Center accounts</div>
                 <div style={{ color: 'var(--muted)', fontSize: '.8rem', lineHeight: 1.5 }}>
-                  Instagram, TikTok, and Threads are managed separately because they only use posts from the account you authorize.
+                  Account-only sources and publisher integrations are managed separately because they use only the account and destination you authorize.
                 </div>
               </div>
               <Link to="/command-center?tab=accounts" className="btn btn-outline btn-sm">

@@ -5,7 +5,7 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -16,7 +16,6 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
 const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky'];
-const ACCOUNT_OWNED_CROSS_POST_PLATFORMS = ['instagram', 'tiktok', 'threads'];
 
 function SourceMark({ source, label, active = false }) {
   const meta = SOURCE_META[source] || {};
@@ -770,7 +769,7 @@ function MemberAccountsSection() {
       <div className="card" style={{ padding: '18px 20px' }}>
         <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>Member account connections</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
-          These sources only import or publish content from the account you explicitly authorize. They never enter the shared feed.
+          Account-only sources import or publish only from the account you explicitly authorize. Publisher integrations stay here until their provider setup is ready.
         </p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
@@ -780,6 +779,7 @@ function MemberAccountsSection() {
       {memberPlatforms.map(([key, platform]) => {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
+        const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
         return (
           <div key={key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -788,7 +788,7 @@ function MemberAccountsSection() {
             <div style={{ flex: 1, minWidth: 180 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
-                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>Own posts only</span>
+                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountOnly ? 'Own posts only' : 'Publisher setup'}</span>
                 {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
                 {!isConnected && unavailable && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
               </div>
@@ -1225,8 +1225,11 @@ function CrossPostSection() {
   }
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p] && platforms[p]?.crossPost?.supported);
-  const otherConnectedPlatforms = connectedPlatforms.filter(p => !ACCOUNT_OWNED_CROSS_POST_PLATFORMS.includes(p));
+  const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
+  const connectedPlatforms = publishingPlatforms.filter(platform => connected[platform] && platforms[platform]?.crossPost?.supported);
+  const connectionPath = (platform) => platforms[platform]?.commandCenterOnly
+    ? '/command-center?tab=accounts'
+    : '/connected-accounts';
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
     const capability = platforms[p]?.crossPost;
@@ -1245,6 +1248,29 @@ function CrossPostSection() {
       </button>
     );
   };
+  const publishingDestination = (p) => {
+    const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+    const platform = platforms[p];
+    const capability = platform?.crossPost;
+    if (!capability?.supported) {
+      const detail = capability?.note || platform?.note || `${meta.label} publishing is not available yet.`;
+      return (
+        <button
+          key={p} type="button" disabled className="btn btn-ghost btn-sm"
+          title={detail}
+          style={{ opacity: .62, cursor: 'not-allowed' }}
+        >
+          <SourceMark source={p} label={meta.icon} /> {meta.label} - Coming soon
+        </button>
+      );
+    }
+    if (connected[p]) return platformTargetButton(p);
+    return (
+      <Link key={p} to={connectionPath(p)} className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+        <SourceMark source={p} label={meta.icon} /> {platform?.configured ? `Connect ${meta.label}` : `${meta.label} setup needed`}
+      </Link>
+    );
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -1255,23 +1281,14 @@ function CrossPostSection() {
           Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.
         </p>
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Your publishing accounts</div>
+          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Publishing destinations</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {ACCOUNT_OWNED_CROSS_POST_PLATFORMS.map((p) => {
-              const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
-              const platform = platforms[p];
-              if (!platform?.crossPost?.supported) return null;
-              return connected[p] ? platformTargetButton(p) : (
-                <Link key={p} to="/command-center?tab=accounts" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-                  <SourceMark source={p} label={meta.icon} /> {platform.configured ? `Connect ${meta.label}` : `${meta.label} setup needed`}
-                </Link>
-              );
-            })}
+            {publishingPlatforms.map(publishingDestination)}
           </div>
         </div>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
-            <Link to="/command-center?tab=accounts" className="btn btn-primary btn-sm">Connect a publishing account</Link>
+            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect a publishing account</Link>
           </div>
         ) : (
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
@@ -1294,12 +1311,6 @@ function CrossPostSection() {
                 </div>
               )}
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
-            </div>
-            <div>
-              {otherConnectedPlatforms.length > 0 && <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Other connected platforms</div>}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {otherConnectedPlatforms.map(platformTargetButton)}
-              </div>
             </div>
             <button className="btn btn-primary" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
               {posting ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Send'}

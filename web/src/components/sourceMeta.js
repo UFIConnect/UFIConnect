@@ -15,6 +15,9 @@ export const SOURCE_META = {
   medium:        { label: 'Medium',        color: '#1A8917', icon: 'M' },
   stackoverflow: { label: 'Stack Overflow',color: '#F48024', icon: 'SO' },
   mastodon:      { label: 'Mastodon',      color: '#6364FF', icon: 'MD' },
+  pinterest:     { label: 'Pinterest',     color: '#E60023', icon: 'P' },
+  tumblr:        { label: 'Tumblr',        color: '#001935', icon: 'TU' },
+  wordpress:     { label: 'WordPress.com', color: '#21759B', icon: 'WP' },
   lobsters:      { label: 'Lobsters',      color: '#AC130D', icon: 'LB' },
   arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: 'arXiv' },
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: 'IN' },
@@ -51,7 +54,19 @@ export const SOURCE_META = {
 
 // Account-owned integrations are managed in Command Center. They only use
 // content from the member who authorizes them and never enter shared feeds.
-export const COMMAND_CENTER_ACCOUNT_PLATFORMS = ['instagram', 'tiktok', 'threads'];
+export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
+  'instagram', 'tiktok', 'threads',
+  'mastodon', 'pinterest', 'tumblr', 'wordpress',
+];
+
+// Cross-Post shows every provider that can receive a post through an
+// official third-party API. The server marks each one as selectable only
+// when its provider flow is configured and supported.
+export const CROSS_POST_PLATFORM_IDS = [
+  'bluesky', 'reddit', 'twitter', 'facebook', 'instagram', 'tiktok',
+  'threads', 'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  'youtube',
+];
 
 // Every platform a user can link via Connected Accounts (mirrors
 // CONNECTED_SOCIAL_PLATFORMS server-side). Not every entry has a live

@@ -1089,6 +1089,17 @@ function socialCredentialStatus(platform, req) {
     };
   }
   const cfg = SOCIAL_CFG[platform];
+  // Catalog-only publisher integrations are intentionally visible before we
+  // have their OAuth app/review work in place. They must never be presented
+  // as configured just because they do not use this generic OAuth shape.
+  if (!cfg) {
+    return {
+      configured: false,
+      requiredEnv: [],
+      missingEnv: [],
+      callbackUrl: oauthCallbackUrl(platform),
+    };
+  }
   const requiredEnv = SOCIAL_ENV_KEYS[platform] || [];
   const values = requiredEnv.map((key, i) => {
     if (i === 0) return cfg?.clientId?.();
@@ -11217,8 +11228,99 @@ function feedPostPersonalizationScore(post, { declaredTopics, roleTerms, affinit
   return score;
 }
 
-function personalizeAuthenticatedFeedPosts(posts, user, prefs = user?.preferences || {}, affinity = null, options = {}) {
+// Feed language selection is intentionally member-scoped. Source text is
+// never rewritten; posts are classified locally from explicit source metadata
+// when present, then from their script and common-language signals.
+const MEMBER_FEED_LANGUAGE_CODES = new Set([
+  'ar', 'bn', 'de', 'en', 'es', 'fr', 'hi', 'id', 'it', 'ja', 'ko', 'nl',
+  'pl', 'pt', 'ru', 'sw', 'th', 'tr', 'uk', 'ur', 'vi', 'zh',
+]);
+const MEMBER_FEED_LANGUAGE_HINTS = [
+  ['es', /\b(?:hola|gracias|para|con|que|una|del|como|pero|est\u00e1|m\u00e1s)\b/giu],
+  ['fr', /\b(?:bonjour|merci|avec|pour|dans|une|des|est|que|plus)\b/giu],
+  ['de', /\b(?:der|die|das|und|ist|mit|f\u00fcr|nicht|eine|mehr)\b/giu],
+  ['pt', /\b(?:ol\u00e1|obrigado|para|com|que|uma|n\u00e3o|mais|sobre|novo)\b/giu],
+  ['it', /\b(?:ciao|grazie|con|per|che|una|non|pi\u00f9|nuovo|come)\b/giu],
+  ['nl', /\b(?:hallo|dank|voor|met|een|van|niet|meer|nieuw|over)\b/giu],
+  ['tr', /\b(?:merhaba|te\u015fekk\u00fcr|i\u00e7in|ile|bir|\u00e7ok|de\u011fil|daha|yeni|olarak)\b/giu],
+  ['id', /\b(?:halo|terima|yang|dan|untuk|dengan|ini|itu|akan|baru)\b/giu],
+  ['pl', /\b(?:cze\u015b\u0107|dzi\u0119kuj\u0119|jest|dla|nie|si\u0119|wi\u0119cej|nowy|oraz|przez)\b/giu],
+  ['sw', /\b(?:habari|asante|kwa|katika|hii|hiyo|ni|au|zaidi|mpya)\b/giu],
+  ['vi', /\b(?:xin ch\u00e0o|c\u1ea3m \u01a1n|v\u00e0|c\u1ee7a|cho|v\u1edbi|trong|m\u1ed9t|\u0111\u01b0\u1ee3c|m\u1edbi)\b/giu],
+  ['en', /\b(?:the|and|for|with|from|this|that|your|about|new|how|what|are|is)\b/giu],
+];
+
+function normalizeMemberFeedLanguages(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === 'string' ? value.split(',') : [];
+  const seen = new Set();
+  for (const raw of values) {
+    const code = String(raw || '').trim().toLowerCase().split(/[-_]/)[0];
+    if (MEMBER_FEED_LANGUAGE_CODES.has(code)) seen.add(code);
+    if (seen.size >= 12) break;
+  }
+  return [...seen];
+}
+
+function requestFeedLanguages(req) {
+  const header = String(req?.get?.('accept-language') || req?.headers?.['accept-language'] || '');
+  return normalizeMemberFeedLanguages(header
+    .split(',')
+    .map(item => item.split(';')[0].trim())
+    .filter(Boolean));
+}
+
+function memberFeedLanguages(user, req) {
+  const saved = normalizeMemberFeedLanguages(user?.roleSettings?.feedLanguages);
+  return saved.length ? saved : requestFeedLanguages(req);
+}
+
+function explicitFeedPostLanguage(post) {
+  for (const value of [post?.language, post?.lang, post?.locale, post?.sourceLanguage, post?.contentLanguage]) {
+    const code = String(value || '').trim().toLowerCase().split(/[-_]/)[0];
+    if (MEMBER_FEED_LANGUAGE_CODES.has(code)) return code;
+  }
+  return '';
+}
+
+function detectFeedPostLanguage(post) {
+  const explicit = explicitFeedPostLanguage(post);
+  if (explicit) return explicit;
+  const text = `${post?.title || ''} ${post?.content || ''} ${post?.author?.name || ''}`.trim();
+  if (!text) return 'unknown';
+  if (/[\u3040-\u30ff]/u.test(text)) return 'ja';
+  if (/[\uac00-\ud7af]/u.test(text)) return 'ko';
+  if (/[\u0e00-\u0e7f]/u.test(text)) return 'th';
+  if (/[\u0980-\u09ff]/u.test(text)) return 'bn';
+  if (/[\u0900-\u097f]/u.test(text)) return 'hi';
+  if (/[\u4e00-\u9fff]/u.test(text)) return 'zh';
+  if (/[\u0600-\u06ff]/u.test(text)) return /[\u06ba\u06be\u06c1\u06d2]/u.test(text) ? 'ur' : 'ar';
+  if (/[\u0400-\u04ff]/u.test(text)) return /[\u0456\u0457\u0454\u0491]/iu.test(text) ? 'uk' : 'ru';
+
+  let bestCode = 'unknown';
+  let bestScore = 0;
+  for (const [code, pattern] of MEMBER_FEED_LANGUAGE_HINTS) {
+    const score = (text.match(pattern) || []).length;
+    if (score > bestScore) {
+      bestCode = code;
+      bestScore = score;
+    }
+  }
+  if (bestScore >= 2 || (bestCode !== 'en' && bestScore >= 1 && /[^\u0000-\u007f]/u.test(text))) return bestCode;
+  if (bestCode === 'en' && bestScore >= 1) return 'en';
+  return /^[\x00-\x7f]+$/.test(text) ? 'en' : 'unknown';
+}
+
+function filterPostsForMemberLanguages(posts, user, req) {
   const list = Array.isArray(posts) ? posts.filter(Boolean) : [];
+  const selected = memberFeedLanguages(user, req);
+  if (!selected.length) return list;
+  return list.filter(post => selected.includes(detectFeedPostLanguage(post)));
+}
+
+function personalizeAuthenticatedFeedPosts(posts, user, prefs = user?.preferences || {}, affinity = null, options = {}) {
+  const list = filterPostsForMemberLanguages(posts, user, options.request);
   if (!list.length || !user?.id) return list;
 
   const declaredTopics = userDeclaredFeedTopics(user, prefs);
@@ -13244,6 +13346,46 @@ const PLATFORMS = {
     reviewRequired: true,
     note: 'Requires a TikTok Content Posting API app, verified media domain, and TikTok review before direct publishing is public.',
   },
+  mastodon: {
+    name: 'Mastodon', color: '#6364FF', icon: 'mastodon',
+    description: 'Publish to the Mastodon account and server you authorize from Cross-Post.',
+    scopes: ['write:statuses'],
+    loginUrl: 'https://joinmastodon.org/servers',
+    setupUrl: 'https://docs.joinmastodon.org/client/token/',
+    reviewRequired: false,
+    comingSoon: true,
+    note: 'Mastodon needs a per-server OAuth app and account-server selection before it can be connected safely.',
+  },
+  pinterest: {
+    name: 'Pinterest', color: '#E60023', icon: 'pinterest',
+    description: 'Publish visual pins to the boards you authorize from Cross-Post.',
+    scopes: ['boards:read', 'pins:read', 'pins:write'],
+    loginUrl: 'https://www.pinterest.com/login/',
+    setupUrl: 'https://developers.pinterest.com/',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Pinterest publishing needs approved API access and a board selector before it can be connected.',
+  },
+  tumblr: {
+    name: 'Tumblr', color: '#001935', icon: 'tumblr',
+    description: 'Publish text and media posts to an authorized Tumblr blog.',
+    scopes: ['write'],
+    loginUrl: 'https://www.tumblr.com/login',
+    setupUrl: 'https://www.tumblr.com/oauth/apps',
+    reviewRequired: false,
+    comingSoon: true,
+    note: 'Tumblr needs an OAuth consumer and a blog selector before it can be connected.',
+  },
+  wordpress: {
+    name: 'WordPress.com', color: '#21759B', icon: 'wordpress',
+    description: 'Publish a post to the WordPress.com site you authorize.',
+    scopes: ['global'],
+    loginUrl: 'https://wordpress.com/log-in',
+    setupUrl: 'https://developer.wordpress.com/apps/',
+    reviewRequired: false,
+    comingSoon: true,
+    note: 'WordPress.com needs an OAuth app and site selector before it can be connected.',
+  },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
     description: 'Get job recommendations matched to your profile and groups.',
@@ -13292,10 +13434,24 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ]);
 
+// These providers publish through official third-party APIs, but each still
+// needs its own OAuth application and destination picker. Keep them in the
+// Command Center catalog without accidentally treating them as live feed
+// connections or accepting mock tokens.
+const PUBLISHING_ONLY_SOCIAL_PLATFORMS = new Set([
+  'mastodon', 'pinterest', 'tumblr', 'wordpress',
+]);
+const SOCIAL_PLATFORM_CATALOG = new Set([
+  ...CONNECTED_SOCIAL_PLATFORMS,
+  ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
+]);
+
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
-const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin']);
+const FORCE_COMING_SOON_PLATFORMS = new Set([
+  'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
+]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
@@ -13305,6 +13461,10 @@ const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin']);
 // These networks are account-owned: their content is only shown to the
 // member who explicitly connected the account, never in the shared pool.
 const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads']);
+const COMMAND_CENTER_SOCIAL_PLATFORMS = new Set([
+  ...MEMBER_ONLY_CONNECTED_FEED_SOURCES,
+  ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
+]);
 const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
@@ -18279,8 +18439,7 @@ app.get('/auth/social/config', authenticate, async (req, res) => {
 
 app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
-  const cfg = SOCIAL_CFG[platform];
-  if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
+  if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
   if (FORCE_COMING_SOON_PLATFORMS.has(platform)) {
     return res.status(503).json({
       error: `${PLATFORMS[platform].name} connection is coming soon.`,
@@ -18288,6 +18447,8 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
       code: 'coming_soon',
     });
   }
+  const cfg = SOCIAL_CFG[platform];
+  if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
   if (user.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)) {
@@ -18481,13 +18642,14 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // --- Profile: social connection status + disconnect ---------------------------
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const connected = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(p => {
+  const connected = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
   }));
-  const platforms = Object.fromEntries([...CONNECTED_SOCIAL_PLATFORMS].map(key => {
+  const platforms = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(key => {
     const status = socialCredentialStatus(key, req);
     const token = user?.socialTokens?.[key];
+    const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(key);
     return [key, {
       ...PLATFORMS[key],
       connected: connected[key],
@@ -18497,9 +18659,9 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       missingEnv: status.missingEnv,
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
       forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
-      commandCenterOnly: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
-      requiresMembership: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
-      locked: user?.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
+      commandCenterOnly,
+      requiresMembership: commandCenterOnly,
+      locked: user?.plan === 'free' && commandCenterOnly,
       crossPost: getCrossPostCapability(key),
     }];
   }));
@@ -18620,6 +18782,9 @@ app.patch('/profile', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLocation')) {
       nextRoleSettings.feedLocation = normalizeFeedLocation(nextRoleSettings.feedLocation);
     }
+    if (Object.prototype.hasOwnProperty.call(nextRoleSettings, 'feedLanguages')) {
+      nextRoleSettings.feedLanguages = normalizeMemberFeedLanguages(nextRoleSettings.feedLanguages);
+    }
     user.roleSettings = nextRoleSettings;
   }
   // Trusts the URL as given rather than re-validating it points at our own
@@ -18716,14 +18881,24 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
     interests: preferenceList(submitted.interests),
     experience: typeof submitted.experience === 'string' ? submitted.experience.trim().slice(0, 80) : '',
   };
+  // Language selection is member-specific and only shapes that member's
+  // feed. Source text stays as published; no shared translation layer.
+  const nextRoleSettings = {
+    ...(user.roleSettings || {}),
+    feedLanguages: Object.prototype.hasOwnProperty.call(req.body || {}, 'feedLanguages')
+      ? normalizeMemberFeedLanguages(req.body.feedLanguages)
+      : normalizeMemberFeedLanguages(user.roleSettings?.feedLanguages),
+  };
   const prev = {
     preferences: user.preferences,
+    roleSettings: user.roleSettings,
     onboardingComplete: user.onboardingComplete,
     joinedGroups: [...(user.joinedGroups || [])],
     bio: user.bio,
     title: user.title,
   };
   user.preferences = prefs;
+  user.roleSettings = nextRoleSettings;
   user.onboardingComplete = true;
   // Optional fields carried from registration context
   if (req.body.bio  && !user.bio)   user.bio   = req.body.bio;
@@ -18738,8 +18913,8 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
   try {
     if (isDBId(user.id)) {
       const { rows } = await db.query(
-        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7) WHERE id=$8 RETURNING *`,
-        [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', user.id]
+        `UPDATE users SET role=$1,goals=$2,interests=$3,experience=$4,onboarding_complete=true,joined_groups=$5,bio=COALESCE(NULLIF(bio,''),$6),title=COALESCE(NULLIF(title,''),$7),role_settings=$8 WHERE id=$9 RETURNING *`,
+        [prefs.role, prefs.goals || [], prefs.interests || [], prefs.experience, user.joinedGroups, user.bio || '', user.title || '', JSON.stringify(user.roleSettings || {}), user.id]
       );
       if (!rows[0]) throw new Error('Profile record was not found after preference save');
       Object.assign(user, dbRowToMemUser(rows[0]));
@@ -19484,7 +19659,7 @@ async function handleFeedRequest(req, res) {
     return scoped.filter(matchesMemberJob);
   };
   const personalizeForUser = (items, options = {}) => (
-    personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext })
+    personalizeAuthenticatedFeedPosts(filterForUser(items), user, prefs, userAffinity, { ...options, locationContext, request: req })
   );
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -19590,7 +19765,7 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
-    const available = filterUnseen(localFeed.posts, seenIds);
+    const available = filterUnseen(filterPostsForMemberLanguages(localFeed.posts, user, req), seenIds);
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = available.slice(offset, offset + feedLimit);
     const hydratedPageRows = feedMode === 'restaurants'
@@ -20806,7 +20981,7 @@ async function handleVideoFeedRequest(req, res) {
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
     const personalizeVideosForUser = (items, options = {}) => (
-      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext })
+      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext, request: req })
     );
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
@@ -20996,7 +21171,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       user,
       prefs,
       userAffinity,
-      { locationContext }
+      { locationContext, request: req }
     );
     const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
@@ -27192,10 +27367,16 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   bluesky:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   reddit:    { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
   twitter:   { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
-  linkedin:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false },
+  facebook:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Facebook Page publishing needs Meta Page permissions and a Page selector.' },
+  linkedin:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'LinkedIn publishing will open after UFIconnect receives LinkedIn app access approval.' },
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
+  mastodon:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Mastodon needs a per-server OAuth app and account-server selection.' },
+  pinterest: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: true, note: 'Pinterest publishing needs approved API access and a board selector.' },
+  tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
+  wordpress: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'WordPress.com needs an OAuth app and site selector.' },
+  youtube:   { supported: false, delivery: 'direct', media: 'video', requiresPhoto: false, note: 'YouTube uploads need a video-specific publishing flow and YouTube upload access.' },
 });
 const MAX_CROSS_POST_TARGETS = 7;
 const CROSS_POST_IMAGE_MAX_BYTES = 10 * 1024 * 1024;

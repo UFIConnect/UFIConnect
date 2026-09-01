@@ -2321,7 +2321,7 @@ export default function Feed({ forcedMode } = {}) {
     setPosts(c?.posts || []);
     setTravelLiveFeeds([]);
     loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
-  }, [loadFeed, profile?.id]);
+  }, [loadFeed, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
 
   useEffect(() => {
     const refreshQuietly = () => {

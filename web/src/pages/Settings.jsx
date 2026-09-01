@@ -64,6 +64,37 @@ const BASE_INTERESTS = [
 ];
 const ALL_INTERESTS = [...new Set([...BASE_INTERESTS, ...EXTRA_INTERESTS])];
 
+const FEED_LANGUAGES = [
+  { code: 'ar', label: 'Arabic' }, { code: 'bn', label: 'Bengali' },
+  { code: 'zh', label: 'Chinese' }, { code: 'nl', label: 'Dutch' },
+  { code: 'en', label: 'English' },
+  { code: 'fr', label: 'French' }, { code: 'de', label: 'German' },
+  { code: 'hi', label: 'Hindi' }, { code: 'id', label: 'Indonesian' },
+  { code: 'it', label: 'Italian' }, { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' }, { code: 'pl', label: 'Polish' },
+  { code: 'pt', label: 'Portuguese' }, { code: 'ru', label: 'Russian' },
+  { code: 'es', label: 'Spanish' }, { code: 'sw', label: 'Swahili' },
+  { code: 'th', label: 'Thai' }, { code: 'tr', label: 'Turkish' },
+  { code: 'uk', label: 'Ukrainian' }, { code: 'ur', label: 'Urdu' },
+  { code: 'vi', label: 'Vietnamese' },
+];
+const FEED_LANGUAGE_CODES = new Set(FEED_LANGUAGES.map(language => language.code));
+
+function normalizeFeedLanguages(value) {
+  return [...new Set((Array.isArray(value) ? value : [])
+    .map(code => String(code || '').trim().toLowerCase())
+    .filter(code => FEED_LANGUAGE_CODES.has(code)))]
+    .slice(0, 12);
+}
+
+function browserFeedLanguages() {
+  if (typeof navigator === 'undefined') return [];
+  const languages = Array.isArray(navigator.languages) && navigator.languages.length
+    ? navigator.languages
+    : [navigator.language];
+  return normalizeFeedLanguages(languages.map(language => String(language || '').split(/[-_]/)[0]));
+}
+
 // ── Role → icon / color metadata (for badge display) ─────────────────────────
 const ROLE_META = {
   'Engineer / Developer':    { icon: 'ED', color: '#2563EB', bg: '#EFF6FF', tagline: 'Software, ML, DevOps',          fields: [{ key: 'primaryStack', label: 'Primary tech stack', placeholder: 'e.g. React, Node.js, Python, Rust' }, { key: 'preferredRole', label: 'Preferred role type', placeholder: 'e.g. Full-stack, Backend, ML, DevOps' }, { key: 'yearsExp', label: 'Years of coding experience', placeholder: 'e.g. 5' }, { key: 'openToWork', label: 'Open to new opportunities', type: 'toggle' }, { key: 'remoteOnly', label: 'Remote only', type: 'toggle' }] },
@@ -364,6 +395,10 @@ export default function Settings() {
   const [prefExperience, setPrefExperience] = useState(profile?.preferences?.experience || '');
   const [prefGoals,      setPrefGoals]      = useState(Array.isArray(profile?.preferences?.goals)     ? profile.preferences.goals     : []);
   const [prefInterests,  setPrefInterests]  = useState(Array.isArray(profile?.preferences?.interests) ? profile.preferences.interests : []);
+  const [prefFeedLanguages, setPrefFeedLanguages] = useState(() => {
+    const savedLanguages = normalizeFeedLanguages(profile?.roleSettings?.feedLanguages);
+    return savedLanguages.length ? savedLanguages : browserFeedLanguages();
+  });
   const [interestSearch, setInterestSearch] = useState('');
   const [roleSearch,     setRoleSearch]     = useState('');
   const [prefSaving,     setPrefSaving]     = useState(false);
@@ -406,10 +441,17 @@ export default function Settings() {
     setPrefExperience(savedPreferences.experience || '');
     setPrefGoals(Array.isArray(savedPreferences.goals) ? savedPreferences.goals : []);
     setPrefInterests(Array.isArray(savedPreferences.interests) ? savedPreferences.interests : []);
+    const savedLanguages = normalizeFeedLanguages(savedSettings.feedLanguages);
+    setPrefFeedLanguages(savedLanguages.length ? savedLanguages : browserFeedLanguages());
   }, [profile?.id]);
 
   function toggleGoal(v)     { setPrefGoals(g => g.includes(v) ? g.filter(x => x !== v) : [...g, v]); }
   function toggleInterest(v) { setPrefInterests(i => i.includes(v) ? i.filter(x => x !== v) : [...i, v]); }
+  function toggleFeedLanguage(code) {
+    setPrefFeedLanguages(current => current.includes(code)
+      ? current.filter(item => item !== code)
+      : current.length >= 12 ? current : [...current, code]);
+  }
 
   const filteredRoles = useMemo(() => {
     const q = roleSearch.trim().toLowerCase();
@@ -430,15 +472,18 @@ export default function Settings() {
       const { data } = await client.post('/profile/onboarding', {
         role: prefRole, experience: prefExperience,
         goals: prefGoals, interests: prefInterests,
+        feedLanguages: prefFeedLanguages,
       });
       try { localStorage.removeItem('ufi_feed_v1'); } catch {}
       const persisted = data.profile || data;
       const persistedPreferences = persisted.preferences || {};
       updateProfileLocally(persisted);
+      setRoleSettings({ ...(persisted.roleSettings || {}) });
       setPrefRole(persistedPreferences.role || '');
       setPrefExperience(persistedPreferences.experience || '');
       setPrefGoals(Array.isArray(persistedPreferences.goals) ? persistedPreferences.goals : []);
       setPrefInterests(Array.isArray(persistedPreferences.interests) ? persistedPreferences.interests : []);
+      setPrefFeedLanguages(normalizeFeedLanguages(persisted.roleSettings?.feedLanguages));
       setPrefSaved(true);
       showToast('Preferences saved', 'success');
       setTimeout(() => setPrefSaved(false), 3000);
@@ -617,6 +662,35 @@ export default function Settings() {
             </div>
             <div style={{ marginTop: 8, fontSize: '.72rem', color: 'var(--muted)' }}>
               {prefInterests.length} selected
+            </div>
+          </div>
+
+          <div className="card">
+            <SectionHeading>Feed Languages</SectionHeading>
+            <div style={{ color: 'var(--muted)', fontSize: '.75rem', lineHeight: 1.45 }}>
+              Choose the languages you want in your own feed. Posts keep their original wording; without a saved choice, your device language is used.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 12 }}>
+              {FEED_LANGUAGES.map(language => {
+                const selected = prefFeedLanguages.includes(language.code);
+                return (
+                  <button
+                    key={language.code}
+                    type="button"
+                    onClick={() => toggleFeedLanguage(language.code)}
+                    aria-pressed={selected}
+                    style={{
+                      minHeight: 32, padding: '5px 10px', borderRadius: 6,
+                      border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
+                      background: selected ? 'var(--primary-light)' : 'var(--surface)',
+                      color: selected ? 'var(--primary)' : 'var(--text)',
+                      cursor: 'pointer', fontSize: '.76rem', fontWeight: selected ? 700 : 600,
+                    }}
+                  >
+                    {language.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
