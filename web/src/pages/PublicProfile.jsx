@@ -458,6 +458,25 @@ export default function PublicProfile() {
           </div>
         )}
 
+        {/* Interests & Goals */}
+        {(user.interests?.length > 0 || user.goals?.length > 0) && (
+          <div className="card">
+            <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Interests & Goals</h3>
+            {user.interests?.length > 0 && (
+              <div style={{ marginBottom: user.goals?.length > 0 ? 12 : 0 }}>
+                <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Interests</div>
+                <div className="tags">{user.interests.map(i => <span key={i} className="tag tag-secondary">{i}</span>)}</div>
+              </div>
+            )}
+            {user.goals?.length > 0 && (
+              <div>
+                <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Goals</div>
+                <div className="tags">{user.goals.map(g => <span key={g} className="tag">{g}</span>)}</div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Posts */}
         <div>
           <div style={{ maxWidth: 640, marginBottom: 8 }}>
@@ -512,25 +531,6 @@ export default function PublicProfile() {
                 {user.roleSettings.openToFunding && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#D97706', background: '#FFFBEB', padding: '3px 10px', borderRadius: 10 }}>Open to investment</span>}
                 {user.roleSettings.openToDeals   && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#DB2777', background: '#FDF2F8', padding: '3px 10px', borderRadius: 10 }}>Actively seeking deals</span>}
                 {(user.roleSettings.openToCollabs || user.roleSettings.openToCollab) && <span style={{ fontSize: '.72rem', fontWeight: 700, color: '#0284C7', background: '#F0F9FF', padding: '3px 10px', borderRadius: 10 }}>Open to collabs</span>}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Interests & Goals */}
-        {(user.interests?.length > 0 || user.goals?.length > 0) && (
-          <div className="card">
-            <h3 style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12 }}>Interests & Goals</h3>
-            {user.interests?.length > 0 && (
-              <div style={{ marginBottom: user.goals?.length > 0 ? 12 : 0 }}>
-                <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Interests</div>
-                <div className="tags">{user.interests.map(i => <span key={i} className="tag tag-secondary">{i}</span>)}</div>
-              </div>
-            )}
-            {user.goals?.length > 0 && (
-              <div>
-                <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.4px' }}>Goals</div>
-                <div className="tags">{user.goals.map(g => <span key={g} className="tag">{g}</span>)}</div>
               </div>
             )}
           </div>
