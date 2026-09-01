@@ -263,12 +263,16 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
   const subEntries = Object.entries(web.subAgents || {});
   const isRunning  = triggering['web_optimizer'] || web.status === 'running';
+  const latencyTarget = Math.max(20, Number(web.latencyTargetMs) || 80);
+  const latencyColor = (value) => {
+    if (value == null) return '#64748b';
+    if (value > latencyTarget * 2) return '#f87171';
+    if (value > latencyTarget) return '#fbbf24';
+    return '#4ade80';
+  };
 
-  const ttfbColor = !web.lastTtfbMs  ? '#64748b'
-    : web.lastTtfbMs  > 800  ? '#f87171'
-    : web.lastTtfbMs  > 400  ? '#fbbf24' : '#4ade80';
-  const loadColor = !web.lastTotalMs ? '#64748b'
-    : web.lastTotalMs > 2500 ? '#f87171' : '#4ade80';
+  const ttfbColor = latencyColor(web.lastTtfbMs);
+  const loadColor = latencyColor(web.lastTotalMs);
   const sizeKb    = web.lastBytes ? (web.lastBytes / 1024).toFixed(1) : null;
   // 450,000 bytes matches the "HTML payload heavier than target" threshold
   // in scoreWebsiteSnapshot on the backend — was 460*1024 (470,910 bytes)
@@ -310,13 +314,25 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
         borderRadius: 8, marginBottom: 16,
       }}>
         {[
-          { label: 'TTFB',   value: web.lastTtfbMs  != null ? `${web.lastTtfbMs}ms`  : '—', color: ttfbColor },
-          { label: 'Load',   value: web.lastTotalMs != null ? `${web.lastTotalMs}ms` : '—', color: loadColor },
+          {
+            label: 'TTFB',
+            value: web.lastTtfbMs != null ? `${web.lastTtfbMs}ms` : '—',
+            color: ttfbColor,
+            title: web.lastInitialTtfbMs != null && web.lastInitialTtfbMs !== web.lastTtfbMs
+              ? `Warm edge response. First pass: ${web.lastInitialTtfbMs}ms.`
+              : `Target: ${latencyTarget}ms or less.`,
+          },
+          {
+            label: 'Load',
+            value: web.lastTotalMs != null ? `${web.lastTotalMs}ms` : '—',
+            color: loadColor,
+            title: `Target: ${latencyTarget}ms or less.`,
+          },
           { label: 'Size',   value: sizeKb           != null ? `${sizeKb} KB`         : '—', color: sizeColor },
           { label: 'Status', value: web.lastStatus   ?? '—',
             color: !web.lastStatus ? '#64748b' : web.lastStatus < 400 ? '#4ade80' : '#f87171' },
-        ].map(({ label, value, color }) => (
-          <div key={label}>
+        ].map(({ label, value, color, title }) => (
+          <div key={label} title={title}>
             <div style={{ fontSize: 10, color: '#475569', marginBottom: 3, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</div>
             <div style={{ fontSize: 14, fontWeight: 700, color }}>{value}</div>
           </div>
