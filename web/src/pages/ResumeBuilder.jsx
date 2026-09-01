@@ -812,16 +812,16 @@ export default function ResumeBuilder() {
               ) : jobContactOptions.length === 0 ? (
                 <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>No live listings are available yet. Refresh Job Tracker and try again.</div>
               ) : (
-                <div style={{ display: 'grid', gap: 10, maxHeight: 'min(78vh, 980px)', overflowY: 'auto', paddingRight: 4 }}>
+                <div className="resume-job-contact-list" style={{ display: 'grid', gap: 10, maxHeight: 'min(78vh, 980px)', overflowY: 'auto', paddingRight: 4 }}>
                   {jobContactOptions.map(job => (
-                    <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                      <div style={{ minWidth: 0 }}>
+                    <div className="resume-job-contact-row" key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                      <div className="resume-job-contact-details" style={{ minWidth: 0 }}>
                         <strong style={{ display: 'block', fontSize: '.86rem' }}>{job.title || 'Tracked role'}</strong>
                         <span style={{ display: 'block', fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
                           {[job.org || 'Hiring team', job.status === 'saved' ? 'Saved' : job.status === 'applied' ? 'Applied' : 'Live listing', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' | ')}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
+                      <div className="resume-job-contact-actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
                         {job.sourceUrl && <a className="btn btn-ghost btn-sm" href={job.sourceUrl} target="_blank" rel="noreferrer">Job</a>}
                         <button type="button" className="btn btn-ghost btn-sm" onClick={() => useTrackedJobForWriting(job, 'cover-letter')}>Copy for letter</button>
                         <button type="button" className="btn btn-primary btn-sm" onClick={() => useTrackedJobForWriting(job, 'outreach')}>Copy for message</button>

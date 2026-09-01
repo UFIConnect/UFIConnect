@@ -2549,6 +2549,15 @@ input, textarea, select { font-family: inherit; }
   font-weight: 700;
   text-align: right;
 }
+.resume-job-contact-list {
+  overscroll-behavior: contain;
+}
+.resume-job-contact-details {
+  flex: 1 1 220px;
+}
+.resume-job-contact-actions {
+  align-items: center;
+}
 .resume-preview-backdrop {
   position: fixed;
   inset: 0;
@@ -2718,6 +2727,33 @@ input, textarea, select { font-family: inherit; }
   .resume-builder-actions .btn { flex: 1 1 150px; }
   .resume-builder-score { align-items: flex-start; flex-direction: column; }
   .resume-builder-score-note { text-align: left; }
+  .resume-job-contact-list {
+    max-height: calc(100dvh - 190px) !important;
+    margin: 0 -2px;
+    padding: 0 2px 8px 0 !important;
+  }
+  .resume-job-contact-row {
+    align-items: stretch !important;
+    flex-direction: column;
+    gap: 10px !important;
+    padding: 12px 0 2px !important;
+  }
+  .resume-job-contact-details {
+    min-width: 0;
+  }
+  .resume-job-contact-actions {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+  .resume-job-contact-actions .btn {
+    justify-content: center;
+    min-width: 0;
+  }
+  .resume-job-contact-actions .btn:first-child:last-child,
+  .resume-job-contact-actions .btn:nth-child(3) {
+    grid-column: span 2;
+  }
   .resume-preview-backdrop { align-items: stretch; padding: 0; }
   .resume-preview-modal { max-height: 100dvh; border-radius: 0; }
   .resume-preview-scroll { padding: 14px; }
