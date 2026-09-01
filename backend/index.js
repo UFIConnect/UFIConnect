@@ -981,7 +981,7 @@ const SOCIAL_CFG = {
     // exists; Google recommends requesting elevated scopes in context.
     scope: 'https://www.googleapis.com/auth/youtube.readonly',
     pkce: true,
-    extraAuthParams: { access_type: 'offline', prompt: 'consent' },
+    extraAuthParams: { access_type: 'online', prompt: 'consent' },
   },
   reddit: {
     authUrl:  'https://www.reddit.com/api/v1/authorize',
@@ -17963,13 +17963,9 @@ async function saveSocialToken(userId, platform, token, refreshToken, connectedA
   }
 }
 
-// Google access tokens expire in ~1 hour; the refresh_token captured at
-// connect time (offline access — see SOCIAL_CFG.youtube) lets this exchange
-// it for a new access token without requiring the user to reconnect.
-// Returns the new access token, or null if there's no refresh token stored
-// (connected before this fix shipped, or offline access was never granted)
-// or the exchange itself fails (refresh token revoked/expired — genuinely
-// requires reconnecting at that point).
+// Online YouTube connections normally have no refresh token. This remains a
+// backward-compatible fallback for older connections that already stored one;
+// newer members reconnect when their access token expires.
 async function refreshGoogleAccessToken(userId) {
   const user = await getUser(userId);
   const refreshToken = user?.socialRefreshTokens?.youtube;
