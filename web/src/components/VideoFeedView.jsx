@@ -194,7 +194,7 @@ function formatTime(sec) {
 // its own top comment) instead of each slide owning/destroying its own.
 // Only meaningful when src.kind === 'youtube'; file/hls/vimeo keep their
 // existing fully-local state below, untouched.
-function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, sharedYt }) {
+function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComments, onToggleLike, sharedYt }) {
   const src = resolveVideoSource(post);
   const meta = SOURCE_META[post.source] || SOURCE_META.uficonnect;
   const fileVideoRef = useRef(null);
@@ -239,6 +239,10 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // by VideoFeedView), everything else keeps reading this slide's own
   // local state exactly as before.
   const isYoutube = src?.kind === 'youtube';
+  const isCommunityPost = !post.isExternal && ['uficonnect', 'livecamera'].includes(post.source || 'uficonnect');
+  const isRestaurantPost = post.source === 'restaurants' && post.ufiInteractive;
+  const canLike = isCommunityPost || isRestaurantPost;
+  const [likeBusy, setLikeBusy] = useState(false);
   const backdropPoster = isYoutube
     ? src?.poster
     : (!active ? (src?.kind === 'vimeo' ? vimeoPoster : src?.poster) : null);
@@ -473,6 +477,19 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
     togglePlay();
   }
 
+  async function handleLike(e) {
+    e.stopPropagation();
+    if (!canLike || likeBusy || !onToggleLike) return;
+    setLikeBusy(true);
+    try {
+      await onToggleLike(post);
+    } catch {
+      // Keep the current count if the update could not be saved.
+    } finally {
+      setLikeBusy(false);
+    }
+  }
+
   return (
     <div
       onClick={handleSlideClick}
@@ -681,7 +698,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           "Show less just disappears." It's outside the scrollable region
           entirely now, so it's always reachable regardless of how far the
           writing itself is scrolled. */}
-      <div style={{
+      <div className="video-feed-caption" style={{
         position: 'absolute', zIndex: 2, left: 16, right: 76, bottom: 40, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
       }}>
@@ -726,39 +743,6 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
             </div>
           )}
         </div>
-        {hasExtraCaption && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
-            style={{
-              marginTop: 6, background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
-              color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
-              cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
-            }}
-          >
-            {captionExpanded ? 'Show less' : 'Read more'}
-          </button>
-        )}
-        {/* Routes back to wherever this post actually lives — Reddit,
-            Mastodon, a YouTube watch page, an article, etc. Every source
-            already carries a real sourceUrl (see each fetcher above), this
-            is just the first place in this view that surfaces it as a tap
-            target instead of leaving the original post unreachable from
-            here. */}
-        {post.sourceUrl && (
-          <a
-            href={post.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              display: 'inline-block', marginTop: 6, background: 'rgba(0,0,0,.5)',
-              borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: '.75rem',
-              padding: '4px 9px', textDecoration: 'none', pointerEvents: 'auto', opacity: 0.95,
-            }}
-          >
-            View original post ↗
-          </a>
-        )}
       </div>
 
       {/* Scrub tracker — click or drag anywhere on the bar to skip to that
@@ -803,22 +787,65 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
         </div>
       )}
 
-      {/* Right-side action rail */}
-      <div style={{ position: 'absolute', zIndex: 2, right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
-          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
-          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.likesCount || 0).toLocaleString()}</span>
-        </div>
+      {/* A fixed action rail stays reachable above the scrubber. */}
+      <div
+        className="video-feed-action-rail"
+        style={{
+          position: 'absolute', zIndex: 3, right: 14, bottom: 46,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+          gridTemplateColumns: `repeat(${2 + Number(hasExtraCaption) + Number(Boolean(post.sourceUrl))}, minmax(0, 1fr))`,
+        }}
+      >
+        {canLike ? (
+          <button
+            type="button"
+            onClick={handleLike}
+            disabled={likeBusy}
+            className={`video-feed-action${post.likedByMe ? ' is-liked' : ''}`}
+            aria-label={`${post.likedByMe ? 'Unlike' : 'Like'} this post`}
+            style={{ opacity: likeBusy ? 0.6 : 1 }}
+          >
+            <span>{post.likedByMe ? 'Liked' : 'Like'}</span>
+            <strong>{(post.likesCount || 0).toLocaleString()}</strong>
+          </button>
+        ) : (
+          <div className="video-feed-action video-feed-action--stat" aria-label={`${(post.likesCount || 0).toLocaleString()} likes`}>
+            <span>Likes</span>
+            <strong>{(post.likesCount || 0).toLocaleString()}</strong>
+          </div>
+        )}
         <button
+          type="button"
           onClick={(e) => { e.stopPropagation(); onOpenComments?.(post); }}
-          style={{
-            all: 'unset', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
-          }}
+          className="video-feed-action"
+          aria-label="View comments"
         >
-          <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comments</span>
-          <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.commentsCount || 0).toLocaleString()}</span>
+          <span>Comments</span>
+          <strong>{(post.commentsCount || 0).toLocaleString()}</strong>
         </button>
+        {hasExtraCaption && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
+            className="video-feed-action"
+          >
+            <span>{captionExpanded ? 'Show less' : 'Read more'}</span>
+          </button>
+        )}
+        {post.sourceUrl && (
+          <a
+            href={post.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              e.stopPropagation();
+              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+            }}
+            className="video-feed-action"
+          >
+            <span>Original post ↗</span>
+          </a>
+        )}
       </div>
     </div>
   );
@@ -1288,6 +1315,18 @@ export default function VideoFeedView({ onExit }) {
     await loadPage({ reset: true, bust: true });
     setRefreshing(false);
   }, [refreshing, loadPage]);
+
+  const toggleVideoLike = useCallback(async (post) => {
+    const isCommunityPost = !post?.isExternal && ['uficonnect', 'livecamera'].includes(post?.source || 'uficonnect');
+    const isRestaurantPost = post?.source === 'restaurants' && post?.ufiInteractive;
+    if (!post?.id || (!isCommunityPost && !isRestaurantPost)) return;
+    const path = isRestaurantPost ? 'restaurants' : 'posts';
+    const { data } = await client.post(`/${path}/${encodeURIComponent(post.id)}/like`);
+    const update = data.post || { likedByMe: data.likedByMe, likesCount: data.likesCount };
+    setVideoPosts(current => current.map(item => (
+      item.id === post.id ? { ...item, ...update } : item
+    )));
+  }, []);
 
   // Feed and Following pull from entirely different endpoints/pools (see
   // loadPage) with no shared source vocabulary between them, same reasoning
@@ -2524,6 +2563,7 @@ export default function VideoFeedView({ onExit }) {
                   onToggleMute={toggleMuted}
                   isScrolling={isScrolling}
                   onOpenComments={setCommentsPost}
+                  onToggleLike={toggleVideoLike}
                   // Only the active slide ever reads this — see VideoSlide's
                   // own effectivePaused/effectiveDuration/effectiveCurrentTime,
                   // which fall back to 0/false when it's undefined, correctly

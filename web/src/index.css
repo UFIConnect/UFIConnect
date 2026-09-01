@@ -2362,6 +2362,73 @@ input, textarea, select { font-family: inherit; }
 .video-feed-youtube-player {
   touch-action: none;
 }
+.video-feed-action {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 54px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+  text-decoration: none;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, .7);
+}
+.video-feed-action > span {
+  font-size: .72rem;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.video-feed-action > strong {
+  font-size: .68rem;
+  line-height: 1.1;
+}
+.video-feed-action:not(.video-feed-action--stat):hover,
+.video-feed-action:not(.video-feed-action--stat):focus-visible {
+  background: rgba(255, 255, 255, .14);
+  outline: none;
+}
+.video-feed-action.is-liked { color: #fecdd3; }
+.video-feed-action--stat { cursor: default; }
+@media (max-width: 768px) {
+  .video-feed-caption {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 86px !important;
+  }
+  .video-feed-action-rail {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 34px !important;
+    display: grid !important;
+    align-items: stretch !important;
+    gap: 6px !important;
+  }
+  .video-feed-action {
+    min-width: 0;
+    min-height: 34px;
+    justify-content: center;
+    padding: 4px;
+    border: 1px solid rgba(255, 255, 255, .2);
+    background: rgba(0, 0, 0, .48);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .video-feed-action > span {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: .62rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .video-feed-action > strong { font-size: .64rem; }
+}
 
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep
    all six destinations reachable and stable on narrow screens without
