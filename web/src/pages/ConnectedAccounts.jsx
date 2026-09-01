@@ -2,7 +2,7 @@
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
-import client from '../api/client';
+import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 
@@ -94,7 +94,10 @@ export default function ConnectedAccounts() {
     const handleParam = handle ? `?handle=${encodeURIComponent(handle.trim())}` : '';
     setConnecting(platform);
     try {
-      const { data } = await client.get(`/auth/social/${platform}/start${handleParam}`);
+      const { data } = await client.get(
+        `/auth/social/${platform}/start${handleParam}`,
+        publicOAuthRequestConfig(),
+      );
       if (data?.url) { window.location.href = data.url; return; }
       throw new Error('Missing provider authorization URL.');
     } catch (err) {
@@ -130,10 +133,10 @@ export default function ConnectedAccounts() {
   );
   const standardPlatforms = platforms.filter((entry) => !isCommandCenterOnly(entry));
   const memberOnlyPlatforms = platforms.filter(isCommandCenterOnly);
-  const connectedList   = standardPlatforms.filter(([k]) => connected[k]);
+  const connectedList   = standardPlatforms.filter(([k, p]) => connected[k] && !p.forceComingSoon);
   const membershipLocked = authProfile?.plan === 'free';
   const availableList   = standardPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
-  const comingSoonList  = standardPlatforms.filter(([k, p]) => !connected[k] && (!p.configured || p.forceComingSoon));
+  const comingSoonList  = standardPlatforms.filter(([k, p]) => p.forceComingSoon || (!connected[k] && !p.configured));
 
   return (
     <Layout>

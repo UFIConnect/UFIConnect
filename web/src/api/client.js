@@ -1,5 +1,6 @@
 import axios from 'axios';
 import {
+  getCanonicalApiBaseUrl,
   markApiOriginFailure,
   markApiOriginHealthy,
   resolveApiBaseUrl,
@@ -19,8 +20,25 @@ function isRelativeRequest(config) {
   return !/^https?:\/\//i.test(String(config.url || ''));
 }
 
-function canFailover(config) {
+function canRetry(config) {
   return SAFE_FAILOVER_METHODS.has(String(config.method || 'get').toLowerCase());
+}
+
+function canFailover(config) {
+  return !config._ufiCanonicalOAuth && canRetry(config);
+}
+
+// OAuth providers validate a single, pre-registered callback host. Pinning the
+// start request to the public origin ensures a temporary Render failover cannot
+// create an authorization URL with the wrong redirect_uri.
+export function publicOAuthRequestConfig(config = {}) {
+  const origin = getCanonicalApiBaseUrl();
+  return {
+    ...config,
+    baseURL: origin,
+    _ufiApiOrigin: origin,
+    _ufiCanonicalOAuth: true,
+  };
 }
 
 function pause(ms) {
@@ -53,7 +71,7 @@ client.interceptors.response.use(
   },
   async (error) => {
     const { config, response } = error;
-    if (!config || !canFailover(config)) return Promise.reject(error);
+    if (!config || !canRetry(config)) return Promise.reject(error);
 
     const transient = !response || TRANSIENT_STATUS_CODES.has(response.status);
     if (!transient) return Promise.reject(error);

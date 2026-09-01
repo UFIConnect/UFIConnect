@@ -82,6 +82,12 @@ export function getApiBaseUrl() {
   return activeApiOrigin;
 }
 
+// OAuth redirect URIs are registered with providers as an exact public URL.
+// Never let a fast transport fallback select a different host for that flow.
+export function getCanonicalApiBaseUrl() {
+  return apiOrigins[0] || '/api';
+}
+
 export function getAlternateApiBaseUrl(origin = activeApiOrigin) {
   return apiOrigins.find((candidate) => candidate !== origin) || null;
 }

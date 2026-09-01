@@ -878,8 +878,8 @@ function fetchJSONWithHeaders(url, extraHeaders = {}) {
 // --- Social OAuth config -----------------------------------------------------
 const API_BASE      = process.env.API_BASE_URL  || 'http://localhost:3000';
 const FRONTEND_BASE = process.env.FRONTEND_URL  || 'http://localhost:5173';
-const FALLBACK_API_BASE = process.env.FALLBACK_API_BASE_URL || API_BASE;
 const PUBLIC_API_BASE = process.env.PUBLIC_API_URL || 'https://api.uficonnect.org';
+const OAUTH_CALLBACK_BASE = process.env.OAUTH_CALLBACK_BASE_URL || PUBLIC_API_BASE;
 
 function normalizedOrigin(value, fallback) {
   try {
@@ -891,21 +891,20 @@ function normalizedOrigin(value, fallback) {
 }
 
 const SAFE_PUBLIC_API_BASE = normalizedOrigin(PUBLIC_API_BASE, 'https://api.uficonnect.org');
-const SAFE_PUBLIC_API_HOST = new URL(SAFE_PUBLIC_API_BASE).host.toLowerCase();
-
-// OAuth providers require an exact redirect URI. The browser normally reaches
-// the API through api.uficonnect.org, but it can temporarily fall back to the
-// Render origin while DNS or TLS recovers. Only honor the canonical Host header
-// here; accepting arbitrary forwarded-host headers would let a caller choose a
-// redirect URI for an OAuth flow.
-function apiBaseForRequest(req) {
-  if (!req) return API_BASE;
-  const requestHost = String(req?.headers?.host || '')
-    .trim()
-    .toLowerCase()
-    .replace(/:\d+$/, '');
-  return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : FALLBACK_API_BASE;
+function canonicalOAuthOrigin(value) {
+  const origin = normalizedOrigin(value, SAFE_PUBLIC_API_BASE);
+  // A stale Render dashboard value must not override a provider's registered
+  // public callback in production. Other verified custom public domains still
+  // remain valid when explicitly configured.
+  return process.env.NODE_ENV === 'production' && /\.onrender\.com$/i.test(new URL(origin).hostname)
+    ? 'https://api.uficonnect.org'
+    : origin;
 }
+const SAFE_OAUTH_CALLBACK_BASE = canonicalOAuthOrigin(OAUTH_CALLBACK_BASE);
+
+// OAuth providers require one exact redirect URI. Transport failover is useful
+// for ordinary API reads, but it must never leak the Render hostname into an
+// authorization request: every provider callback is always public and stable.
 
 const requestedMetaGraphVersion = String(process.env.META_GRAPH_API_VERSION || 'v24.0').trim();
 const META_GRAPH_API_VERSION = /^v\d+\.\d+$/.test(requestedMetaGraphVersion)
@@ -1101,12 +1100,12 @@ function socialCredentialStatus(platform, req) {
     configured: missingEnv.length === 0,
     requiredEnv,
     missingEnv,
-    callbackUrl: oauthCallbackUrl(platform, req),
+    callbackUrl: oauthCallbackUrl(platform),
   };
 }
 
-function oauthCallbackUrl(platform, req) {
-  return `${apiBaseForRequest(req)}/auth/social/${platform}/callback`;
+function oauthCallbackUrl(platform) {
+  return `${SAFE_OAUTH_CALLBACK_BASE}/auth/social/${platform}/callback`;
 }
 
 function pkceVerifier() { return crypto.randomBytes(32).toString('base64url'); }
@@ -12892,8 +12891,8 @@ const PLATFORMS = {
     authUrl: 'https://www.linkedin.com/oauth/v2/authorization',
     loginUrl: 'https://www.linkedin.com/login',
     setupUrl: 'https://www.linkedin.com/developers/apps',
-    reviewRequired: false,
-    note: 'Available again after the public API callback and LinkedIn access are verified.',
+    reviewRequired: true,
+    note: 'LinkedIn connection will open after UFIconnect receives LinkedIn app access approval.',
   },
   github: {
     name: 'GitHub', color: '#24292F', icon: 'github',
@@ -13066,7 +13065,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
-const FORCE_COMING_SOON_PLATFORMS = new Set();
+const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin']);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
@@ -18035,6 +18034,7 @@ app.get('/auth/social/config', authenticate, async (req, res) => {
       callbackUrl: status.callbackUrl,
       authUrl: cfg.authUrl,
       scope: cfg.scope,
+      forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(platform),
     }];
   }));
   res.json({
@@ -18048,6 +18048,13 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
   const cfg = SOCIAL_CFG[platform];
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
+  if (FORCE_COMING_SOON_PLATFORMS.has(platform)) {
+    return res.status(503).json({
+      error: `${PLATFORMS[platform].name} connection is coming soon.`,
+      detail: PLATFORMS[platform].note,
+      code: 'coming_soon',
+    });
+  }
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
   if (user.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)) {
@@ -18067,7 +18074,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   });
 
   const clientId = cfg.clientId();
-  const redirectUri = oauthCallbackUrl(platform, req);
+  const redirectUri = oauthCallbackUrl(platform);
   let codeVerifier;
 
   const params = new URLSearchParams({
@@ -18118,7 +18125,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const cfg         = SOCIAL_CFG[platform];
   const clientId    = cfg.clientId();
   const clientSecret= cfg.clientSecret();
-  const redirectUri = oauthCallbackUrl(platform, req);
+  const redirectUri = oauthCallbackUrl(platform);
 
   try {
     let accessToken;
@@ -26925,7 +26932,7 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   bluesky:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   reddit:    { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
   twitter:   { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
-  linkedin:  { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
+  linkedin:  { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
   instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
   tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },

@@ -89,9 +89,11 @@ services:
         value: https://api.uficonnect.org
       - key: FALLBACK_API_BASE_URL
         value: https://uficonnect-api-708r.onrender.com
-      # Keep Render as the emergency origin. OAuth routes choose this only
-      # when a request did not arrive through the verified public hostname.
+      # Keep Render as the emergency transport origin for ordinary web API
+      # traffic. OAuth callback URLs must always use the public hostname.
       - key: PUBLIC_API_URL
+        value: https://api.uficonnect.org
+      - key: OAUTH_CALLBACK_BASE_URL
         value: https://api.uficonnect.org
       - key: FRONTEND_URL
         value: https://uficonnect.org

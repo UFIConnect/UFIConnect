@@ -4,7 +4,7 @@ import Layout from '../components/Layout';
 import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import client from '../api/client';
+import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
@@ -734,7 +734,10 @@ function MemberAccountsSection() {
   async function connectAccount(platform) {
     setConnecting(platform);
     try {
-      const { data } = await client.get(`/auth/social/${platform}/start`, { params: { returnTo: 'command-center' } });
+      const { data } = await client.get(
+        `/auth/social/${platform}/start`,
+        publicOAuthRequestConfig({ params: { returnTo: 'command-center' } }),
+      );
       if (!data?.url) throw new Error('Missing provider authorization URL.');
       window.location.assign(data.url);
     } catch (requestError) {
