@@ -1089,6 +1089,8 @@ function JobTrackerSection() {
       await client.post('/jobs/tracking', {
         jobId: job.id, status, title: job.title, org: job.org,
         source: job.source, sourceUrl: job.sourceUrl, matchScore: job.matchScore,
+        jobContent: job.content, contactEmail: job.contactEmail,
+        recruiterName: job.recruiterName, recruiterRole: job.recruiterRole,
       });
       setTracked(prev => ({ ...prev, [job.id]: { ...prev[job.id], id: job.id, status } }));
     } catch {

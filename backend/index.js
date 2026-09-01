@@ -15688,11 +15688,19 @@ async function migrateDB() {
         source       TEXT,
         source_url   TEXT,
         match_score  INTEGER,
+        job_content  TEXT,
+        contact_email TEXT,
+        recruiter_name TEXT,
+        recruiter_role TEXT,
         created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (user_id, job_id)
       )
     `);
+    await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS job_content TEXT`);
+    await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS contact_email TEXT`);
+    await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS recruiter_name TEXT`);
+    await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS recruiter_role TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS job_tracking_user_idx ON job_tracking(user_id, updated_at DESC)`);
 
     // Resume Builder's editable draft — one row per user (upsert, like
@@ -26663,6 +26671,8 @@ app.get('/jobs/tracking', authenticate, async (req, res) => {
       jobs: rows.map(r => ({
         id: r.job_id, status: r.status, title: r.title, org: r.org,
         source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
+        jobContent: r.job_content, contactEmail: r.contact_email,
+        recruiterName: r.recruiter_name, recruiterRole: r.recruiter_role,
         trackedAt: r.created_at, updatedAt: r.updated_at,
       })),
     });
@@ -26674,20 +26684,23 @@ app.get('/jobs/tracking', authenticate, async (req, res) => {
 
 app.post('/jobs/tracking', authenticate, async (req, res) => {
   if (!db.isConnected()) return res.status(503).json({ message: 'Job tracking is not available right now.' });
-  const { jobId, status, title, org, source, sourceUrl, matchScore } = req.body || {};
+  const { jobId, status, title, org, source, sourceUrl, matchScore, jobContent, contactEmail, recruiterName, recruiterRole } = req.body || {};
   if (!jobId || !['saved', 'applied', 'viewed'].includes(status)) {
     return res.status(400).json({ message: 'jobId and a valid status are required.' });
   }
   try {
     const id = `jt_${req.user.id}_${jobId}`.replace(/[^a-zA-Z0-9_]/g, '_');
     await db.query(
-      `INSERT INTO job_tracking (id, user_id, job_id, status, title, org, source, source_url, match_score, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+      `INSERT INTO job_tracking (id, user_id, job_id, status, title, org, source, source_url, match_score, job_content, contact_email, recruiter_name, recruiter_role, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
        ON CONFLICT (user_id, job_id) DO UPDATE SET
          status = EXCLUDED.status, title = EXCLUDED.title, org = EXCLUDED.org,
          source = EXCLUDED.source, source_url = EXCLUDED.source_url,
-         match_score = EXCLUDED.match_score, updated_at = NOW()`,
-      [id, req.user.id, jobId, status, title || null, org || null, source || null, sourceUrl || null, Number.isFinite(matchScore) ? matchScore : null]
+         match_score = EXCLUDED.match_score, job_content = COALESCE(EXCLUDED.job_content, job_tracking.job_content),
+         contact_email = COALESCE(EXCLUDED.contact_email, job_tracking.contact_email),
+         recruiter_name = COALESCE(EXCLUDED.recruiter_name, job_tracking.recruiter_name),
+         recruiter_role = COALESCE(EXCLUDED.recruiter_role, job_tracking.recruiter_role), updated_at = NOW()`,
+      [id, req.user.id, jobId, status, title || null, org || null, source || null, sourceUrl || null, Number.isFinite(matchScore) ? matchScore : null, typeof jobContent === 'string' ? jobContent.slice(0, 12000) : null, typeof contactEmail === 'string' ? contactEmail.slice(0, 320) : null, typeof recruiterName === 'string' ? recruiterName.slice(0, 320) : null, typeof recruiterRole === 'string' ? recruiterRole.slice(0, 320) : null]
     );
     res.json({ ok: true });
   } catch (e) {

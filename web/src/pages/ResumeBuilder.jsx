@@ -223,6 +223,9 @@ export default function ResumeBuilder() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
   const [activeBuilderTab, setActiveBuilderTab] = useState('resume');
+  const [trackedJobs, setTrackedJobs] = useState([]);
+  const [liveJobs, setLiveJobs] = useState([]);
+  const [trackedJobsLoading, setTrackedJobsLoading] = useState(false);
 
   const unlocked = !!profile?.resumeBuilderAddon;
 
@@ -282,6 +285,31 @@ export default function ResumeBuilder() {
         }
       })
       .catch(() => {});
+    return () => { cancelled = true; };
+  }, [unlocked]);
+
+  useEffect(() => {
+    if (!unlocked) {
+      setTrackedJobs([]);
+      setLiveJobs([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setTrackedJobsLoading(true);
+    Promise.allSettled([
+      client.get('/jobs/tracking'),
+      client.get('/opportunities'),
+    ]).then(([trackedResponse, opportunitiesResponse]) => {
+      if (cancelled) return;
+      setTrackedJobs(trackedResponse.status === 'fulfilled' && Array.isArray(trackedResponse.value?.data?.jobs)
+        ? trackedResponse.value.data.jobs
+        : []);
+      setLiveJobs(opportunitiesResponse.status === 'fulfilled' && Array.isArray(opportunitiesResponse.value?.data?.opportunities)
+        ? opportunitiesResponse.value.data.opportunities
+        : []);
+    }).finally(() => {
+      if (!cancelled) setTrackedJobsLoading(false);
+    });
     return () => { cancelled = true; };
   }, [unlocked]);
 
@@ -360,6 +388,49 @@ export default function ResumeBuilder() {
 
   function updateWriting(section, field, value) {
     setData(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
+  }
+
+  const trackedJobContacts = trackedJobs
+    .filter(job => job.status === 'saved' || job.status === 'applied')
+    .map(job => {
+      const live = liveJobs.find(item => item?.id === job.id) || {};
+      const listing = { ...job, ...live };
+      const content = String(listing.content || listing.jobContent || '');
+      const publicContact = listing.contactEmail || content.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
+      return {
+        ...listing,
+        content,
+        publicContact,
+        recipientName: listing.recruiterName || '',
+        recipientRole: listing.recruiterRole || (publicContact ? 'Recruiter' : 'Recruiting team'),
+      };
+    });
+
+  function useTrackedJobForWriting(job) {
+    if (activeBuilderTab === 'cover-letter') {
+      setData(prev => ({
+        ...prev,
+        coverLetter: {
+          ...prev.coverLetter,
+          role: job.title || prev.coverLetter.role,
+          company: job.org || prev.coverLetter.company,
+          jobDescription: job.content || prev.coverLetter.jobDescription,
+        },
+      }));
+      showToast('Job details added to your cover letter.', 'success');
+      return;
+    }
+    setData(prev => ({
+      ...prev,
+      outreach: {
+        ...prev.outreach,
+        recipientName: job.recipientName || prev.outreach.recipientName,
+        recipientRole: job.recipientRole || prev.outreach.recipientRole,
+        company: job.org || prev.outreach.company,
+        context: `I am interested in the ${job.title || 'open'} role${job.org ? ` at ${job.org}` : ''}.`,
+      },
+    }));
+    showToast('Job and contact details added to your message.', 'success');
   }
 
   async function generateApplicationDraft(type) {
@@ -628,6 +699,36 @@ export default function ResumeBuilder() {
                   Draft from the resume above, then edit the result. Each generated draft is saved with your resume.
                 </p>
               </div>
+              <section aria-label="Saved and applied jobs" style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: '12px 0', marginBottom: 18 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', marginBottom: 8 }}>
+                  <strong style={{ fontSize: '.82rem' }}>Jobs and people to reach out to</strong>
+                  <span style={{ fontSize: '.72rem', color: 'var(--muted)' }}>From your Job Tracker</span>
+                </div>
+                {trackedJobsLoading ? (
+                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Loading your tracked jobs...</div>
+                ) : trackedJobContacts.length === 0 ? (
+                  <div style={{ fontSize: '.8rem', color: 'var(--muted)' }}>Save or mark a job applied in Job Tracker to prepare a tailored draft here.</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 8, maxHeight: 250, overflowY: 'auto', paddingRight: 2 }}>
+                    {trackedJobContacts.map(job => (
+                      <div key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid var(--border)' }}>
+                        <div style={{ minWidth: 0 }}>
+                          <strong style={{ display: 'block', fontSize: '.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{job.title || 'Tracked role'}</strong>
+                          <span style={{ display: 'block', fontSize: '.74rem', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {[job.org || 'Hiring team', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' · ')}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {job.sourceUrl && <a className="btn btn-ghost btn-sm" href={job.sourceUrl} target="_blank" rel="noreferrer">Job</a>}
+                          <button type="button" className="btn btn-primary btn-sm" onClick={() => useTrackedJobForWriting(job)}>
+                            {activeBuilderTab === 'cover-letter' ? 'Use for letter' : 'Use for message'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 22 }}>
                 {activeBuilderTab === 'cover-letter' && (
                   <div style={{ minWidth: 0 }}>
