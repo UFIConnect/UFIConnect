@@ -3210,7 +3210,6 @@ export default function Feed({ forcedMode } = {}) {
         <aside className="home-feed-right-tabs" aria-label="Home feed controls">
           <div className="home-feed-view-tabs">
             {[
-              { key: 'feed', label: 'Home' },
               { key: 'following', label: 'Following' },
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },

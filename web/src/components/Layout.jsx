@@ -253,10 +253,6 @@ export default function Layout({ children, wide = false }) {
       {profile && mobileMenuOpen && (
         <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
           <div className="mobile-command-menu-label">Your feed</div>
-          <Link to="/?feed=feed" className={`mobile-command-menu-item${isHomeFeedRoute && (!mobileFeedMode || mobileFeedMode === 'feed') ? ' active' : ''}`} aria-current={isHomeFeedRoute && (!mobileFeedMode || mobileFeedMode === 'feed') ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="home" size={18} />
-            Home
-          </Link>
           <Link to="/?feed=following" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'following' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
             <ShellIcon name="following" size={18} />
             Following
