@@ -111,7 +111,11 @@ function resolveVideoSource(post) {
     // comment) — a vertical (9:16) video forced into VideoSlide's default
     // 16:9 container renders squeezed, with the video's own thumbnail/
     // title cropped, confirmed live as a Short looking visibly cut off.
-    const vertical = isYouTubeShortsUrl(youtubeUrl);
+    // A watched Short is sometimes stored as a regular /watch URL by a
+    // channel RSS feed. Leave that shape unknown here so VideoFeedView can
+    // confirm it from YouTube's portrait frame image before sizing the
+    // shared player; known /shorts/ URLs remain vertical immediately.
+    const vertical = isYouTubeShortsUrl(youtubeUrl) ? true : null;
     return { kind: 'youtube', id: ytId, poster: post.mediaPoster || youTubePosterUrl(ytId), vertical };
   }
   // Same idea for an article embedding a Vimeo player instead (see
@@ -1014,6 +1018,7 @@ function CommentsSheet({ post, onClose }) {
 export default function VideoFeedView({ onExit }) {
   const [videoPosts, setVideoPosts] = useState([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [youtubeFrameOrientations, setYoutubeFrameOrientations] = useState({});
   // The post currently showing in the comments popup — lifted up here
   // (rather than local to each VideoSlide) so it renders once, fixed to the
   // whole viewport, instead of being scoped/clipped inside one snap-scroll
@@ -1678,7 +1683,16 @@ export default function VideoFeedView({ onExit }) {
   // and inert instead, rather than a false control. Computed here (moved
   // up from just above the render) since the shared YouTube player effect
   // below needs it too.
-  const activeSrc = resolveVideoSource(videoPosts[activeIndex] || {});
+  const resolvedActiveSrc = resolveVideoSource(videoPosts[activeIndex] || {});
+  const activeYoutubeOrientation = resolvedActiveSrc?.kind === 'youtube'
+    ? youtubeFrameOrientations[resolvedActiveSrc.id]
+    : null;
+  const activeSrc = resolvedActiveSrc?.kind === 'youtube'
+    ? {
+        ...resolvedActiveSrc,
+        vertical: resolvedActiveSrc.vertical === true || activeYoutubeOrientation === 'portrait',
+      }
+    : resolvedActiveSrc;
   const muteControllable = activeSrc?.kind !== 'vimeo';
   // Landscape (16:9) YouTube/Vimeo content — the norm for DEV Community's
   // own tutorial videos, most Reddit clips, and any design-blog Vimeo
@@ -1694,6 +1708,32 @@ export default function VideoFeedView({ onExit }) {
   // change, gated to the same desktop/tablet breakpoint as the rest of
   // the card so mobile (already full-bleed either way) is untouched.
   const activeIsWideVideo = activeSrc?.kind === 'youtube' ? activeSrc.vertical === false : activeSrc?.kind === 'vimeo';
+
+  // RSS uses /watch URLs for both ordinary videos and Shorts. YouTube's
+  // frame0 image carries the real frame orientation, including for those
+  // ambiguous existing posts. Cache one small image probe per video so a
+  // portrait upload fills the mobile feed instead of being boxed inside a
+  // landscape iframe.
+  useEffect(() => {
+    if (
+      resolvedActiveSrc?.kind !== 'youtube'
+      || resolvedActiveSrc.vertical === true
+      || activeYoutubeOrientation
+    ) return;
+    const videoId = resolvedActiveSrc.id;
+    const probe = new Image();
+    let cancelled = false;
+    const settle = (orientation) => {
+      if (cancelled) return;
+      setYoutubeFrameOrientations(current => (
+        current[videoId] ? current : { ...current, [videoId]: orientation }
+      ));
+    };
+    probe.onload = () => settle(probe.naturalHeight > probe.naturalWidth ? 'portrait' : 'landscape');
+    probe.onerror = () => settle('landscape');
+    probe.src = `https://i.ytimg.com/vi/${encodeURIComponent(videoId)}/frame0.jpg`;
+    return () => { cancelled = true; };
+  }, [resolvedActiveSrc?.kind, resolvedActiveSrc?.id, resolvedActiveSrc?.vertical, activeYoutubeOrientation]);
 
   // ─── Shared YouTube player ──────────────────────────────────────────────
   // One YT.Player instance for the whole session instead of one per slide,
@@ -1861,7 +1901,12 @@ export default function VideoFeedView({ onExit }) {
               // looked like it worked, but only because YouTube's own
               // player has its own internal click handling; this app's
               // togglePlay was never actually the thing firing.
-              try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
+              try {
+                const iframe = e.target.getIframe();
+                iframe.style.pointerEvents = 'none';
+                iframe.style.touchAction = 'none';
+                iframe.tabIndex = -1;
+              } catch {}
               setSharedYt(s => ({ ...s, duration: e.target.getDuration() || 0 }));
               if (startUnmuted) e.target.unMute();
               e.target.playVideo();
@@ -2006,9 +2051,9 @@ export default function VideoFeedView({ onExit }) {
           full-width pills would overflow a real phone width; a badge reads
           fine at a glance and the sheet itself still shows exactly what's
           active. */}
-      <div style={{
+      <div className="video-feed-top-controls" style={{
         position: 'absolute', top: topSafe, left: 12, right: 12,
-        zIndex: 10, display: 'flex', alignItems: 'center', gap: 6,
+        zIndex: 20, display: 'flex', alignItems: 'center', gap: 6,
       }}>
         <button onClick={onExit} aria-label="Back to Home" style={{ ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round">
@@ -2522,7 +2567,7 @@ export default function VideoFeedView({ onExit }) {
             settles (when activeIndex itself updates) reads as clean rather
             than broken; a brief transition softens the swap instead of an
             abrupt cut. */}
-        <div ref={sharedYtWrapperRef} style={{
+        <div ref={sharedYtWrapperRef} className="video-feed-youtube-player" style={{
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           pointerEvents: 'none',
