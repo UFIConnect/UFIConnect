@@ -27112,11 +27112,15 @@ function callOpenAIImage(apiKey, prompt) {
   });
 }
 
-function callConfiguredVideoGenerator(endpoint, apiKey, prompt) {
+function callConfiguredVideoGenerator(endpoint, apiKey, prompt, durationSeconds) {
   return new Promise((resolve, reject) => {
     const url = new URL(endpoint);
     if (url.protocol !== 'https:') return reject(new Error('Video provider URL must use HTTPS.'));
-    const body = JSON.stringify({ prompt });
+    const body = JSON.stringify({
+      prompt,
+      durationSeconds,
+      duration: durationSeconds,
+    });
     const request = https.request({
       hostname: url.hostname, port: url.port || 443, path: url.pathname + url.search, method: 'POST',
       headers: {
@@ -27149,6 +27153,8 @@ function callConfiguredVideoGenerator(endpoint, apiKey, prompt) {
 const OPENAI_VIDEO_MODELS = new Set(['sora-2', 'sora-2-pro']);
 const OPENAI_VIDEO_SECONDS = new Set(['4', '8', '12']);
 const OPENAI_VIDEO_SIZES = new Set(['720x1280', '1280x720', '1024x1792', '1792x1024']);
+const MIN_VIDEO_GENERATION_SECONDS = 4;
+const MAX_VIDEO_GENERATION_SECONDS = 300;
 const OPENAI_VIDEO_JOB_TICKET_PURPOSE = 'openai-video-generation';
 const OPENAI_VIDEO_JOB_ID = /^video_[A-Za-z0-9_-]{1,200}$/;
 
@@ -27164,6 +27170,12 @@ function configuredOpenAIVideoProvider() {
     seconds: OPENAI_VIDEO_SECONDS.has(requestedSeconds) ? requestedSeconds : '4',
     size: OPENAI_VIDEO_SIZES.has(requestedSize) ? requestedSize : '720x1280',
   };
+}
+
+function requestedVideoGenerationSeconds(value, fallback = 12) {
+  const seconds = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(seconds)) return fallback;
+  return Math.max(MIN_VIDEO_GENERATION_SECONDS, Math.min(MAX_VIDEO_GENERATION_SECONDS, seconds));
 }
 
 function openAIVideoFormBody(fields) {
@@ -27393,6 +27405,10 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
   }
   const type = req.body?.type === 'video' ? 'video' : 'image';
   const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim().slice(0, 1000) : '';
+  const requestedDurationSeconds = requestedVideoGenerationSeconds(
+    req.body?.durationSeconds,
+    Number.parseInt(String(process.env.VIDEO_GENERATION_OPENAI_SECONDS || '4'), 10) || 4,
+  );
   if (!prompt) return res.status(400).json({ message: 'Describe what you want to create.' });
   try {
     const screening = await screenMemberContent({ content: prompt, kind: 'media_prompt', maxLength: 1000 });
@@ -27411,7 +27427,9 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
     }
 
     const openAIProvider = configuredOpenAIVideoProvider();
-    if (openAIProvider) {
+    const customProviderUrl = String(process.env.VIDEO_GENERATION_API_URL || '').trim();
+    if (openAIProvider && requestedDurationSeconds <= 12) {
+      openAIProvider.seconds = String(requestedDurationSeconds);
       const video = await createOpenAIVideoJob(openAIProvider, screening.content);
       if (!isOpenAIVideoJobId(video?.id)) throw new Error('OpenAI did not return a valid video job.');
       const ticket = createOpenAIVideoTicket(req.user.id, video.id);
@@ -27422,12 +27440,19 @@ app.post('/command-center/media-generate', authenticate, mediaGenerationLimiter,
       });
     }
 
-    const customProviderUrl = String(process.env.VIDEO_GENERATION_API_URL || '').trim();
     if (!customProviderUrl) {
-      return res.status(503).json({ message: 'Video generation needs OPENAI_API_KEY with access to OpenAI video generation.' });
+      if (openAIProvider) {
+        return res.status(422).json({ message: 'OpenAI generates clips up to 12 seconds. Set VIDEO_GENERATION_API_URL to a long-form provider for videos up to 5 minutes.' });
+      }
+      return res.status(503).json({ message: 'Video generation needs OPENAI_API_KEY or VIDEO_GENERATION_API_URL in Render.' });
     }
-    const mediaUrl = await callConfiguredVideoGenerator(customProviderUrl, process.env.VIDEO_GENERATION_API_KEY, screening.content);
-    return res.json({ mediaUrl, mediaType: 'video', provider: 'custom' });
+    const mediaUrl = await callConfiguredVideoGenerator(
+      customProviderUrl,
+      process.env.VIDEO_GENERATION_API_KEY,
+      screening.content,
+      requestedDurationSeconds,
+    );
+    return res.json({ mediaUrl, mediaType: 'video', provider: 'custom', durationSeconds: requestedDurationSeconds });
   } catch (error) {
     console.error('[/command-center/media-generate] error:', error.message);
     return res.status(502).json({ message: mediaGenerationMessage(error) });

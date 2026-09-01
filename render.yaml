@@ -232,8 +232,8 @@ services:
         value: 720x1280
       - key: MEDIA_GENERATION_RATE_LIMIT
         value: '6'
-      # Optional legacy provider fallback. Only used when OPENAI_API_KEY is
-      # unavailable; the provider receives POST {prompt} and returns a URL.
+      # Optional long-form provider. For requests over 12 seconds it receives
+      # POST {prompt, durationSeconds, duration} and returns a video URL.
       - key: VIDEO_GENERATION_API_URL
         sync: false
       - key: VIDEO_GENERATION_API_KEY

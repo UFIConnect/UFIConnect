@@ -534,6 +534,7 @@ function dataUrlToFile(dataUrl, name) {
 function MediaStudioSection({ onOpenCrossPost }) {
   const [type, setType] = useState('image');
   const [prompt, setPrompt] = useState('');
+  const [videoSeconds, setVideoSeconds] = useState(12);
   const [generating, setGenerating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [asset, setAsset] = useState(null);
@@ -585,7 +586,11 @@ function MediaStudioSection({ onOpenCrossPost }) {
     generationRequest.current = requestId;
     setGenerating(true); setUploading(false); setError(''); setAsset(null); setGenerationStatus('Preparing your request...');
     try {
-      const { data } = await client.post('/command-center/media-generate', { type, prompt: prompt.trim() });
+      const { data } = await client.post('/command-center/media-generate', {
+        type,
+        prompt: prompt.trim(),
+        ...(type === 'video' ? { durationSeconds: videoSeconds } : {}),
+      });
       if (data.job?.id && data.job?.ticket) {
         const video = await waitForOpenAIVideo(data.job, requestId);
         if (video && requestId === generationRequest.current) setAsset(video);
@@ -638,9 +643,28 @@ function MediaStudioSection({ onOpenCrossPost }) {
           </div>
           <textarea
             value={prompt} onChange={e => setPrompt(e.target.value)} rows={4}
-            placeholder={type === 'image' ? 'Describe the photo or graphic you want to create' : 'Describe the short video you want to create'}
+            placeholder={type === 'image' ? 'Describe the photo or graphic you want to create' : 'Describe the video you want to create'}
             style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
           />
+          {type === 'video' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '.82rem', fontWeight: 700 }}>
+              Duration
+              <select
+                value={videoSeconds}
+                onChange={e => setVideoSeconds(Number(e.target.value))}
+                disabled={generating || uploading}
+                style={{ minHeight: 36, padding: '0 9px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)' }}
+              >
+                <option value={4}>4 seconds</option>
+                <option value={8}>8 seconds</option>
+                <option value={12}>12 seconds</option>
+                <option value={30}>30 seconds</option>
+                <option value={60}>1 minute</option>
+                <option value={120}>2 minutes</option>
+                <option value={300}>5 minutes</option>
+              </select>
+            </label>
+          )}
           <button className="btn btn-primary" type="submit" disabled={generating || uploading || !prompt.trim()} style={{ alignSelf: 'flex-start' }}>
             {generating || uploading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : `Generate ${type}`}
           </button>
