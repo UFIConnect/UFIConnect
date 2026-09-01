@@ -23918,10 +23918,16 @@ app.post('/groups/:id/posts', authenticate, contentSubmissionLimiter, async (req
       ? String(mediaUrl).slice(0, 1000)
       : null;
     const safeMediaType = safeMediaUrl && (mediaType === 'image' || mediaType === 'video') ? mediaType : null;
+    if (safeMediaUrl && !safeMediaType) {
+      return res.status(400).json({ message: 'Choose whether the upload is an image or video.' });
+    }
     // A caption is genuinely optional once there's a real, verified
     // photo/video attached — matches how every social platform this feed
     // already aggregates from treats media posts.
     if (!rawContent.trim() && !safeMediaUrl) return res.status(400).json({ message: 'Content or media is required.' });
+    if (safeMediaType === 'video' && !rawContent.trim()) {
+      return res.status(400).json({ message: 'Add a caption to video posts before publishing.' });
+    }
     const screening = await screenMemberContent({
       content: rawContent,
       mediaUrl: safeMediaUrl,
