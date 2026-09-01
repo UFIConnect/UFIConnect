@@ -2681,6 +2681,19 @@ input, textarea, select { font-family: inherit; }
 .resume-preview--studio { border-left: 15px solid var(--resume-accent); }
 .resume-preview--studio .resume-preview-header { padding-left: 12px; }
 .resume-preview--studio .resume-preview-section h2 { padding-left: 10px; border-left: 3px solid var(--resume-accent); }
+.resume-preview--compact { padding-top: 44px; }
+.resume-preview--compact .resume-preview-header {
+  padding: 2px 0 14px 14px;
+  border-bottom: 1px solid #D8DEE8;
+  border-left: 6px solid var(--resume-accent);
+}
+.resume-preview--compact .resume-preview-section { margin-top: 18px; }
+.resume-preview--compact .resume-preview-section h2 {
+  padding-bottom: 6px;
+  color: #172033;
+  border-bottom: 1px solid #D8DEE8;
+}
+.resume-preview--compact .resume-preview-entry { margin-bottom: 11px; }
 
 @media (max-width: 768px) {
   .resume-template-grid { grid-template-columns: 1fr; }

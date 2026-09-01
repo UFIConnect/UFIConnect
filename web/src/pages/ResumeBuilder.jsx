@@ -12,6 +12,7 @@ const TEMPLATES = [
   { key: 'classic',   label: 'Classic',   desc: 'Traditional type with a refined top rule.', accent: '#9A3412' },
   { key: 'executive', label: 'Executive', desc: 'A decisive dark header for senior roles.', accent: '#0F766E' },
   { key: 'studio',    label: 'Studio',    desc: 'A lively accent rail with spacious detail.', accent: '#B45309' },
+  { key: 'compact',   label: 'Compact',   desc: 'A focused one-page layout with a slim accent rail.', accent: '#BE123C' },
 ];
 
 function emptyDraft() {

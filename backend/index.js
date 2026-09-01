@@ -26469,7 +26469,7 @@ app.post('/command-center/media-generate', authenticate, async (req, res) => {
 // existing attachments/ATS pipeline (see POST /profile/attachments) rather
 // than building a second resume system: /resume-builder/export renders the
 // draft to a PDF and inserts it as a normal attachment row.
-const RESUME_TEMPLATES = new Set(['modern', 'minimal', 'classic', 'executive', 'studio']);
+const RESUME_TEMPLATES = new Set(['modern', 'minimal', 'classic', 'executive', 'studio', 'compact']);
 
 function emptyResumeDraft() {
   return {
@@ -26516,7 +26516,7 @@ function resumeDraftToText(data) {
   return lines.join('\n');
 }
 
-// Five original layouts using PDFKit's built-in fonts only. They share the
+// Six original layouts using PDFKit's built-in fonts only. They share the
 // same structured resume data, but their headers, typography, and section
 // treatment are intentionally distinct so the picker changes the real PDF,
 // not just its label in the editor.
@@ -26535,6 +26535,7 @@ function renderResumePDF(data, template) {
       classic:   { accent: '#9A3412', bodyFont: 'Times-Roman', headingFont: 'Times-Bold' },
       executive: { accent: '#0F766E', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
       studio:    { accent: '#B45309', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      compact:   { accent: '#BE123C', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
     }[template] || { accent: '#2563EB', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' };
     const { accent, bodyFont, headingFont } = templateStyle;
 
@@ -26562,6 +26563,12 @@ function renderResumePDF(data, template) {
       doc.fontSize(24).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 50, 70, { align: 'center' });
       doc.fontSize(10.5).font(bodyFont).fillColor('#5C4337').text(c.title || '', { align: 'center' });
       doc.moveDown(0.4);
+    } else if (template === 'compact') {
+      doc.rect(50, 50, 6, 72).fill(accent);
+      doc.fontSize(22).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 70, 51);
+      doc.fontSize(10.5).font(bodyFont).fillColor(accent).text(c.title || '', 70, 81);
+      doc.moveTo(70, 111).lineTo(doc.page.width - doc.page.margins.right, 111).strokeColor('#D8DEE8').lineWidth(1).stroke();
+      doc.y = 130;
     } else {
       doc.fontSize(22).font(headingFont).fillColor('#000').text(c.name || 'Your Name');
       doc.fontSize(11).font(bodyFont).fillColor('#333').text(c.title || '');
@@ -26581,13 +26588,14 @@ function renderResumePDF(data, template) {
       doc.moveDown(0.6);
       const isExecutive = template === 'executive';
       const isClassic = template === 'classic';
-      doc.fontSize(isExecutive ? 10.5 : 12)
+      const isCompact = template === 'compact';
+      doc.fontSize(isExecutive || isCompact ? 10.5 : 12)
         .font(headingFont)
-        .fillColor(isClassic ? '#172033' : accent)
+        .fillColor(isClassic || isCompact ? '#172033' : accent)
         .text(label.toUpperCase(), { characterSpacing: isExecutive ? 1.1 : 0.5 });
       doc.moveTo(doc.x, doc.y + 2)
         .lineTo(doc.page.width - doc.page.margins.right, doc.y + 2)
-        .strokeColor(isClassic ? '#BCA99A' : accent)
+        .strokeColor(isClassic ? '#BCA99A' : isCompact ? '#D8DEE8' : accent)
         .lineWidth(isExecutive ? 2 : 1)
         .stroke();
       doc.moveDown(0.4);
