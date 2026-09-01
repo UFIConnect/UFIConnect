@@ -27025,7 +27025,7 @@ app.post('/command-center/content-draft', authenticate, aiContentDraftLimiter, a
   }
 });
 
-function normalizeHashtagList(values, limit = 12) {
+function normalizeHashtagList(values, limit = 30) {
   const seen = new Set();
   const tags = [];
   for (const value of asArray(values)) {
@@ -27043,20 +27043,8 @@ function normalizeHashtagList(values, limit = 12) {
 
 function parseHashtagDraftGroups(text) {
   const raw = String(text || '').trim();
-  const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-  try {
-    const parsed = JSON.parse(jsonText);
-    const groups = asArray(parsed?.groups)
-      .map((group, index) => ({
-        label: String(group?.label || `Set ${index + 1}`).trim().slice(0, 48) || `Set ${index + 1}`,
-        hashtags: normalizeHashtagList(group?.hashtags),
-      }))
-      .filter(group => group.hashtags.length);
-    if (groups.length) return groups.slice(0, 3);
-  } catch (_) {}
-
-  const hashtags = normalizeHashtagList([raw], 12);
-  return hashtags.length ? [{ label: 'Suggested set', hashtags }] : [];
+  const hashtags = normalizeHashtagList([raw]);
+  return hashtags.length ? [{ label: 'Copy set', hashtags }] : [];
 }
 
 app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, async (req, res) => {
@@ -27077,8 +27065,7 @@ app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, a
     `Create three distinct, relevant hashtag sets for a ${platformLabel} post about: "${topic}".`,
     `Audience: ${audience || 'people interested in the topic'}.`,
     `Location: ${location || 'not location-specific'}.`,
-    'Use 6 to 10 specific hashtags in each set. Mix broad discovery, niche, and community tags. Avoid banned, misleading, or unrelated tags. Do not claim a tag is currently trending or include any explanation.',
-    'Return valid JSON only: {"groups":[{"label":"Discovery","hashtags":["#Example"]},{"label":"Niche","hashtags":["#Example"]},{"label":"Community","hashtags":["#Example"]}]}.',
+    'Return exactly three lines of eight specific hashtags each. Mix broad discovery, niche, and community tags. Avoid banned, misleading, or unrelated tags. Do not claim a tag is currently trending and do not include labels, markdown, or explanation.',
   ].join('\n');
 
   try {

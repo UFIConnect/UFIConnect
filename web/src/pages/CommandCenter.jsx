@@ -317,6 +317,36 @@ const DRAFT_PLATFORMS = [
   { value: 'general',   label: 'General',     icon: 'GEN' },
 ];
 
+function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
+  if (!drafts?.length && !hashtagGroups?.length) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {drafts?.map((draft, index) => (
+        <div key={`draft-${index}`} className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+            <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '.86rem', lineHeight: 1.6, flex: 1 }}>{draft}</p>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => onCopy(draft)} style={{ flexShrink: 0 }}>Copy</button>
+          </div>
+        </div>
+      ))}
+      {hashtagGroups?.map((group, index) => {
+        const text = group.hashtags.join(' ');
+        return (
+          <div key={`${group.label}-${index}`} className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+              <strong style={{ fontSize: '.85rem' }}>{group.label}</strong>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={() => onCopy(text)}>Copy set</button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {group.hashtags.map(tag => <span key={tag} className="tag tag-primary">{tag}</span>)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // AI drafting only — the member still posts it themselves on the platform's
 // own app. There's no real publish-on-their-behalf API this app can reach
 // for TikTok or Instagram (business/creator app review neither has been
@@ -389,6 +419,12 @@ function ContentHubSection() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {notConfigured && (
+        <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: '.85rem' }}>
+          AI content drafting isn't configured yet — check back soon.
+        </div>
+      )}
+      <ContentDraftResults drafts={drafts} hashtagGroups={hashtagGroups} onCopy={copyDraft} />
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
@@ -477,43 +513,6 @@ function ContentHubSection() {
         </form>
       </div>
 
-      {notConfigured && (
-        <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: '.85rem' }}>
-          AI content drafting isn't configured yet — check back soon.
-        </div>
-      )}
-
-      {drafts && drafts.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {drafts.map((d, i) => (
-            <div key={i} className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <p style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: '.86rem', lineHeight: 1.6, flex: 1 }}>{d}</p>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyDraft(d)} style={{ flexShrink: 0 }}>Copy</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {hashtagGroups && hashtagGroups.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {hashtagGroups.map((group, index) => {
-            const text = group.hashtags.join(' ');
-            return (
-              <div key={`${group.label}-${index}`} className="card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-                  <strong style={{ fontSize: '.85rem' }}>{group.label}</strong>
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyDraft(text)}>Copy set</button>
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {group.hashtags.map(tag => <span key={tag} className="tag tag-primary">{tag}</span>)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -649,9 +648,9 @@ function MediaStudioSection({ onOpenCrossPost }) {
         </form>
       </div>
 
-      {error && <SectionError message={error} />}
+      {error && <div style={{ order: -1 }}><SectionError message={error} /></div>}
       {asset && (
-        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12, order: -1 }}>
           {asset.type === 'video'
             ? <video src={asset.url} controls playsInline style={{ width: '100%', maxHeight: 420, borderRadius: 8, background: '#111' }} />
             : <img src={asset.url} alt="Generated for your post" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 8, background: 'var(--bg-secondary)' }} />}
