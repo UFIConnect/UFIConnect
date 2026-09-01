@@ -4,7 +4,6 @@ import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVid
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
-import { useLockBodyScroll } from '../hooks/useLockBodyScroll';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
@@ -1113,7 +1112,6 @@ export default function VideoFeedView({ onExit }) {
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
-  const suppressSharedYtClickRef = useRef(false);
   const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
   // filter was applied server-side — resets to 0 the moment any page has
@@ -1544,103 +1542,6 @@ export default function VideoFeedView({ onExit }) {
     };
   }, [videoPosts.length]);
 
-  // Touch forwarding for the shared YouTube overlay ONLY — deliberately a
-  // separate effect from the mouse-drag one above, attached only to
-  // ytOverlay, never to container. A finger drag on `container` itself
-  // already gets real, smooth, momentum-based scrolling for free from the
-  // browser (WebkitOverflowScrolling:touch + scroll-snap) — it was never
-  // broken there and manually driving scrollTop for it would only make it
-  // worse (no momentum, fighting the browser's own physics). The overlay is
-  // the one place touch doesn't get that for free: it's a DOM sibling of
-  // container, not a descendant (see its own top comment for why — stays
-  // fixed in place across slide transitions), so the browser's touch-to-
-  // scrollable-ancestor walk from a touch starting there never finds
-  // container. Confirmed live as touch swipes silently doing nothing
-  // specifically over an active YouTube video, everywhere else on the same
-  // slide scrolling normally — and confirmed again, the hard way, as
-  // "scrolling feels heavy/difficult everywhere" the one time this got
-  // merged into the same handler as the mouse-drag effect above instead of
-  // scoped to just this element.
-  useEffect(() => {
-    const container = containerRef.current;
-    const ytOverlay = sharedYtWrapperRef.current;
-    if (!container || !ytOverlay) return;
-    function handleTouchStart(e) {
-      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
-      const startY = e.touches[0].clientY;
-      const startScrollTop = container.scrollTop;
-      let lastY = startY;
-      let dragged = false;
-      function handleMove(ev) {
-        lastY = ev.touches[0].clientY;
-        const dy = lastY - startY;
-        if (Math.abs(dy) > 3) {
-          dragged = true;
-          suppressSharedYtClickRef.current = true;
-        }
-        if (dragged) {
-          ev.preventDefault();
-          container.scrollTop = startScrollTop - dy;
-        }
-      }
-      function handleEnd() {
-        document.removeEventListener('touchmove', handleMove);
-        document.removeEventListener('touchend', handleEnd);
-        // A shared iframe is not inside the snap container, so this path
-        // must supply the last bit of native swipe behavior itself. Without
-        // it, a normal short flick moves less than half a slide and mandatory
-        // snapping sends the user straight back to the current video.
-        const distance = lastY - startY;
-        const threshold = Math.max(48, container.clientHeight * 0.12);
-        if (dragged && Math.abs(distance) >= threshold) {
-          const nextTop = startScrollTop + (distance < 0 ? container.clientHeight : -container.clientHeight);
-          container.scrollTo({
-            top: Math.max(0, Math.min(nextTop, container.scrollHeight - container.clientHeight)),
-            behavior: 'smooth',
-          });
-        }
-        window.setTimeout(() => { suppressSharedYtClickRef.current = false; }, 0);
-      }
-      // passive:false — handleMove calls preventDefault, which a passive
-      // listener silently ignores.
-      document.addEventListener('touchmove', handleMove, { passive: false });
-      document.addEventListener('touchend', handleEnd, { once: true });
-    }
-    ytOverlay.addEventListener('touchstart', handleTouchStart, { passive: true });
-    return () => ytOverlay.removeEventListener('touchstart', handleTouchStart);
-  }, [videoPosts.length]);
-
-  // Mouse-wheel/trackpad scrolling over the shared YouTube overlay — a
-  // separate gap from the drag-to-scroll fix right above, and the more
-  // likely explanation for "can't scroll while hovering the video": a
-  // wheel gesture doesn't go through pointerdown/pointermove at all, it's
-  // the browser's own native scroll-chaining, which walks up the DOM
-  // ancestor chain of whatever element is actually under the cursor
-  // looking for a scrollable one to apply the scroll to. Since the
-  // overlay is a sibling of the scroll container, not a descendant of it
-  // (see the drag effect's own comment for why), that walk never reaches
-  // it — neither the overlay itself nor its real ancestor (.video-feed-
-  // frame) is scrollable, so a wheel/trackpad gesture over the video finds
-  // nothing to scroll and silently does nothing, no matter what pointer-
-  // events are set to. Forwarding the wheel delta to the container's own
-  // scrollTop manually sidesteps the ancestry problem the same way the
-  // pointerdown handler above does for drags. This also covers file/hls
-  // video content that happens to be wrapped the same way DEV Community's
-  // own /api/videos content and some Reddit posts route through YouTube
-  // under the hood (see resolveVideoSource) — same underlying kind, same
-  // gap, same fix.
-  useEffect(() => {
-    const container = containerRef.current;
-    const ytOverlay = sharedYtWrapperRef.current;
-    if (!container || !ytOverlay) return;
-    function handleWheel(e) {
-      if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
-      container.scrollTop += e.deltaY;
-    }
-    ytOverlay.addEventListener('wheel', handleWheel, { passive: true });
-    return () => ytOverlay.removeEventListener('wheel', handleWheel);
-  }, [videoPosts.length]);
-
   // Fetch the next page a couple of slides before actually running out.
   // emptyStreakRef cap (see its own declaration above): without it, a
   // search/topic filter matching nothing anywhere would auto-fetch page
@@ -1660,8 +1561,6 @@ export default function VideoFeedView({ onExit }) {
       loadPage({ quiet: true }).finally(() => { loadingMoreRef.current = false; });
     }
   }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
-
-  useLockBodyScroll();
 
   // 73% of everything that ever shows up in this feed (checked live
   // against the DB: 160 of 219 cached video posts) resolves to the
@@ -1922,19 +1821,13 @@ export default function VideoFeedView({ onExit }) {
               sharedYtLoadedIdRef.current = videoId;
               // YT.Player replaces sharedYtMountRef's placeholder div with
               // its own real <iframe> — none of that placeholder's inline
-              // styles (including pointerEvents:'none', deliberately set so
-              // the wrapping div's own onClick/wheel-forwarding own this
-              // area — see the render below) carry over onto the new
-              // iframe, so it's reapplied directly here. Without this, the
-              // actual live YouTube iframe sits on top with default (auto)
-              // pointer-events — a real cross-origin iframe, so once the
-              // cursor is over its rendered pixels, every wheel/scroll
-              // event is captured entirely inside its own document and
-              // never reaches this page at all. Confirmed live as "can't
-              // scroll while hovering over a video" — tap-to-pause still
-              // looked like it worked, but only because YouTube's own
-              // player has its own internal click handling; this app's
-              // togglePlay was never actually the thing firing.
+              // styles carry over onto the new iframe, so the click-through
+              // rule is reapplied directly here. A cross-origin iframe with
+              // normal pointer events captures a swipe or wheel before the
+              // feed can see it, which makes mobile behave differently from
+              // the desktop list. Keeping it click-through gives every
+              // viewport the same native feed scroll path; the slide below
+              // owns tap-to-play/pause and the action controls.
               try {
                 const iframe = e.target.getIframe();
                 iframe.style.pointerEvents = 'none';
@@ -2052,7 +1945,7 @@ export default function VideoFeedView({ onExit }) {
     <div style={{
       position: 'fixed', inset: 0, zIndex: 3000,
       background: 'radial-gradient(ellipse 80% 60% at 50% 40%, #181818 0%, #000 70%)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', touchAction: 'pan-y',
     }}>
       {/* Everything but the comments sheet lives inside this frame. Built
           for a phone screen (full-bleed controls, a 9:16 video box) — on a
@@ -2494,7 +2387,7 @@ export default function VideoFeedView({ onExit }) {
           // it to 'grabbing' for the duration of an actual drag.
           style={{
             height: '100%', overflowY: 'auto', scrollSnapType: 'y mandatory', WebkitOverflowScrolling: 'touch',
-            overscrollBehaviorY: 'contain', touchAction: 'pan-y', userSelect: 'none', cursor: 'grab',
+            overscrollBehaviorY: 'none', touchAction: 'pan-y', userSelect: 'none', cursor: 'grab',
           }}
         >
           {videoPosts.map((post, idx) => (
