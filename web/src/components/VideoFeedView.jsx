@@ -100,10 +100,12 @@ function resolveVideoSource(post) {
   if (!post || typeof post !== 'object') return null;
   // Dedicated YouTube posts carry embedId (or a recoverable sourceUrl); any
   // other source's article can embed a real YouTube video too (see
-  // parseRSSItems' video detection backend-side), in which case mediaUrl
-  // itself is the watch URL — checked as a fallback so e.g. a YC blog post
-  // with an embedded video plays the same way a dedicated YouTube post does.
-  const youtubeUrl = post.source === 'youtube' ? (post.sourceUrl || post.mediaUrl) : (post.mediaUrl || post.sourceUrl);
+  // parseRSSItems' video detection backend-side), in which case either URL
+  // can carry the player. Do not prefer one field blindly: a source article
+  // often keeps its original article URL in sourceUrl and a YouTube URL in
+  // mediaUrl, while persisted YouTube rows do the inverse.
+  const youtubeUrls = [post.mediaUrl, post.sourceUrl].filter(Boolean);
+  const youtubeUrl = youtubeUrls.find(url => extractYouTubeId(url)) || youtubeUrls[0] || null;
   const ytId = post.embedId || extractYouTubeId(youtubeUrl);
   if (ytId) {
     // Real Shorts are persisted with a /shorts/ sourceUrl specifically so
@@ -115,7 +117,7 @@ function resolveVideoSource(post) {
     // channel RSS feed. Leave that shape unknown here so VideoFeedView can
     // confirm it from YouTube's portrait frame image before sizing the
     // shared player; known /shorts/ URLs remain vertical immediately.
-    const vertical = isYouTubeShortsUrl(youtubeUrl) ? true : null;
+    const vertical = youtubeUrls.some(isYouTubeShortsUrl) ? true : null;
     return { kind: 'youtube', id: ytId, poster: post.mediaPoster || youTubePosterUrl(ytId), vertical };
   }
   // Same idea for an article embedding a Vimeo player instead (see
@@ -150,6 +152,7 @@ function resolveVideoSource(post) {
 const VIDEO_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const VIDEO_COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
 const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
+const YOUTUBE_SHORTS_MAX_DURATION_SECONDS = 183;
 
 // How many slides on either side of the active one actually mount a real
 // VideoSlide (video/iframe element, engagement tracking, comments wiring,
@@ -245,6 +248,18 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   const effectivePaused = isYoutube ? !!sharedYt?.paused : paused;
   const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
   const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
+  // The shared player is a sibling of the scroll slides. For a landscape
+  // video it occupies a centered 16:9 box, leaving a large unused area above
+  // and below it. Keep the existing caption/actions in their original style,
+  // but offset their bottom anchor by that measured letterbox so they stay
+  // inside the actual YouTube frame on phones as well as portrait Shorts.
+  const youtubeFrameInset = isYoutube && active && Number.isFinite(sharedYt?.frame?.top) && sharedYt.frame.height > 0
+    ? Math.max(0, Math.round(sharedYt.frame.top))
+    : null;
+  const captionBottom = youtubeFrameInset === null ? 40 : youtubeFrameInset + 40;
+  const railBottom = youtubeFrameInset === null ? 46 : youtubeFrameInset + 46;
+  const scrubberBottom = youtubeFrameInset === null ? 12 : youtubeFrameInset + 12;
+  const durationBottom = youtubeFrameInset === null ? 20 : youtubeFrameInset + 20;
 
   // Genuine-watch engagement signal (see api/engagement.js) — currentTime
   // already updates continuously during real playback (onTimeUpdate/the
@@ -682,7 +697,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           entirely now, so it's always reachable regardless of how far the
           writing itself is scrolled. */}
       <div className={isYoutube ? 'video-feed-caption video-feed-caption--youtube' : 'video-feed-caption'} style={{
-        position: 'absolute', zIndex: 4, left: 16, right: 76, bottom: 40, color: '#fff',
+        position: 'absolute', zIndex: 4, left: 16, right: 76, bottom: captionBottom, color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
       }}>
         <div style={{ marginBottom: 8 }}>
@@ -771,7 +786,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           ref={progressBarRef}
           onPointerDown={handleBarPointerDown}
           style={{
-            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: 12,
+            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: scrubberBottom,
             height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(0,0,0,.45)',
             cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
           }}
@@ -793,7 +808,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       )}
       {src && effectiveDuration > 0 && (
         <div style={{
-          position: 'absolute', zIndex: 2, right: 14, bottom: 20, color: '#fff', fontSize: '.65rem',
+          position: 'absolute', zIndex: 2, right: 14, bottom: durationBottom, color: '#fff', fontSize: '.65rem',
           fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
         }}>
           {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
@@ -801,7 +816,7 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
       )}
 
       {/* Right-side action rail */}
-      <div className={isYoutube ? 'video-feed-action-rail video-feed-action-rail--youtube' : 'video-feed-action-rail'} style={{ position: 'absolute', zIndex: 4, right: 14, bottom: 46, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+      <div className={isYoutube ? 'video-feed-action-rail video-feed-action-rail--youtube' : 'video-feed-action-rail'} style={{ position: 'absolute', zIndex: 4, right: 14, bottom: railBottom, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
           <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.likesCount || 0).toLocaleString()}</span>
@@ -1789,7 +1804,7 @@ export default function VideoFeedView({ onExit }) {
   // ambiguity entirely instead of relying on that CSS behavior resolving
   // the way it's supposed to.
   const sharedYtWrapperRef = useRef(null);
-  const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0 });
+  const [ytBoxSize, setYtBoxSize] = useState({ width: 0, height: 0, top: 0 });
   useEffect(() => {
     const wrapper = sharedYtWrapperRef.current;
     if (!wrapper) return;
@@ -1798,7 +1813,7 @@ export default function VideoFeedView({ onExit }) {
       if (!availW || !availH) return;
       const width = availW / ratio <= availH ? availW : availH * ratio;
       const height = width / ratio;
-      setYtBoxSize({ width, height });
+      setYtBoxSize({ width, height, top: Math.max(0, (availH - height) / 2) });
     }
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect;
@@ -1809,6 +1824,17 @@ export default function VideoFeedView({ onExit }) {
     recompute(rect.width, rect.height);
     return () => observer.disconnect();
   }, [activeSrc?.vertical]);
+
+  // RSS and third-party embeds can preserve a regular /watch URL even when
+  // the actual video is a Short. Once YouTube exposes its duration, use its
+  // current Shorts duration limit as a practical fallback so that clip is
+  // framed as portrait instead of reduced to a small 16:9 player.
+  const classifyShortFromDuration = useCallback((videoId, duration) => {
+    if (!videoId || !Number.isFinite(duration) || duration <= 0 || duration > YOUTUBE_SHORTS_MAX_DURATION_SECONDS) return;
+    setYoutubeFrameOrientations(current => (
+      current[videoId] === 'portrait' ? current : { ...current, [videoId]: 'portrait' }
+    ));
+  }, []);
 
   useEffect(() => {
     if (activeSrc?.kind !== 'youtube') {
@@ -1927,7 +1953,9 @@ export default function VideoFeedView({ onExit }) {
                 iframe.style.touchAction = 'none';
                 iframe.tabIndex = -1;
               } catch {}
-              setSharedYt(s => ({ ...s, duration: e.target.getDuration() || 0 }));
+              const duration = e.target.getDuration() || 0;
+              setSharedYt(s => ({ ...s, duration }));
+              classifyShortFromDuration(videoId, duration);
               if (startUnmuted) e.target.unMute();
               e.target.playVideo();
               startAutoplayRetry(e.target);
@@ -1936,7 +1964,10 @@ export default function VideoFeedView({ onExit }) {
               if (cancelled) return;
               setSharedYt(s => ({ ...s, paused: e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED }));
               const d = e.target.getDuration();
-              if (d) setSharedYt(s => ({ ...s, duration: d }));
+              if (d) {
+                setSharedYt(s => ({ ...s, duration: d }));
+                classifyShortFromDuration(sharedYtLoadedIdRef.current || videoId, d);
+              }
             },
             onError: () => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); },
           },
@@ -1957,6 +1988,7 @@ export default function VideoFeedView({ onExit }) {
           // correcting on the same cadence currentTime already relies on.
           const d = p.getDuration() || 0;
           setSharedYt(s => (s.currentTime === ct && s.duration === d) ? s : { ...s, currentTime: ct, duration: d });
+          classifyShortFromDuration(videoId, d);
         } catch {}
       }
     }, 250);
@@ -1972,7 +2004,7 @@ export default function VideoFeedView({ onExit }) {
       // switches is the entire point.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIndex, activeSrc?.kind, activeSrc?.id]);
+  }, [activeIndex, activeSrc?.kind, activeSrc?.id, classifyShortFromDuration]);
 
   // Keep the shared player's mute state in sync with the top-bar toggle —
   // file/hls slides each do their own equivalent sync locally.
@@ -2534,6 +2566,7 @@ export default function VideoFeedView({ onExit }) {
                     togglePlay: sharedYtTogglePlay,
                     seekTo: sharedYtSeekTo,
                     seekingRef: sharedYtSeekingRef,
+                    frame: activeSrc?.kind === 'youtube' ? ytBoxSize : undefined,
                   } : undefined}
                 />
               ) : (

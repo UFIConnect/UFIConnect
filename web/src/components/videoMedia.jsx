@@ -113,10 +113,11 @@ export function useSoloVideoPlayback(id, inView) {
 // for it, so any YouTube post served from the database (the primary path
 // for most of the feed now) arrived with no way to actually play the video,
 // only a thumbnail + an external link. It's recoverable from sourceUrl
-// (watch?v=... or youtu.be/...), which is always persisted.
+// (watch?v=..., youtu.be/..., Shorts, or a live URL), which is always
+// persisted.
 export function extractYouTubeId(url) {
   if (!url) return null;
-  const m = String(url).match(/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([\w-]{11})/);
+  const m = String(url).match(/(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*?&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/i);
   return m ? m[1] : null;
 }
 

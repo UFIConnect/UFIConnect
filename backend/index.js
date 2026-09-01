@@ -20415,18 +20415,21 @@ app.get('/feed/guest', async (req, res) => {
 // the feature. Filtering server-side means a source-classification bug can
 // never surface as a dead slide again, regardless of how a bad row ended
 // up in the cache.
+const PLAYABLE_YOUTUBE_URL = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*?&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
+
 function isPlayableVideoPost(p) {
   if (!p || p.mediaType !== 'video') return false;
   if (p.source === 'bluesky') return !!(p.mediaUrl && /\.m3u8(\?|$)/i.test(p.mediaUrl));
+  const videoUrls = [p.mediaUrl, p.sourceUrl].filter(Boolean);
   if (p.source === 'youtube') {
-    return !!(p.embedId || /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.sourceUrl || ''));
+    return !!(p.embedId || videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url)));
   }
-  // Any other source's article embedding a YouTube or Vimeo player, or a
-  // direct-file video URL (Reddit/Mastodon/etc) — same precedence order as
-  // resolveVideoSource client-side.
-  if (/(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)[\w-]{11}/.test(p.mediaUrl || '')) return true;
-  if (/vimeo\.com\/(?:video\/)?\d+/.test(p.mediaUrl || '')) return true;
-  if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(p.mediaUrl || '')) return true;
+  // Every aggregate source can contribute a YouTube/Vimeo/direct-file post.
+  // Check both persisted URL fields so an article's own source URL and its
+  // embedded-video URL are treated consistently with the client resolver.
+  if (videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url))) return true;
+  if (videoUrls.some(url => /vimeo\.com\/(?:video\/)?\d+/.test(url))) return true;
+  if (videoUrls.some(url => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url))) return true;
   return false;
 }
 

@@ -2362,18 +2362,6 @@ input, textarea, select { font-family: inherit; }
 .video-feed-youtube-player {
   touch-action: none;
 }
-@media (max-width: 768px) {
-  .video-feed-caption--youtube {
-    top: 56% !important;
-    bottom: auto !important;
-    transform: translateY(-50%);
-  }
-  .video-feed-action-rail--youtube {
-    top: 56% !important;
-    bottom: auto !important;
-    transform: translateY(-50%);
-  }
-}
 
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep
    all six destinations reachable and stable on narrow screens without
