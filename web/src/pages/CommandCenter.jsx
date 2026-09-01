@@ -590,7 +590,7 @@ function MediaStudioSection({ onOpenCrossPost }) {
       const { data } = await client.post('/command-center/media-generate', {
         type,
         prompt: prompt.trim(),
-        ...(type === 'video' ? { durationSeconds: videoSeconds } : {}),
+        ...(type === 'video' ? { durationSeconds: Math.min(videoSeconds, 12) } : {}),
       });
       if (data.job?.id && data.job?.ticket) {
         const video = await waitForOpenAIVideo(data.job, requestId);
@@ -659,10 +659,10 @@ function MediaStudioSection({ onOpenCrossPost }) {
                 <option value={4}>4 seconds</option>
                 <option value={8}>8 seconds</option>
                 <option value={12}>12 seconds</option>
-                <option value={30}>30 seconds</option>
-                <option value={60}>1 minute</option>
-                <option value={120}>2 minutes</option>
-                <option value={300}>5 minutes</option>
+                <option value={30} disabled>30 seconds (coming soon)</option>
+                <option value={60} disabled>1 minute (coming soon)</option>
+                <option value={120} disabled>2 minutes (coming soon)</option>
+                <option value={300} disabled>5 minutes (coming soon)</option>
               </select>
             </label>
           )}
