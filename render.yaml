@@ -15,6 +15,7 @@ services:
     domains:
       - api.uficonnect.org
     runtime: node
+    autoDeployTrigger: commit
     rootDir: backend
     buildCommand: npm install
     startCommand: node --max-old-space-size=320 index.js
@@ -321,6 +322,7 @@ services:
   - type: web
     name: uficonnect-pipeline
     runtime: node
+    autoDeployTrigger: commit
     rootDir: backend
     buildCommand: npm install
     startCommand: node --max-old-space-size=320 index.js
@@ -447,6 +449,7 @@ services:
   - type: web
     name: uficonnect-web
     runtime: static
+    autoDeployTrigger: commit
     domains:
       - uficonnect.org
       - www.uficonnect.org
