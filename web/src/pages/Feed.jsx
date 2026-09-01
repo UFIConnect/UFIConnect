@@ -201,6 +201,10 @@ function normalizeLocationFilters(value = {}) {
   };
 }
 
+function locationScopeLabel(value = {}) {
+  return [value?.city, value?.country].filter(Boolean).join(', ');
+}
+
 function loadFeedState(userId) {
   try {
     const key = memberStorageKey(FEED_STATE_KEY, userId);
@@ -762,7 +766,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 // Travel has a small, persistent live-camera rail above its discoverable
 // stories. Only the current camera is mounted, so rotating the rail never
 // turns into a row of simultaneously decoding YouTube players on mobile.
-function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId }) {
+function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '' }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [inView, setInView] = useState(false);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
@@ -815,8 +819,12 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId }) {
     <section ref={loopRef} className="travel-live-loop" aria-label="Live travel cameras">
       <div className="travel-live-loop-header">
         <div>
-          <div className="travel-live-loop-title">Live travel</div>
-          <div className="travel-live-loop-subtitle">A moving window into places worth keeping on the list.</div>
+          <div className="travel-live-loop-title">{locationLabel ? `Live in ${locationLabel}` : 'Live travel'}</div>
+          <div className="travel-live-loop-subtitle">
+            {locationLabel
+              ? 'Verified live views matched to your selected travel location.'
+              : 'A moving window into places worth keeping on the list.'}
+          </div>
         </div>
         <span className="travel-live-loop-status"><span aria-hidden="true" />Live now</span>
       </div>
@@ -2604,6 +2612,7 @@ export default function Feed({ forcedMode } = {}) {
   const firstName = profile?.name?.split(' ')[0] || '';
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
+  const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
@@ -2731,7 +2740,9 @@ export default function Feed({ forcedMode } = {}) {
 
       {['countries', 'restaurants'].includes(viewMode) && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>Prioritize</span>
+          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>
+            {viewMode === 'countries' ? 'Travel location' : 'Restaurant location'}
+          </span>
           <input
             className="form-input"
             aria-label="Country filter"
@@ -3065,7 +3076,9 @@ export default function Feed({ forcedMode } = {}) {
                 <p style={{ marginBottom: 12 }}>
                   {locationMessage || (viewMode === 'restaurants'
                     ? 'This feed searches for recent restaurant openings worldwide. Add a country or city above to bring matching reports closer to the top.'
-                    : 'Travel combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to bring nearby places forward.')}
+                    : travelLocationLabel
+                      ? `Travel is showing live views, guides, and current stories for ${travelLocationLabel}, then a wider worldwide scroll.`
+                      : 'Travel combines live public cameras, destination guides, and fresh travel ideas. Add a country or city to see matching places first.')}
                 </p>
                 <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: false })}>Refresh now</button>
               </>
@@ -3103,13 +3116,18 @@ export default function Feed({ forcedMode } = {}) {
               feeds={travelLiveFeeds}
               onMediaOpen={post => setMediaLightboxPostId(post.id)}
               mediaOpenId={mediaLightboxPostId}
+              locationLabel={travelLocationLabel}
             />
           )}
 
           {viewMode === 'countries' && contentPosts.length > 0 && (
             <div className="travel-content-heading">
-              <span>Travel picks</span>
-              <small>Fresh places, guides, and reasons to keep scrolling.</small>
+              <span>{travelLocationLabel ? `From ${travelLocationLabel}` : 'Travel picks'}</span>
+              <small>
+                {travelLocationLabel
+                  ? 'Live views, guides, and current travel stories from your selected region.'
+                  : 'Fresh places, guides, and reasons to keep scrolling.'}
+              </small>
             </div>
           )}
 

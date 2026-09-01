@@ -9687,8 +9687,11 @@ const RESTAURANT_OPENING_NEWS_EDITIONS = Object.freeze([
 // shared cache keeps these wider lookups off the request path for everyone
 // except the first visitor after a refresh.
 const COUNTRIES_DISCOVERY_CACHE_MS = 30 * 60 * 1000;
+const COUNTRIES_SELECTED_DISCOVERY_CACHE_MS = 15 * 60 * 1000;
 const COUNTRIES_DISCOVERY_NEWS_BATCH_SIZE = 2;
 const COUNTRIES_DISCOVERY_NEWS_MAX_POSTS = 220;
+const COUNTRIES_SELECTED_NEWS_MAX_POSTS = 24;
+const COUNTRIES_SELECTED_GUIDES_MAX = 4;
 const COUNTRIES_GUIDES_PER_REFRESH = 15;
 const COUNTRIES_GUIDE_BATCH_SIZE = 4;
 const COUNTRIES_DISCOVERY_NEWS_EDITIONS = Object.freeze([
@@ -9878,6 +9881,51 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
     createdAt: '2024-09-06T12:00:00.000Z',
   },
   {
+    id: 'camera_paris_montmartre',
+    title: 'Montmartre, Paris',
+    content: 'Live public camera overlooking Montmartre and Sacre-Coeur. Paris is having a very good skyline day.',
+    sourceUrl: 'https://www.youtube.com/watch?v=TQqDwYlZy7M',
+    mediaUrl: 'https://www.youtube.com/watch?v=TQqDwYlZy7M',
+    country: 'France', countryCode: 'FR', city: 'Paris',
+    createdAt: '2026-08-31T00:00:00.000Z',
+  },
+  {
+    id: 'camera_los_angeles_coast',
+    title: 'Los Angeles Coast',
+    content: 'Live public camera from Los Angeles. The surf report is also a mood report.',
+    sourceUrl: 'https://www.youtube.com/watch?v=EoARdUpNjJ8',
+    mediaUrl: 'https://www.youtube.com/watch?v=EoARdUpNjJ8',
+    country: 'United States', countryCode: 'US', city: 'Los Angeles',
+    createdAt: '2026-08-31T00:00:00.000Z',
+  },
+  {
+    id: 'camera_miami_beach',
+    title: 'Miami Beach',
+    content: 'Live public camera from Miami Beach. The ocean has excellent attendance today.',
+    sourceUrl: 'https://www.youtube.com/watch?v=YMeqcksl8U0',
+    mediaUrl: 'https://www.youtube.com/watch?v=YMeqcksl8U0',
+    country: 'United States', countryCode: 'US', city: 'Miami',
+    createdAt: '2026-08-31T00:00:00.000Z',
+  },
+  {
+    id: 'camera_berlin_frankfurter_tor',
+    title: 'Frankfurter Tor, Berlin',
+    content: 'Live public camera at Frankfurter Tor in Berlin. A real-time look at a city that knows how to use a boulevard.',
+    sourceUrl: 'https://www.youtube.com/watch?v=iaTAp8FxtHw',
+    mediaUrl: 'https://www.youtube.com/watch?v=iaTAp8FxtHw',
+    country: 'Germany', countryCode: 'DE', city: 'Berlin',
+    createdAt: '2026-08-31T00:00:00.000Z',
+  },
+  {
+    id: 'camera_mexico_city_zocalo',
+    title: 'Zocalo, Mexico City',
+    content: 'Live public camera at the Zocalo in Mexico City. One square, a lot of city.',
+    sourceUrl: 'https://www.youtube.com/watch?v=Kd9JjX_621U',
+    mediaUrl: 'https://www.youtube.com/watch?v=Kd9JjX_621U',
+    country: 'Mexico', countryCode: 'MX', city: 'Mexico City',
+    createdAt: '2026-08-31T00:00:00.000Z',
+  },
+  {
     id: 'camera_table_mountain_cape_town',
     title: 'Table Mountain, Cape Town',
     content: 'Live public camera from Table Mountain. The clouds came dressed for the occasion.',
@@ -9925,10 +9973,8 @@ function enrichLiveCameraPost(post) {
 
 function liveCameraLocationScore(post, location) {
   if (!location?.available) return 0;
-  const city = String(location.city || '').trim().toLowerCase();
-  if (city && city === String(post.city || '').trim().toLowerCase()) return 2;
-  if (location.country && location.country === post.countryCode) return 1;
-  if (normalizedCountryInput(location.countryName) && normalizedCountryInput(location.countryName) === normalizedCountryInput(post.country)) return 1;
+  if (travelCityMatches(post, location)) return 2;
+  if (travelCountryMatches(post, location)) return 1;
   return 0;
 }
 
@@ -10024,6 +10070,56 @@ function countryDestinationGuidePost(destination, summary = null) {
   };
 }
 
+function travelLocationHasSavedSelection(location) {
+  return location?.source === 'member' && Boolean(location?.city || location?.country || location?.countryName);
+}
+
+function travelCityMatches(post, location) {
+  const requested = normalizedCountryInput(location?.city);
+  const candidate = normalizedCountryInput(post?.city);
+  return Boolean(requested && candidate && (
+    requested === candidate || requested.includes(candidate) || candidate.includes(requested)
+  ));
+}
+
+function travelCountryMatches(post, location) {
+  const countryCode = String(location?.country || '').trim().toUpperCase();
+  if (countryCode && countryCode === String(post?.countryCode || '').trim().toUpperCase()) return true;
+  const requested = normalizedCountryInput(location?.countryName || location?.country);
+  const candidate = normalizedCountryInput(post?.country);
+  return Boolean(requested && candidate && requested === candidate);
+}
+
+function selectedTravelGuideDestinations(location) {
+  const city = cleanLocationInput(location?.city);
+  const country = cleanLocationInput(location?.countryName || location?.country) || 'Selected destination';
+  const countryCode = String(location?.country || '').trim().toUpperCase();
+  if (city) {
+    const exact = COUNTRIES_DESTINATION_GUIDES.filter(destination => travelCityMatches(destination, location));
+    if (exact.length) return exact.slice(0, COUNTRIES_SELECTED_GUIDES_MAX);
+    return [{
+      slug: city.replace(/\s+/g, '_'),
+      city,
+      country,
+      countryCode,
+      fallback: `A practical starting point for planning time in ${city}.`,
+    }];
+  }
+
+  const countryGuides = COUNTRIES_DESTINATION_GUIDES
+    .filter(destination => travelCountryMatches(destination, location))
+    .slice(0, COUNTRIES_SELECTED_GUIDES_MAX);
+  if (countryGuides.length) return countryGuides;
+  if (!country || country === 'Selected destination') return [];
+  return [{
+    slug: country.replace(/\s+/g, '_'),
+    city: country,
+    country,
+    countryCode,
+    fallback: `A practical starting point for planning a trip through ${country}.`,
+  }];
+}
+
 function rotatingCountryGuideSelection() {
   const total = COUNTRIES_DESTINATION_GUIDES.length;
   if (!total) return [];
@@ -10033,12 +10129,12 @@ function rotatingCountryGuideSelection() {
   return Array.from({ length: count }, (_, index) => COUNTRIES_DESTINATION_GUIDES[(start + index) % total]);
 }
 
-async function fetchCountryDestinationGuides() {
-  const destinations = rotatingCountryGuideSelection();
+async function fetchTravelGuidePosts(destinations) {
   const guides = [];
   let failures = 0;
-  for (let start = 0; start < destinations.length; start += COUNTRIES_GUIDE_BATCH_SIZE) {
-    const batch = destinations.slice(start, start + COUNTRIES_GUIDE_BATCH_SIZE);
+  const list = Array.isArray(destinations) ? destinations.filter(Boolean) : [];
+  for (let start = 0; start < list.length; start += COUNTRIES_GUIDE_BATCH_SIZE) {
+    const batch = list.slice(start, start + COUNTRIES_GUIDE_BATCH_SIZE);
     const results = await Promise.allSettled(batch.map(destination =>
       fetchJSON(`https://en.wikivoyage.org/api/rest_v1/page/summary/${encodeURIComponent(destination.slug)}`)
     ));
@@ -10049,6 +10145,14 @@ async function fetchCountryDestinationGuides() {
   }
   if (failures) console.warn(`[Countries] ${failures} Wikivoyage guide lookup(s) failed; using compact fallback cards.`);
   return guides;
+}
+
+async function fetchCountryDestinationGuides() {
+  return fetchTravelGuidePosts(rotatingCountryGuideSelection());
+}
+
+async function fetchSelectedTravelGuides(location) {
+  return fetchTravelGuidePosts(selectedTravelGuideDestinations(location));
 }
 
 function countryDiscoveryNewsUrl(edition) {
@@ -10097,6 +10201,10 @@ function countryDiscoveryNewsPost(item, edition) {
     isExternal: true,
     topic: 'Travel & Adventure',
     coverageRegion: edition.label,
+    location: edition.location?.scope || null,
+    city: edition.location?.city || null,
+    country: edition.location?.country || null,
+    countryCode: edition.location?.countryCode || null,
     activityScore: parseTimestampMs(item.pubDate) || Date.now(),
     // News videos and thumbnails are often permission-gated by their
     // publishers. Guides and cameras provide the visual cards here, while
@@ -10136,6 +10244,41 @@ async function fetchCountryDiscoveryNewsPosts() {
   return [...deduped.values()]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, COUNTRIES_DISCOVERY_NEWS_MAX_POSTS);
+}
+
+function selectedTravelNewsEdition(location) {
+  const scope = locationScopeLabel(location);
+  if (!scope) return null;
+  const countryCode = /^[A-Z]{2}$/i.test(String(location?.country || ''))
+    ? String(location.country).toUpperCase()
+    : 'US';
+  const placeTerms = [location?.city, location?.countryName]
+    .map(cleanLocationInput)
+    .filter(Boolean)
+    .map(value => `\"${value.replace(/\"/g, '')}\"`);
+  return {
+    label: `Around ${scope}`,
+    gl: countryCode,
+    hl: 'en',
+    ceid: `${countryCode}:en`,
+    query: `(${placeTerms.join(' OR ')}) (travel OR tourism OR \"travel guide\" OR \"things to do\" OR destination) -\"tourism tax\" -\"travel ban\" when:30d`,
+    location: {
+      scope,
+      city: location?.city || null,
+      country: location?.countryName || null,
+      countryCode: location?.country || null,
+    },
+  };
+}
+
+async function fetchSelectedTravelNewsPosts(location) {
+  const edition = selectedTravelNewsEdition(location);
+  if (!edition) return [];
+  const xml = await withLocationProviderSlot(() => fetchText(countryDiscoveryNewsUrl(edition)));
+  return parseRSSItems(xml)
+    .filter(item => item?.title && item?.link && isCountryDiscoveryNewsItem(item))
+    .map(item => countryDiscoveryNewsPost(item, edition))
+    .slice(0, COUNTRIES_SELECTED_NEWS_MAX_POSTS);
 }
 
 function sortDiscoveryPostsNewest(posts) {
@@ -10200,6 +10343,30 @@ function interleaveCountryDiscoveryPosts(cameras, guides, news) {
   ]);
 }
 
+function markSelectedTravelPost(post, location) {
+  const cityMatch = travelCityMatches(post, location);
+  const scope = locationScopeLabel(location);
+  return {
+    ...post,
+    matchedByLocation: true,
+    locationMatch: cityMatch ? 'local' : 'country',
+    locationMatchLabel: cityMatch
+      ? `In ${location.city}`
+      : scope ? `Around ${scope}` : 'In your selected region',
+  };
+}
+
+function mergeUniqueTravelPosts(...lists) {
+  const seen = new Set();
+  return lists.flat().filter((post) => {
+    if (!post) return false;
+    const key = post.id || post.sourceUrl || `${post.source || 'travel'}:${post.title || ''}:${post.createdAt || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function getCountriesCameraFeed(location, viewerId = null) {
   const entry = await readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
     const [cameraResult, guideResult, newsResult] = await Promise.allSettled([
@@ -10220,9 +10387,9 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   const savedById = new Map(posts
     .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map(post => [post.id, post]));
-  const ranked = rankFeedPostsForLocation(rawPosts, location, { preserveFirst: 0, chunkSize: 12 })
+  const cameras = rawPosts
+    .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map((post) => {
-      if (post?.source !== LIVE_CAMERA_SOURCE) return post;
       const saved = savedById.get(post.id);
       const current = saved
         ? { ...post, likes: saved.likes, commentsCount: saved.commentsCount }
@@ -10232,27 +10399,62 @@ async function getCountriesCameraFeed(location, viewerId = null) {
         ? { ...current, matchedByLocation: true, locationMatch: score === 2 ? 'local' : 'country', locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}` }
         : current;
     });
+
+  let selectedEntry = null;
+  let regionalPosts = [];
+  const selectedLocation = travelLocationHasSavedSelection(location);
+  if (selectedLocation) {
+    selectedEntry = await readLocationLiveCache(
+      locationCacheKey('countries:selected', location),
+      COUNTRIES_SELECTED_DISCOVERY_CACHE_MS,
+      async () => {
+        const [guideResult, newsResult] = await Promise.allSettled([
+          fetchSelectedTravelGuides(location),
+          fetchSelectedTravelNewsPosts(location),
+        ]);
+        if (guideResult.status === 'rejected') console.warn('[Travel] selected guide search failed:', guideResult.reason?.message || guideResult.reason);
+        if (newsResult.status === 'rejected') console.warn('[Travel] selected travel-news search failed:', newsResult.reason?.message || newsResult.reason);
+        return weightedRoundRobinDiscoveryQueues([
+          { posts: guideResult.status === 'fulfilled' ? guideResult.value : [], weight: 1 },
+          { posts: newsResult.status === 'fulfilled' ? newsResult.value : [], weight: 2 },
+        ]);
+      },
+    );
+    regionalPosts = (selectedEntry?.posts || []).map(post => markSelectedTravelPost(post, location));
+  }
+
+  const worldwidePosts = rankFeedPostsForLocation(
+    rawPosts.filter(post => post?.source !== LIVE_CAMERA_SOURCE),
+    location,
+    { preserveFirst: 0, chunkSize: 12 },
+  );
+  const travelPosts = mergeUniqueTravelPosts(regionalPosts, worldwidePosts);
+  const scopedCameras = selectedLocation
+    ? (location?.city
+      ? cameras.filter(post => travelCityMatches(post, location))
+      : cameras.filter(post => travelCountryMatches(post, location)))
+    : rankFeedPostsForLocation(cameras, location, { preserveFirst: 0, chunkSize: 12 });
   // Keep the live cameras as their own rail instead of spending the first
   // page of Travel on them. The client can rotate one lightweight player at
   // a time while the scroll below remains a full set of guides and travel
   // stories. Camera entries are intentionally not fed through seen-post
   // filtering: a live view is a persistent destination, not a card a
   // member should lose after one visit.
-  const serialized = ranked.map(post => post?.source === LIVE_CAMERA_SOURCE ? serializeCommunityPost(post, viewerId) : post);
-  const liveFeeds = serialized.filter(post => post?.isLiveCamera);
-  const travelPosts = serialized.filter(post => !post?.isLiveCamera);
+  const liveFeeds = scopedCameras.map(post => serializeCommunityPost(post, viewerId));
   return {
     posts: travelPosts,
     liveFeeds,
-    fetchedAt: entry?.fetchedAt || new Date().toISOString(),
-    catalogSize: ranked.length,
+    fetchedAt: [entry?.fetchedAt, selectedEntry?.fetchedAt].filter(Boolean).sort().at(-1) || new Date().toISOString(),
+    catalogSize: rawPosts.length,
     equalizer: {
       mode: 'live-weighted-round-robin',
       liveCameras: liveFeeds.length,
       destinationGuides: travelPosts.filter(post => post?.source === 'wikivoyage').length,
       travelNews: travelPosts.filter(post => post?.source === 'travelnews').length,
+      regionalPosts: regionalPosts.length,
+      selectedLocation: selectedLocation ? locationScopeLabel(location) : null,
     },
-    providerError: entry?.error || null,
+    providerError: travelPosts.length || liveFeeds.length ? null : selectedEntry?.error || entry?.error || null,
   };
 }
 
