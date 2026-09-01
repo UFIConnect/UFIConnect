@@ -1667,13 +1667,6 @@ function AutomationSection({ onSelectSection }) {
           onClick={() => onSelectSection('content')}
         />
         <AutomationToolCard
-          title="Hashtag Creator"
-          description="Draft focused hashtag sets for each platform, audience, and location."
-          status="Ready"
-          actionLabel="Open AI Hub"
-          onClick={() => onSelectSection('content')}
-        />
-        <AutomationToolCard
           title="Media Studio"
           description="Generate a photo or send a video prompt to the configured media provider."
           status="Ready"
