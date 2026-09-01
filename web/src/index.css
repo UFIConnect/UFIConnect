@@ -689,10 +689,13 @@ input, textarea, select { font-family: inherit; }
 }
 .opportunities-refresh-row {
   display: flex;
-  justify-content: flex-end;
   margin-bottom: 8px;
 }
-.opportunities-refresh-btn { white-space: nowrap; }
+.opportunities-refresh-btn {
+  width: 100%;
+  min-height: 36px;
+  justify-content: center;
+}
 .page-title {
   font-size: 1.4rem;
   font-weight: 800;
@@ -2091,9 +2094,6 @@ input, textarea, select { font-family: inherit; }
     text-align: center;
     white-space: normal;
   }
-  .opportunities-refresh-row { justify-content: flex-end; }
-  .opportunities-refresh-btn { min-height: 36px; }
-
   /* Cards full-width */
   .card { border-radius: 10px; }
 
