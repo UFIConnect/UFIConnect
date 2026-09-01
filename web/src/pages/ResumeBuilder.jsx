@@ -222,6 +222,7 @@ export default function ResumeBuilder() {
   const [exportResult, setExportResult] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [drafting, setDrafting] = useState(null);
+  const [activeBuilderTab, setActiveBuilderTab] = useState('resume');
 
   const unlocked = !!profile?.resumeBuilderAddon;
 
@@ -455,6 +456,28 @@ export default function ResumeBuilder() {
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 760 }}>
+            <div role="tablist" aria-label="Resume Builder" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                ['resume', 'Resume'],
+                ['cover-letter', 'Cover letter'],
+                ['outreach', 'Reach-out messages'],
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  id={`resume-builder-tab-${key}`}
+                  role="tab"
+                  type="button"
+                  aria-selected={activeBuilderTab === key}
+                  onClick={() => setActiveBuilderTab(key)}
+                  className="btn btn-sm"
+                  style={{ border: 'none', background: activeBuilderTab === key ? 'var(--primary)' : 'var(--bg-secondary)', color: activeBuilderTab === key ? '#fff' : 'var(--text)' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {activeBuilderTab === 'resume' && <>
             <div className="card">
               <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Template</div>
               <div className="resume-template-grid" role="group" aria-label="Resume template">
@@ -596,17 +619,18 @@ export default function ResumeBuilder() {
                 </div>
               )}
             </div>
+            </>}
 
-            <div className="card">
+            {activeBuilderTab !== 'resume' && <div className="card">
               <div style={{ marginBottom: 16 }}>
-                <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Application writing</h3>
+                <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>{activeBuilderTab === 'cover-letter' ? 'Cover letter' : 'Reach-out messages'}</h3>
                 <p style={{ margin: 0, fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5 }}>
                   Draft from the resume above, then edit the result. Each generated draft is saved with your resume.
                 </p>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 22 }}>
-                <div style={{ minWidth: 0 }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '.86rem' }}>Cover letter</h4>
+                {activeBuilderTab === 'cover-letter' && (
+                  <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
                     <Field label="Role" value={data.coverLetter.role} onChange={e => updateWriting('coverLetter', 'role', e.target.value)} placeholder="e.g. Product Designer" />
                     <Field label="Company" value={data.coverLetter.company} onChange={e => updateWriting('coverLetter', 'company', e.target.value)} />
@@ -642,10 +666,11 @@ export default function ResumeBuilder() {
                     placeholder="Your cover letter will appear here."
                     style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', lineHeight: 1.55, resize: 'vertical' }}
                   />
-                </div>
+                  </div>
+                )}
 
-                <div style={{ minWidth: 0 }}>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '.86rem' }}>Reach-out message</h4>
+                {activeBuilderTab === 'outreach' && (
+                  <div style={{ minWidth: 0 }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
                     <Field label="Recipient" value={data.outreach.recipientName} onChange={e => updateWriting('outreach', 'recipientName', e.target.value)} placeholder="e.g. Alex Morgan" />
                     <Field label="Their role" value={data.outreach.recipientRole} onChange={e => updateWriting('outreach', 'recipientRole', e.target.value)} placeholder="e.g. Design Director" />
@@ -684,9 +709,10 @@ export default function ResumeBuilder() {
                     placeholder="Your reach-out message will appear here."
                     style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', lineHeight: 1.55, resize: 'vertical' }}
                   />
-                </div>
+                  </div>
+                )}
               </div>
-            </div>
+            </div>}
 
           </div>
         )}

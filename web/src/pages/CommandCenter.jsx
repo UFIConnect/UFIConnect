@@ -1120,6 +1120,17 @@ function JobTrackerSection() {
   const liveById = new Map(sorted.map(job => [job.id, job]));
   const trackedRows = trackedValues.map(job => ({ ...job, ...(liveById.get(job.id) || {}), isLive: liveById.has(job.id) }));
   const displayedJobs = view === 'live' ? sorted : trackedRows.filter(job => job.status === view);
+  const recruiterLeads = trackedRows
+    .filter(job => job.status === 'saved' || job.status === 'applied')
+    .map(job => {
+      const publicContact = String(job.content || '').match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || null;
+      const searchTerms = `${job.org || ''} recruiter ${job.title || ''}`.trim();
+      return {
+        ...job,
+        publicContact,
+        recruiterSearchUrl: `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(searchTerms)}`,
+      };
+    });
   const selectedResume = resumes.find(resume => resume.isPrimary) || resumes[0] || null;
   const selectedResumeScore = Number(selectedResume?.atsScore);
   const canPreviewResume = resumePreview && (
@@ -1183,6 +1194,7 @@ function JobTrackerSection() {
           ['live', 'Live listings'],
           ['saved', 'Saved jobs'],
           ['applied', 'Applied jobs'],
+          ['recruiters', 'Recruiters'],
         ].map(([key, label]) => (
           <button
             key={key} type="button" className="btn btn-sm" onClick={() => setView(key)}
@@ -1193,7 +1205,28 @@ function JobTrackerSection() {
         ))}
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {view === 'recruiters' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {recruiterLeads.map(job => (
+            <div key={job.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: '.88rem' }}>{job.org || 'Hiring team'}</div>
+                <div style={{ fontSize: '.76rem', color: 'var(--muted)', marginTop: 2 }}>{job.title || 'Tracked role'}</div>
+                <div style={{ fontSize: '.72rem', color: 'var(--muted)', marginTop: 5 }}>
+                  {job.publicContact ? `Public contact: ${job.publicContact}` : 'Recruiting team search'}
+                </div>
+              </div>
+              <a href={job.recruiterSearchUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">Find recruiter</a>
+              {job.sourceUrl && <a href={job.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View job</a>}
+            </div>
+          ))}
+          {!recruiterLeads.length && (
+            <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
+              Save or mark a job as applied to build your recruiter list.
+            </div>
+          )}
+        </div>
+      ) : <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {displayedJobs.map(job => {
           const t = tracked[job.id];
           const strong = Number.isFinite(job.matchScore) && job.matchScore >= 15;
@@ -1247,7 +1280,7 @@ function JobTrackerSection() {
             {view === 'saved' ? 'No saved jobs yet. Save a listing to keep it here.' : view === 'applied' ? 'No applied jobs yet. Mark a saved listing as applied when you apply.' : 'No listings available right now — check back soon.'}
           </div>
         )}
-      </div>
+      </div>}
 
       {resumePreview && (
         <div
