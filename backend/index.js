@@ -18393,7 +18393,9 @@ function isConfiguredResumeBuilderPrice(price) {
 }
 
 function getResumeBuilderPriceCandidates() {
-  return [...new Set(RESUME_BUILDER_PRICE_ID_ENV_KEYS
+  const configuredKeys = Object.keys(process.env)
+    .filter(key => /resume/i.test(key) && /price/i.test(key) && (/_id$/i.test(key) || /_price$/i.test(key)));
+  return [...new Set([...RESUME_BUILDER_PRICE_ID_ENV_KEYS, ...configuredKeys]
     .map(key => String(process.env[key] || '').trim())
     .filter(Boolean))];
 }
