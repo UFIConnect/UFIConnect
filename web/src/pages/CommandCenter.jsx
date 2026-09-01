@@ -329,6 +329,12 @@ function ContentHubSection() {
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState(null);
   const [notConfigured, setNotConfigured] = useState(false);
+  const [hashtagPlatform, setHashtagPlatform] = useState('tiktok');
+  const [hashtagTopic, setHashtagTopic] = useState('');
+  const [hashtagAudience, setHashtagAudience] = useState('');
+  const [hashtagLocation, setHashtagLocation] = useState('');
+  const [draftingHashtags, setDraftingHashtags] = useState(false);
+  const [hashtagGroups, setHashtagGroups] = useState(null);
 
   async function handleDraft(e) {
     e.preventDefault();
@@ -351,6 +357,28 @@ function ContentHubSection() {
     navigator.clipboard?.writeText(text)
       .then(() => showToast('Copied to clipboard', 'success'))
       .catch(() => showToast('Could not copy — select and copy manually.', 'error'));
+  }
+
+  async function handleHashtagDraft(e) {
+    e.preventDefault();
+    if (!hashtagTopic.trim() || draftingHashtags) return;
+    setDraftingHashtags(true);
+    setHashtagGroups(null);
+    setNotConfigured(false);
+    try {
+      const { data } = await client.post('/command-center/hashtag-draft', {
+        platform: hashtagPlatform,
+        topic: hashtagTopic,
+        audience: hashtagAudience,
+        location: hashtagLocation,
+      });
+      setHashtagGroups(data.groups || []);
+    } catch (err) {
+      if (err?.response?.status === 503) setNotConfigured(true);
+      else showToast(err?.response?.data?.message || 'Could not generate hashtags. Please try again.', 'error');
+    } finally {
+      setDraftingHashtags(false);
+    }
   }
 
   return (
@@ -397,6 +425,52 @@ function ContentHubSection() {
         </form>
       </div>
 
+      <div className="card">
+        <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Hashtag creator</h3>
+        <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
+          Draft focused hashtag sets for the post and audience you have in mind.
+        </p>
+        <form onSubmit={handleHashtagDraft} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
+          <div>
+            <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Platform</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {DRAFT_PLATFORMS.map(p => (
+                <button
+                  key={p.value} type="button" onClick={() => setHashtagPlatform(p.value)}
+                  className="btn btn-sm"
+                  style={{ background: hashtagPlatform === p.value ? 'var(--primary)' : 'var(--bg-secondary)', color: hashtagPlatform === p.value ? '#fff' : 'var(--text)', border: 'none' }}
+                >
+                  {p.icon} {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>What's the post about?</label>
+            <textarea
+              value={hashtagTopic} onChange={e => setHashtagTopic(e.target.value)} rows={2}
+              placeholder="e.g. Showing the first demo of my budgeting app"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem', fontFamily: 'inherit', resize: 'vertical' }}
+            />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
+            <input
+              value={hashtagAudience} onChange={e => setHashtagAudience(e.target.value)}
+              placeholder="Audience (optional)"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem' }}
+            />
+            <input
+              value={hashtagLocation} onChange={e => setHashtagLocation(e.target.value)}
+              placeholder="Location (optional)"
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '.85rem' }}
+            />
+          </div>
+          <button className="btn btn-primary" type="submit" disabled={draftingHashtags || !hashtagTopic.trim()} style={{ alignSelf: 'flex-start' }}>
+            {draftingHashtags ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Draft hashtags'}
+          </button>
+        </form>
+      </div>
+
       {notConfigured && (
         <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: '.85rem' }}>
           AI content drafting isn't configured yet — check back soon.
@@ -413,6 +487,25 @@ function ContentHubSection() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {hashtagGroups && hashtagGroups.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {hashtagGroups.map((group, index) => {
+            const text = group.hashtags.join(' ');
+            return (
+              <div key={`${group.label}-${index}`} className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                  <strong style={{ fontSize: '.85rem' }}>{group.label}</strong>
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => copyDraft(text)}>Copy set</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {group.hashtags.map(tag => <span key={tag} className="tag tag-primary">{tag}</span>)}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1569,6 +1662,13 @@ function AutomationSection({ onSelectSection }) {
         <AutomationToolCard
           title="AI Drafts"
           description="Generate captions and post drafts for the platform you plan to publish on."
+          status="Ready"
+          actionLabel="Open AI Hub"
+          onClick={() => onSelectSection('content')}
+        />
+        <AutomationToolCard
+          title="Hashtag Creator"
+          description="Draft focused hashtag sets for each platform, audience, and location."
           status="Ready"
           actionLabel="Open AI Hub"
           onClick={() => onSelectSection('content')}

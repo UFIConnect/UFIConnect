@@ -201,6 +201,8 @@ services:
       # OPENAI_API_KEY only. Both routes remain paid-member-only server-side.
       - key: AI_CONTENT_OPENAI_MODEL
         value: gpt-5-mini
+      - key: AI_CONTENT_DRAFT_RATE_LIMIT
+        value: '60'
       # Media Studio uses this server-side key for image generation, AI text
       # drafting, and OpenAI video jobs. The project needs access to the
       # selected OpenAI video model for video generation to be available.

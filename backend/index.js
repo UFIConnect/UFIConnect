@@ -433,6 +433,17 @@ const resumeAIDraftLimiter = rateLimit({
   message: { message: 'Too many resume writing requests. Please try again in a little while.' },
 });
 
+// Caption and hashtag drafting share one per-member allowance because both
+// call the same paid text model.
+const aiContentDraftLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: envNumber('AI_CONTENT_DRAFT_RATE_LIMIT', 60, 5, 300),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || rateLimitKey(req),
+  message: { message: 'Too many AI content requests. Please try again later.' },
+});
+
 // Video creation is both slower and materially more expensive than text or
 // image generation. Keep the allowance per member, rather than per IP, so a
 // shared network cannot exhaust another member's video quota.
@@ -26962,7 +26973,7 @@ const CONTENT_DRAFT_PLATFORM_LABELS = {
   tiktok: 'TikTok', instagram: 'Instagram', linkedin: 'LinkedIn',
   twitter: 'X/Twitter', threads: 'Threads', general: 'social media',
 };
-app.post('/command-center/content-draft', authenticate, async (req, res) => {
+app.post('/command-center/content-draft', authenticate, aiContentDraftLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   // Cost-bearing (a real per-call LLM API charge) — gated to paid plans
   // server-side, not just hidden behind a UI badge, since a free user could
@@ -26992,6 +27003,72 @@ app.post('/command-center/content-draft', authenticate, async (req, res) => {
   } catch (e) {
     console.error('[/command-center/content-draft] error:', e.message);
     res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
+  }
+});
+
+function normalizeHashtagList(values, limit = 12) {
+  const seen = new Set();
+  const tags = [];
+  for (const value of asArray(values)) {
+    const matches = String(value || '').match(/#[A-Za-z0-9_]+/g) || [];
+    for (const tag of matches) {
+      const normalized = tag.toLowerCase();
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      tags.push(tag);
+      if (tags.length >= limit) return tags;
+    }
+  }
+  return tags;
+}
+
+function parseHashtagDraftGroups(text) {
+  const raw = String(text || '').trim();
+  const jsonText = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try {
+    const parsed = JSON.parse(jsonText);
+    const groups = asArray(parsed?.groups)
+      .map((group, index) => ({
+        label: String(group?.label || `Set ${index + 1}`).trim().slice(0, 48) || `Set ${index + 1}`,
+        hashtags: normalizeHashtagList(group?.hashtags),
+      }))
+      .filter(group => group.hashtags.length);
+    if (groups.length) return groups.slice(0, 3);
+  } catch (_) {}
+
+  const hashtags = normalizeHashtagList([raw], 12);
+  return hashtags.length ? [{ label: 'Suggested set', hashtags }] : [];
+}
+
+app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'The AI Content Hub is a Pro feature - upgrade to use it.' });
+  }
+  const provider = configuredOpenAITextProvider();
+  if (!provider) return res.status(503).json({ message: "AI content drafting isn't configured yet." });
+
+  const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim().slice(0, 300) : '';
+  const audience = typeof req.body?.audience === 'string' ? req.body.audience.trim().slice(0, 160) : '';
+  const location = typeof req.body?.location === 'string' ? req.body.location.trim().slice(0, 120) : '';
+  if (!topic) return res.status(400).json({ message: 'topic is required.' });
+
+  const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[req.body?.platform] || 'social media';
+  const prompt = [
+    `Create three distinct, relevant hashtag sets for a ${platformLabel} post about: "${topic}".`,
+    `Audience: ${audience || 'people interested in the topic'}.`,
+    `Location: ${location || 'not location-specific'}.`,
+    'Use 6 to 10 specific hashtags in each set. Mix broad discovery, niche, and community tags. Avoid banned, misleading, or unrelated tags. Do not claim a tag is currently trending or include any explanation.',
+    'Return valid JSON only: {"groups":[{"label":"Discovery","hashtags":["#Example"]},{"label":"Niche","hashtags":["#Example"]},{"label":"Community","hashtags":["#Example"]}]}.',
+  ].join('\n');
+
+  try {
+    const groups = parseHashtagDraftGroups(await callOpenAIText(provider.apiKey, prompt, provider.model));
+    if (!groups.length) throw new Error('OpenAI did not return hashtags.');
+    res.json({ groups, provider: 'openai' });
+  } catch (error) {
+    console.error('[/command-center/hashtag-draft] error:', error.message);
+    res.status(502).json({ message: 'Could not generate hashtags right now. Please try again.' });
   }
 });
 
