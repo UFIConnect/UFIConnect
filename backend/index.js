@@ -25937,7 +25937,17 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // Sort — default newest-first (by posted date); 'match' sorts by relevance
   // score instead, with a daily rotation tiebreaker so equal-score items
   // don't freeze in the same order all day.
-  const sortMode = req.query.sort === 'match' ? 'match' : 'newest';
+  const supportedSortModes = new Set(['match', 'newest', 'oldest', 'live', 'remote', 'employer', 'title', 'source']);
+  const sortMode = supportedSortModes.has(req.query.sort) ? req.query.sort : 'newest';
+  const postedAt = (opportunity) => {
+    const timestamp = Date.parse(opportunity?.posted || '');
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const newestFirst = (a, b) => postedAt(b) - postedAt(a);
+  const textOrder = (field) => (a, b) => {
+    const comparison = String(a?.[field] || '').localeCompare(String(b?.[field] || ''), undefined, { sensitivity: 'base' });
+    return comparison || newestFirst(a, b);
+  };
   if (sortMode === 'match') {
     const dayBucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
     results.sort((a, b) => {
@@ -25948,8 +25958,20 @@ app.get('/opportunities', authenticate, async (req, res) => {
       for (let i = 0; i < kb.length; i++) hb = (Math.imul(hb, 31) + kb.charCodeAt(i)) | 0;
       return Math.abs(ha) - Math.abs(hb);
     });
+  } else if (sortMode === 'oldest') {
+    results.sort((a, b) => postedAt(a) - postedAt(b));
+  } else if (sortMode === 'live') {
+    results.sort((a, b) => Number(Boolean(b.isLive)) - Number(Boolean(a.isLive)) || newestFirst(a, b));
+  } else if (sortMode === 'remote') {
+    results.sort((a, b) => Number(Boolean(b.remote)) - Number(Boolean(a.remote)) || newestFirst(a, b));
+  } else if (sortMode === 'employer') {
+    results.sort(textOrder('org'));
+  } else if (sortMode === 'title') {
+    results.sort(textOrder('title'));
+  } else if (sortMode === 'source') {
+    results.sort(textOrder('source'));
   } else {
-    results.sort((a, b) => new Date(b.posted) - new Date(a.posted));
+    results.sort(newestFirst);
   }
 
   // Equalizer — same idea as the pipeline's own Equalizer stage (see
@@ -25965,7 +25987,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // is ever excluded, only reordered — so every source that's actually
   // selected shows up on the first page instead of being buried under a
   // busier one.
-  if (new Set(results.map(o => o.source)).size > 1) {
+  if (['match', 'newest', 'live', 'remote'].includes(sortMode) && new Set(results.map(o => o.source)).size > 1) {
     results = diversifyBySource(results, results.length, 2, 0.4, false);
   }
 

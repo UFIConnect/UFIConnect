@@ -53,6 +53,17 @@ const FILTERS = [
   ...Object.entries(TYPE_META).map(([value, { label }]) => ({ value, label })),
 ];
 
+const OPPORTUNITY_SORT_OPTIONS = [
+  { value: 'match', label: 'Best match' },
+  { value: 'newest', label: 'Newest' },
+  { value: 'oldest', label: 'Oldest' },
+  { value: 'live', label: 'Live first' },
+  { value: 'remote', label: 'Remote first' },
+  { value: 'employer', label: 'Employer A-Z' },
+  { value: 'title', label: 'Title A-Z' },
+  { value: 'source', label: 'Source A-Z' },
+];
+
 function debounce(fn, delay) {
   let timeoutId;
   return function(...args) {
@@ -447,8 +458,9 @@ export default function Opportunities() {
             className="form-input"
             style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
           >
-            <option value="newest">Newest</option>
-            <option value="match">Best match</option>
+            {OPPORTUNITY_SORT_OPTIONS.map(({ value, label }) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
           </select>
           <button
             type="button"
