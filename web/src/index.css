@@ -2355,9 +2355,11 @@ input, textarea, select { font-family: inherit; }
   pointer-events: auto;
   touch-action: manipulation;
 }
-.video-feed-youtube-player,
 .video-feed-youtube-player iframe {
   pointer-events: none !important;
+  touch-action: none;
+}
+.video-feed-youtube-player {
   touch-action: none;
 }
 

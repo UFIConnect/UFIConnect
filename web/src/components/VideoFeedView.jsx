@@ -239,6 +239,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
   // by VideoFeedView), everything else keeps reading this slide's own
   // local state exactly as before.
   const isYoutube = src?.kind === 'youtube';
+  const backdropPoster = isYoutube
+    ? src?.poster
+    : (!active ? (src?.kind === 'vimeo' ? vimeoPoster : src?.poster) : null);
   const effectivePaused = isYoutube ? !!sharedYt?.paused : paused;
   const effectiveDuration = isYoutube ? (sharedYt?.duration || 0) : duration;
   const effectiveCurrentTime = isYoutube ? (sharedYt?.currentTime || 0) : currentTime;
@@ -497,14 +500,14 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           for vimeo (see vimeoPoster's own comment above), so without this
           override every Vimeo post would permanently skip this backdrop
           and the inactive-state preview image below. */}
-      {(() => { const effectivePoster = !active && (src?.kind === 'vimeo' ? vimeoPoster : src?.poster); return effectivePoster && (
+      {backdropPoster && (
         <div style={{
-          position: 'absolute', inset: 0, zIndex: -1,
-          backgroundImage: `url(${effectivePoster})`,
+          position: 'absolute', inset: 0, zIndex: isYoutube ? 0 : -1,
+          backgroundImage: `url(${backdropPoster})`,
           backgroundSize: 'cover', backgroundPosition: 'center',
           transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
         }} />
-      ); })()}
+      )}
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
       ) : src.kind === 'youtube' ? (
@@ -1098,6 +1101,7 @@ export default function VideoFeedView({ onExit }) {
   const sourceFilterRef = useRef([]);
   const containerRef = useRef(null);
   const slideRefs = useRef([]);
+  const suppressSharedYtClickRef = useRef(false);
   const consumedVideoIds = useRef(new Set());
   // Consecutive pages that came back with zero results after a search/topic
   // filter was applied server-side — resets to 0 the moment any page has
@@ -1565,10 +1569,15 @@ export default function VideoFeedView({ onExit }) {
       if (e.target.closest('button, a, [role="button"], .video-caption-scroll')) return;
       const startY = e.touches[0].clientY;
       const startScrollTop = container.scrollTop;
+      let lastY = startY;
       let dragged = false;
       function handleMove(ev) {
-        const dy = ev.touches[0].clientY - startY;
-        if (Math.abs(dy) > 3) dragged = true;
+        lastY = ev.touches[0].clientY;
+        const dy = lastY - startY;
+        if (Math.abs(dy) > 3) {
+          dragged = true;
+          suppressSharedYtClickRef.current = true;
+        }
         if (dragged) {
           ev.preventDefault();
           container.scrollTop = startScrollTop - dy;
@@ -1577,6 +1586,20 @@ export default function VideoFeedView({ onExit }) {
       function handleEnd() {
         document.removeEventListener('touchmove', handleMove);
         document.removeEventListener('touchend', handleEnd);
+        // A shared iframe is not inside the snap container, so this path
+        // must supply the last bit of native swipe behavior itself. Without
+        // it, a normal short flick moves less than half a slide and mandatory
+        // snapping sends the user straight back to the current video.
+        const distance = lastY - startY;
+        const threshold = Math.max(48, container.clientHeight * 0.12);
+        if (dragged && Math.abs(distance) >= threshold) {
+          const nextTop = startScrollTop + (distance < 0 ? container.clientHeight : -container.clientHeight);
+          container.scrollTo({
+            top: Math.max(0, Math.min(nextTop, container.scrollHeight - container.clientHeight)),
+            behavior: 'smooth',
+          });
+        }
+        window.setTimeout(() => { suppressSharedYtClickRef.current = false; }, 0);
       }
       // passive:false — handleMove calls preventDefault, which a passive
       // listener silently ignores.
@@ -2570,9 +2593,13 @@ export default function VideoFeedView({ onExit }) {
         <div ref={sharedYtWrapperRef} className="video-feed-youtube-player" style={{
           position: 'absolute', inset: 0, zIndex: 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          pointerEvents: 'none',
+          pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
+          touchAction: 'none',
           opacity: activeSrc?.kind === 'youtube' && !isScrolling ? 1 : 0,
           transition: 'opacity .15s ease-out',
+        }} onClick={(e) => {
+          e.stopPropagation();
+          if (!suppressSharedYtClickRef.current) sharedYtTogglePlay();
         }}>
           <div
             // Explicit pixel width/height from ytBoxSize (measured off this
