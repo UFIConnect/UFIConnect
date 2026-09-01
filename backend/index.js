@@ -18367,13 +18367,12 @@ app.post('/profile/onboarding', authenticate, async (req, res) => {
 const TIER_PRICE_IDS = {
   pro:            () => process.env.STRIPE_PRICE_ID,
   business:       () => process.env.STRIPE_PRICE_ID_BUSINESS,
-  // The explicit Resume Builder override is first so a newly-created Stripe
-  // Price in Render replaces the legacy add-on price without changing any
-  // existing subscriptions already attached to that legacy Price.
-  resume_builder: () => process.env.STRIPE_RESUME_BUILDER_PRICE_ID
-    || process.env.RESUME_BUILDER_PRICE_ID
-    || process.env.STRIPE_PRICE_ID_RESUME_BUILDER,
 };
+const RESUME_BUILDER_PRICE_ID_ENV_KEYS = [
+  'STRIPE_RESUME_BUILDER_PRICE_ID',
+  'RESUME_BUILDER_PRICE_ID',
+  'STRIPE_PRICE_ID_RESUME_BUILDER',
+];
 
 const STRIPE_PRICE_SUMMARY_CACHE_MS = 5 * 60 * 1000;
 const stripePriceSummaryCache = new Map();
@@ -18391,6 +18390,12 @@ function isConfiguredResumeBuilderPrice(price) {
     && Number(price.unit_amount) === RESUME_BUILDER_PRICE_REQUIREMENT.unitAmount
     && String(price.recurring?.interval || '').toLowerCase() === RESUME_BUILDER_PRICE_REQUIREMENT.interval
     && Number(price.recurring?.interval_count || 1) === RESUME_BUILDER_PRICE_REQUIREMENT.intervalCount;
+}
+
+function getResumeBuilderPriceCandidates() {
+  return [...new Set(RESUME_BUILDER_PRICE_ID_ENV_KEYS
+    .map(key => String(process.env[key] || '').trim())
+    .filter(Boolean))];
 }
 
 function summarizeStripePrice(price, tier) {
@@ -18413,7 +18418,35 @@ function summarizeStripePrice(price, tier) {
   }
 }
 
+async function resolveResumeBuilderPrice() {
+  const candidateIds = getResumeBuilderPriceCandidates();
+  if (!stripe || !candidateIds.length) return { priceId: null, summary: null };
+  const cacheKey = 'resume_builder:' + candidateIds.join(':');
+  const cached = stripePriceSummaryCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < STRIPE_PRICE_SUMMARY_CACHE_MS) return cached.value;
+
+  const candidates = [];
+  for (const priceId of candidateIds) {
+    try {
+      const summary = summarizeStripePrice(await stripe.prices.retrieve(priceId), 'resume_builder');
+      if (summary) candidates.push({ priceId, summary });
+    } catch (error) {
+      console.warn('[billing/config] Could not read Resume Builder price:', error.message);
+    }
+  }
+  // Match by amount and cadence, not simply by environment-variable order.
+  // This lets a new correct Render Price replace an old monthly Price while
+  // that legacy value remains configured for existing subscriptions.
+  const selected = candidates.find(candidate => candidate.summary.matchesRequiredPrice) || candidates[0] || null;
+  const value = selected
+    ? { priceId: selected.priceId, summary: selected.summary }
+    : { priceId: null, summary: null };
+  stripePriceSummaryCache.set(cacheKey, { value, at: Date.now() });
+  return value;
+}
+
 async function getStripePriceSummary(tier) {
+  if (tier === 'resume_builder') return (await resolveResumeBuilderPrice()).summary;
   const priceId = String(TIER_PRICE_IDS[tier]?.() || '').trim();
   if (!stripe || !priceId) return null;
   const cacheKey = `${tier}:${priceId}`;
@@ -18496,8 +18529,11 @@ app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   if (tier === 'business') {
     return res.status(400).json({ message: 'Business is not available yet.' });
   }
-  const priceId = TIER_PRICE_IDS[tier]();
-  const resumeBuilderPrice = tier === 'resume_builder' ? await getStripePriceSummary('resume_builder') : null;
+  const resumeBuilderPricing = tier === 'resume_builder'
+    ? await resolveResumeBuilderPrice()
+    : { priceId: null, summary: null };
+  const priceId = tier === 'resume_builder' ? resumeBuilderPricing.priceId : TIER_PRICE_IDS[tier]();
+  const resumeBuilderPrice = resumeBuilderPricing.summary;
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET || !priceId) {
     return res.status(503).json({ message: 'Billing is not configured yet.' });
   }
