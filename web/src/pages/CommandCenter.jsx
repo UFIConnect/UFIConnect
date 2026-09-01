@@ -16,9 +16,6 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 // same honesty convention the rest of this app already uses for platforms
 // pending API/app-review access.
 const OWN_CONTENT_PLATFORMS = ['github', 'gitlab', 'youtube', 'reddit', 'twitch', 'instagram', 'tiktok', 'threads', 'bluesky'];
-// Platforms with a real, working publish-on-your-behalf API. Other connected
-// platforms remain visible but are queued until their API path is available.
-const REAL_PUBLISH_PLATFORMS = ['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok'];
 const ACCOUNT_OWNED_CROSS_POST_PLATFORMS = ['instagram', 'tiktok', 'threads'];
 
 function SourceMark({ source, label, active = false }) {
@@ -1105,17 +1102,19 @@ function JobTrackerSection() {
 
 const PLATFORM_RESULT_META = {
   posted: { icon: 'OK', label: 'Posted' },
-  handoff: { icon: 'TikTok', label: 'Ready in TikTok inbox' },
-  queued: { icon: 'Queued', label: 'Queued - pending platform approval' },
+  handoff: { icon: 'TikTok', label: 'Finish in TikTok' },
+  processing: { icon: 'Working', label: 'Processing' },
+  unsupported: { icon: 'Unavailable', label: 'Not available' },
+  queued: { icon: 'Queued', label: 'Queued (legacy)' },
   failed: { icon: 'Failed', label: 'Failed' },
 };
 
-// connectedPlatforms comes from the same /social/platforms endpoint used by
-// the rest of the command center. Each result reports whether it posted,
-// needs a platform handoff, queued, or failed.
+// Server-provided platform capabilities are the source of truth here. That
+// keeps the composer from offering a connection that cannot actually publish.
 function CrossPostSection() {
   const { showToast } = useToast();
   const [connected, setConnected] = useState(null);
+  const [platforms, setPlatforms] = useState({});
   const [content, setContent] = useState('');
   const [selected, setSelected] = useState(new Set());
   const [posting, setPosting] = useState(false);
@@ -1125,6 +1124,7 @@ function CrossPostSection() {
   const [media, setMedia] = useState(null);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [mediaError, setMediaError] = useState('');
+  const [syncing, setSyncing] = useState(false);
 
   const loadCrossPostData = useCallback(async () => {
     setLoadError('');
@@ -1132,8 +1132,13 @@ function CrossPostSection() {
       client.get('/social/platforms'),
       client.get('/command-center/cross-post/history'),
     ]);
-    if (socialResult.status === 'fulfilled') setConnected(socialResult.value.data.connected || {});
-    else setConnected({});
+    if (socialResult.status === 'fulfilled') {
+      setConnected(socialResult.value.data.connected || {});
+      setPlatforms(socialResult.value.data.platforms || {});
+    } else {
+      setConnected({});
+      setPlatforms({});
+    }
     if (historyResult.status === 'fulfilled') setHistory(historyResult.value.data.posts || []);
     else setHistory([]);
     if (socialResult.status === 'rejected' || historyResult.status === 'rejected') {
@@ -1151,6 +1156,11 @@ function CrossPostSection() {
   }, [loadCrossPostData]);
 
   function toggle(platform) {
+    const capability = platforms[platform]?.crossPost;
+    if (capability?.requiresPhoto && !media) {
+      showToast(`Add a photo before selecting ${SOURCE_META[platform]?.label || platform}.`, 'error');
+      return;
+    }
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(platform)) next.delete(platform); else next.add(platform);
@@ -1173,6 +1183,24 @@ function CrossPostSection() {
     }
   }
 
+  function removePhoto() {
+    setMedia(null);
+    setSelected(prev => new Set([...prev].filter(platform => !platforms[platform]?.crossPost?.requiresPhoto)));
+  }
+
+  const syncCrossPostStatuses = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const { data } = await client.post('/command-center/cross-post/sync');
+      setHistory(data.posts || []);
+      if (data.updated) showToast('Cross-post history updated.', 'success');
+    } catch (err) {
+      showToast(err?.response?.data?.message || 'Could not refresh cross-post results.', 'error');
+    } finally {
+      setSyncing(false);
+    }
+  }, [showToast]);
+
   async function handlePost(e) {
     e.preventDefault();
     if ((!content.trim() && !media) || !selected.size || posting || uploadingMedia) return;
@@ -1182,6 +1210,7 @@ function CrossPostSection() {
       const { data } = await client.post('/command-center/cross-post', { content: content.trim(), mediaUrl: media?.url, platforms: [...selected] });
       setLastResult(data.targets || []);
       setHistory(prev => [{ id: data.id, content: content.trim(), mediaUrl: data.mediaUrl, targets: data.targets, createdAt: new Date().toISOString() }, ...(prev || [])]);
+      if (!data.historySaved) showToast('Your post was sent, but its history will finish syncing shortly.', 'error');
       setContent('');
       setSelected(new Set());
       setMedia(null);
@@ -1193,19 +1222,23 @@ function CrossPostSection() {
   }
 
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
-  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p]);
+  const connectedPlatforms = CONNECTED_SOCIAL_PLATFORMS.filter(p => connected[p] && platforms[p]?.crossPost?.supported);
   const otherConnectedPlatforms = connectedPlatforms.filter(p => !ACCOUNT_OWNED_CROSS_POST_PLATFORMS.includes(p));
   const platformTargetButton = (p) => {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+    const capability = platforms[p]?.crossPost;
+    if (!capability?.supported) return null;
     const active = selected.has(p);
-    const real = REAL_PUBLISH_PLATFORMS.includes(p);
+    const needsPhoto = capability.requiresPhoto && !media;
+    const deliveryHint = capability.delivery === 'handoff' ? ' · TikTok inbox' : capability.requiresPhoto ? ' · photo' : '';
     return (
       <button
-        key={p} type="button" onClick={() => toggle(p)}
+        key={p} type="button" onClick={() => toggle(p)} disabled={needsPhoto}
         className="btn btn-sm"
-        style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
+        title={needsPhoto ? 'Add a photo to publish to this account.' : undefined}
+        style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none', opacity: needsPhoto ? .55 : 1 }}
       >
-        <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!real && ' · queued'}
+        <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{deliveryHint}
       </button>
     );
   };
@@ -1216,16 +1249,18 @@ function CrossPostSection() {
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Post to multiple platforms</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
-          Publish to the connected platforms whose official API supports your account. Photo-only destinations show a clear requirement, and unfinished integrations remain queued instead of being marked as posted.
+          Send one post through the official publishing route for each selected account. TikTok uses its inbox handoff, then this history confirms when it is complete.
         </p>
         <div style={{ marginTop: 16, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Your account channels</div>
+          <div style={{ fontSize: '.75rem', fontWeight: 800, color: 'var(--muted)', marginBottom: 8 }}>Your publishing accounts</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {ACCOUNT_OWNED_CROSS_POST_PLATFORMS.map((p) => {
               const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
+              const platform = platforms[p];
+              if (!platform?.crossPost?.supported) return null;
               return connected[p] ? platformTargetButton(p) : (
-                <Link key={p} to="/connected-accounts" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
-                  <SourceMark source={p} label={meta.icon} /> Connect {meta.label}
+                <Link key={p} to="/command-center?tab=accounts" className="btn btn-ghost btn-sm" style={{ textDecoration: 'none' }}>
+                  <SourceMark source={p} label={meta.icon} /> {platform.configured ? `Connect ${meta.label}` : `${meta.label} setup needed`}
                 </Link>
               );
             })}
@@ -1233,7 +1268,7 @@ function CrossPostSection() {
         </div>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
-            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect an account</Link>
+            <Link to="/command-center?tab=accounts" className="btn btn-primary btn-sm">Connect a publishing account</Link>
           </div>
         ) : (
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
@@ -1252,7 +1287,7 @@ function CrossPostSection() {
               {media && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <img src={media.url} alt="Selected for cross-posting" style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 6 }} />
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMedia(null)}>Remove photo</button>
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={removePhoto}>Remove photo</button>
                 </div>
               )}
               {mediaError && <span style={{ color: 'var(--danger)', fontSize: '.76rem' }}>{mediaError}</span>}
@@ -1260,20 +1295,7 @@ function CrossPostSection() {
             <div>
               {otherConnectedPlatforms.length > 0 && <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 6 }}>Other connected platforms</div>}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {otherConnectedPlatforms.map(p => {
-                  const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
-                  const active = selected.has(p);
-                  const real = REAL_PUBLISH_PLATFORMS.includes(p);
-                  return (
-                    <button
-                      key={p} type="button" onClick={() => toggle(p)}
-                      className="btn btn-sm"
-                      style={{ background: active ? 'var(--primary)' : 'var(--bg-secondary)', color: active ? '#fff' : 'var(--text)', border: 'none' }}
-                    >
-                      <SourceMark source={p} label={meta.icon} active={active} /> {meta.label}{!real && ' · queued'}
-                    </button>
-                  );
-                })}
+                {otherConnectedPlatforms.map(platformTargetButton)}
               </div>
             </div>
             <button className="btn btn-primary" type="submit" disabled={posting || uploadingMedia || (!content.trim() && !media) || !selected.size} style={{ alignSelf: 'flex-start' }}>
@@ -1306,16 +1328,27 @@ function CrossPostSection() {
 
       {history && history.length > 0 && (
         <div>
-          <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>History</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+            <h3 style={{ fontSize: '.85rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', margin: 0 }}>History</h3>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={syncCrossPostStatuses} disabled={syncing}>
+              {syncing ? 'Checking...' : 'Refresh results'}
+            </button>
+          </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {history.map(h => (
               <div key={h.id} className="card">
                 {h.mediaUrl && <img src={h.mediaUrl} alt="Cross-posted" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 6, marginBottom: 10, background: 'var(--bg-secondary)' }} />}
                 <p style={{ margin: '0 0 8px', fontSize: '.85rem', whiteSpace: 'pre-wrap' }}>{h.content}</p>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: '.72rem', color: 'var(--muted)' }}>
-                  {(h.targets || []).map(t => (
-                    <span key={t.platform}>{(PLATFORM_RESULT_META[t.status] || {}).icon} {(SOURCE_META[t.platform] || {}).label || t.platform}</span>
-                  ))}
+                  {(h.targets || []).map(t => {
+                    const resultMeta = PLATFORM_RESULT_META[t.status] || PLATFORM_RESULT_META.failed;
+                    return (
+                      <span key={t.platform} title={t.error || resultMeta.label}>
+                        {resultMeta.icon} {(SOURCE_META[t.platform] || {}).label || t.platform}
+                        {t.status === 'posted' && t.postedUrl && <> <a href={t.postedUrl} target="_blank" rel="noopener noreferrer">View</a></>}
+                      </span>
+                    );
+                  })}
                   <span>· {timeAgo(h.createdAt)}</span>
                 </div>
               </div>

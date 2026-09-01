@@ -886,6 +886,13 @@ function apiBaseForRequest(req) {
   return requestHost === SAFE_PUBLIC_API_HOST ? SAFE_PUBLIC_API_BASE : FALLBACK_API_BASE;
 }
 
+const requestedMetaGraphVersion = String(process.env.META_GRAPH_API_VERSION || 'v24.0').trim();
+const META_GRAPH_API_VERSION = /^v\d+\.\d+$/.test(requestedMetaGraphVersion)
+  ? requestedMetaGraphVersion
+  : 'v24.0';
+const META_GRAPH_BASE = `https://graph.facebook.com/${META_GRAPH_API_VERSION}`;
+const META_LOGIN_BASE = `https://www.facebook.com/${META_GRAPH_API_VERSION}`;
+
 const SOCIAL_CFG = {
   linkedin: {
     authUrl:  'https://www.linkedin.com/oauth/v2/authorization',
@@ -909,8 +916,8 @@ const SOCIAL_CFG = {
     basicAuth: true,
   },
   facebook: {
-    authUrl:  'https://www.facebook.com/v18.0/dialog/oauth',
-    tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    authUrl:  `${META_LOGIN_BASE}/dialog/oauth`,
+    tokenUrl: `${META_GRAPH_BASE}/oauth/access_token`,
     clientId:     () => process.env.FACEBOOK_APP_ID,
     clientSecret: () => process.env.FACEBOOK_APP_SECRET,
     scope: 'public_profile,email',
@@ -918,8 +925,8 @@ const SOCIAL_CFG = {
     getToken: true,
   },
   instagram: {
-    authUrl:  'https://www.facebook.com/v18.0/dialog/oauth',
-    tokenUrl: 'https://graph.facebook.com/v18.0/oauth/access_token',
+    authUrl:  `${META_LOGIN_BASE}/dialog/oauth`,
+    tokenUrl: `${META_GRAPH_BASE}/oauth/access_token`,
     clientId:     () => process.env.INSTAGRAM_APP_ID,
     clientSecret: () => process.env.INSTAGRAM_APP_SECRET,
     // Meta limits publishing to approved apps and professional accounts. A
@@ -1302,7 +1309,57 @@ async function atprotoPostJSON(url, body, { accessToken } = {}) {
   }
 }
 
-// GET equivalent of postFormWithMeta — same "expose headers/status" shape
+function requestBytesWithMeta(url, { method = 'POST', body = Buffer.alloc(0), headers = {}, timeoutMs = 15000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.isBuffer(body) ? body : Buffer.from(body || '');
+    const u = new URL(url);
+    if (u.protocol !== 'https:') {
+      reject(new Error('Only HTTPS media uploads are allowed.'));
+      return;
+    }
+    const opts = {
+      hostname: u.hostname,
+      port: u.port || 443,
+      path: u.pathname + u.search,
+      method,
+      headers: {
+        Accept: 'application/json',
+        ...headers,
+        'Content-Length': payload.length,
+      },
+    };
+    const req = https.request(opts, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let data = null;
+        try { data = JSON.parse(raw); } catch {}
+        resolve({ data, raw, headers: res.headers, status: res.statusCode });
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`${method} request timeout`)));
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function atprotoPostBytes(url, body, { accessToken, contentType } = {}) {
+  let nonce;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const proof = createDPoPProof('POST', url, { nonce, accessToken });
+    const headers = { DPoP: proof, 'Content-Type': contentType || 'application/octet-stream' };
+    if (accessToken) headers.Authorization = `DPoP ${accessToken}`;
+    const result = await requestBytesWithMeta(url, { method: 'POST', body, headers });
+    const nextNonce = result.headers['dpop-nonce'];
+    if (nextNonce) nonce = nextNonce;
+    if (result.status >= 400 && result.data?.error === 'use_dpop_nonce' && attempt === 0) continue;
+    return result;
+  }
+}
+
+// GET equivalent of postFormWithMeta - same "expose headers/status" shape
 // atprotoGet below needs for its own DPoP-nonce retry.
 function getWithMeta(url, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -12648,7 +12705,7 @@ const PLATFORMS = {
     name: 'Facebook', color: '#1877F2', icon: 'facebook',
     description: 'See posts and discussions from your Facebook Groups.',
     scopes: ['email', 'public_profile'],
-    authUrl: 'https://www.facebook.com/v18.0/dialog/oauth',
+    authUrl: `${META_LOGIN_BASE}/dialog/oauth`,
     loginUrl: 'https://www.facebook.com/login',
     setupUrl: 'https://developers.facebook.com/apps',
     reviewRequired: false,
@@ -12658,7 +12715,7 @@ const PLATFORMS = {
     name: 'Instagram', color: '#E1306C', icon: 'instagram',
     description: 'Publish photos to your professional Instagram account and bring visual work into UFIconnect.',
     scopes: ['instagram_basic', 'instagram_content_publish', 'pages_show_list', 'pages_read_engagement'],
-    authUrl: 'https://www.facebook.com/v18.0/dialog/oauth',
+    authUrl: `${META_LOGIN_BASE}/dialog/oauth`,
     loginUrl: 'https://www.instagram.com/accounts/login/',
     setupUrl: 'https://developers.facebook.com/apps',
     reviewRequired: true,
@@ -12785,7 +12842,7 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
-const FORCE_COMING_SOON_PLATFORMS = new Set(['linkedin', 'tiktok']);
+const FORCE_COMING_SOON_PLATFORMS = new Set();
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
 // selected as a single source filter (see the FEED_SOCIAL_TABS branch
@@ -14589,14 +14646,9 @@ async function migrateDB() {
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role_settings JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_hidden BOOLEAN DEFAULT false`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_tokens JSONB DEFAULT '{}'`);
-    // Refresh tokens, kept separate from social_tokens rather than nested
-    // inside it — every existing call site (~70+) reads
-    // user.socialTokens[platform] expecting a bare access-token string
-    // directly usable as `Bearer ${token}`; changing that shape would mean
-    // touching all of them. A sibling map instead. Only providers whose
-    // OAuth flow actually requests offline access (currently just
-    // YouTube/Google — see SOCIAL_CFG.youtube's access_type:'offline') ever
-    // populate this; everyone else's entry stays absent.
+    // Refresh tokens stay separate from social_tokens because existing call
+    // sites expect a bare access token. Providers that issue refresh tokens
+    // populate this sibling map so long-lived account connections can renew.
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_refresh_tokens JSONB DEFAULT '{}'`);
     await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS social_connected_at JSONB DEFAULT '{}'`);
     await db.query(`
@@ -14848,13 +14900,9 @@ async function migrateDB() {
     `);
 
     // Command Center's cross-post tab — one row per compose-and-send attempt.
-    // `targets` is a JSONB array of {platform, status, postedUrl, error} —
-    // status is 'posted' only for platforms with a real, self-serve publish
-    // API this app can call today (Bluesky, Reddit — see publishToBluesky/
-    // publishToReddit); every other platform is recorded 'queued' and never
-    // marked posted, since there's no real publish-on-behalf-of-the-member
-    // API this app has access to for them yet (same reasoning as the AI
-    // Content Hub's drafts-only design above).
+    // `targets` is a JSONB array of provider outcomes. A row is persisted as
+    // processing before any provider call, then replaced with posted, handoff,
+    // failed, or unsupported results so a response cannot disappear midway.
     await db.query(`
       CREATE TABLE IF NOT EXISTS cross_posts (
         id         TEXT PRIMARY KEY,
@@ -17611,10 +17659,8 @@ app.post('/auth/reset-password', passwordResetLimiter, async (req, res) => {
 });
 
 // --- Social token helpers -----------------------------------------------------
-// refreshToken is optional — only Google/YouTube's OAuth flow currently
-// requests offline access (see SOCIAL_CFG.youtube), so every other provider
-// calls this with refreshToken undefined and socialRefreshTokens[platform]
-// simply never gets set for them, same as today.
+// refreshToken is optional because not every provider issues one. It is kept
+// in a sibling map so existing socialTokens call sites remain access-token-only.
 async function saveSocialToken(userId, platform, token, refreshToken, connectedAt = null) {
   const user = await getUser(userId);
   if (!user) throw new Error('User not found');
@@ -17876,7 +17922,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
     if (platform === 'facebook' || platform === 'instagram') {
       try {
         const longLived = await fetchJSON(
-          `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(accessToken)}`
+          `${META_GRAPH_BASE}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(accessToken)}`
         );
         if (longLived?.access_token) accessToken = longLived.access_token;
       } catch (e) {
@@ -17884,14 +17930,9 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
       }
     }
 
-    // Google access tokens expire in ~1 hour — YouTube's Following-tab
-    // subscription feed (the only consumer of a long-lived connection here)
-    // would otherwise start failing with a 401 an hour after connecting,
-    // with no way to recover short of disconnecting and reconnecting.
-    // raw.refresh_token only ever arrives here because SOCIAL_CFG.youtube
-    // requests access_type:'offline'+prompt:'consent' — every other
-    // provider's raw.refresh_token is simply undefined, so this is a no-op
-    // for them, same as before.
+    // Store a provider refresh token whenever it is issued. Cross-Post uses
+    // these values to recover its supported destinations from token expiry;
+    // YouTube also uses the same storage for its subscription feed refresh.
     await saveSocialToken(entry.userId, platform, accessToken, raw.refresh_token || raw.data?.refresh_token);
     const connectedUser = await getUser(entry.userId);
     const connectedAt = connectedSourceWindow(connectedUser, platform).connectedAt;
@@ -17948,6 +17989,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       commandCenterOnly: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
       requiresMembership: MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
       locked: user?.plan === 'free' && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(key),
+      crossPost: getCrossPostCapability(key),
     }];
   }));
   res.json({
@@ -26153,18 +26195,36 @@ app.get('/command-center/your-content/download', authenticate, async (req, res) 
 });
 
 // --- Command Center: cross-post --------------------------------------------
-// Only Bluesky and Reddit actually publish — both have a real, self-serve
-// public API this app can call today with what's already configured (no
-// app review/elevated-access tier needed, unlike LinkedIn/Twitter/Facebook —
-// see FOLLOWING_SOURCE_FETCHERS' own comment for the same constraint on the
-// read side). Every other requested platform is recorded 'queued' and never
-// marked posted — this must never silently pretend to have posted somewhere
-// it didn't.
-// Each platform in this set has an official member-publishing endpoint wired
-// below. A provider can still reject a request when its app review, account
-// type, or OAuth scope is missing; that comes back as failed, never posted.
-const REAL_PUBLISH_PLATFORMS = new Set(['bluesky', 'reddit', 'twitter', 'threads', 'instagram', 'tiktok']);
-const PHOTO_REQUIRED_PUBLISH_PLATFORMS = new Set(['instagram', 'tiktok']);
+// Cross-post runs only through the provider APIs wired below. Unsupported
+// connected accounts are excluded from the composer rather than queued as if
+// they had published. Each target returns its provider result independently,
+// so one rejected destination never blocks the rest of the selected set.
+const CROSS_POST_CAPABILITIES = Object.freeze({
+  bluesky:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
+  reddit:    { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
+  twitter:   { supported: true, delivery: 'direct', media: 'link', requiresPhoto: false },
+  linkedin:  { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
+  threads:   { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: false },
+  instagram: { supported: true, delivery: 'direct', media: 'native-image', requiresPhoto: true },
+  tiktok:    { supported: true, delivery: 'handoff', media: 'native-image', requiresPhoto: true },
+});
+const MAX_CROSS_POST_TARGETS = 7;
+const CROSS_POST_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const BLUESKY_IMAGE_MAX_BYTES = 976 * 1024;
+
+function getCrossPostCapability(platform) {
+  return CROSS_POST_CAPABILITIES[platform] || {
+    supported: false,
+    delivery: 'unsupported',
+    media: 'none',
+    requiresPhoto: false,
+  };
+}
+
+function linkedInApiVersion() {
+  const value = String(process.env.LINKEDIN_API_VERSION || '202606').trim();
+  return /^\d{6}$/.test(value) ? value : '202606';
+}
 
 function crossPostText(text, mediaUrl, limit) {
   const clean = String(text || '').trim();
@@ -26173,15 +26233,141 @@ function crossPostText(text, mediaUrl, limit) {
   return `${clean.slice(0, Math.max(0, limit - suffix.length))}${suffix}`.trim();
 }
 
+function isCloudinaryCrossPostImageUrl(url) {
+  const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || '').trim();
+  if (!cloudName) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:'
+      && parsed.hostname === 'res.cloudinary.com'
+      && parsed.pathname.startsWith(`/${cloudName}/image/upload/`);
+  } catch {
+    return false;
+  }
+}
+
+function cloudinaryJpegVariant(mediaUrl) {
+  const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || '').trim();
+  const marker = `/${cloudName}/image/upload/`;
+  if (!cloudName || !mediaUrl.includes(marker)) return mediaUrl;
+  return mediaUrl.replace(marker, `${marker}f_jpg,q_auto:good,w_1600/`);
+}
+
+function downloadCrossPostImage(mediaUrl, { maxBytes = CROSS_POST_IMAGE_MAX_BYTES } = {}) {
+  return new Promise((resolve, reject) => {
+    const limitLabel = maxBytes < 1024 * 1024 ? `${Math.floor(maxBytes / 1024)} KB` : `${Math.floor(maxBytes / 1024 / 1024)} MB`;
+    let settled = false;
+    const finish = (handler, value) => {
+      if (settled) return;
+      settled = true;
+      handler(value);
+    };
+    const requestImage = (target, redirects = 0) => {
+      if (!isCloudinaryCrossPostImageUrl(target)) {
+        finish(reject, new Error('Cross-post media must be a UFIconnect image upload.'));
+        return;
+      }
+      let parsed;
+      try { parsed = new URL(target); } catch { finish(reject, new Error('The image URL is invalid.')); return; }
+      const req = https.get(parsed, { headers: { 'User-Agent': 'UFIconnect/1.0' } }, (upstream) => {
+        const status = Number(upstream.statusCode || 0);
+        if (status >= 300 && status < 400 && upstream.headers.location && redirects < 2) {
+          upstream.resume();
+          const next = new URL(upstream.headers.location, parsed).toString();
+          requestImage(next, redirects + 1);
+          return;
+        }
+        if (status < 200 || status >= 300) {
+          upstream.resume();
+          finish(reject, new Error(`Could not retrieve the uploaded image (HTTP ${status || 'unknown'}).`));
+          return;
+        }
+        const contentType = String(upstream.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        if (!/^image\/(jpeg|png|webp|gif)$/.test(contentType)) {
+          upstream.resume();
+          finish(reject, new Error('The selected file is not a supported image format.'));
+          return;
+        }
+        const advertisedSize = Number(upstream.headers['content-length'] || 0);
+        if (Number.isFinite(advertisedSize) && advertisedSize > maxBytes) {
+          upstream.resume();
+          finish(reject, new Error(`The image is larger than this platform allows (${limitLabel}).`));
+          return;
+        }
+        let total = 0;
+        const chunks = [];
+        upstream.on('data', (chunk) => {
+          if (settled) return;
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buffer.length;
+          if (total > maxBytes) {
+            upstream.destroy();
+            finish(reject, new Error(`The image is larger than this platform allows (${limitLabel}).`));
+            return;
+          }
+          chunks.push(buffer);
+        });
+        upstream.on('error', error => finish(reject, error));
+        upstream.on('end', () => finish(resolve, { body: Buffer.concat(chunks), contentType, sourceUrl: target }));
+      });
+      req.on('error', error => finish(reject, error));
+      req.setTimeout(15000, () => req.destroy(new Error('Image download timed out.')));
+    };
+    requestImage(mediaUrl);
+  });
+}
+
+async function downloadBlueskyImage(mediaUrl) {
+  try {
+    const image = await downloadCrossPostImage(mediaUrl, { maxBytes: BLUESKY_IMAGE_MAX_BYTES });
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(image.contentType)) return image;
+  } catch (error) {
+    const compactUrl = cloudinaryJpegVariant(mediaUrl);
+    if (compactUrl === mediaUrl) throw error;
+  }
+  return downloadCrossPostImage(cloudinaryJpegVariant(mediaUrl), { maxBytes: BLUESKY_IMAGE_MAX_BYTES });
+}
+
+async function downloadLinkedInImage(mediaUrl) {
+  const image = await downloadCrossPostImage(mediaUrl);
+  if (['image/jpeg', 'image/png'].includes(image.contentType)) return image;
+  return downloadCrossPostImage(cloudinaryJpegVariant(mediaUrl));
+}
+
 async function publishToBluesky(token, { text, mediaUrl }) {
   let session;
-  try { session = JSON.parse(token); } catch { throw new Error('Bluesky session invalid — reconnect the account.'); }
-  if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw new Error('Bluesky session invalid — reconnect the account.');
+  try { session = JSON.parse(token); } catch { throw new Error('Bluesky session invalid - reconnect the account.'); }
+  if (!session?.accessToken || !session?.did || !session?.pdsUrl) throw new Error('Bluesky session invalid - reconnect the account.');
+  let imageBlob = null;
+  if (mediaUrl) {
+    const image = await downloadBlueskyImage(mediaUrl);
+    const upload = await atprotoPostBytes(`${session.pdsUrl}/xrpc/com.atproto.repo.uploadBlob`, image.body, {
+      accessToken: session.accessToken,
+      contentType: image.contentType,
+    });
+    if (upload?.status < 200 || upload?.status >= 300 || !upload?.data?.blob) {
+      throw new Error(`Bluesky image upload HTTP ${upload?.status || 'unknown'}: ${JSON.stringify(upload?.data || {}).slice(0, 180)}`);
+    }
+    imageBlob = upload.data.blob;
+  }
   const url = `${session.pdsUrl}/xrpc/com.atproto.repo.createRecord`;
   const result = await atprotoPostJSON(url, {
     repo: session.did,
     collection: 'app.bsky.feed.post',
-    record: { text: crossPostText(text, mediaUrl, 300), createdAt: new Date().toISOString(), $type: 'app.bsky.feed.post' },
+    record: {
+      text: String(text || '').trim().slice(0, 300),
+      createdAt: new Date().toISOString(),
+      $type: 'app.bsky.feed.post',
+      ...(imageBlob ? {
+        embed: {
+          $type: 'app.bsky.embed.images',
+          images: [{
+            alt: String(text || '').trim().slice(0, 1000) || 'Image shared from UFIconnect',
+            image: imageBlob,
+          }],
+        },
+      } : {}),
+    },
   }, { accessToken: session.accessToken });
   if (result?.status >= 400) throw new Error(`Bluesky HTTP ${result.status}: ${JSON.stringify(result.data).slice(0, 200)}`);
   const rkey = (result?.data?.uri || '').split('/').pop();
@@ -26228,19 +26414,56 @@ async function publishToTwitter(token, { text, mediaUrl }) {
   return `https://x.com/i/web/status/${result.data.data.id}`;
 }
 
+async function uploadLinkedInImage(token, owner, mediaUrl) {
+  const image = await downloadLinkedInImage(mediaUrl);
+  const linkedInHeaders = {
+    Authorization: `Bearer ${token}`,
+    'Linkedin-Version': linkedInApiVersion(),
+    'X-Restli-Protocol-Version': '2.0.0',
+  };
+  const initialize = await postJSONWithMeta('https://api.linkedin.com/rest/images?action=initializeUpload', {
+    initializeUploadRequest: { owner },
+  }, linkedInHeaders);
+  const imageUrn = initialize.data?.value?.image;
+  const uploadUrl = initialize.data?.value?.uploadUrl;
+  if (initialize.status < 200 || initialize.status >= 300 || !imageUrn || !uploadUrl) {
+    throw new Error(`LinkedIn image setup HTTP ${initialize.status}: ${JSON.stringify(initialize.data || {}).slice(0, 180)}`);
+  }
+  const upload = await requestBytesWithMeta(uploadUrl, {
+    method: 'PUT',
+    body: image.body,
+    headers: { 'Content-Type': image.contentType },
+    timeoutMs: 30000,
+  });
+  if (upload.status < 200 || upload.status >= 300) {
+    throw new Error(`LinkedIn image upload HTTP ${upload.status}: ${upload.raw.slice(0, 180)}`);
+  }
+  return imageUrn;
+}
+
 async function publishToLinkedIn(token, { text, mediaUrl }) {
   const identity = await fetchJSON('https://api.linkedin.com/v2/userinfo', { Authorization: `Bearer ${token}` });
   if (!identity?.sub) throw new Error('LinkedIn session is missing the member identity - reconnect the account.');
+  const author = `urn:li:person:${identity.sub}`;
+  const imageUrn = mediaUrl ? await uploadLinkedInImage(token, author, mediaUrl) : null;
   const result = await postJSONWithMeta('https://api.linkedin.com/rest/posts', {
-    author: `urn:li:person:${identity.sub}`,
-    commentary: crossPostText(text, mediaUrl, 3000),
+    author,
+    commentary: String(text || '').trim().slice(0, 3000),
     visibility: 'PUBLIC',
     distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
     lifecycleState: 'PUBLISHED',
     isReshareDisabledByAuthor: false,
+    ...(imageUrn ? {
+      content: {
+        media: {
+          id: imageUrn,
+          altText: String(text || '').trim().slice(0, 120) || 'Image shared from UFIconnect',
+        },
+      },
+    } : {}),
   }, {
     Authorization: `Bearer ${token}`,
-    'Linkedin-Version': '202509',
+    'Linkedin-Version': linkedInApiVersion(),
     'X-Restli-Protocol-Version': '2.0.0',
   });
   if (result.status < 200 || result.status >= 300) {
@@ -26263,27 +26486,46 @@ async function publishToThreads(token, { text, mediaUrl }) {
   if (published.status < 200 || published.status >= 300 || !published.data?.id) {
     throw new Error(`Threads publish HTTP ${published.status}: ${JSON.stringify(published.data || {}).slice(0, 180)}`);
   }
-  return null;
+  const details = await fetchJSON(`https://graph.threads.net/${published.data.id}?fields=permalink&access_token=${encodeURIComponent(token)}`).catch(() => null);
+  return details?.permalink || null;
+}
+
+const waitFor = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitForInstagramContainer(token, containerId) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const status = await fetchJSON(
+      `${META_GRAPH_BASE}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`
+    );
+    const value = String(status?.status_code || status?.status || '').toUpperCase();
+    if (value === 'FINISHED' || value === 'PUBLISHED') return;
+    if (value === 'ERROR' || value === 'EXPIRED') {
+      throw new Error('Instagram could not prepare this photo. Try a different image.');
+    }
+    await waitFor(1200);
+  }
+  throw new Error('Instagram is still preparing this photo. Try again in a moment.');
 }
 
 async function publishToInstagram(token, { text, mediaUrl }) {
   if (!mediaUrl) throw new Error('Instagram requires a photo. Add one before publishing.');
-  const pages = await fetchJSON(`https://graph.facebook.com/v19.0/me/accounts?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`);
+  const pages = await fetchJSON(`${META_GRAPH_BASE}/me/accounts?fields=instagram_business_account&access_token=${encodeURIComponent(token)}`);
   const accountId = pages?.data?.map(page => page.instagram_business_account?.id).find(Boolean);
   if (!accountId) throw new Error('No professional Instagram account is linked to this Meta connection.');
-  const container = await postFormWithMeta(`https://graph.facebook.com/v19.0/${accountId}/media`, {
+  const container = await postFormWithMeta(`${META_GRAPH_BASE}/${accountId}/media`, {
     image_url: mediaUrl, caption: String(text || '').slice(0, 2200), access_token: token,
   });
   if (container.status < 200 || container.status >= 300 || !container.data?.id) {
     throw new Error(`Instagram media HTTP ${container.status}: ${JSON.stringify(container.data || {}).slice(0, 180)}`);
   }
-  const published = await postFormWithMeta(`https://graph.facebook.com/v19.0/${accountId}/media_publish`, {
+  await waitForInstagramContainer(token, container.data.id);
+  const published = await postFormWithMeta(`${META_GRAPH_BASE}/${accountId}/media_publish`, {
     creation_id: container.data.id, access_token: token,
   });
   if (published.status < 200 || published.status >= 300 || !published.data?.id) {
     throw new Error(`Instagram publish HTTP ${published.status}: ${JSON.stringify(published.data || {}).slice(0, 180)}`);
   }
-  const permalink = await fetchJSON(`https://graph.facebook.com/v19.0/${published.data.id}?fields=permalink&access_token=${encodeURIComponent(token)}`).catch(() => null);
+  const permalink = await fetchJSON(`${META_GRAPH_BASE}/${published.data.id}?fields=permalink&access_token=${encodeURIComponent(token)}`).catch(() => null);
   return permalink?.permalink || null;
 }
 
@@ -26297,10 +26539,195 @@ async function publishToTikTok(token, { text, mediaUrl }) {
     post_info: { title: String(text || 'UFIconnect photo').slice(0, 90), description: String(text || '').slice(0, 4000) },
     source_info: { source: 'PULL_FROM_URL', photo_images: [mediaUrl], photo_cover_index: 0 },
   }, { Authorization: `Bearer ${token}` });
-  if (result.status < 200 || result.status >= 300 || result.data?.error?.code !== 'ok') {
+  if (!tiktokResponseSucceeded(result)) {
     throw new Error(`TikTok HTTP ${result.status}: ${(result.data?.error?.message || JSON.stringify(result.data || {})).slice(0, 180)}`);
   }
   return result.data?.data?.publish_id || null;
+}
+
+function shortCrossPostError(error) {
+  return String(error?.message || 'The platform did not accept this post.').slice(0, 200);
+}
+
+function tiktokResponseSucceeded(result) {
+  const code = result?.data?.error?.code;
+  return result?.status >= 200 && result?.status < 300 && (code === undefined || code === null || code === 0 || code === '0' || code === 'ok');
+}
+
+async function fetchTikTokPublishStatus(token, publishId) {
+  const result = await postJSONWithMeta('https://open.tiktokapis.com/v2/post/publish/status/fetch/', {
+    publish_id: publishId,
+  }, { Authorization: `Bearer ${token}` });
+  if (!tiktokResponseSucceeded(result)) {
+    throw new Error(`TikTok status HTTP ${result.status}: ${(result.data?.error?.message || JSON.stringify(result.data || {})).slice(0, 180)}`);
+  }
+  const data = result.data?.data || {};
+  const state = String(data.status || data.publish_status || data.post_status || '').toUpperCase();
+  const postId = data.publicaly_available_post_id || data.publicly_available_post_id || data.post_id || data.video_id;
+  const username = data.creator_username || data.username;
+  const postedUrl = data.share_url || data.permalink || (postId && username ? `https://www.tiktok.com/@${username}/video/${postId}` : null);
+  if (['PUBLISH_COMPLETE', 'PUBLISHED', 'POSTED'].includes(state)) {
+    return { status: 'posted', postedUrl: postedUrl || null, error: null };
+  }
+  if (state.includes('FAIL') || state === 'CANCELED' || state === 'CANCELLED') {
+    return { status: 'failed', error: String(data.fail_reason || data.error_message || 'TikTok could not publish this post.').slice(0, 200) };
+  }
+  const error = state === 'SEND_TO_USER_INBOX'
+    ? 'Waiting for you to finish this post in the TikTok inbox.'
+    : state ? `TikTok is processing this post (${state.toLowerCase().replaceAll('_', ' ')}).` : 'TikTok is still processing this post.';
+  return { status: 'handoff', error };
+}
+
+function isUnauthorizedCrossPostError(error) {
+  return /\b401\b|expired access token|invalid access token|token.*(?:expired|invalid)|unauthorized/i.test(String(error?.message || ''));
+}
+
+async function refreshCrossPostAccessToken(userId, platform) {
+  const user = await getUser(userId);
+  const currentToken = user?.socialTokens?.[platform];
+  const refreshToken = user?.socialRefreshTokens?.[platform];
+  const cfg = SOCIAL_CFG[platform];
+  if (!user || !currentToken || !cfg) return null;
+  try {
+    let raw;
+    let accessToken;
+    let nextRefreshToken;
+    if (platform === 'twitter' || platform === 'reddit') {
+      if (!refreshToken) return null;
+      const basicAuth = Buffer.from(`${cfg.clientId()}:${cfg.clientSecret()}`).toString('base64');
+      raw = await postForm(cfg.tokenUrl, { grant_type: 'refresh_token', refresh_token: refreshToken }, { Authorization: `Basic ${basicAuth}` });
+      accessToken = raw?.access_token;
+      nextRefreshToken = raw?.refresh_token || refreshToken;
+    } else if (platform === 'tiktok') {
+      if (!refreshToken) return null;
+      raw = await postForm(cfg.tokenUrl, {
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_key: cfg.clientId(),
+        client_secret: cfg.clientSecret(),
+      });
+      accessToken = raw?.data?.access_token || raw?.access_token;
+      nextRefreshToken = raw?.data?.refresh_token || raw?.refresh_token || refreshToken;
+    } else if (platform === 'threads') {
+      raw = await fetchJSON(`https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=${encodeURIComponent(currentToken)}`);
+      accessToken = raw?.access_token;
+      nextRefreshToken = refreshToken;
+    } else if (platform === 'instagram') {
+      raw = await fetchJSON(
+        `${META_GRAPH_BASE}/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(cfg.clientId())}&client_secret=${encodeURIComponent(cfg.clientSecret())}&fb_exchange_token=${encodeURIComponent(currentToken)}`
+      );
+      accessToken = raw?.access_token;
+      nextRefreshToken = refreshToken;
+    } else {
+      return null;
+    }
+    if (!accessToken) return null;
+    await saveSocialToken(userId, platform, accessToken, nextRefreshToken);
+    return accessToken;
+  } catch (error) {
+    console.warn(`[cross-post ${platform} token refresh]`, error.message);
+    return null;
+  }
+}
+
+async function publishCrossPostTarget(user, platform, { content, mediaUrl }) {
+  const capability = getCrossPostCapability(platform);
+  if (!capability.supported) {
+    return { platform, status: 'unsupported', error: 'UFIconnect cannot publish to this connected account yet.' };
+  }
+  const token = user.socialTokens?.[platform];
+  if (!token) return { platform, status: 'failed', error: 'Not connected.' };
+  if (capability.requiresPhoto && !mediaUrl) {
+    const label = platform === 'instagram' ? 'Instagram' : 'TikTok';
+    return { platform, status: 'failed', error: `${label} requires a photo.` };
+  }
+  const deliver = async (accessToken) => {
+    let postedUrl = null;
+    if (platform === 'bluesky') postedUrl = await publishToBluesky(accessToken, { text: content, mediaUrl });
+    else if (platform === 'reddit') postedUrl = await publishToReddit(accessToken, { text: content, mediaUrl });
+    else if (platform === 'twitter') postedUrl = await publishToTwitter(accessToken, { text: content, mediaUrl });
+    else if (platform === 'linkedin') postedUrl = await publishToLinkedIn(accessToken, { text: content, mediaUrl });
+    else if (platform === 'threads') postedUrl = await publishToThreads(accessToken, { text: content, mediaUrl });
+    else if (platform === 'instagram') postedUrl = await publishToInstagram(accessToken, { text: content, mediaUrl });
+    else if (platform === 'tiktok') {
+      const publishId = await publishToTikTok(accessToken, { text: content, mediaUrl });
+      if (!publishId) throw new Error('TikTok did not return a handoff ID.');
+      return { platform, status: 'handoff', publishId, error: 'Sent to TikTok. Finish the post from your TikTok inbox.' };
+    }
+    return { platform, status: 'posted', postedUrl: postedUrl || null };
+  };
+  try {
+    return await deliver(token);
+  } catch (error) {
+    let finalError = error;
+    if (isUnauthorizedCrossPostError(error)) {
+      const refreshedToken = await refreshCrossPostAccessToken(user.id, platform);
+      if (refreshedToken) {
+        try {
+          return await deliver(refreshedToken);
+        } catch (retryError) {
+          finalError = retryError;
+        }
+      }
+    }
+    console.error(`[/command-center/cross-post] ${platform}:`, finalError.message);
+    return { platform, status: 'failed', error: shortCrossPostError(finalError) };
+  }
+}
+
+function normalizeCrossPostTargets(targets) {
+  if (Array.isArray(targets)) return targets;
+  try {
+    const parsed = JSON.parse(targets || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function crossPostRowToApi(row) {
+  return {
+    id: row.id,
+    content: row.content,
+    mediaUrl: row.media_url,
+    targets: normalizeCrossPostTargets(row.targets),
+    createdAt: row.created_at,
+  };
+}
+
+async function synchronizeTikTokCrossPosts(user, rows) {
+  const token = user.socialTokens?.tiktok;
+  if (!token) return { posts: rows.map(crossPostRowToApi), updated: 0 };
+  const idsToCheck = new Set(rows
+    .filter(row => normalizeCrossPostTargets(row.targets).some(target => target.platform === 'tiktok' && target.status === 'handoff' && target.publishId))
+    .slice(0, 10)
+    .map(row => row.id));
+  const checks = await Promise.all(rows.map(async (row) => {
+    if (!idsToCheck.has(row.id)) return { row, updated: false };
+    const targets = normalizeCrossPostTargets(row.targets);
+    const nextTargets = await Promise.all(targets.map(async (target) => {
+      if (target.platform !== 'tiktok' || target.status !== 'handoff' || !target.publishId) return target;
+      try {
+        const next = await fetchTikTokPublishStatus(token, target.publishId);
+        return { ...target, ...next };
+      } catch (error) {
+        console.warn('[cross-post TikTok status]', error.message);
+        return target;
+      }
+    }));
+    if (JSON.stringify(targets) === JSON.stringify(nextTargets)) return { row, updated: false };
+    try {
+      await db.query(`UPDATE cross_posts SET targets=$1 WHERE id=$2 AND user_id=$3`, [JSON.stringify(nextTargets), row.id, user.id]);
+      return { row: { ...row, targets: nextTargets }, updated: true };
+    } catch (error) {
+      console.error('[cross-post TikTok status persistence]', error.message);
+      return { row, updated: false };
+    }
+  }));
+  return {
+    posts: checks.map(check => crossPostRowToApi(check.row)),
+    updated: checks.filter(check => check.updated).length,
+  };
 }
 
 app.post('/command-center/cross-post', authenticate, async (req, res) => {
@@ -26308,57 +26735,42 @@ app.post('/command-center/cross-post', authenticate, async (req, res) => {
   if (!user || user.plan === 'free') {
     return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
   }
+  if (!db.isConnected()) {
+    return res.status(503).json({ message: 'Cross-post is temporarily unavailable while account storage reconnects. Please try again shortly.' });
+  }
   const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
   const requestedMediaUrl = typeof req.body?.mediaUrl === 'string' ? req.body.mediaUrl.trim() : '';
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const mediaUrl = cloudName && requestedMediaUrl.startsWith(`https://res.cloudinary.com/${cloudName}/`)
-    ? requestedMediaUrl.slice(0, 1000)
-    : null;
-  const platforms = Array.isArray(req.body?.platforms) ? req.body.platforms.filter(p => CONNECTED_SOCIAL_PLATFORMS.includes(p)) : [];
+  const mediaUrl = isCloudinaryCrossPostImageUrl(requestedMediaUrl) ? requestedMediaUrl.slice(0, 1000) : null;
+  const platforms = [...new Set((Array.isArray(req.body?.platforms) ? req.body.platforms : [])
+    .map(platform => String(platform || '').trim().toLowerCase())
+    .filter(platform => CONNECTED_SOCIAL_PLATFORMS.has(platform)))]
+    .slice(0, MAX_CROSS_POST_TARGETS);
   if (!content && !mediaUrl) return res.status(400).json({ message: 'Write something or add a photo.' });
+  if (content.length > 4000) return res.status(400).json({ message: 'Keep the post under 4,000 characters.' });
   if (requestedMediaUrl && !mediaUrl) return res.status(400).json({ message: 'The photo must be uploaded through UFIconnect first.' });
   if (!platforms.length) return res.status(400).json({ message: 'Select at least one platform.' });
 
-  const targets = [];
-  for (const platform of platforms) {
-    const token = user.socialTokens?.[platform];
-    if (!token) { targets.push({ platform, status: 'failed', error: 'Not connected.' }); continue; }
-    if (!REAL_PUBLISH_PLATFORMS.has(platform)) {
-      targets.push({ platform, status: 'queued', error: 'Publishing API pending platform approval — saved, not yet posted.' });
-      continue;
-    }
-    if (PHOTO_REQUIRED_PUBLISH_PLATFORMS.has(platform) && !mediaUrl) {
-      targets.push({ platform, status: 'failed', error: `${platform === 'instagram' ? 'Instagram' : 'TikTok'} requires a photo.` });
-      continue;
-    }
-    try {
-      let postedUrl = null;
-      if (platform === 'bluesky') postedUrl = await publishToBluesky(token, { text: content, mediaUrl });
-      else if (platform === 'reddit') postedUrl = await publishToReddit(token, { text: content, mediaUrl });
-      else if (platform === 'twitter') postedUrl = await publishToTwitter(token, { text: content, mediaUrl });
-      else if (platform === 'linkedin') postedUrl = await publishToLinkedIn(token, { text: content, mediaUrl });
-      else if (platform === 'threads') postedUrl = await publishToThreads(token, { text: content, mediaUrl });
-      else if (platform === 'instagram') postedUrl = await publishToInstagram(token, { text: content, mediaUrl });
-      else if (platform === 'tiktok') {
-        const publishId = await publishToTikTok(token, { text: content, mediaUrl });
-        targets.push({ platform, status: 'handoff', publishId, error: 'Sent to TikTok. Finish the post from your TikTok inbox.' });
-        continue;
-      }
-      targets.push({ platform, status: 'posted', postedUrl });
-    } catch (e) {
-      console.error(`[/command-center/cross-post] ${platform}:`, e.message);
-      targets.push({ platform, status: 'failed', error: e.message.slice(0, 200) });
-    }
-  }
-
   const id = `xp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  if (db.isConnected()) {
+  const initialTargets = platforms.map(platform => ({ platform, status: 'processing', error: 'Preparing delivery.' }));
+  try {
     await db.query(
       `INSERT INTO cross_posts (id, user_id, content, media_url, targets, created_at) VALUES ($1,$2,$3,$4,$5,NOW())`,
-      [id, req.user.id, content, mediaUrl, JSON.stringify(targets)]
-    ).catch(e => console.error('[cross_posts insert]', e.message));
+      [id, req.user.id, content, mediaUrl, JSON.stringify(initialTargets)]
+    );
+  } catch (error) {
+    console.error('[cross_posts insert]', error.message);
+    return res.status(503).json({ message: 'Cross-post history could not be prepared. Nothing was sent; please try again shortly.' });
   }
-  res.json({ id, targets, mediaUrl });
+
+  const targets = await Promise.all(platforms.map(platform => publishCrossPostTarget(user, platform, { content, mediaUrl })));
+  let historySaved = true;
+  try {
+    await db.query(`UPDATE cross_posts SET targets=$1 WHERE id=$2 AND user_id=$3`, [JSON.stringify(targets), id, req.user.id]);
+  } catch (error) {
+    historySaved = false;
+    console.error('[cross_posts update]', error.message);
+  }
+  res.status(historySaved ? 200 : 202).json({ id, targets, mediaUrl, historySaved });
 });
 
 app.get('/command-center/cross-post/history', authenticate, async (req, res) => {
@@ -26369,13 +26781,32 @@ app.get('/command-center/cross-post/history', authenticate, async (req, res) => 
   if (!db.isConnected()) return res.json({ posts: [] });
   try {
     const { rows } = await db.query(
-      `SELECT id, content, media_url, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`,
+      `SELECT id, content, media_url, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.id]
     );
-    res.json({ posts: rows.map(r => ({ id: r.id, content: r.content, mediaUrl: r.media_url, targets: r.targets, createdAt: r.created_at })) });
+    res.json({ posts: rows.map(crossPostRowToApi) });
   } catch (e) {
     console.error('[/command-center/cross-post/history]', e.message);
     res.status(500).json({ message: 'Could not load history.' });
+  }
+});
+
+app.post('/command-center/cross-post/sync', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user || user.plan === 'free') {
+    return res.status(403).json({ message: 'Cross-post is a Pro feature — upgrade to use it.' });
+  }
+  if (!db.isConnected()) return res.status(503).json({ message: 'Cross-post history is temporarily unavailable.' });
+  try {
+    const { rows } = await db.query(
+      `SELECT id, content, media_url, targets, created_at FROM cross_posts WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50`,
+      [req.user.id]
+    );
+    const result = await synchronizeTikTokCrossPosts(user, rows);
+    res.json(result);
+  } catch (error) {
+    console.error('[/command-center/cross-post/sync]', error.message);
+    res.status(500).json({ message: 'Could not refresh cross-post results.' });
   }
 });
 
