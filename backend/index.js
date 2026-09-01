@@ -9990,7 +9990,9 @@ function currentLiveCameraPosts() {
 // oEmbed is a lightweight public check that rejects deleted, private, and
 // embedding-disabled YouTube streams before they are put in Travel. It is
 // intentionally shared for six hours so this quality check cannot become a
-// per-visitor request fan-out.
+// per-visitor request fan-out. The check is advisory: YouTube can rate-limit
+// or briefly reject oEmbed from a server even while its embed player works.
+// A transient metadata outage must never erase the entire live-travel rail.
 async function isLiveCameraEmbeddable(camera) {
   const now = Date.now();
   const cached = liveCameraVerificationCache.get(camera.id);
@@ -10019,9 +10021,19 @@ async function verifiedLiveCameraPosts() {
   })));
   const valid = checks.filter(check => check.valid).map(check => check.post);
   if (valid.length < candidates.length) {
-    console.warn(`[Travel] omitted ${candidates.length - valid.length} unavailable live camera(s).`);
+    console.warn(`[Travel] ${candidates.length - valid.length} live camera metadata check(s) were unavailable.`);
   }
-  return valid;
+  // oEmbed is not the embed playback authority. Keep verified cameras first,
+  // then retain the curated fallbacks so a YouTube metadata hiccup cannot
+  // turn Travel into an empty tab. The browser player remains the final
+  // playback check and only one camera is mounted at a time client-side.
+  const verifiedIds = new Set(valid.map(post => post.id));
+  return [
+    ...valid.map(post => ({ ...post, liveVerified: true })),
+    ...candidates
+      .filter(post => !verifiedIds.has(post.id))
+      .map(post => ({ ...post, liveVerified: false })),
+  ];
 }
 
 function countryGuideUrl(destination) {
@@ -10367,6 +10379,26 @@ function mergeUniqueTravelPosts(...lists) {
   });
 }
 
+// A saved travel location should decide what starts the rail, not whether
+// the rail exists. Plenty of cities do not have a catalogued public stream
+// yet; in that case the member still gets a live worldwide window instead of
+// a blank Travel experience.
+function prioritizeLiveCamerasForLocation(cameras, location) {
+  const list = Array.isArray(cameras) ? cameras.filter(Boolean) : [];
+  if (!list.length || !location?.available) return list;
+  return list
+    .map((post, index) => ({ post, index, score: liveCameraLocationScore(post, location) }))
+    .sort((left, right) => (right.score - left.score) || (left.index - right.index))
+    .map(({ post, score }) => score > 0
+      ? {
+        ...post,
+        matchedByLocation: true,
+        locationMatch: score === 2 ? 'local' : 'country',
+        locationMatchLabel: score === 2 ? `Live in ${post.city}` : `Live in ${post.country}`,
+      }
+      : post);
+}
+
 async function getCountriesCameraFeed(location, viewerId = null) {
   const entry = await readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
     const [cameraResult, guideResult, newsResult] = await Promise.allSettled([
@@ -10429,11 +10461,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
     { preserveFirst: 0, chunkSize: 12 },
   );
   const travelPosts = mergeUniqueTravelPosts(regionalPosts, worldwidePosts);
-  const scopedCameras = selectedLocation
-    ? (location?.city
-      ? cameras.filter(post => travelCityMatches(post, location))
-      : cameras.filter(post => travelCountryMatches(post, location)))
-    : rankFeedPostsForLocation(cameras, location, { preserveFirst: 0, chunkSize: 12 });
+  const scopedCameras = prioritizeLiveCamerasForLocation(cameras, location);
   // Keep the live cameras as their own rail instead of spending the first
   // page of Travel on them. The client can rotate one lightweight player at
   // a time while the scroll below remains a full set of guides and travel

@@ -819,10 +819,10 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
     <section ref={loopRef} className="travel-live-loop" aria-label="Live travel cameras">
       <div className="travel-live-loop-header">
         <div>
-          <div className="travel-live-loop-title">{locationLabel ? `Live in ${locationLabel}` : 'Live travel'}</div>
+          <div className="travel-live-loop-title">{locationLabel ? `Live travel near ${locationLabel}` : 'Live travel'}</div>
           <div className="travel-live-loop-subtitle">
             {locationLabel
-              ? 'Verified live views matched to your selected travel location.'
+              ? 'Live views from your selected area first, then a wider world loop.'
               : 'A moving window into places worth keeping on the list.'}
           </div>
         </div>
