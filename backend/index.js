@@ -28817,6 +28817,13 @@ db.initDB().then(async () => {
     await migrateDB();
     await refreshSharedUserActivity();
     await Promise.all([refreshDbFeedPostCount(), refreshStagingPostCount()]);
+    // Do not leave a just-restarted API waiting for the first one-minute
+    // interval before its users can see content already staged by pipeline.
+    // The pipeline must never promote its own writes, so this stays api-only.
+    if (!IS_PIPELINE_ROLE) {
+      await transferStagedPosts({ reason: 'startup' });
+      await Promise.all([refreshDbFeedPostCount(), refreshStagingPostCount()]);
+    }
     checkDatabaseSize().catch(e => console.warn('[checkDatabaseSize] startup check failed:', e.message));
     const purgedFallbackPosts = await purgeFallbackFeedCache();
     if (purgedFallbackPosts) console.log(`[startup] Removed ${purgedFallbackPosts} generated fallback feed posts`);
