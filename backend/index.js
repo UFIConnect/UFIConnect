@@ -6716,7 +6716,7 @@ function logAgentAction(agentId, emoji, msg, color = '#CBD5E1') {
 const sseClients  = new Map();   // clientId ? res
 
 // Rolling dedup guard — keeps only the most recent SEEN_IDS_MAX IDs to bound memory
-const SEEN_IDS_MAX    = 6000;
+const SEEN_IDS_MAX    = envNumber('FEED_SEEN_IDS_MAX', 30000, 6000, 200000);
 const seenPostIds     = new Set();
 const seenPostIdQueue = [];      // insertion-order queue for rolling eviction
 
@@ -13609,7 +13609,9 @@ async function runWebCacheSubAgent() {
   const id = 'web_cache';
   try {
     runCacheHelperCheck();
-    runSortAgentCheck();
+    // The API reads already-ranked DB pages. Resorting the pipeline's
+    // in-memory source pools on the API service only steals CPU from requests.
+    if (IS_PIPELINE_ROLE) runSortAgentCheck();
     const sw = await fetchPublicText(new URL('/sw.js', WEB_OPTIMIZER_URL).toString(), { maxBytes: 100_000 }).catch(() => null);
     const hasServiceWorker = !!(sw && sw.statusCode < 400 && /CACHE_NAME|caches\./i.test(sw.body || ''));
     updateWebSubAgent(id, {
@@ -13666,14 +13668,17 @@ async function runWebStorageSubAgent() {
     },
   });
   try {
-    const sourcePosts = realFeedPosts([...agentSourceCache.values()].flatMap(v => v.posts || []));
-    const hotPosts = sortFeedBatch(realFeedPosts([...globalFeedCache.posts, ...sourcePosts]), 'web-storage-hot-cache', {
-      limit: WEB_STORAGE_BATCH_LIMIT,
-    });
-    // Only ever reached on the pipeline role (see the IS_PIPELINE_ROLE
-    // guard above), so this always targets staging, same as every other
-    // pipeline-side save — never feed_posts_cache directly.
-    const saved = db.isConnected() ? (await savePostsToDBFast(hotPosts, 'feed_posts_staging') || 0) : 0;
+    // Fresh posts are persisted by addAndBroadcast's coalesced ingest queue.
+    // Re-saving the whole hot cache here every 90 seconds was duplicate work:
+    // it generated thousands of staging upserts and promotion writes without
+    // making a single new post available. This pass stays as an audit and a
+    // stale-source healer, but it never competes with live feed traffic.
+    const sourcePostReferences = [...agentSourceCache.values()]
+      .reduce((total, cache) => total + (Array.isArray(cache?.posts) ? cache.posts.length : 0), 0);
+    const observedHotPosts = Math.min(
+      WEB_STORAGE_BATCH_LIMIT,
+      (Array.isArray(globalFeedCache.posts) ? globalFeedCache.posts.length : 0) + sourcePostReferences
+    );
 
     const stale = Object.keys(SOURCE_FETCHERS)
       .filter(id => {
@@ -13689,7 +13694,8 @@ async function runWebStorageSubAgent() {
       increment: true,
       status: 'healthy',
       lastError: null,
-      saved,
+      saved: 0,
+      observedHotPosts,
       queuedSources: stale,
       batchLimit: WEB_STORAGE_BATCH_LIMIT,
       dbCap: MAX_CACHED_DB_POSTS,
@@ -13702,7 +13708,7 @@ async function runWebStorageSubAgent() {
       },
     });
     logAgentAction(id, '??',
-      `Fast storage pass saved ${saved.toLocaleString()} hot posts · queued ${stale.length} stale source(s) · DB ${dbSizeState.mb ?? '?'}MB/${DB_SIZE_LIMIT_MB}MB`,
+      `Storage audit observed ${observedHotPosts.toLocaleString()} hot post reference(s) · queued ${stale.length} stale source(s) · DB ${dbSizeState.mb ?? '?'}MB/${DB_SIZE_LIMIT_MB}MB`,
       '#FB7185');
   } catch (e) {
     updateWebSubAgent(id, { status: 'degraded', lastError: e.message });
@@ -17113,6 +17119,7 @@ const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `f
 // plan is upgraded, ideally alongside actually watching dbSizeState.
 const MAX_ARCHIVE_POSTS = envNumber('MAX_ARCHIVE_POSTS', 500000, 100000, 20000000);
 const FEED_COUNT_CAP_INTERVAL_MS = envNumber('FEED_COUNT_CAP_INTERVAL_MS', 5 * 60 * 1000, 60 * 1000, 60 * 60 * 1000);
+const FEED_AGE_CAP_INTERVAL_MS = envNumber('FEED_AGE_CAP_INTERVAL_MS', 15 * 60 * 1000, 5 * 60 * 1000, 6 * 60 * 60 * 1000);
 const FEED_UNSEEN_CAP_INTERVAL_MS = envNumber('FEED_UNSEEN_CAP_INTERVAL_MS', 15 * 60 * 1000, 5 * 60 * 1000, 6 * 60 * 60 * 1000);
 const ARCHIVE_MAX_AGE_MS = envNumber('ARCHIVE_MAX_AGE_MS', 30 * 24 * 60 * 60 * 1000, 24 * 60 * 60 * 1000, 365 * 24 * 60 * 60 * 1000);
 const ARCHIVE_AGE_PRUNE_INTERVAL_MS = envNumber('ARCHIVE_AGE_PRUNE_INTERVAL_MS', 60 * 60 * 1000, 10 * 60 * 1000, 24 * 60 * 60 * 1000);
@@ -17178,6 +17185,7 @@ const feedRetentionState = {
     unseenPostDays: Math.round(UNSEEN_POST_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
     maxArchivePosts: MAX_ARCHIVE_POSTS,
     countCapIntervalSec: Math.round(FEED_COUNT_CAP_INTERVAL_MS / 1000),
+    ageCapIntervalSec: Math.round(FEED_AGE_CAP_INTERVAL_MS / 1000),
     unseenCapIntervalSec: Math.round(FEED_UNSEEN_CAP_INTERVAL_MS / 1000),
     archivePostDays: Math.round(ARCHIVE_MAX_AGE_MS / (24 * 60 * 60 * 1000)),
     archiveAgePruneIntervalSec: Math.round(ARCHIVE_AGE_PRUNE_INTERVAL_MS / 1000),
@@ -18015,7 +18023,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          media_poster TEXT
        )
      )
-     INSERT INTO ${targetTable}
+     INSERT INTO ${targetTable} AS existing
        (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster)
      SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster
      FROM incoming
@@ -18032,7 +18040,19 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        post_created_at= EXCLUDED.post_created_at,
        location       = EXCLUDED.location,
        media_poster   = EXCLUDED.media_poster,
-       fetched_at     = NOW()`,
+       fetched_at     = NOW()
+     WHERE existing.title IS DISTINCT FROM EXCLUDED.title
+        OR existing.content IS DISTINCT FROM EXCLUDED.content
+        OR existing.author_name IS DISTINCT FROM EXCLUDED.author_name
+        OR existing.source_url IS DISTINCT FROM EXCLUDED.source_url
+        OR existing.media_url IS DISTINCT FROM EXCLUDED.media_url
+        OR existing.media_type IS DISTINCT FROM EXCLUDED.media_type
+        OR existing.topic IS DISTINCT FROM EXCLUDED.topic
+        OR existing.likes_count IS DISTINCT FROM EXCLUDED.likes_count
+        OR existing.comments_count IS DISTINCT FROM EXCLUDED.comments_count
+        OR existing.post_created_at IS DISTINCT FROM EXCLUDED.post_created_at
+        OR existing.location IS DISTINCT FROM EXCLUDED.location
+        OR existing.media_poster IS DISTINCT FROM EXCLUDED.media_poster`,
     [JSON.stringify(rows).replace(/\\u0000/gi, '')]
   );
   if (!options.skipTrim && targetTable === 'feed_posts_cache') trimFeedPostsCache();
@@ -21431,7 +21451,11 @@ async function handleFeedRequest(req, res) {
       timeRange,
     });
     const dbPosts = dbRows.map(p => mapExternalPost(p, sourceFilter));
-    if (db.isConnected()) savePostsToDB(livePosts).catch(() => {});
+    if (db.isConnected() && livePosts.length) {
+      // Connected-account refreshes are user-facing. Persist them as one
+      // bulk no-op-aware write and leave retention to its background timer.
+      savePostsToDBFast(livePosts, 'feed_posts_cache', db, { skipTrim: true }).catch(() => {});
+    }
 
     // Rotate + circular-reslice, same as the multi-source/source-tab
     // branches below — plus the same filterUnseen those now also apply
@@ -21828,9 +21852,8 @@ app.get('/office/feed', authenticate, handleFeedRequest);
 app.get('/feed/guest', async (req, res) => {
   try {
     recordRealUserActivity(req, 'guest-feed');
-    if (!IS_PIPELINE_ROLE) {
-      transferStagedPosts({ maxBatches: 1, reason: 'guest-feed' }).catch(e => console.warn('[guest-transfer]', e.message));
-    }
+    // Promotion is scheduled independently. A visitor request must never
+    // create extra database-transfer work on the serving process.
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const cursorMap = decodeFeedCursor(req.query.cursor);
     const { posts, nextCursor, hasMore } = await getCachedGuestFeedPage({
@@ -24210,6 +24233,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       lastSavedCount: stagingTransferState.lastSavedCount,
       lastDeletedCount: stagingTransferState.lastDeletedCount,
       lastStagingClearedPosts: stagingTransferState.lastStagingClearedPosts,
+      lastSourceDeletedPurgeCount: stagingTransferState.lastSourceDeletedPurgeCount,
       lastDurationMs: stagingTransferState.lastDurationMs,
       lastSourceCounts: stagingTransferState.lastSourceCounts,
       currentBatch: stagingTransferState.currentBatch,
@@ -24603,6 +24627,7 @@ const stagingTransferState = {
   lastSavedCount: 0,
   lastDeletedCount: 0,
   lastStagingClearedPosts: [],
+  lastSourceDeletedPurgeCount: 0,
   lastSourceCounts: {},
   currentBatch: 0,
   currentBatchSize: 0,
@@ -24707,6 +24732,20 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
   let batchCount = 0;
   const sourceCounts = {};
   try {
+    // Source-deletion reconciliation already creates a tombstone in the
+    // archive. Purge any race-created staging copy once per transfer run,
+    // rather than repeating this full join inside every promotion batch.
+    const tombstoneCleanup = await db.query(
+      `DELETE FROM feed_posts_staging s
+       USING feed_posts_archive a
+       WHERE s.id = a.id
+         AND s.source_url = a.source_url
+         AND a.archive_reason = 'source-deleted'`
+    );
+    stagingTransferState.lastSourceDeletedPurgeCount = tombstoneCleanup.rowCount || 0;
+    if (tombstoneCleanup.rowCount) {
+      logAgentAction('feed', 'transfer', `Cleared ${tombstoneCleanup.rowCount.toLocaleString()} source-deleted staging row(s)`, '#F87171');
+    }
     // Drains in a tight loop within one invocation, capped at 20 batches
     // (100k rows), instead of one fixed 5000-row batch per tick — after
     // staging sat un-drained for over a week (pipeline stuck on a stale
@@ -24719,16 +24758,6 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       const result = await db.withClient(async (client) => {
         await client.query('BEGIN');
         try {
-          // A URL confirmed deleted at its origin gets a tombstone in the
-          // archive. Clear any old pipeline copy before it can be promoted
-          // back into the live feed on a later transfer tick.
-          await client.query(
-            `DELETE FROM feed_posts_staging s
-             USING feed_posts_archive a
-             WHERE s.id = a.id
-               AND s.source_url = a.source_url
-               AND a.archive_reason = 'source-deleted'`
-          );
           const { rows } = await client.query(
             `WITH picked AS (
                SELECT id
@@ -24796,7 +24825,9 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
       logAgentAction('feed', 'transfer', `Transferred ${count} post(s) from staging to feed_posts_cache${withheld}`, '#38BDF8');
       if (result.rows.length < STAGING_TRANSFER_BATCH_SIZE) break; // caught up - no need to keep looping this tick
     }
-    trimFeedPostsCache({ reason: 'after-transfer' });
+    // Retention runs on dedicated timers below. Keeping its whole-table
+    // archive scans out of the promotion loop prevents large transfers from
+    // competing with read traffic for the database connection pool.
     await refreshStagingPostCount();
     if (totalMoved > 0) runSourceDeletionReconciliation({ reason: 'after-transfer' });
     stagingTransferState.lastDurationMs = Date.now() - transferStartedAt;
@@ -24855,20 +24886,21 @@ async function transferStagedPosts({ maxBatches = STAGING_TRANSFER_MAX_BATCHES, 
 // running continuously on the pipeline side.
 const AUTO_TRANSFER_INTERVAL_MS = 60 * 1000;
 setInterval(() => {
-  // runSortAgentCheck stays unconditional — harmless and still useful for
-  // whichever role's own in-memory cache actually has content (pipeline's
-  // own globalFeedCache, built from its own fetches, is what its own
-  // /office/* views read for monitoring; api's stays empty post-split, so
-  // this is just a no-op there).
-  runSortAgentCheck();
-  if (!IS_PIPELINE_ROLE) transferStagedPosts().catch(e => console.warn('[auto-transfer]', e.message));
+  if (IS_PIPELINE_ROLE) {
+    runSortAgentCheck();
+    return;
+  }
+  transferStagedPosts().catch(e => console.warn('[auto-transfer]', e.message));
   refreshDbFeedPostCount();
   refreshStagingPostCount();
 }, AUTO_TRANSFER_INTERVAL_MS);
-refreshDbFeedPostCount();
-refreshStagingPostCount();
+if (!IS_PIPELINE_ROLE) {
+  refreshDbFeedPostCount();
+  refreshStagingPostCount();
+}
 
 scheduleFeedRetentionTimer('count-cap-timer', FEED_COUNT_CAP_INTERVAL_MS, ['countCap'], 2 * 60 * 1000);
+scheduleFeedRetentionTimer('age-cap-timer', FEED_AGE_CAP_INTERVAL_MS, ['ageCap'], 3 * 60 * 1000);
 scheduleFeedRetentionTimer('unseen-cap-timer', FEED_UNSEEN_CAP_INTERVAL_MS, ['unseenCap'], 4 * 60 * 1000);
 scheduleFeedRetentionTimer('archive-age-timer', ARCHIVE_AGE_PRUNE_INTERVAL_MS, ['archiveAgeCap', 'archiveCap'], 6 * 60 * 1000);
 if (!IS_PIPELINE_ROLE) {
@@ -30113,7 +30145,7 @@ db.initDB().then(async () => {
     }
     // Pre-populate seenPostIds so workers don't re-broadcast historical posts
     globalFeedCache.posts = realFeedPosts(globalFeedCache.posts);
-    globalFeedCache.posts.forEach(p => p?.id && seenPostIds.add(p.id));
+    globalFeedCache.posts.forEach(p => p?.id && addSeenId(p.id));
     console.log('[startup] Background initialization complete');
   } catch (err) {
     console.warn('[startup] Background initialization error:', err.message);
