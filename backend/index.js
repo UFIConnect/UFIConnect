@@ -10033,10 +10033,70 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
-const liveCameraVerificationCache = new Map();
-const LIVE_CAMERA_VERIFICATION_CACHE_MS = 6 * H;
+const LIVE_CAMERA_VERIFICATION_CACHE_MS = 10 * MIN;
+const LIVE_CAMERA_FAILURE_RECHECK_MS = 5 * MIN;
+const LIVE_CAMERA_DISCOVERY_CACHE_MS = 6 * H;
+const LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW = 4;
+const liveCameraResolvedStreams = new Map();
+const liveCameraDiscoveryCache = new Map();
+let liveCameraVerificationPromise = null;
+let liveCameraVerificationSnapshot = [];
+let liveCameraVerificationExpiresAt = 0;
+let liveCameraDiscoveryWindowStartedAt = 0;
+let liveCameraDiscoveryCount = 0;
+const liveCameraVerificationState = {
+  status: 'idle',
+  lastRun: null,
+  lastDurationMs: 0,
+  primaryLive: 0,
+  replacements: 0,
+  unavailable: 0,
+  apiConfigured: false,
+  lastError: null,
+};
+
+function liveCameraYouTubeId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host === 'youtu.be') return parsed.pathname.split('/').filter(Boolean)[0] || null;
+    if (!/(?:^|\.)youtube(?:-nocookie)?\.com$/i.test(host)) return null;
+    const direct = parsed.searchParams.get('v');
+    if (direct) return direct;
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const marker = segments.findIndex(segment => ['embed', 'shorts', 'live'].includes(segment));
+    return marker >= 0 ? segments[marker + 1] || null : null;
+  } catch {
+    const match = raw.match(/(?:youtu\.be\/|(?:youtube(?:-nocookie)?\.com)\/(?:watch\?[^#\s]*?v=|embed\/|shorts\/|live\/))([\w-]{11})/i);
+    return match?.[1] || null;
+  }
+}
+
+function liveCameraYouTubeUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
+}
+
+function getResolvedLiveCameraStream(cameraId) {
+  const entry = liveCameraResolvedStreams.get(cameraId);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) liveCameraResolvedStreams.delete(cameraId);
+    return null;
+  }
+  return entry.stream;
+}
+
+function rememberResolvedLiveCameraStream(cameraId, stream, ttl = LIVE_CAMERA_VERIFICATION_CACHE_MS) {
+  liveCameraResolvedStreams.set(cameraId, {
+    stream,
+    expiresAt: Date.now() + ttl,
+  });
+}
 
 function liveCameraPost(camera) {
+  const resolved = getResolvedLiveCameraStream(camera.id);
+  const sourceUrl = resolved?.sourceUrl || camera.sourceUrl;
   return {
     id: camera.id,
     authorId: null,
@@ -10048,22 +10108,38 @@ function liveCameraPost(camera) {
     createdAt: camera.createdAt,
     source: LIVE_CAMERA_SOURCE,
     sourceLabel: 'Live Cameras',
-    sourceUrl: camera.sourceUrl,
-    mediaUrl: camera.mediaUrl,
+    sourceUrl,
+    mediaUrl: sourceUrl,
     mediaType: 'video',
     country: camera.country,
     countryCode: camera.countryCode,
     city: camera.city,
     topic: 'Live Cameras',
     isLiveCamera: true,
+    liveVerified: Boolean(resolved),
+    liveReplacement: Boolean(resolved?.replacement),
   };
 }
 
 function enrichLiveCameraPost(post) {
   const camera = LIVE_CAMERA_BY_ID.get(post?.id);
-  return camera
-    ? { ...liveCameraPost(camera), ...post, country: camera.country, countryCode: camera.countryCode, city: camera.city, isLiveCamera: true }
-    : post;
+  if (!camera) return post;
+  const current = liveCameraPost(camera);
+  return {
+    ...current,
+    ...post,
+    title: current.title,
+    content: current.content,
+    sourceUrl: current.sourceUrl,
+    mediaUrl: current.mediaUrl,
+    mediaType: 'video',
+    country: camera.country,
+    countryCode: camera.countryCode,
+    city: camera.city,
+    isLiveCamera: true,
+    liveVerified: current.liveVerified,
+    liveReplacement: current.liveReplacement,
+  };
 }
 
 function liveCameraLocationScore(post, location) {
@@ -10082,53 +10158,187 @@ function currentLiveCameraPosts() {
     .filter(post => post?.mediaUrl && post?.sourceUrl);
 }
 
-// oEmbed is a lightweight public check that rejects deleted, private, and
-// embedding-disabled YouTube streams before they are put in Travel. It is
-// intentionally shared for six hours so this quality check cannot become a
-// per-visitor request fan-out. The check is advisory: YouTube can rate-limit
-// or briefly reject oEmbed from a server even while its embed player works.
-// A transient metadata outage must never erase the entire live-travel rail.
-async function isLiveCameraEmbeddable(camera) {
+async function waitForYouTubeDataApiSlot() {
+  const waitMs = Math.max(0, YOUTUBE_API_MIN_SPACING_MS - (Date.now() - youtubeApiLastCallAt));
+  if (waitMs) await new Promise(resolve => setTimeout(resolve, waitMs));
+  youtubeApiLastCallAt = Date.now();
+}
+
+async function fetchYouTubeLiveStates(videoIds) {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  const ids = [...new Set((videoIds || []).filter(id => /^[\w-]{11}$/.test(String(id))))].slice(0, 50);
+  if (!apiKey || !ids.length) return null;
+  try {
+    await waitForYouTubeDataApiSlot();
+    const params = new URLSearchParams({
+      part: 'liveStreamingDetails,status',
+      id: ids.join(','),
+      key: apiKey,
+    });
+    const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`);
+    const states = new Map();
+    for (const item of data?.items || []) {
+      const live = item?.liveStreamingDetails;
+      states.set(item.id, {
+        live: Boolean(live?.actualStartTime && !live?.actualEndTime),
+        embeddable: item?.status?.embeddable !== false,
+      });
+    }
+    return states;
+  } catch (error) {
+    console.warn('[Travel] live-stream verification failed:', error?.message || error);
+    return null;
+  }
+}
+
+function takeLiveCameraDiscoverySlot() {
   const now = Date.now();
-  const cached = liveCameraVerificationCache.get(camera.id);
-  if (cached?.expiresAt > now) return cached.valid;
+  if (!liveCameraDiscoveryWindowStartedAt || now - liveCameraDiscoveryWindowStartedAt >= LIVE_CAMERA_DISCOVERY_CACHE_MS) {
+    liveCameraDiscoveryWindowStartedAt = now;
+    liveCameraDiscoveryCount = 0;
+  }
+  if (liveCameraDiscoveryCount >= LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW) return false;
+  liveCameraDiscoveryCount += 1;
+  return true;
+}
+
+async function discoverLiveCameraReplacement(camera) {
+  const now = Date.now();
+  const cached = liveCameraDiscoveryCache.get(camera.id);
+  if (cached?.expiresAt > now) return cached.stream || null;
   if (cached?.pending) return cached.pending;
-  const url = `https://www.youtube.com/oembed?url=${encodeURIComponent(camera.sourceUrl)}&format=json`;
-  const entry = cached || { valid: false, expiresAt: 0, pending: null };
-  entry.pending = fetchJSON(url)
-    .then(data => Boolean(data?.title))
-    .catch(() => false)
-    .then((valid) => {
-      entry.valid = valid;
-      entry.expiresAt = Date.now() + LIVE_CAMERA_VERIFICATION_CACHE_MS;
-      return valid;
+  if (!process.env.YOUTUBE_API_KEY || !takeLiveCameraDiscoverySlot()) return null;
+
+  const entry = cached || { stream: null, expiresAt: 0, pending: null };
+  entry.pending = Promise.resolve()
+    .then(async () => {
+      const params = new URLSearchParams({
+        part: 'snippet',
+        q: `${camera.city} ${camera.country} live webcam`,
+        type: 'video',
+        eventType: 'live',
+        videoEmbeddable: 'true',
+        order: 'relevance',
+        maxResults: '5',
+        key: process.env.YOUTUBE_API_KEY,
+      });
+      if (/^[A-Z]{2}$/.test(camera.countryCode || '')) params.set('regionCode', camera.countryCode);
+      await waitForYouTubeDataApiSlot();
+      const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/search?${params.toString()}`);
+      const candidates = (data?.items || [])
+        .filter(item => item?.id?.videoId && item?.snippet?.liveBroadcastContent === 'live')
+        .slice(0, 5);
+      const states = await fetchYouTubeLiveStates(candidates.map(item => item.id.videoId));
+      const selected = candidates.find(item => {
+        const state = states?.get(item.id.videoId);
+        return state?.live && state.embeddable;
+      });
+      if (!selected) return null;
+      return {
+        sourceUrl: liveCameraYouTubeUrl(selected.id.videoId),
+        videoId: selected.id.videoId,
+        title: String(selected.snippet?.title || camera.title).slice(0, 300),
+        channelTitle: String(selected.snippet?.channelTitle || '').slice(0, 160),
+        replacement: true,
+      };
+    })
+    .catch((error) => {
+      console.warn(`[Travel] replacement lookup failed for ${camera.city}:`, error?.message || error);
+      return null;
+    })
+    .then((stream) => {
+      entry.stream = stream;
+      entry.expiresAt = Date.now() + (stream ? LIVE_CAMERA_DISCOVERY_CACHE_MS : LIVE_CAMERA_FAILURE_RECHECK_MS);
+      return stream;
     })
     .finally(() => { entry.pending = null; });
-  liveCameraVerificationCache.set(camera.id, entry);
+  liveCameraDiscoveryCache.set(camera.id, entry);
   return entry.pending;
 }
 
-async function verifiedLiveCameraPosts() {
+function withVerifiedLiveCameraStream(post, stream) {
+  return {
+    ...post,
+    sourceUrl: stream.sourceUrl,
+    mediaUrl: stream.sourceUrl,
+    mediaType: 'video',
+    liveVerified: true,
+    liveReplacement: Boolean(stream.replacement),
+    liveStreamTitle: stream.title || null,
+    liveStreamChannel: stream.channelTitle || null,
+    liveCheckedAt: new Date().toISOString(),
+  };
+}
+
+async function refreshVerifiedLiveCameraPosts() {
+  const started = Date.now();
   const candidates = currentLiveCameraPosts();
-  const checks = await Promise.all(candidates.map(async (post) => ({
-    post,
-    valid: await isLiveCameraEmbeddable(post),
-  })));
-  const valid = checks.filter(check => check.valid).map(check => check.post);
-  if (valid.length < candidates.length) {
-    console.warn(`[Travel] ${candidates.length - valid.length} live camera metadata check(s) were unavailable.`);
+  const states = await fetchYouTubeLiveStates(candidates.map(post => liveCameraYouTubeId(post.sourceUrl)));
+  if (!states) {
+    liveCameraVerificationState.status = 'degraded';
+    liveCameraVerificationState.lastRun = Date.now();
+    liveCameraVerificationState.lastDurationMs = Date.now() - started;
+    liveCameraVerificationState.primaryLive = 0;
+    liveCameraVerificationState.replacements = 0;
+    liveCameraVerificationState.unavailable = candidates.length;
+    liveCameraVerificationState.apiConfigured = Boolean(process.env.YOUTUBE_API_KEY);
+    liveCameraVerificationState.lastError = 'YouTube live-status verification was unavailable';
+    return [];
   }
-  // oEmbed is not the embed playback authority. Keep verified cameras first,
-  // then retain the curated fallbacks so a YouTube metadata hiccup cannot
-  // turn Travel into an empty tab. The browser player remains the final
-  // playback check and only one camera is mounted at a time client-side.
-  const verifiedIds = new Set(valid.map(post => post.id));
-  return [
-    ...valid.map(post => ({ ...post, liveVerified: true })),
-    ...candidates
-      .filter(post => !verifiedIds.has(post.id))
-      .map(post => ({ ...post, liveVerified: false })),
-  ];
+  const verified = [];
+  const unresolved = [];
+
+  for (const post of candidates) {
+    const videoId = liveCameraYouTubeId(post.sourceUrl);
+    const state = videoId ? states?.get(videoId) : null;
+    if (state?.live && state.embeddable) {
+      const stream = { sourceUrl: post.sourceUrl, videoId, replacement: false };
+      rememberResolvedLiveCameraStream(post.id, stream);
+      verified.push(withVerifiedLiveCameraStream(post, stream));
+      continue;
+    }
+    liveCameraResolvedStreams.delete(post.id);
+    unresolved.push(post);
+  }
+
+  for (const post of unresolved) {
+    const camera = LIVE_CAMERA_BY_ID.get(post.id);
+    if (!camera) continue;
+    const replacement = await discoverLiveCameraReplacement(camera);
+    if (!replacement) continue;
+    rememberResolvedLiveCameraStream(post.id, replacement);
+    verified.push(withVerifiedLiveCameraStream(post, replacement));
+  }
+
+  liveCameraVerificationState.status = states ? 'ready' : 'degraded';
+  liveCameraVerificationState.lastRun = Date.now();
+  liveCameraVerificationState.lastDurationMs = Date.now() - started;
+  liveCameraVerificationState.primaryLive = verified.filter(post => !post.liveReplacement).length;
+  liveCameraVerificationState.replacements = verified.filter(post => post.liveReplacement).length;
+  liveCameraVerificationState.unavailable = Math.max(0, candidates.length - verified.length);
+  liveCameraVerificationState.apiConfigured = Boolean(process.env.YOUTUBE_API_KEY);
+  liveCameraVerificationState.lastError = states ? null : 'YouTube live-status verification was unavailable';
+  return verified;
+}
+
+async function verifiedLiveCameraPosts() {
+  const now = Date.now();
+  if (liveCameraVerificationSnapshot.length && liveCameraVerificationExpiresAt > now) return liveCameraVerificationSnapshot;
+  if (liveCameraVerificationPromise) return liveCameraVerificationPromise;
+  liveCameraVerificationPromise = refreshVerifiedLiveCameraPosts()
+    .then((posts) => {
+      liveCameraVerificationSnapshot = posts;
+      liveCameraVerificationExpiresAt = Date.now() + (posts.length ? LIVE_CAMERA_VERIFICATION_CACHE_MS : LIVE_CAMERA_FAILURE_RECHECK_MS);
+      return posts;
+    })
+    .catch((error) => {
+      liveCameraVerificationState.status = 'error';
+      liveCameraVerificationState.lastError = error?.message || 'Live-camera verification failed';
+      liveCameraVerificationExpiresAt = Date.now() + LIVE_CAMERA_FAILURE_RECHECK_MS;
+      return liveCameraVerificationSnapshot;
+    })
+    .finally(() => { liveCameraVerificationPromise = null; });
+  return liveCameraVerificationPromise;
 }
 
 function countryGuideUrl(destination) {
@@ -10490,8 +10700,8 @@ function roundRobinDiscoveryGroups(posts, groupForPost) {
 }
 
 // The location-feed equalizer is intentionally weighted, not a flat sort:
-// every active queue gets a turn, while Travel gets two verified live-camera
-// cards per cycle so a live feed still feels genuinely live.
+// every active discovery queue gets a turn without one provider taking over
+// the travel scroll.
 function weightedRoundRobinDiscoveryQueues(weightedQueues) {
   const queues = (Array.isArray(weightedQueues) ? weightedQueues : [])
     .map(({ posts: queuePosts, weight }) => ({
@@ -10521,12 +10731,10 @@ function weightedRoundRobinDiscoveryQueues(weightedQueues) {
   return result;
 }
 
-function interleaveCountryDiscoveryPosts(cameras, guides, news) {
-  const liveCameras = roundRobinDiscoveryGroups(cameras, post => `camera:${post.countryCode || post.country || post.id}`);
+function interleaveCountryDiscoveryPosts(guides, news) {
   const destinationGuides = roundRobinDiscoveryGroups(guides, post => `guide:${post.countryCode || post.country || post.id}`);
   const travelNews = roundRobinDiscoveryGroups(news, post => `news:${post.coverageRegion || post.sourceLabel || post.id}`);
   return weightedRoundRobinDiscoveryQueues([
-    { posts: liveCameras, weight: 2 },
     { posts: destinationGuides, weight: 1 },
     { posts: travelNews, weight: 1 },
   ]);
@@ -10577,27 +10785,32 @@ function prioritizeLiveCamerasForLocation(cameras, location) {
 }
 
 async function getCountriesCameraFeed(location, viewerId = null) {
-  const entry = await readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
-    const [cameraResult, guideResult, newsResult] = await Promise.allSettled([
-      verifiedLiveCameraPosts(),
-      fetchCountryDestinationGuides(),
-      fetchCountryDiscoveryNewsPosts(),
-    ]);
-    const cameras = cameraResult.status === 'fulfilled' ? cameraResult.value : [];
-    const guides = guideResult.status === 'fulfilled' ? guideResult.value : [];
-    const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
-    if (cameraResult.status === 'rejected') console.warn('[Travel] live-camera verification failed:', cameraResult.reason?.message || cameraResult.reason);
-    if (guideResult.status === 'rejected') console.warn('[Travel] guide search failed:', guideResult.reason?.message || guideResult.reason);
-    if (newsResult.status === 'rejected') console.warn('[Travel] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
-    return interleaveCountryDiscoveryPosts(cameras, guides, news);
-  });
+  // Guides and stories can stay cached for a while. Camera availability cannot:
+  // a stream can end at any moment, so its independently verified snapshot has
+  // a much shorter lifetime and is never stored in this discovery cache.
+  const [cameraResult, entry] = await Promise.all([
+    verifiedLiveCameraPosts().catch((error) => {
+      console.warn('[Travel] live-camera verification failed:', error?.message || error);
+      return [];
+    }),
+    readLocationLiveCache('countries:vacation-discovery', COUNTRIES_DISCOVERY_CACHE_MS, async () => {
+      const [guideResult, newsResult] = await Promise.allSettled([
+        fetchCountryDestinationGuides(),
+        fetchCountryDiscoveryNewsPosts(),
+      ]);
+      const guides = guideResult.status === 'fulfilled' ? guideResult.value : [];
+      const news = newsResult.status === 'fulfilled' ? newsResult.value : [];
+      if (guideResult.status === 'rejected') console.warn('[Travel] guide search failed:', guideResult.reason?.message || guideResult.reason);
+      if (newsResult.status === 'rejected') console.warn('[Travel] travel-news search failed:', newsResult.reason?.message || newsResult.reason);
+      return interleaveCountryDiscoveryPosts(guides, news);
+    }),
+  ]);
 
   const rawPosts = Array.isArray(entry?.posts) ? entry.posts : [];
   const savedById = new Map(posts
     .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map(post => [post.id, post]));
-  const cameras = rawPosts
-    .filter(post => post?.source === LIVE_CAMERA_SOURCE)
+  const cameras = (Array.isArray(cameraResult) ? cameraResult : [])
     .map((post) => {
       const saved = savedById.get(post.id);
       const current = saved
@@ -10636,7 +10849,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   }
 
   const worldwidePosts = rankFeedPostsForLocation(
-    rawPosts.filter(post => post?.source !== LIVE_CAMERA_SOURCE),
+    rawPosts,
     location,
     { preserveFirst: 0, chunkSize: 12 },
   );
@@ -10652,11 +10865,17 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   return {
     posts: travelPosts,
     liveFeeds,
-    fetchedAt: [entry?.fetchedAt, selectedEntry?.fetchedAt].filter(Boolean).sort().at(-1) || new Date().toISOString(),
-    catalogSize: rawPosts.length,
+    fetchedAt: [
+      entry?.fetchedAt,
+      selectedEntry?.fetchedAt,
+      liveCameraVerificationState.lastRun ? new Date(liveCameraVerificationState.lastRun).toISOString() : null,
+    ].filter(Boolean).sort().at(-1) || new Date().toISOString(),
+    catalogSize: rawPosts.length + cameras.length,
     equalizer: {
       mode: 'live-weighted-round-robin',
       liveCameras: liveFeeds.length,
+      liveCameraStatus: liveCameraVerificationState.status,
+      unavailableLiveCameras: liveCameraVerificationState.unavailable,
       destinationGuides: travelPosts.filter(post => post?.source === 'wikivoyage').length,
       travelNews: travelPosts.filter(post => post?.source === 'travelnews').length,
       travelEvents: travelPosts.filter(post => post?.source === 'travelevents').length,
