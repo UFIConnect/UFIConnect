@@ -127,12 +127,13 @@ export default function ConnectedAccounts() {
     }
   }
 
-  // Every social account a member can authorize belongs here. Command Center
-  // features may use a subset of these connections, but the connection flow
-  // itself must never become a dead-end behind a membership screen.
-  const connectedList   = platforms.filter(([k, p]) => connected[k] && !p.forceComingSoon);
-  const availableList   = platforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
-  const comingSoonList  = platforms.filter(([k, p]) => p.forceComingSoon || (!connected[k] && !p.configured));
+  // Account-owned integrations live in Command Center. Keeping them out of
+  // this general page prevents a member from connecting a source here and
+  // then wondering why it only appears in their private workspace.
+  const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
+  const connectedList   = generalPlatforms.filter(([k]) => connected[k]);
+  const availableList   = generalPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
+  const comingSoonList  = generalPlatforms.filter(([k, p]) => !connected[k] && (p.forceComingSoon || !p.configured));
 
   return (
     <Layout>
@@ -174,7 +175,7 @@ export default function ConnectedAccounts() {
             <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>LINK</div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '.95rem' }}>
-                {connectedList.length} of {platforms.length} accounts connected
+                {connectedList.length} of {generalPlatforms.length} accounts connected
               </div>
               <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>
                 {connectedList.length === 0
@@ -198,6 +199,12 @@ export default function ConnectedAccounts() {
               </div>
             )}
           </div>
+
+          {platforms.some(([, p]) => p.commandCenterOnly) && (
+            <div style={{ margin: '-10px 0 24px', fontSize: '.78rem', color: 'var(--muted)' }}>
+              Account-only publishing and personal-post connections are managed in the <Link to="/command-center?tab=accounts" style={{ color: 'var(--primary)', fontWeight: 700 }}>Command Center</Link>.
+            </div>
+          )}
 
           {/* Connected section */}
           {connectedList.length > 0 && (

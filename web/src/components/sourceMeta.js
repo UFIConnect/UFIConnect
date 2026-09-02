@@ -56,7 +56,7 @@ export const SOURCE_META = {
 // Account-owned integrations are managed in Command Center. They only use
 // content from the member who authorizes them and never enter shared feeds.
 export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
-  'instagram', 'tiktok', 'threads',
+  'linkedin', 'instagram', 'tiktok', 'threads',
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
 ];
 
@@ -83,7 +83,7 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
 // vocabulary here prevents the two controls from quietly drifting apart.
 export const HOME_FEED_SOURCE_IDS = [
   'reddit', 'github', 'youtube', 'hackernews',
-  'linkedin', 'twitter', 'facebook',
+  'twitter', 'facebook',
   'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
   'bluesky', 'gitlab', 'devto', 'medium', 'stackoverflow', 'lobsters', 'arxiv',
   'producthunt', 'techcrunch', 'theverge', 'indiehackers', 'hashnode',

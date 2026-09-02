@@ -1447,6 +1447,9 @@ function CrossPostSection() {
   if (connected === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
   const publishingPlatforms = CROSS_POST_PLATFORM_IDS.filter(platform => platforms[platform]);
   const connectedPlatforms = publishingPlatforms.filter(platform => connected[platform] && platforms[platform]?.crossPost?.supported);
+  const commandCenterPublishingPath = publishingPlatforms.some(platform => (
+    platforms[platform]?.commandCenterOnly && platforms[platform]?.crossPost?.supported
+  )) ? '/command-center?tab=accounts' : '/connected-accounts';
   const connectionPath = (platform) => platforms[platform]?.commandCenterOnly
     ? '/command-center?tab=accounts'
     : '/connected-accounts';
@@ -1472,6 +1475,17 @@ function CrossPostSection() {
     const meta = SOURCE_META[p] || SOURCE_META.uficonnect;
     const platform = platforms[p];
     const capability = platform?.crossPost;
+    if (platform?.forceComingSoon && !connected[p]) {
+      return (
+        <button
+          key={p} type="button" disabled className="btn btn-ghost btn-sm"
+          title={platform?.note || `${meta.label} is coming soon.`}
+          style={{ opacity: .62, cursor: 'not-allowed' }}
+        >
+          <SourceMark source={p} label={meta.icon} /> {meta.label} - Coming soon
+        </button>
+      );
+    }
     if (!capability?.supported) {
       const detail = capability?.note || platform?.note || `${meta.label} publishing is not available yet.`;
       return (
@@ -1508,7 +1522,7 @@ function CrossPostSection() {
         </div>
         {!connectedPlatforms.length ? (
           <div style={{ marginTop: 16 }}>
-            <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect a publishing account</Link>
+            <Link to={commandCenterPublishingPath} className="btn btn-primary btn-sm">Connect a publishing account</Link>
           </div>
         ) : (
           <form onSubmit={handlePost} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>

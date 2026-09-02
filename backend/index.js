@@ -13622,6 +13622,10 @@ const SOCIAL_PLATFORM_CATALOG = new Set([
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
 const FORCE_COMING_SOON_PLATFORMS = new Set([
+  // LinkedIn's member-feed and publishing access remain gated behind its
+  // partner approval. Keep it visible in Command Center, but do not offer a
+  // connection that cannot deliver the promised account functionality.
+  'linkedin', 'tiktok',
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
 ]);
 
@@ -13632,12 +13636,12 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
 // from AGGREGATE_FEED_SOURCES below rather than reused to exclude them.
 // These networks are account-owned: their content is only shown to the
 // member who explicitly connected the account, never in the shared pool.
-const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads']);
+const MEMBER_ONLY_CONNECTED_FEED_SOURCES = new Set(['instagram', 'tiktok', 'threads', 'linkedin']);
 const COMMAND_CENTER_SOCIAL_PLATFORMS = new Set([
   ...MEMBER_ONLY_CONNECTED_FEED_SOURCES,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
 ]);
-const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
+const FEED_SOCIAL_TABS = new Set(['twitter', 'facebook']);
 // Every source with a real public aggregate fetcher (SOURCE_CONFIG) — the
 // canonical "everything" list for the unfiltered newest-sort cursor feed
 // (see getCursorFeedPage) and any other caller that needs "every real
@@ -18139,6 +18143,33 @@ function requireOfficeToken(req, res, next) {
   if (provided === expected) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
+
+// OAuth values live only in Render. This Office-only report deliberately
+// exposes presence and the exact callback URLs, never a client ID or secret,
+// so production configuration can be audited without creating another secret
+// surface in the browser or API logs.
+app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
+  const platforms = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(platform => {
+    const status = socialCredentialStatus(platform);
+    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]);
+    const forceComingSoon = FORCE_COMING_SOON_PLATFORMS.has(platform);
+    const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(platform);
+    return [platform, {
+      configured: status.configured,
+      requiredEnv: status.requiredEnv,
+      missingEnv: status.missingEnv,
+      callbackUrl: status.callbackUrl,
+      forceComingSoon,
+      commandCenterOnly,
+      canStartAuthorization: hasOAuthFlow && status.configured && !forceComingSoon,
+    }];
+  }));
+  res.json({
+    callbackOrigin: SAFE_OAUTH_CALLBACK_BASE,
+    frontendOrigin: normalizedOrigin(FRONTEND_BASE, 'https://uficonnect.org'),
+    platforms,
+  });
+});
 
 // Preview-link scrapers (Slack/Twitter/Discord/Facebook/etc.) mostly never
 // execute JS at all — they just fetch the raw HTML once for its Open Graph

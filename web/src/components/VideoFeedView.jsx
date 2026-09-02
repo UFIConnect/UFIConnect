@@ -45,7 +45,7 @@ const FEED_ONLY_EXCLUDED_SOURCES = ['uficonnect', 'dribbble', 'instagram'];
 // different pool entirely.
 const FEED_VIDEO_SOURCE_ORDER = [
   'reddit', 'github', 'youtube', 'hackernews',
-  'linkedin', 'twitter', 'facebook',
+  'twitter', 'facebook',
   'indeed', 'remoteok', 'remotive', 'muse', 'usajobs',
   'bluesky', 'devto', 'stackoverflow', 'gitlab', 'medium', 'hashnode', 'lobsters',
   'arxiv', 'producthunt', 'indiehackers', 'yc', 'crunchbase', 'techcrunch', 'theverge',

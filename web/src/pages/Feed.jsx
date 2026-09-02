@@ -157,7 +157,7 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
 const SOURCE_TABS = [
   { key: 'all' },
   { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
-  { key: 'linkedin' }, { key: 'twitter' }, { key: 'facebook' },
+  { key: 'twitter' }, { key: 'facebook' },
   { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
   { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
   { key: 'gitlab' }, { key: 'medium' }, { key: 'hashnode' }, { key: 'lobsters' },
