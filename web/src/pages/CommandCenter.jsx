@@ -1828,7 +1828,9 @@ export default function CommandCenter() {
     return <Layout><div className="empty-state"><span className="spinner spinner-primary" /></div></Layout>;
   }
 
-  const locked = profile.plan === 'free';
+  // Connections themselves are available to every signed-in member. The
+  // remaining Command Center tools keep their paid-plan gate below.
+  const locked = profile.plan === 'free' && section !== 'accounts';
 
   return (
     <Layout>

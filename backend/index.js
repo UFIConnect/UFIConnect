@@ -13603,7 +13603,7 @@ const SOCIAL_PLATFORM_CATALOG = new Set([
 // even when their credentials are present. Keep it separate from
 // `configured` so the connection status itself remains truthful.
 const FORCE_COMING_SOON_PLATFORMS = new Set([
-  'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  'mastodon', 'pinterest', 'tumblr', 'wordpress',
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -18648,7 +18648,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
 
   // State is a signed JWT — survives server restarts, expires in 10 min
   const returnToCommandCenter = req.query.returnTo === 'command-center'
-    && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform);
+    && SOCIAL_PLATFORM_CATALOG.has(platform);
   params.set('state', createOAuthState(
     req.user.id,
     platform,
@@ -18665,7 +18665,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const { code, state, error: oauthError } = req.query;
   const entry = verifyOAuthState(state, platform);
   const frontendProfile = entry?.extra?.returnTo === 'command-center'
-    && MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(platform)
+    && SOCIAL_PLATFORM_CATALOG.has(platform)
     ? `${FRONTEND_BASE}/command-center?tab=accounts`
     : `${FRONTEND_BASE}/connected-accounts`;
   const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
