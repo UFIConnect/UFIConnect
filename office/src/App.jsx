@@ -1247,6 +1247,14 @@ function SourcesView({ status, triggerAgent, triggering }) {
                   <span>Err <strong style={{ color: w.totalErrors ? '#f87171' : '#4ade80' }}>{errorRate}%</strong></span>
                 </div>
 
+                {(w.cadence || w.refreshTtlMinutes) && (
+                  <div style={{ fontSize: 10, color: '#64748b', lineHeight: 1.45 }}>
+                    {w.cadence && <>Scheduled {w.cadence}</>}
+                    {w.cycleMinutes != null && <> · full topic cycle {w.cycleMinutes}m</>}
+                    {w.refreshTtlMinutes != null && <> · live refresh TTL {w.refreshTtlMinutes}m</>}
+                  </div>
+                )}
+
                 {w.isConnectedSource ? (
                   <div style={{ fontSize: 10, color: '#22c55e', padding: '4px 8px', background: 'rgba(34,197,94,.06)', borderRadius: 4 }}>
                     Connected-account source — live requests run when a user connects this account.

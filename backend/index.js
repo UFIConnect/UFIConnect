@@ -7809,9 +7809,14 @@ const equalizerShareCounts = new Map(); // sourceId -> weighted count within the
 
 function pushToEqualizer(sourceId, posts) {
   if (!posts?.length) return;
+  // Worker ids and public feed source ids are not always identical (HN is
+  // the only current example). Keep the equalizer keyed by the same
+  // canonical source id that is persisted and returned to clients, otherwise
+  // its weighting/acceptance telemetry treats one platform as two sources.
+  const equalizerSourceId = canonicalFeedSourceId(sourceId) || sourceId;
   equalizerState.lastBackpressureDroppedBySource = {};
-  if (!equalizerBuffer.has(sourceId)) equalizerBuffer.set(sourceId, []);
-  const buffer = equalizerBuffer.get(sourceId);
+  if (!equalizerBuffer.has(equalizerSourceId)) equalizerBuffer.set(equalizerSourceId, []);
+  const buffer = equalizerBuffer.get(equalizerSourceId);
   let buffered = 0;
   for (const post of posts) {
     if (!post?.id || isFallbackFeedPost(post) || seenPostIds.has(post.id) || equalizerQueuedPostIds.has(post.id)) {
@@ -7882,11 +7887,16 @@ function recordEqualizerShare(sourceId, count) {
   }
 }
 
+function getEqualizerSourceConfig(sourceId) {
+  const canonicalSourceId = canonicalFeedSourceId(sourceId) || sourceId;
+  return SOURCE_CONFIG[feedWorkerKey(canonicalSourceId)] || SOURCE_CONFIG[sourceId] || {};
+}
+
 function buildEqualizerDrainPlan(sourceIds) {
-  const totalBaseWeight = sourceIds.reduce((sum, sourceId) => sum + (SOURCE_CONFIG[sourceId]?.shards || 1), 0) || 1;
+  const totalBaseWeight = sourceIds.reduce((sum, sourceId) => sum + (getEqualizerSourceConfig(sourceId).shards || 1), 0) || 1;
   const candidates = sourceIds.map(id => {
     const buffer = equalizerBuffer.get(id);
-    const baseWeight = SOURCE_CONFIG[id]?.shards || 1;
+    const baseWeight = getEqualizerSourceConfig(id).shards || 1;
     const fairShare = baseWeight / totalBaseWeight;
     const recentShare = equalizerShareTotal > 0 ? (equalizerShareCounts.get(id) || 0) / equalizerShareTotal : fairShare;
     const dampening = recentShare > fairShare ? Math.max(0.15, fairShare / recentShare) : 1;
@@ -7969,7 +7979,7 @@ function runEqualizerDrain() {
   const accepted = addAndBroadcast(merged, { includeAccepted: true });
   const acceptedBySource = {};
   for (const post of accepted.posts) {
-    const sourceId = post.source || 'unknown';
+    const sourceId = canonicalFeedSourceId(post.source) || 'unknown';
     acceptedBySource[sourceId] = (acceptedBySource[sourceId] || 0) + 1;
   }
   const rejectedBySource = {};
@@ -23248,6 +23258,9 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // platforms directly instead of guessing from post counts alone.
       cadence: AGENT_DEFS[workerId]?.interval || null,
       cycleMinutes: AGENT_DEFS[workerId]?.cycleMinutes ?? null,
+      refreshTtlMinutes: SOURCE_CONFIG[workerId]?.ttl
+        ? Math.round(SOURCE_CONFIG[workerId].ttl / 60000)
+        : null,
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
