@@ -23120,11 +23120,15 @@ function getAgentPostCount(id, cache) {
 // --- Office API endpoints -----------------------------------------------------
 
 app.get('/office/status', requireOfficeToken, (req, res) => {
-  // Build per-source health snapshot
-  const sourceHealthArr = Object.keys(SOURCE_CONFIG).map((id) => {
+  // Build per-source health snapshot. The aggregate source catalog includes
+  // the dedicated Remotive and Muse sweeps too; they are not topic-cycler
+  // workers, but they do pull live listings into the same feed cache.
+  const sourceHealthArr = AGGREGATE_FEED_SOURCES.map((id) => {
     const h = workerHealth.get(id);
     const cache = agentSourceCache.get(id);
-    const liveCount = cache?.totalSeen ?? realFeedPosts(cache?.posts || []).length;
+    const cachedPosts = realFeedPosts(cache?.posts || []);
+    const globalPosts = realFeedPosts(globalFeedCache.posts).filter(post => post.source === id);
+    const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPosts.length);
     const status = h
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
