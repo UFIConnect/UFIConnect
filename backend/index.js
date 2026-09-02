@@ -148,6 +148,15 @@ function buildHealthPayload() {
     payload.contentScreening = null;
   }
   try {
+    payload.liveTravel = {
+      catalogCities: uniqueLiveCameraCities(LIVE_CAMERA_CATALOG).length,
+      activeCities: liveCameraVerificationSnapshot.length,
+      verification: { ...liveCameraVerificationState },
+    };
+  } catch {
+    payload.liveTravel = null;
+  }
+  try {
     payload.dbSize = {
       mb: dbSizeState?.mb ?? null,
       status: dbSizeState?.status || 'unknown',
@@ -9812,6 +9821,212 @@ const COUNTRIES_DESTINATION_GUIDES = Object.freeze([
 ]);
 
 const LIVE_CAMERA_SOURCE = 'livecamera';
+// Discovery-only cities do not carry a guessed video URL. They become visible
+// only after YouTube returns a current, embeddable stream for the city.
+const LIVE_CAMERA_DISCOVERY_CITIES = Object.freeze([
+  ['seattle', 'Seattle', 'United States', 'US'],
+  ['san_diego', 'San Diego', 'United States', 'US'],
+  ['portland', 'Portland', 'United States', 'US'],
+  ['chicago', 'Chicago', 'United States', 'US'],
+  ['austin', 'Austin', 'United States', 'US'],
+  ['denver', 'Denver', 'United States', 'US'],
+  ['honolulu', 'Honolulu', 'United States', 'US'],
+  ['toronto', 'Toronto', 'Canada', 'CA'],
+  ['montreal', 'Montreal', 'Canada', 'CA'],
+  ['quebec_city', 'Quebec City', 'Canada', 'CA'],
+  ['calgary', 'Calgary', 'Canada', 'CA'],
+  ['san_juan', 'San Juan', 'Puerto Rico', 'PR'],
+  ['cancun', 'Cancun', 'Mexico', 'MX'],
+  ['cartagena', 'Cartagena', 'Colombia', 'CO'],
+  ['bogota', 'Bogota', 'Colombia', 'CO'],
+  ['lima', 'Lima', 'Peru', 'PE'],
+  ['cusco', 'Cusco', 'Peru', 'PE'],
+  ['sao_paulo', 'Sao Paulo', 'Brazil', 'BR'],
+  ['buenos_aires', 'Buenos Aires', 'Argentina', 'AR'],
+  ['santiago', 'Santiago', 'Chile', 'CL'],
+  ['montevideo', 'Montevideo', 'Uruguay', 'UY'],
+  ['dublin', 'Dublin', 'Ireland', 'IE'],
+  ['edinburgh', 'Edinburgh', 'United Kingdom', 'GB'],
+  ['manchester', 'Manchester', 'United Kingdom', 'GB'],
+  ['lisbon', 'Lisbon', 'Portugal', 'PT'],
+  ['porto', 'Porto', 'Portugal', 'PT'],
+  ['madrid', 'Madrid', 'Spain', 'ES'],
+  ['barcelona', 'Barcelona', 'Spain', 'ES'],
+  ['valencia', 'Valencia', 'Spain', 'ES'],
+  ['brussels', 'Brussels', 'Belgium', 'BE'],
+  ['copenhagen', 'Copenhagen', 'Denmark', 'DK'],
+  ['stockholm', 'Stockholm', 'Sweden', 'SE'],
+  ['oslo', 'Oslo', 'Norway', 'NO'],
+  ['helsinki', 'Helsinki', 'Finland', 'FI'],
+  ['reykjavik', 'Reykjavik', 'Iceland', 'IS'],
+  ['prague', 'Prague', 'Czechia', 'CZ'],
+  ['budapest', 'Budapest', 'Hungary', 'HU'],
+  ['warsaw', 'Warsaw', 'Poland', 'PL'],
+  ['krakow', 'Krakow', 'Poland', 'PL'],
+  ['zurich', 'Zurich', 'Switzerland', 'CH'],
+  ['geneva', 'Geneva', 'Switzerland', 'CH'],
+  ['milan', 'Milan', 'Italy', 'IT'],
+  ['florence', 'Florence', 'Italy', 'IT'],
+  ['naples', 'Naples', 'Italy', 'IT'],
+  ['athens', 'Athens', 'Greece', 'GR'],
+  ['dubrovnik', 'Dubrovnik', 'Croatia', 'HR'],
+  ['santorini', 'Santorini', 'Greece', 'GR'],
+  ['abu_dhabi', 'Abu Dhabi', 'United Arab Emirates', 'AE'],
+  ['doha', 'Doha', 'Qatar', 'QA'],
+  ['muscat', 'Muscat', 'Oman', 'OM'],
+  ['amman', 'Amman', 'Jordan', 'JO'],
+  ['marrakesh', 'Marrakesh', 'Morocco', 'MA'],
+  ['cairo', 'Cairo', 'Egypt', 'EG'],
+  ['nairobi', 'Nairobi', 'Kenya', 'KE'],
+  ['johannesburg', 'Johannesburg', 'South Africa', 'ZA'],
+  ['zanzibar_city', 'Zanzibar City', 'Tanzania', 'TZ'],
+  ['delhi', 'Delhi', 'India', 'IN'],
+  ['mumbai', 'Mumbai', 'India', 'IN'],
+  ['jaipur', 'Jaipur', 'India', 'IN'],
+  ['kathmandu', 'Kathmandu', 'Nepal', 'NP'],
+  ['colombo', 'Colombo', 'Sri Lanka', 'LK'],
+  ['hanoi', 'Hanoi', 'Vietnam', 'VN'],
+  ['ho_chi_minh_city', 'Ho Chi Minh City', 'Vietnam', 'VN'],
+  ['phnom_penh', 'Phnom Penh', 'Cambodia', 'KH'],
+  ['siem_reap', 'Siem Reap', 'Cambodia', 'KH'],
+  ['jakarta', 'Jakarta', 'Indonesia', 'ID'],
+  ['denpasar', 'Denpasar', 'Indonesia', 'ID'],
+  ['manila', 'Manila', 'Philippines', 'PH'],
+  ['shanghai', 'Shanghai', 'China', 'CN'],
+  ['beijing', 'Beijing', 'China', 'CN'],
+  ['shenzhen', 'Shenzhen', 'China', 'CN'],
+  ['kyoto', 'Kyoto', 'Japan', 'JP'],
+  ['fukuoka', 'Fukuoka', 'Japan', 'JP'],
+  ['busan', 'Busan', 'South Korea', 'KR'],
+  ['melbourne', 'Melbourne', 'Australia', 'AU'],
+  ['brisbane', 'Brisbane', 'Australia', 'AU'],
+  ['perth', 'Perth', 'Australia', 'AU'],
+  ['auckland', 'Auckland', 'New Zealand', 'NZ'],
+  ['wellington', 'Wellington', 'New Zealand', 'NZ'],
+  ['queenstown', 'Queenstown', 'New Zealand', 'NZ'],
+  ['las_vegas', 'Las Vegas', 'United States', 'US'],
+  ['orlando', 'Orlando', 'United States', 'US'],
+  ['atlanta', 'Atlanta', 'United States', 'US'],
+  ['nashville', 'Nashville', 'United States', 'US'],
+  ['philadelphia', 'Philadelphia', 'United States', 'US'],
+  ['dallas', 'Dallas', 'United States', 'US'],
+  ['houston', 'Houston', 'United States', 'US'],
+  ['minneapolis', 'Minneapolis', 'United States', 'US'],
+  ['detroit', 'Detroit', 'United States', 'US'],
+  ['salt_lake_city', 'Salt Lake City', 'United States', 'US'],
+  ['anchorage', 'Anchorage', 'United States', 'US'],
+  ['ottawa', 'Ottawa', 'Canada', 'CA'],
+  ['victoria', 'Victoria', 'Canada', 'CA'],
+  ['halifax', 'Halifax', 'Canada', 'CA'],
+  ['winnipeg', 'Winnipeg', 'Canada', 'CA'],
+  ['edmonton', 'Edmonton', 'Canada', 'CA'],
+  ['guadalajara', 'Guadalajara', 'Mexico', 'MX'],
+  ['merida', 'Merida', 'Mexico', 'MX'],
+  ['tulum', 'Tulum', 'Mexico', 'MX'],
+  ['guatemala_city', 'Guatemala City', 'Guatemala', 'GT'],
+  ['panama_city', 'Panama City', 'Panama', 'PA'],
+  ['santo_domingo', 'Santo Domingo', 'Dominican Republic', 'DO'],
+  ['kingston', 'Kingston', 'Jamaica', 'JM'],
+  ['nassau', 'Nassau', 'Bahamas', 'BS'],
+  ['medellin', 'Medellin', 'Colombia', 'CO'],
+  ['quito', 'Quito', 'Ecuador', 'EC'],
+  ['la_paz', 'La Paz', 'Bolivia', 'BO'],
+  ['asuncion', 'Asuncion', 'Paraguay', 'PY'],
+  ['valparaiso', 'Valparaiso', 'Chile', 'CL'],
+  ['ushuaia', 'Ushuaia', 'Argentina', 'AR'],
+  ['salvador', 'Salvador', 'Brazil', 'BR'],
+  ['recife', 'Recife', 'Brazil', 'BR'],
+  ['brasilia', 'Brasilia', 'Brazil', 'BR'],
+  ['lyon', 'Lyon', 'France', 'FR'],
+  ['marseille', 'Marseille', 'France', 'FR'],
+  ['nice', 'Nice', 'France', 'FR'],
+  ['munich', 'Munich', 'Germany', 'DE'],
+  ['hamburg', 'Hamburg', 'Germany', 'DE'],
+  ['cologne', 'Cologne', 'Germany', 'DE'],
+  ['frankfurt', 'Frankfurt', 'Germany', 'DE'],
+  ['bologna', 'Bologna', 'Italy', 'IT'],
+  ['turin', 'Turin', 'Italy', 'IT'],
+  ['seville', 'Seville', 'Spain', 'ES'],
+  ['granada', 'Granada', 'Spain', 'ES'],
+  ['malaga', 'Malaga', 'Spain', 'ES'],
+  ['bilbao', 'Bilbao', 'Spain', 'ES'],
+  ['palma', 'Palma', 'Spain', 'ES'],
+  ['valletta', 'Valletta', 'Malta', 'MT'],
+  ['ljubljana', 'Ljubljana', 'Slovenia', 'SI'],
+  ['sarajevo', 'Sarajevo', 'Bosnia and Herzegovina', 'BA'],
+  ['belgrade', 'Belgrade', 'Serbia', 'RS'],
+  ['bucharest', 'Bucharest', 'Romania', 'RO'],
+  ['sofia', 'Sofia', 'Bulgaria', 'BG'],
+  ['tirana', 'Tirana', 'Albania', 'AL'],
+  ['skopje', 'Skopje', 'North Macedonia', 'MK'],
+  ['tallinn', 'Tallinn', 'Estonia', 'EE'],
+  ['riga', 'Riga', 'Latvia', 'LV'],
+  ['vilnius', 'Vilnius', 'Lithuania', 'LT'],
+  ['bratislava', 'Bratislava', 'Slovakia', 'SK'],
+  ['luxembourg', 'Luxembourg City', 'Luxembourg', 'LU'],
+  ['rotterdam', 'Rotterdam', 'Netherlands', 'NL'],
+  ['the_hague', 'The Hague', 'Netherlands', 'NL'],
+  ['gothenburg', 'Gothenburg', 'Sweden', 'SE'],
+  ['bergen', 'Bergen', 'Norway', 'NO'],
+  ['riyadh', 'Riyadh', 'Saudi Arabia', 'SA'],
+  ['jeddah', 'Jeddah', 'Saudi Arabia', 'SA'],
+  ['kuwait_city', 'Kuwait City', 'Kuwait', 'KW'],
+  ['manama', 'Manama', 'Bahrain', 'BH'],
+  ['tel_aviv', 'Tel Aviv', 'Israel', 'IL'],
+  ['tbilisi', 'Tbilisi', 'Georgia', 'GE'],
+  ['baku', 'Baku', 'Azerbaijan', 'AZ'],
+  ['yerevan', 'Yerevan', 'Armenia', 'AM'],
+  ['casablanca', 'Casablanca', 'Morocco', 'MA'],
+  ['rabat', 'Rabat', 'Morocco', 'MA'],
+  ['tunis', 'Tunis', 'Tunisia', 'TN'],
+  ['dakar', 'Dakar', 'Senegal', 'SN'],
+  ['accra', 'Accra', 'Ghana', 'GH'],
+  ['lagos', 'Lagos', 'Nigeria', 'NG'],
+  ['addis_ababa', 'Addis Ababa', 'Ethiopia', 'ET'],
+  ['kigali', 'Kigali', 'Rwanda', 'RW'],
+  ['kampala', 'Kampala', 'Uganda', 'UG'],
+  ['dar_es_salaam', 'Dar es Salaam', 'Tanzania', 'TZ'],
+  ['cape_town', 'Cape Town', 'South Africa', 'ZA'],
+  ['durban', 'Durban', 'South Africa', 'ZA'],
+  ['windhoek', 'Windhoek', 'Namibia', 'NA'],
+  ['port_louis', 'Port Louis', 'Mauritius', 'MU'],
+  ['victoria_seychelles', 'Victoria', 'Seychelles', 'SC'],
+  ['karachi', 'Karachi', 'Pakistan', 'PK'],
+  ['lahore', 'Lahore', 'Pakistan', 'PK'],
+  ['dhaka', 'Dhaka', 'Bangladesh', 'BD'],
+  ['yangon', 'Yangon', 'Myanmar', 'MM'],
+  ['vientiane', 'Vientiane', 'Laos', 'LA'],
+  ['luang_prabang', 'Luang Prabang', 'Laos', 'LA'],
+  ['chiang_mai', 'Chiang Mai', 'Thailand', 'TH'],
+  ['phuket', 'Phuket', 'Thailand', 'TH'],
+  ['pattaya', 'Pattaya', 'Thailand', 'TH'],
+  ['penang', 'George Town', 'Malaysia', 'MY'],
+  ['kota_kinabalu', 'Kota Kinabalu', 'Malaysia', 'MY'],
+  ['bandar_seri_begawan', 'Bandar Seri Begawan', 'Brunei', 'BN'],
+  ['sapporo', 'Sapporo', 'Japan', 'JP'],
+  ['hiroshima', 'Hiroshima', 'Japan', 'JP'],
+  ['naha', 'Naha', 'Japan', 'JP'],
+  ['yokohama', 'Yokohama', 'Japan', 'JP'],
+  ['nagoya', 'Nagoya', 'Japan', 'JP'],
+  ['guangzhou', 'Guangzhou', 'China', 'CN'],
+  ['chengdu', 'Chengdu', 'China', 'CN'],
+  ['hangzhou', 'Hangzhou', 'China', 'CN'],
+  ['xian', "Xi'an", 'China', 'CN'],
+  ['macau', 'Macau', 'Macau', 'MO'],
+  ['taichung', 'Taichung', 'Taiwan', 'TW'],
+  ['kaohsiung', 'Kaohsiung', 'Taiwan', 'TW'],
+  ['ulaanbaatar', 'Ulaanbaatar', 'Mongolia', 'MN'],
+  ['sydney', 'Sydney', 'Australia', 'AU'],
+  ['gold_coast', 'Gold Coast', 'Australia', 'AU'],
+  ['cairns', 'Cairns', 'Australia', 'AU'],
+  ['adelaide', 'Adelaide', 'Australia', 'AU'],
+  ['canberra', 'Canberra', 'Australia', 'AU'],
+  ['hobart', 'Hobart', 'Australia', 'AU'],
+  ['christchurch', 'Christchurch', 'New Zealand', 'NZ'],
+  ['rotorua', 'Rotorua', 'New Zealand', 'NZ'],
+  ['suva', 'Suva', 'Fiji', 'FJ'],
+  ['papeete', 'Papeete', 'French Polynesia', 'PF'],
+]);
 const LIVE_CAMERA_CATALOG = Object.freeze([
   {
     id: 'camera_times_square_ny',
@@ -10029,14 +10244,128 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
     country: 'Hong Kong', countryCode: 'HK', city: 'Hong Kong',
     createdAt: '2026-09-01T00:00:00.000Z',
   },
+  {
+    id: 'camera_singapore_downtown',
+    title: 'Downtown Singapore',
+    content: 'A live look across downtown Singapore, where the skyline keeps excellent office hours.',
+    sourceUrl: 'https://www.youtube.com/watch?v=8XU1mp6gcQs',
+    mediaUrl: 'https://www.youtube.com/watch?v=8XU1mp6gcQs',
+    country: 'Singapore', countryCode: 'SG', city: 'Singapore',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_bangkok_skyline',
+    title: 'Bangkok Skyline',
+    content: 'Live skyline and street weather from Bangkok. The heat is doing its best work.',
+    sourceUrl: 'https://www.youtube.com/watch?v=lo8Cv9WDRWg',
+    mediaUrl: 'https://www.youtube.com/watch?v=lo8Cv9WDRWg',
+    country: 'Thailand', countryCode: 'TH', city: 'Bangkok',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_san_francisco_moscone',
+    title: 'Moscone Center, San Francisco',
+    content: 'Live from San Francisco near Yerba Buena Gardens and Moscone Center.',
+    sourceUrl: 'https://www.youtube.com/watch?v=lRsDoDzDYOA',
+    mediaUrl: 'https://www.youtube.com/watch?v=lRsDoDzDYOA',
+    country: 'United States', countryCode: 'US', city: 'San Francisco',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_washington_monument',
+    title: 'Washington Monument, Washington, DC',
+    content: 'Live views over the National Mall from the Washington Monument.',
+    sourceUrl: 'https://www.youtube.com/watch?v=oDCAAfOSqvA',
+    mediaUrl: 'https://www.youtube.com/watch?v=oDCAAfOSqvA',
+    country: 'United States', countryCode: 'US', city: 'Washington',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_boston_fenway',
+    title: 'Fenway Park, Boston',
+    content: 'A live city view near Fenway Park, where the neighborhood keeps score year-round.',
+    sourceUrl: 'https://www.youtube.com/watch?v=FLipW4Y3Y0s',
+    mediaUrl: 'https://www.youtube.com/watch?v=FLipW4Y3Y0s',
+    country: 'United States', countryCode: 'US', city: 'Boston',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_vancouver_harbour',
+    title: 'Vancouver Harbour',
+    content: 'A live view of Vancouver harbour, mountains, and whatever the weather has planned.',
+    sourceUrl: 'https://www.youtube.com/watch?v=Fq-P0bdelRs',
+    mediaUrl: 'https://www.youtube.com/watch?v=Fq-P0bdelRs',
+    country: 'Canada', countryCode: 'CA', city: 'Vancouver',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_vienna_city',
+    title: 'Vienna City View',
+    content: 'A live window onto Vienna street life and weather.',
+    sourceUrl: 'https://www.youtube.com/watch?v=VThWu4E39qc',
+    mediaUrl: 'https://www.youtube.com/watch?v=VThWu4E39qc',
+    country: 'Austria', countryCode: 'AT', city: 'Vienna',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_kuala_lumpur_skyline',
+    title: 'Kuala Lumpur Skyline',
+    content: 'Live skyline, weather, and traffic from Kuala Lumpur.',
+    sourceUrl: 'https://www.youtube.com/watch?v=BTvjnp9YMyY',
+    mediaUrl: 'https://www.youtube.com/watch?v=BTvjnp9YMyY',
+    country: 'Malaysia', countryCode: 'MY', city: 'Kuala Lumpur',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_osaka_tsutenkaku',
+    title: 'Tsutenkaku, Osaka',
+    content: 'A live street-level view toward Tsutenkaku in Osaka.',
+    sourceUrl: 'https://www.youtube.com/watch?v=9_fMqMkwrXE',
+    mediaUrl: 'https://www.youtube.com/watch?v=9_fMqMkwrXE',
+    country: 'Japan', countryCode: 'JP', city: 'Osaka',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_taipei_elephant_mountain',
+    title: 'Taipei Cityscape',
+    content: 'A live Taipei city view from Elephant Mountain.',
+    sourceUrl: 'https://www.youtube.com/watch?v=JLEmtG9heG0',
+    mediaUrl: 'https://www.youtube.com/watch?v=JLEmtG9heG0',
+    country: 'Taiwan', countryCode: 'TW', city: 'Taipei',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  {
+    id: 'camera_istanbul_city',
+    title: 'Istanbul City View',
+    content: 'A live view across Istanbul, straddling two continents without breaking a sweat.',
+    sourceUrl: 'https://www.youtube.com/watch?v=0xFW3MBtpVE',
+    mediaUrl: 'https://www.youtube.com/watch?v=0xFW3MBtpVE',
+    country: 'Turkey', countryCode: 'TR', city: 'Istanbul',
+    createdAt: '2026-09-02T00:00:00.000Z',
+  },
+  ...LIVE_CAMERA_DISCOVERY_CITIES.map(([slug, city, country, countryCode]) => ({
+    id: `camera_${slug}`,
+    title: `${city} Live View`,
+    content: `A current live view from ${city}, ${country}.`,
+    sourceUrl: null,
+    mediaUrl: null,
+    country,
+    countryCode,
+    city,
+    createdAt: '2026-09-02T00:00:00.000Z',
+    discoveryOnly: true,
+  })),
 ]);
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
 let liveCameraPostsSeeded = false;
 let liveCameraPostsSeedPromise = null;
-const LIVE_CAMERA_VERIFICATION_CACHE_MS = 10 * MIN;
-const LIVE_CAMERA_FAILURE_RECHECK_MS = 5 * MIN;
+const LIVE_CAMERA_VERIFICATION_CACHE_MS = 3 * MIN;
+const LIVE_CAMERA_FAILURE_RECHECK_MS = 2 * MIN;
 const LIVE_CAMERA_DISCOVERY_CACHE_MS = 6 * H;
-const LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW = 4;
+const LIVE_CAMERA_DISCOVERY_WINDOW_MS = 12 * H;
+const LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW = 24;
+const LIVE_CAMERA_DISCOVERY_INLINE_MAX = 4;
+const LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX = 20;
 const liveCameraResolvedStreams = new Map();
 const liveCameraDiscoveryCache = new Map();
 let liveCameraVerificationPromise = null;
@@ -10044,6 +10373,8 @@ let liveCameraVerificationSnapshot = [];
 let liveCameraVerificationExpiresAt = 0;
 let liveCameraDiscoveryWindowStartedAt = 0;
 let liveCameraDiscoveryCount = 0;
+let liveCameraDiscoveryBackgroundPromise = null;
+const liveCameraLocationRefreshes = new Map();
 const liveCameraVerificationState = {
   status: 'idle',
   lastRun: null,
@@ -10052,6 +10383,9 @@ const liveCameraVerificationState = {
   replacements: 0,
   unavailable: 0,
   apiConfigured: false,
+  backgroundStatus: 'idle',
+  backgroundLastRun: null,
+  backgroundResolved: 0,
   lastError: null,
 };
 
@@ -10154,8 +10488,55 @@ function currentLiveCameraPosts() {
     .filter(post => post?.source === LIVE_CAMERA_SOURCE)
     .map(post => [post.id, post]));
   return LIVE_CAMERA_CATALOG
-    .map(camera => enrichLiveCameraPost(savedById.get(camera.id) || liveCameraPost(camera)))
-    .filter(post => post?.mediaUrl && post?.sourceUrl);
+    .map(camera => enrichLiveCameraPost(savedById.get(camera.id) || liveCameraPost(camera)));
+}
+
+function liveCameraCityKey(post) {
+  return [post?.city, post?.countryCode || post?.country]
+    .map(value => String(value || '').trim().toLowerCase())
+    .join('|');
+}
+
+function uniqueLiveCameraCities(cameraPosts) {
+  const seen = new Set();
+  return (Array.isArray(cameraPosts) ? cameraPosts : []).filter((post) => {
+    const key = liveCameraCityKey(post);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function prioritizeLiveCameraDiscovery(cameraPosts, location) {
+  const ranked = (Array.isArray(cameraPosts) ? cameraPosts : [])
+    .map((post, index) => {
+      const camera = LIVE_CAMERA_BY_ID.get(post.id);
+      return {
+        post,
+        index,
+        score: liveCameraLocationScore(post, location),
+        hasPrimary: Boolean(camera?.sourceUrl),
+      };
+    })
+    .sort((left, right) => (right.score - left.score) || (left.index - right.index));
+  const local = ranked.filter(item => item.score > 0);
+  const remaining = ranked.filter(item => item.score === 0);
+  const rotate = (items) => {
+    if (!items.length) return items;
+    const cycle = Math.floor(Date.now() / LIVE_CAMERA_DISCOVERY_WINDOW_MS);
+    const step = Math.ceil(LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW / 2);
+    const start = (cycle * step) % items.length;
+    return [...items.slice(start), ...items.slice(0, start)];
+  };
+  const existingCities = rotate(remaining.filter(item => item.hasPrimary));
+  const newCities = rotate(remaining.filter(item => !item.hasPrimary));
+  const mixed = [];
+  const largest = Math.max(existingCities.length, newCities.length);
+  for (let index = 0; index < largest; index += 1) {
+    if (existingCities[index]) mixed.push(existingCities[index]);
+    if (newCities[index]) mixed.push(newCities[index]);
+  }
+  return uniqueLiveCameraCities([...local, ...mixed].map(({ post }) => post));
 }
 
 async function waitForYouTubeDataApiSlot() {
@@ -10181,7 +10562,7 @@ async function fetchYouTubeLiveStates(videoIds) {
       const live = item?.liveStreamingDetails;
       states.set(item.id, {
         live: Boolean(live?.actualStartTime && !live?.actualEndTime),
-        embeddable: item?.status?.embeddable !== false,
+        embeddable: item?.status?.embeddable === true && item?.status?.privacyStatus === 'public',
       });
     }
     return states;
@@ -10191,12 +10572,20 @@ async function fetchYouTubeLiveStates(videoIds) {
   }
 }
 
-function takeLiveCameraDiscoverySlot() {
-  const now = Date.now();
-  if (!liveCameraDiscoveryWindowStartedAt || now - liveCameraDiscoveryWindowStartedAt >= LIVE_CAMERA_DISCOVERY_CACHE_MS) {
+function resetLiveCameraDiscoveryWindow(now = Date.now()) {
+  if (!liveCameraDiscoveryWindowStartedAt || now - liveCameraDiscoveryWindowStartedAt >= LIVE_CAMERA_DISCOVERY_WINDOW_MS) {
     liveCameraDiscoveryWindowStartedAt = now;
     liveCameraDiscoveryCount = 0;
   }
+}
+
+function liveCameraDiscoverySlotsRemaining() {
+  resetLiveCameraDiscoveryWindow();
+  return Math.max(0, LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW - liveCameraDiscoveryCount);
+}
+
+function takeLiveCameraDiscoverySlot() {
+  resetLiveCameraDiscoveryWindow();
   if (liveCameraDiscoveryCount >= LIVE_CAMERA_MAX_DISCOVERIES_PER_WINDOW) return false;
   liveCameraDiscoveryCount += 1;
   return true;
@@ -10204,9 +10593,19 @@ function takeLiveCameraDiscoverySlot() {
 
 async function discoverLiveCameraReplacement(camera) {
   const now = Date.now();
-  const cached = liveCameraDiscoveryCache.get(camera.id);
-  if (cached?.expiresAt > now) return cached.stream || null;
+  let cached = liveCameraDiscoveryCache.get(camera.id);
   if (cached?.pending) return cached.pending;
+  if (cached?.expiresAt > now) {
+    if (!cached.stream?.videoId) return null;
+    // A search result can end before the discovery cache does. Re-check the
+    // candidate before reusing it; a stale cached replacement must never
+    // reach the rail just because it was live a few minutes ago.
+    const states = await fetchYouTubeLiveStates([cached.stream.videoId]);
+    const state = states?.get(cached.stream.videoId);
+    if (state?.live && state.embeddable) return cached.stream;
+    liveCameraDiscoveryCache.delete(camera.id);
+    cached = null;
+  }
   if (!process.env.YOUTUBE_API_KEY || !takeLiveCameraDiscoverySlot()) return null;
 
   const entry = cached || { stream: null, expiresAt: 0, pending: null };
@@ -10270,11 +10669,55 @@ function withVerifiedLiveCameraStream(post, stream) {
   };
 }
 
-async function refreshVerifiedLiveCameraPosts() {
+async function resolveLiveCameraDiscoveries(cameraPosts, maxLookups) {
+  const resolved = [];
+  let lookups = 0;
+  for (const post of cameraPosts) {
+    if (lookups >= maxLookups || liveCameraDiscoverySlotsRemaining() <= 0) break;
+    const camera = LIVE_CAMERA_BY_ID.get(post.id);
+    if (!camera) continue;
+    const before = liveCameraDiscoveryCount;
+    const replacement = await discoverLiveCameraReplacement(camera);
+    if (liveCameraDiscoveryCount > before) lookups += 1;
+    if (!replacement) continue;
+    rememberResolvedLiveCameraStream(post.id, replacement);
+    resolved.push(withVerifiedLiveCameraStream(post, replacement));
+  }
+  return resolved;
+}
+
+function scheduleLiveCameraDiscovery(cameraPosts) {
+  if (IS_PIPELINE_ROLE || !process.env.YOUTUBE_API_KEY || !cameraPosts.length || liveCameraDiscoveryBackgroundPromise) return;
+  liveCameraVerificationState.backgroundStatus = 'queued';
+  liveCameraDiscoveryBackgroundPromise = new Promise(resolve => setTimeout(resolve, 0))
+    .then(async () => {
+      liveCameraVerificationState.backgroundStatus = 'running';
+      const resolved = await resolveLiveCameraDiscoveries(cameraPosts, LIVE_CAMERA_DISCOVERY_BACKGROUND_MAX);
+      liveCameraVerificationState.backgroundLastRun = Date.now();
+      liveCameraVerificationState.backgroundResolved = resolved.length;
+      if (resolved.length) liveCameraVerificationExpiresAt = 0;
+      return resolved;
+    })
+    .catch((error) => {
+      liveCameraVerificationState.backgroundStatus = 'error';
+      liveCameraVerificationState.lastError = error?.message || 'Live-camera discovery failed';
+      console.warn('[Travel] background live-camera discovery failed:', error?.message || error);
+      return [];
+    })
+    .finally(() => {
+      if (liveCameraVerificationState.backgroundStatus !== 'error') {
+        liveCameraVerificationState.backgroundStatus = 'idle';
+      }
+      liveCameraDiscoveryBackgroundPromise = null;
+    });
+}
+
+async function refreshVerifiedLiveCameraPosts(location = null) {
   const started = Date.now();
   const candidates = currentLiveCameraPosts();
-  const states = await fetchYouTubeLiveStates(candidates.map(post => liveCameraYouTubeId(post.sourceUrl)));
-  if (!states) {
+  const primaryIds = candidates.map(post => liveCameraYouTubeId(post.sourceUrl)).filter(Boolean);
+  const states = primaryIds.length ? await fetchYouTubeLiveStates(primaryIds) : new Map();
+  if (primaryIds.length && !states) {
     liveCameraVerificationState.status = 'degraded';
     liveCameraVerificationState.lastRun = Date.now();
     liveCameraVerificationState.lastDurationMs = Date.now() - started;
@@ -10292,40 +10735,56 @@ async function refreshVerifiedLiveCameraPosts() {
     const videoId = liveCameraYouTubeId(post.sourceUrl);
     const state = videoId ? states?.get(videoId) : null;
     if (state?.live && state.embeddable) {
-      const stream = { sourceUrl: post.sourceUrl, videoId, replacement: false };
+      const existing = getResolvedLiveCameraStream(post.id);
+      const stream = {
+        sourceUrl: post.sourceUrl,
+        videoId,
+        replacement: Boolean(existing?.replacement),
+        title: existing?.title || null,
+        channelTitle: existing?.channelTitle || null,
+      };
       rememberResolvedLiveCameraStream(post.id, stream);
       verified.push(withVerifiedLiveCameraStream(post, stream));
       continue;
     }
+    if (post.liveReplacement) liveCameraDiscoveryCache.delete(post.id);
     liveCameraResolvedStreams.delete(post.id);
     unresolved.push(post);
   }
 
-  for (const post of unresolved) {
-    const camera = LIVE_CAMERA_BY_ID.get(post.id);
-    if (!camera) continue;
-    const replacement = await discoverLiveCameraReplacement(camera);
-    if (!replacement) continue;
-    rememberResolvedLiveCameraStream(post.id, replacement);
-    verified.push(withVerifiedLiveCameraStream(post, replacement));
-  }
+  const discoveryCandidates = prioritizeLiveCameraDiscovery(unresolved, location);
+  const inlineCandidates = discoveryCandidates.slice(0, LIVE_CAMERA_DISCOVERY_INLINE_MAX);
+  verified.push(...await resolveLiveCameraDiscoveries(inlineCandidates, LIVE_CAMERA_DISCOVERY_INLINE_MAX));
+  scheduleLiveCameraDiscovery(discoveryCandidates.slice(inlineCandidates.length));
+
+  const uniqueVerified = uniqueLiveCameraCities(verified);
 
   liveCameraVerificationState.status = states ? 'ready' : 'degraded';
   liveCameraVerificationState.lastRun = Date.now();
   liveCameraVerificationState.lastDurationMs = Date.now() - started;
-  liveCameraVerificationState.primaryLive = verified.filter(post => !post.liveReplacement).length;
-  liveCameraVerificationState.replacements = verified.filter(post => post.liveReplacement).length;
-  liveCameraVerificationState.unavailable = Math.max(0, candidates.length - verified.length);
+  liveCameraVerificationState.primaryLive = uniqueVerified.filter(post => !post.liveReplacement).length;
+  liveCameraVerificationState.replacements = uniqueVerified.filter(post => post.liveReplacement).length;
+  liveCameraVerificationState.unavailable = Math.max(0, uniqueLiveCameraCities(candidates).length - uniqueVerified.length);
   liveCameraVerificationState.apiConfigured = Boolean(process.env.YOUTUBE_API_KEY);
   liveCameraVerificationState.lastError = states ? null : 'YouTube live-status verification was unavailable';
-  return verified;
+  return uniqueVerified;
 }
 
-async function verifiedLiveCameraPosts() {
+async function verifiedLiveCameraPosts(location = null) {
   const now = Date.now();
-  if (liveCameraVerificationSnapshot.length && liveCameraVerificationExpiresAt > now) return liveCameraVerificationSnapshot;
+  const locationKey = location?.available
+    ? `${String(location.countryCode || location.country || '').trim().toLowerCase()}|${String(location.city || '').trim().toLowerCase()}`
+    : '';
+  const hasLocationCamera = !locationKey || liveCameraVerificationSnapshot.some(post =>
+    location?.city ? travelCityMatches(post, location) : travelCountryMatches(post, location)
+  );
+  const locationRefreshUntil = locationKey ? (liveCameraLocationRefreshes.get(locationKey) || 0) : 0;
+  if (liveCameraVerificationExpiresAt > now && (hasLocationCamera || locationRefreshUntil > now)) {
+    return liveCameraVerificationSnapshot;
+  }
   if (liveCameraVerificationPromise) return liveCameraVerificationPromise;
-  liveCameraVerificationPromise = refreshVerifiedLiveCameraPosts()
+  if (locationKey) liveCameraLocationRefreshes.set(locationKey, now + LIVE_CAMERA_FAILURE_RECHECK_MS);
+  liveCameraVerificationPromise = refreshVerifiedLiveCameraPosts(location)
     .then((posts) => {
       liveCameraVerificationSnapshot = posts;
       liveCameraVerificationExpiresAt = Date.now() + (posts.length ? LIVE_CAMERA_VERIFICATION_CACHE_MS : LIVE_CAMERA_FAILURE_RECHECK_MS);
@@ -10334,8 +10793,9 @@ async function verifiedLiveCameraPosts() {
     .catch((error) => {
       liveCameraVerificationState.status = 'error';
       liveCameraVerificationState.lastError = error?.message || 'Live-camera verification failed';
+      liveCameraVerificationSnapshot = [];
       liveCameraVerificationExpiresAt = Date.now() + LIVE_CAMERA_FAILURE_RECHECK_MS;
-      return liveCameraVerificationSnapshot;
+      return [];
     })
     .finally(() => { liveCameraVerificationPromise = null; });
   return liveCameraVerificationPromise;
@@ -10789,7 +11249,7 @@ async function getCountriesCameraFeed(location, viewerId = null) {
   // a stream can end at any moment, so its independently verified snapshot has
   // a much shorter lifetime and is never stored in this discovery cache.
   const [cameraResult, entry] = await Promise.all([
-    verifiedLiveCameraPosts().catch((error) => {
+    verifiedLiveCameraPosts(location).catch((error) => {
       console.warn('[Travel] live-camera verification failed:', error?.message || error);
       return [];
     }),
