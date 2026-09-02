@@ -57,6 +57,7 @@ const EXTERNAL_BRAND_ICON_URLS = {
   mittr:         'https://www.technologyreview.com/favicon.ico',
   theregister:   'https://www.theregister.com/favicon.ico',
   freecodecamp:  'https://cdn.simpleicons.org/freecodecamp/006400',
+  phoronix:      'https://www.phoronix.com/favicon.ico',
   remoteok:      'https://remoteok.com/favicon.ico',
   remotive:      'https://remotive.com/favicon.ico',
   muse:          'https://www.themuse.com/favicon.ico',

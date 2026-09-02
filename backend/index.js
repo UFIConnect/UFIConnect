@@ -14337,6 +14337,69 @@ const PLATFORMS = {
     comingSoon: true,
     note: 'WordPress.com needs an OAuth app and site selector before it can be connected.',
   },
+  wired: {
+    name: 'WIRED', color: '#111111', icon: 'wired', category: 'publication',
+    description: 'Connect a WIRED account for future article publishing and reader tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'WIRED account connection and Cross-Post support are coming soon.',
+  },
+  mittr: {
+    name: 'MIT Technology Review', color: '#A31F34', icon: 'mittr', category: 'publication',
+    description: 'Connect your MIT Technology Review account for future article tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'MIT Technology Review account connection and Cross-Post support are coming soon.',
+  },
+  smashing: {
+    name: 'Smashing Magazine', color: '#E9620A', icon: 'smashing', category: 'publication',
+    description: 'Connect your Smashing Magazine account for future publishing tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Smashing Magazine account connection and Cross-Post support are coming soon.',
+  },
+  infoq: {
+    name: 'InfoQ', color: '#67B346', icon: 'infoq', category: 'publication',
+    description: 'Connect your InfoQ account for future article publishing tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'InfoQ account connection and Cross-Post support are coming soon.',
+  },
+  theregister: {
+    name: 'The Register', color: '#CC0000', icon: 'theregister', category: 'publication',
+    description: 'Connect your account with The Register for future article and discussion tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'The Register account connection and Cross-Post support are coming soon.',
+  },
+  arstechnica: {
+    name: 'Ars Technica', color: '#FF6600', icon: 'arstechnica', category: 'publication',
+    description: 'Connect your Ars Technica account for future article and forum tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Ars Technica account connection and Cross-Post support are coming soon.',
+  },
+  phoronix: {
+    name: 'Phoronix', color: '#2B7BB9', icon: 'phoronix', category: 'publication',
+    description: 'Connect your Phoronix account for future article and forum tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Phoronix account connection and Cross-Post support are coming soon.',
+  },
+  devto: {
+    name: 'DEV Community', color: '#3B49DF', icon: 'devto', category: 'publication',
+    description: 'Connect your DEV Community account for future article publishing.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'DEV Community account connection and Cross-Post support are coming soon.',
+  },
+  freecodecamp: {
+    name: 'freeCodeCamp', color: '#006400', icon: 'freecodecamp', category: 'publication',
+    description: 'Connect your freeCodeCamp account for future article and learning tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'freeCodeCamp account connection and Cross-Post support are coming soon.',
+  },
   indeed: {
     name: 'Indeed', color: '#003A9B', icon: 'indeed',
     description: 'Get job recommendations matched to your profile and groups.',
@@ -14392,9 +14455,14 @@ const CONNECTED_SOCIAL_PLATFORMS = new Set([
 const PUBLISHING_ONLY_SOCIAL_PLATFORMS = new Set([
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
 ]);
+const PUBLICATION_ACCOUNT_PLATFORMS = new Set([
+  'wired', 'mittr', 'smashing', 'infoq', 'theregister',
+  'arstechnica', 'phoronix', 'devto', 'freecodecamp',
+]);
 const SOCIAL_PLATFORM_CATALOG = new Set([
   ...CONNECTED_SOCIAL_PLATFORMS,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
+  ...PUBLICATION_ACCOUNT_PLATFORMS,
 ]);
 
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
@@ -14406,6 +14474,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
   // connection that cannot deliver the promised account functionality.
   'linkedin', 'tiktok',
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
+  ...PUBLICATION_ACCOUNT_PLATFORMS,
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -29170,6 +29239,15 @@ const CROSS_POST_CAPABILITIES = Object.freeze({
   tumblr:    { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'Tumblr needs an OAuth consumer and a blog selector.' },
   wordpress: { supported: false, delivery: 'direct', media: 'native-image', requiresPhoto: false, note: 'WordPress.com needs an OAuth app and site selector.' },
   youtube:   { supported: false, delivery: 'direct', media: 'video', requiresPhoto: false, note: 'YouTube uploads need a video-specific publishing flow and YouTube upload access.' },
+  wired:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'WIRED publishing is coming soon.' },
+  mittr:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'MIT Technology Review publishing is coming soon.' },
+  smashing:    { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Smashing Magazine publishing is coming soon.' },
+  infoq:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'InfoQ publishing is coming soon.' },
+  theregister: { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'The Register publishing is coming soon.' },
+  arstechnica: { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Ars Technica publishing is coming soon.' },
+  phoronix:    { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'Phoronix publishing is coming soon.' },
+  devto:       { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'DEV Community publishing is coming soon.' },
+  freecodecamp: { supported: false, delivery: 'unsupported', media: 'none', requiresPhoto: false, note: 'freeCodeCamp publishing is coming soon.' },
 });
 const MAX_CROSS_POST_TARGETS = 7;
 const CROSS_POST_IMAGE_MAX_BYTES = 10 * 1024 * 1024;

@@ -35,6 +35,7 @@ export const SOURCE_META = {
   phoronix:      { label: 'Phoronix',        color: '#2B7BB9', icon: 'PX' },
   infoq:         { label: 'InfoQ',           color: '#67B346', icon: 'IQ' },
   mittr:         { label: 'MIT Tech Review', color: '#A31F34', icon: 'MIT' },
+  freecodecamp:  { label: 'freeCodeCamp',    color: '#006400', icon: 'FCC' },
   remoteok:      { label: 'Remote OK',       color: '#10B981', icon: 'RO' },
   remotive:      { label: 'Remotive',        color: '#2563EB', icon: 'RM' },
   muse:          { label: 'The Muse',        color: '#7C3AED', icon: 'MU' },
@@ -60,13 +61,14 @@ export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
 ];
 
-// Cross-Post shows every provider that can receive a post through an
-// official third-party API. The server marks each one as selectable only
-// when its provider flow is configured and supported.
+// Cross-Post shows supported providers and planned publishing destinations.
+// The server marks each one as selectable only when its provider flow is
+// configured and supported.
 export const CROSS_POST_PLATFORM_IDS = [
   'bluesky', 'reddit', 'twitter', 'facebook', 'instagram', 'tiktok',
   'threads', 'linkedin', 'mastodon', 'pinterest', 'tumblr', 'wordpress',
-  'youtube',
+  'youtube', 'wired', 'mittr', 'smashing', 'infoq', 'theregister',
+  'arstechnica', 'phoronix', 'devto', 'freecodecamp',
 ];
 
 // Every platform a user can link via Connected Accounts (mirrors
