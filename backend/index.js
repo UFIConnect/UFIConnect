@@ -9459,6 +9459,7 @@ const COUNTRY_INPUT_CODES = {
   'united kingdom': 'GB', uk: 'GB', 'great britain': 'GB',
   canada: 'CA', australia: 'AU', japan: 'JP',
   germany: 'DE', france: 'FR', spain: 'ES', italy: 'IT',
+  'south korea': 'KR', korea: 'KR', 'hong kong': 'HK',
   netherlands: 'NL', ireland: 'IE', india: 'IN',
   'new zealand': 'NZ', brazil: 'BR', mexico: 'MX',
   singapore: 'SG', poland: 'PL', portugal: 'PT', sweden: 'SE',
@@ -9614,6 +9615,8 @@ const COUNTRY_LOCATION_KEYWORDS = {
   PL: ['poland', 'warsaw'],
   PT: ['portugal', 'lisbon'],
   SE: ['sweden', 'stockholm'],
+  KR: ['south korea', 'korea', 'seoul', 'busan'],
+  HK: ['hong kong'],
 };
 // Present in the vast majority of real listings that aren't restricted to a
 // specific country — always counts as a match regardless of the user's
@@ -9989,6 +9992,42 @@ const LIVE_CAMERA_CATALOG = Object.freeze([
     mediaUrl: 'https://www.youtube.com/watch?v=i5R4ZlVLzLI',
     country: 'South Africa', countryCode: 'ZA', city: 'Cape Town',
     createdAt: '2024-02-01T12:00:00.000Z',
+  },
+  {
+    id: 'camera_venice_grand_canal',
+    title: 'Venice Canals, Italy',
+    content: 'Live public camera from Venice. Gondolas are keeping a very steady appointment with the canal.',
+    sourceUrl: 'https://www.youtube.com/watch?v=a1mcaV3Sf9U',
+    mediaUrl: 'https://www.youtube.com/watch?v=a1mcaV3Sf9U',
+    country: 'Italy', countryCode: 'IT', city: 'Venice',
+    createdAt: '2026-09-01T00:00:00.000Z',
+  },
+  {
+    id: 'camera_seoul_han_river',
+    title: 'Han River, Seoul',
+    content: 'Live public camera from Seoul. The skyline is taking the long route across the river.',
+    sourceUrl: 'https://www.youtube.com/watch?v=xfxAhLA6DpU',
+    mediaUrl: 'https://www.youtube.com/watch?v=xfxAhLA6DpU',
+    country: 'South Korea', countryCode: 'KR', city: 'Seoul',
+    createdAt: '2026-09-01T00:00:00.000Z',
+  },
+  {
+    id: 'camera_amsterdam_canals',
+    title: 'Amsterdam Live Walk',
+    content: 'Live public camera from Amsterdam. A little canal-side people watching without the bike logistics.',
+    sourceUrl: 'https://www.youtube.com/watch?v=RmiTd0J5qDg',
+    mediaUrl: 'https://www.youtube.com/watch?v=RmiTd0J5qDg',
+    country: 'Netherlands', countryCode: 'NL', city: 'Amsterdam',
+    createdAt: '2026-09-01T00:00:00.000Z',
+  },
+  {
+    id: 'camera_hong_kong_peak',
+    title: 'Victoria Harbour, Hong Kong',
+    content: 'Live public camera from Victoria Peak. The harbor keeps the city moving after the sun goes down.',
+    sourceUrl: 'https://www.youtube.com/watch?v=QwVfrO2DfP4',
+    mediaUrl: 'https://www.youtube.com/watch?v=QwVfrO2DfP4',
+    country: 'Hong Kong', countryCode: 'HK', city: 'Hong Kong',
+    createdAt: '2026-09-01T00:00:00.000Z',
   },
 ]);
 const LIVE_CAMERA_BY_ID = new Map(LIVE_CAMERA_CATALOG.map(camera => [camera.id, camera]));
@@ -11248,18 +11287,64 @@ function buildFullMemberFeedEqualizer(posts, userTopics, userAffinity, options =
   return buildTwoPhaseMix(uniqueEqualizerPosts(posts), userTopics, userAffinity, options);
 }
 
-// Travel and Restaurants are location-led discovery surfaces. Keep the
-// selected-place items as their own leading band, but fully equalize sources
-// and topics inside that band and the remaining discovery feed separately.
-function buildLocationAwareMemberEqualizer(posts, userAffinity) {
+// Travel and Restaurants are explicitly newest-first discovery surfaces.
+// Location and member engagement choose the order only inside a short
+// timestamp cohort, so a useful local event can lead its near-simultaneous
+// peers without an older story jumping ahead of fresher content. Each cohort
+// is still source-equalized before the page-level diversity guard runs.
+const LOCATION_FEED_RECENCY_COHORT_MS = 2 * 60 * 1000;
+
+function locationFeedUsageScore(post, userAffinity) {
+  const sourceWeight = Number(userAffinity?.source?.get(post?.source) || 0);
+  const topicWeight = Number(userAffinity?.topic?.get(post?.topic) || 0);
+  return Math.min(12, Math.log1p(Math.max(0, sourceWeight)) * 2)
+    + Math.min(14, Math.log1p(Math.max(0, topicWeight)) * 2.2);
+}
+
+function locationFeedRelevanceScore(post, locationContext, userAffinity) {
+  const locationScore = post?.matchedByLocation
+    ? (post.locationMatch === 'local' ? 24 : 18)
+    : feedPostLocationMatch(post, locationContext).score;
+  return locationScore + locationFeedUsageScore(post, userAffinity);
+}
+
+function buildLocationAwareMemberEqualizer(posts, userAffinity, locationContext) {
   const list = uniqueEqualizerPosts(posts);
-  const local = list.filter(post => post.matchedByLocation || post.locationMatch === 'local');
-  const remainder = list.filter(post => !local.includes(post));
-  if (!local.length) return buildFullMemberFeedEqualizer(list, [], userAffinity, { filterTopics: false });
-  return uniqueEqualizerPosts([
-    ...buildFullMemberFeedEqualizer(local, [], userAffinity, { filterTopics: false }),
-    ...buildFullMemberFeedEqualizer(remainder, [], userAffinity, { filterTopics: false }),
-  ]);
+  const cohorts = new Map();
+  for (const post of list) {
+    const timestamp = parseTimestampMs(post?.createdAt) || 0;
+    const cohort = Math.floor(timestamp / LOCATION_FEED_RECENCY_COHORT_MS);
+    if (!cohorts.has(cohort)) cohorts.set(cohort, []);
+    cohorts.get(cohort).push({
+      post,
+      timestamp,
+      relevance: locationFeedRelevanceScore(post, locationContext, userAffinity),
+    });
+  }
+
+  return uniqueEqualizerPosts(
+    [...cohorts.entries()]
+      .sort(([left], [right]) => right - left)
+      .flatMap(([, cohort]) => {
+        const bySource = new Map();
+        for (const entry of cohort) {
+          const source = entry.post?.source || 'unknown';
+          if (!bySource.has(source)) bySource.set(source, []);
+          bySource.get(source).push(entry);
+        }
+        const sourceQueues = [...bySource.values()]
+          .map(queue => queue.sort((left, right) =>
+            (right.relevance - left.relevance)
+            || (right.timestamp - left.timestamp)
+          ))
+          .sort((left, right) =>
+            (right[0].relevance - left[0].relevance)
+            || (right[0].timestamp - left[0].timestamp)
+          )
+          .map(queue => queue.map(entry => entry.post));
+        return roundRobinMerge(sourceQueues);
+      })
+  );
 }
 
 function buildTwoPhaseMix(pool, userTopics, userAffinity, options = {}) {
@@ -20015,6 +20100,7 @@ async function handleFeedRequest(req, res) {
     const available = buildLocationAwareMemberEqualizer(
       filterUnseen(filterPostsForMemberLanguages(localFeed.posts, user, req), seenIds),
       userAffinity,
+      locationContext,
     );
     const offset = (reqPage - 1) * feedLimit;
     const pageRows = enforceFeedDiversity(available.slice(offset), feedLimit, 'newest');

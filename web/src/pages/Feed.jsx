@@ -764,9 +764,9 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
 }
 
 // Travel has a small, persistent live-camera rail above its discoverable
-// stories. Only the current camera is mounted, so rotating the rail never
+// stories. Only the current camera is mounted, so switching the rail never
 // turns into a row of simultaneously decoding YouTube players on mobile.
-function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '' }) {
+function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = '', onLocationSelect }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [inView, setInView] = useState(false);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
@@ -778,6 +778,15 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
   useEffect(() => {
     setActiveIndex(current => Math.min(current, Math.max(liveFeeds.length - 1, 0)));
   }, [liveFeeds.length]);
+
+  useEffect(() => {
+    if (!locationLabel) return;
+    const selectedIndex = liveFeeds.findIndex(feed =>
+      [feed?.city, feed?.country].filter(Boolean).join(', ') === locationLabel
+    );
+    if (selectedIndex < 0) return;
+    setActiveIndex(current => current === selectedIndex ? current : selectedIndex);
+  }, [liveFeeds, locationLabel]);
 
   useEffect(() => {
     const element = loopRef.current;
@@ -799,20 +808,16 @@ function TravelLiveLoop({ feeds = [], onMediaOpen, mediaOpenId, locationLabel = 
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
-  useEffect(() => {
-    if (!inView || liveFeeds.length < 2) return undefined;
-    const intervalId = window.setInterval(() => {
-      if (document.hidden) return;
-      setActiveIndex(current => (current + 1) % liveFeeds.length);
-    }, 18000);
-    return () => window.clearInterval(intervalId);
-  }, [inView, liveFeeds.length]);
-
   if (!active) return null;
 
-  const selectCamera = (index) => setActiveIndex(index);
+  const selectCamera = (index) => {
+    const selected = liveFeeds[index];
+    setActiveIndex(index);
+    if (selected) onLocationSelect?.(selected);
+  };
   const moveCamera = (direction) => {
-    setActiveIndex(current => (current + direction + liveFeeds.length) % liveFeeds.length);
+    const nextIndex = (activeIndex + direction + liveFeeds.length) % liveFeeds.length;
+    selectCamera(nextIndex);
   };
 
   return (
@@ -2204,6 +2209,37 @@ export default function Feed({ forcedMode } = {}) {
     }
   }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
 
+  const selectTravelLiveLocation = useCallback(async (camera) => {
+    const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
+    if (!next.country && !next.city) return;
+    const current = normalizeLocationFilters(locationFiltersRef.current);
+    const unchanged = current.country.toLowerCase() === next.country.toLowerCase()
+      && current.city.toLowerCase() === next.city.toLowerCase();
+    locationFiltersRef.current = next;
+    setLocationFilters(next);
+    setLocationSaving(true);
+    setLocationMessage('');
+    try {
+      if (!unchanged) {
+        const { data } = await client.patch('/profile', {
+          roleSettings: { ...(profile?.roleSettings || {}), feedLocation: next },
+        });
+        updateProfileLocally(data.profile || data);
+      }
+      setLocationMessage(`Showing newest events around ${[next.city, next.country].filter(Boolean).join(', ')}.`);
+    } catch {
+      const stored = normalizeLocationFilters(profile?.roleSettings?.feedLocation);
+      locationFiltersRef.current = stored;
+      setLocationFilters(stored);
+      setLocationMessage('Could not save this location. Your previous travel location is still active.');
+    } finally {
+      setLocationSaving(false);
+      setRemotePage(2);
+      setRemoteHasMore(true);
+      loadFeed(true, activeTabsRef.current, { replace: true, bust: false });
+    }
+  }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
+
   // Debounced search handler
   const debouncedSearch = useMemo(
     () => debounce((query) => {
@@ -3157,6 +3193,7 @@ export default function Feed({ forcedMode } = {}) {
               onMediaOpen={post => setMediaLightboxPostId(post.id)}
               mediaOpenId={mediaLightboxPostId}
               locationLabel={travelLocationLabel}
+              onLocationSelect={selectTravelLiveLocation}
             />
           )}
 
