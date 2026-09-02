@@ -18151,7 +18151,7 @@ function requireOfficeToken(req, res, next) {
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
   const platforms = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
-    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]);
+    const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]) || platform === 'bluesky';
     const forceComingSoon = FORCE_COMING_SOON_PLATFORMS.has(platform);
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(platform);
     return [platform, {

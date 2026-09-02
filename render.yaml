@@ -296,6 +296,14 @@ services:
         sync: false
       - key: DRIBBBLE_CLIENT_SECRET
         sync: false
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      - key: THREADS_CLIENT_ID
+        sync: false
+      - key: THREADS_CLIENT_SECRET
+        sync: false
       - key: BEHANCE_CLIENT_ID
         sync: false
       - key: BEHANCE_CLIENT_SECRET
@@ -303,6 +311,10 @@ services:
       - key: TIKTOK_CLIENT_KEY
         sync: false
       - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      # AT Protocol OAuth uses a signed client assertion rather than a
+      # traditional client ID/secret pair.
+      - key: BLUESKY_SIGNING_KEY
         sync: false
       - key: BLUESKY_CLIENT_ID
         sync: false
@@ -446,6 +458,14 @@ services:
         sync: false
       - key: DRIBBBLE_CLIENT_SECRET
         sync: false
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      - key: THREADS_CLIENT_ID
+        sync: false
+      - key: THREADS_CLIENT_SECRET
+        sync: false
       - key: BEHANCE_CLIENT_ID
         sync: false
       - key: BEHANCE_CLIENT_SECRET
@@ -453,6 +473,8 @@ services:
       - key: TIKTOK_CLIENT_KEY
         sync: false
       - key: TIKTOK_CLIENT_SECRET
+        sync: false
+      - key: BLUESKY_SIGNING_KEY
         sync: false
       - key: BLUESKY_CLIENT_ID
         sync: false
