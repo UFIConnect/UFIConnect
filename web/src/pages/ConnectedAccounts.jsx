@@ -4,6 +4,7 @@ import Layout from '../components/Layout';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { CAREER_SITES } from '../components/careerSites';
+import { PUBLICATION_SITES } from '../components/publicationSites';
 import { useAuth } from '../contexts/AuthContext';
 
 const PLATFORM_BENEFITS = {
@@ -149,7 +150,7 @@ export default function ConnectedAccounts() {
         <p className="page-subtitle">
           {isBusinessMembership
             ? 'Your Business membership keeps connections focused on live career sources and official job searches.'
-            : 'Connect your social accounts and open career sites tailored to your work.'}
+            : 'Connect social accounts and open your career, magazine, and article accounts.'}
         </p>
       </div>
 
@@ -234,6 +235,18 @@ export default function ConnectedAccounts() {
             </p>
             {CAREER_SITES.map(site => <CareerSiteCard key={site.key} site={site} />)}
           </section>
+
+          {!isBusinessMembership && (
+            <section style={{ marginBottom: 28 }} aria-labelledby="publication-sites-heading">
+              <div id="publication-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
+                Magazine &amp; article sign-ins
+              </div>
+              <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
+                Open your account at the official publisher. Your password stays with that publisher and is never shared with UFIconnect.
+              </p>
+              {PUBLICATION_SITES.map(site => <PublicationSiteCard key={site.key} site={site} />)}
+            </section>
+          )}
 
           {/* Connected section */}
           {!isBusinessMembership && connectedList.length > 0 && (
@@ -521,6 +534,51 @@ function CareerSiteCard({ site }) {
           <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>{site.description}</div>
         </div>
         <div style={{ marginLeft: 'auto', flexShrink: 0 }}>{action}</div>
+      </div>
+    </div>
+  );
+}
+
+function PublicationSiteCard({ site }) {
+  return (
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: hasBrandIcon(site.key) ? '#fff' : site.color,
+          border: hasBrandIcon(site.key) ? '1px solid var(--border)' : 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          {hasBrandIcon(site.key) ? (
+            <BrandIcon platform={site.key} size={22} />
+          ) : (
+            <span style={{ color: '#fff', fontWeight: 700, fontSize: '.78rem' }}>{site.name.slice(0, 2).toUpperCase()}</span>
+          )}
+        </div>
+        <div style={{ flex: '1 1 210px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{site.name}</span>
+            <span style={{
+              fontSize: '.65rem', fontWeight: 700, color: '#475569',
+              background: '#F1F5F9', padding: '1px 6px', borderRadius: 4,
+            }}>
+              Official account
+            </span>
+          </div>
+          <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>{site.description}</div>
+        </div>
+        <div style={{ marginLeft: 'auto', flexShrink: 0 }}>
+          <a
+            href={site.signInUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-sm btn-outline"
+            style={{ borderColor: site.color, color: site.color, whiteSpace: 'nowrap' }}
+            aria-label={`Sign in to ${site.name}`}
+          >
+            Sign in
+          </a>
+        </div>
       </div>
     </div>
   );
