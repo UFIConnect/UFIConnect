@@ -1535,6 +1535,15 @@ app.get('/oauth/bluesky/jwks.json', (_req, res) => {
 // in up front (there's no fixed authUrl to just redirect to) and a real
 // PAR round-trip before it has anything to redirect the browser to at all.
 app.get('/auth/social/bluesky/start', authenticate, async (req, res) => {
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+  if (user.plan === 'business') {
+    return res.status(403).json({
+      error: 'Business memberships use Career Sites instead of social account connections.',
+      detail: 'Open Connected Accounts to browse career sources and official job searches.',
+      code: 'business_career_only',
+    });
+  }
   if (!BLUESKY_SIGNING_KEY) {
     return res.status(501).json({
       error: 'bluesky OAuth not configured',
@@ -15977,7 +15986,12 @@ function fullProfile(user) {
       });
     }
   });
-  const connectedPlatforms = Object.keys(user.socialTokens || {}).filter(platform => !!user.socialTokens[platform]);
+  // Business is a career-only membership. Existing social tokens are kept
+  // intact so a later downgrade never loses account data, but they are not
+  // exposed to Business surfaces or used as visible connections.
+  const connectedPlatforms = user.plan === 'business'
+    ? []
+    : Object.keys(user.socialTokens || {}).filter(platform => !!user.socialTokens[platform]);
 
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
@@ -19476,11 +19490,13 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
-  // Linking an account is available to every signed-in member. Paid plans
-  // still gate the cost-bearing Command Center actions that may use the
-  // connection (AI drafting, media generation, and publishing); a plan must
-  // never prevent a member from authorizing, reviewing, or disconnecting
-  // their own social account.
+  if (user.plan === 'business') {
+    return res.status(403).json({
+      error: 'Business memberships use Career Sites instead of social account connections.',
+      detail: 'Open Connected Accounts to browse career sources and official job searches.',
+      code: 'business_career_only',
+    });
+  }
 
   const status = socialCredentialStatus(platform, req);
   if (!status.configured) return res.status(501).json({
@@ -19666,11 +19682,13 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 // --- Profile: social connection status + disconnect ---------------------------
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const connected = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(p => {
+  const careerOnly = user?.plan === 'business';
+  const visiblePlatforms = careerOnly ? [] : [...SOCIAL_PLATFORM_CATALOG];
+  const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
   }));
-  const platforms = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(key => {
+  const platforms = Object.fromEntries(visiblePlatforms.map(key => {
     const status = socialCredentialStatus(key, req);
     const token = user?.socialTokens?.[key];
     const commandCenterOnly = COMMAND_CENTER_SOCIAL_PLATFORMS.has(key);
@@ -19697,12 +19715,14 @@ app.get('/social/platforms', authenticate, async (req, res) => {
     connected,
     connectedPlatforms: Object.keys(connected).filter(key => connected[key]),
     connectedAt: Object.fromEntries(Object.keys(connected).filter(key => connected[key]).map(key => [key, connectedSourceWindow(user, key).connectedAt])),
+    careerOnly,
   });
 });
 
 app.get('/profile/social', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
-  const platforms = [...CONNECTED_SOCIAL_PLATFORMS];
+  const careerOnly = user?.plan === 'business';
+  const platforms = careerOnly ? [] : [...CONNECTED_SOCIAL_PLATFORMS];
   const connected = Object.fromEntries(platforms.map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
@@ -19710,6 +19730,7 @@ app.get('/profile/social', authenticate, async (req, res) => {
   res.json({
     connected,
     connectedAt: Object.fromEntries(platforms.filter(p => connected[p]).map(p => [p, connectedSourceWindow(user, p).connectedAt])),
+    careerOnly,
   });
 });
 
@@ -20161,11 +20182,8 @@ app.get('/billing/config', async (_req, res) => {
 app.post('/billing/create-checkout-session', authenticate, async (req, res) => {
   const requestedTier = req.body?.tier;
   const tier = ['pro', 'business', 'resume_builder'].includes(requestedTier) ? requestedTier : 'pro';
-  // Business is locked in the UI (not yet ready to sell) — reject it
-  // server-side too so it can't be reached by POSTing directly.
-  if (tier === 'business') {
-    return res.status(400).json({ message: 'Business is not available yet.' });
-  }
+  // A configured Business Price permits checkout; its presence is checked
+  // alongside Stripe and webhook configuration below.
   const resumeBuilderPricing = tier === 'resume_builder'
     ? await resolveResumeBuilderPrice()
     : { priceId: null, summary: null };

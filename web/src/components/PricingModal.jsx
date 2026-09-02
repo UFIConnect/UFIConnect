@@ -1,5 +1,8 @@
 ﻿// Exported so other pages (e.g. Landing's pricing section) can render the
 // same names/prices without retyping them somewhere they'd drift out of sync.
+import { useEffect, useState } from 'react';
+import client from '../api/client';
+
 export const TIERS = [
   {
     tier: 'pro',
@@ -12,20 +15,27 @@ export const TIERS = [
     tier: 'business',
     name: 'Business',
     price: '199.94',
-    tagline: 'For teams',
+    tagline: 'For hiring teams',
     icon: 'Biz',
-    locked: true,
-    note: 'Final pricing is based on how many employers your business has logged.',
+    note: 'Career sources, role-matched opportunities, and hiring workflows.',
   },
 ];
 
 // Same overlay/card shape as ReportModal — the established pattern every
-// modal in this app already uses. Tier descriptions are deliberately just
-// name/price/tagline, not a feature list — nothing is actually gated by
-// plan yet (this is the payment/tier infrastructure ahead of a real
-// feature), so listing specific perks here would be a promise nothing
-// behind it can keep.
+// modal in this app already uses. Checkout availability still comes from the
+// backend, so a visible tier cannot be purchased until its Stripe Price is
+// configured in Render.
 export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
+  const [billingConfig, setBillingConfig] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    client.get('/billing/config')
+      .then(({ data }) => { if (!cancelled) setBillingConfig(data); })
+      .catch(() => { if (!cancelled) setBillingConfig({}); });
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <div
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
@@ -47,17 +57,20 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
           >Close</button>
         </div>
         <p style={{ margin: '0 0 20px', fontSize: '.85rem', color: 'var(--muted)' }}>
-          Choose a plan to support UFIconnect and unlock what's coming next.
+          Choose the membership that fits the work you want to do.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {TIERS.map(t => (
+          {TIERS.map(t => {
+            const businessSetupPending = t.tier === 'business' && billingConfig && !billingConfig.tiers?.business;
+            const unavailable = Boolean(t.locked || businessSetupPending);
+            return (
             <div
               key={t.tier}
               style={{
                 display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px',
                 borderRadius: 12, border: '1.5px solid var(--border)',
-                opacity: t.locked ? 0.6 : 1,
+                opacity: unavailable ? 0.6 : 1,
               }}
             >
               <div style={{
@@ -68,11 +81,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: '.95rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                   {t.name}
-                  {t.locked && (
+                  {unavailable && (
                     <span style={{
                       fontSize: '.65rem', fontWeight: 700, color: 'var(--muted)',
                       background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 6px',
-                    }}>COMING SOON</span>
+                    }}>{businessSetupPending ? 'SETUP PENDING' : 'COMING SOON'}</span>
                   )}
                 </div>
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{t.tagline}</div>
@@ -84,20 +97,26 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
-                disabled={!!loadingTier || t.locked}
+                disabled={!!loadingTier || unavailable}
                 onClick={() => onSelectTier(t.tier)}
                 style={{ flexShrink: 0 }}
               >
-                {t.locked ? 'Locked' : (loadingTier === t.tier ? '...' : 'Choose')}
+                {unavailable ? 'Unavailable' : (loadingTier === t.tier ? '...' : 'Choose')}
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
         {TIERS.filter(t => t.note).map(t => (
           <p key={t.tier} style={{ margin: '12px 2px 0', fontSize: '.72rem', color: 'var(--muted)', fontStyle: 'italic' }}>
             {t.name}: {t.note}
           </p>
         ))}
+        {billingConfig && !billingConfig.tiers?.business && (
+          <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
+            Business checkout activates automatically once its Stripe Price is configured.
+          </p>
+        )}
       </div>
     </div>
   );

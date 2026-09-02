@@ -750,7 +750,9 @@ export default function Settings() {
               <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
                 {profile.plan === 'free'
                   ? 'Support UFIconnect with a paid plan.'
-                  : 'Thanks for supporting UFIconnect — manage your subscription anytime.'}
+                  : profile.plan === 'business'
+                    ? 'Career sources and hiring workflows are ready in Connected Accounts.'
+                    : 'Thanks for supporting UFIconnect — manage your subscription anytime.'}
               </div>
             </div>
             {profile.plan !== 'free' ? (

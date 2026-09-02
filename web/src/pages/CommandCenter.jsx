@@ -7,6 +7,7 @@ import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { CAREER_SITES } from '../components/careerSites';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 
@@ -862,6 +863,7 @@ function YourFeedSection() {
 }
 
 function MemberAccountsSection() {
+  const { profile } = useAuth();
   const { showToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -870,6 +872,7 @@ function MemberAccountsSection() {
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(null);
   const [disconnecting, setDisconnecting] = useState(null);
+  const isBusinessMembership = profile?.plan === 'business';
 
   const loadAccounts = useCallback(async () => {
     setError('');
@@ -884,8 +887,9 @@ function MemberAccountsSection() {
   }, []);
 
   useEffect(() => {
+    if (isBusinessMembership) return;
     loadAccounts();
-  }, [loadAccounts]);
+  }, [isBusinessMembership, loadAccounts]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -932,6 +936,40 @@ function MemberAccountsSection() {
     } finally {
       setDisconnecting(null);
     }
+  }
+
+  if (isBusinessMembership) {
+    return (
+      <div>
+        <div style={{ marginBottom: 14 }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>Business career connections</h3>
+          <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
+            Business memberships use live job sources and official career searches instead of social account connections.
+          </p>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(235px, 1fr))', gap: 10 }}>
+          {CAREER_SITES.map(site => {
+            const action = site.live ? (
+              <Link to={`/opportunities?sources=${encodeURIComponent(site.source)}`} className="btn btn-ghost btn-sm">Browse jobs</Link>
+            ) : (
+              <a href={site.href} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">Open search</a>
+            );
+            return (
+              <div key={site.key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 14px' }}>
+                <span style={{ width: 34, height: 34, borderRadius: 8, background: hasBrandIcon(site.key) ? '#fff' : site.color, border: hasBrandIcon(site.key) ? '1px solid var(--border)' : 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {hasBrandIcon(site.key) ? <BrandIcon platform={site.key} size={19} /> : <span style={{ color: '#fff', fontSize: '.68rem', fontWeight: 800 }}>{site.name.slice(0, 2).toUpperCase()}</span>}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <strong style={{ display: 'block', fontSize: '.83rem' }}>{site.name}</strong>
+                  <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.7rem', marginTop: 2 }}>{site.live ? 'Live in Opportunities' : site.loginRequired ? 'Official login' : 'Official search'}</span>
+                </div>
+                {action}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   }
 
   if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
