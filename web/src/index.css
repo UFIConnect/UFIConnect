@@ -2039,6 +2039,14 @@ input, textarea, select { font-family: inherit; }
     font-weight: 650;
     text-decoration: none;
   }
+  button.mobile-command-menu-item {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
   .mobile-command-menu-item.active {
     background: var(--primary-light);
     color: var(--primary);

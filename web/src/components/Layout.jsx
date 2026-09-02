@@ -132,6 +132,30 @@ export default function Layout({ children, wide = false }) {
     }
   }
 
+  // Mobile Home is the entry point to the member's feed picker. A second tap
+  // is an intentional reset to the all-feed, so accidental navigation does
+  // not discard the feed the member was reading.
+  function handleMobileHomeClick(event) {
+    event.preventDefault();
+    if (!mobileMenuOpen) {
+      setMobileMenuOpen(true);
+      return;
+    }
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigate(HOME_FEED_PATH, { replace: true, state: { refreshHomeAt: Date.now() } });
+  }
+
+  function selectMobileFeed(feed) {
+    const current = mobileFeedMode || 'feed';
+    const next = current === feed ? 'feed' : feed;
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
+      state: { refreshHomeAt: Date.now() },
+    });
+  }
+
   const requestedFeed = new URLSearchParams(location.search).get('feed');
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : requestedFeed;
   const isHomeFeedRoute = location.pathname === '/';
@@ -255,18 +279,22 @@ export default function Layout({ children, wide = false }) {
       {profile && mobileMenuOpen && (
         <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
           <div className="mobile-command-menu-label">Your feed</div>
-          <Link to="/?feed=following" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'following' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'feed' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'feed'} onClick={() => selectMobileFeed('feed')}>
+            <ShellIcon name="home" size={18} />
+            All feed
+          </button>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'following'} onClick={() => selectMobileFeed('following')}>
             <ShellIcon name="following" size={18} />
             Following
-          </Link>
-          <Link to="/?feed=countries" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'countries' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+          </button>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
             <ShellIcon name="countries" size={18} />
             Travel
-          </Link>
-          <Link to="/?feed=restaurants" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-current={isHomeFeedRoute && mobileFeedMode === 'restaurants' ? 'page' : undefined} onClick={() => setMobileMenuOpen(false)}>
+          </button>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'restaurants'} onClick={() => selectMobileFeed('restaurants')}>
             <ShellIcon name="restaurants" size={18} />
             Restaurants
-          </Link>
+          </button>
           <div className="mobile-command-menu-label">Your tools</div>
           <HomeFeedTools
             showSources={mobileUsesSourceControls}
@@ -299,7 +327,7 @@ export default function Layout({ children, wide = false }) {
             key={to}
             to={to}
             end={icon === 'home'}
-            onClick={event => handleNavClick(event, to)}
+            onClick={icon === 'home' ? handleMobileHomeClick : event => handleNavClick(event, to)}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon" style={{ position: 'relative' }}>
