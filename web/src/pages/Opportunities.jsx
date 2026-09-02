@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -119,6 +119,7 @@ function SourceBadge({ opp }) {
 }
 
 export default function Opportunities() {
+  const [searchParams] = useSearchParams();
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [platformSearchUrls, setPlatformSearchUrls] = useState(null);
@@ -148,6 +149,7 @@ export default function Opportunities() {
   const refreshRequestRef = useRef(null);
   const loadingMoreRef = useRef(false);
   const sentinelRef = useRef(null);
+  const routeSourcesAppliedRef = useRef('');
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
   // "All") — the fetch effect below reads and clears it. Live sources
   // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
@@ -174,6 +176,18 @@ export default function Opportunities() {
   // availableSources below), so a stale source picked under Jobs shouldn't
   // silently keep filtering once you switch to Grants.
   useEffect(() => { setSourceFilter([]); }, [filter]);
+
+  // Career-site cards link here with a source selection. Apply it once after
+  // the API confirms which live job sources are available, then leave normal
+  // chip controls entirely in the member's hands.
+  const requestedSources = searchParams.get('sources') || '';
+  useEffect(() => {
+    if (!requestedSources || !availableSources.length || routeSourcesAppliedRef.current === requestedSources) return;
+    const requested = requestedSources.split(',').map(value => value.trim()).filter(Boolean);
+    const matched = requested.filter(source => availableSources.includes(source));
+    routeSourcesAppliedRef.current = requestedSources;
+    if (matched.length) setSourceFilter(matched);
+  }, [availableSources, requestedSources]);
 
   // Fetch the first page whenever a real filter/search/sort change happens
   // — /opportunities now supports real server-side offset/limit (added

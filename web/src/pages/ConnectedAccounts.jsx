@@ -21,6 +21,22 @@ const PLATFORM_BENEFITS = {
   bluesky:   ['Follow decentralised conversations', 'Surface posts matching your interests', 'Connect with the open social web'],
 };
 
+// Career sites are deliberately separate from OAuth accounts. The five live
+// sources below already deliver listings into Opportunities; the remaining
+// sites require their own member login and open through their official search.
+const CAREER_SITES = [
+  { key: 'indeed', name: 'Indeed', color: '#2557A7', source: 'Indeed', live: true, description: 'Browse live listings matched to your role, resume, and activity.' },
+  { key: 'usajobs', name: 'USAJobs', color: '#005EA8', source: 'USAJobs', live: true, description: 'Explore current federal jobs from the official USAJobs feed.' },
+  { key: 'remoteok', name: 'Remote OK', color: '#10B981', source: 'Remote OK', live: true, description: 'Explore current remote roles without leaving UFIconnect.' },
+  { key: 'remotive', name: 'Remotive', color: '#2563EB', source: 'Remotive', live: true, description: 'Browse remote roles that update in the Opportunities feed.' },
+  { key: 'muse', name: 'The Muse', color: '#7C3AED', source: 'The Muse', live: true, description: 'Discover current roles and career opportunities from The Muse.' },
+  { key: 'glassdoor', name: 'Glassdoor', color: '#0CAA41', href: 'https://www.glassdoor.com/Job/jobs.htm', loginRequired: true, description: 'Open Glassdoor’s official job search with your own account.' },
+  { key: 'handshake', name: 'Handshake', color: '#F97316', href: 'https://app.joinhandshake.com/job-search', loginRequired: true, description: 'Open your school or employer Handshake job search.' },
+  { key: 'wellfound', name: 'Wellfound', color: '#111827', href: 'https://wellfound.com/jobs', loginRequired: true, description: 'Search startup roles directly on Wellfound.' },
+  { key: 'ziprecruiter', name: 'ZipRecruiter', color: '#E92C2C', href: 'https://www.ziprecruiter.com/jobs-search', description: 'Open ZipRecruiter’s official job search.' },
+  { key: 'dice', name: 'Dice', color: '#0066CC', href: 'https://www.dice.com/jobs', description: 'Search technology roles directly on Dice.' },
+];
+
 export default function ConnectedAccounts() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [platforms, setPlatforms]       = useState([]);
@@ -146,7 +162,7 @@ export default function ConnectedAccounts() {
       <div className="page-header">
         <h1 className="page-title">Connected Accounts</h1>
         <p className="page-subtitle">
-          Connect your social accounts through each provider's permission screen, then return to UFIconnect automatically.
+          Connect your social accounts and open career sites tailored to your work.
         </p>
       </div>
 
@@ -205,6 +221,16 @@ export default function ConnectedAccounts() {
               Account-only publishing and personal-post connections are managed in the <Link to="/command-center?tab=accounts" style={{ color: 'var(--primary)', fontWeight: 700 }}>Command Center</Link>.
             </div>
           )}
+
+          <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
+            <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
+              Career sites
+            </div>
+            <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
+              Live sources open directly in Opportunities. Other sites open their official job search and keep their own sign-in.
+            </p>
+            {CAREER_SITES.map(site => <CareerSiteCard key={site.key} site={site} />)}
+          </section>
 
           {/* Connected section */}
           {connectedList.length > 0 && (
@@ -437,6 +463,62 @@ function PlatformCard({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CareerSiteCard({ site }) {
+  const action = site.live ? (
+    <Link
+      to={`/opportunities?sources=${encodeURIComponent(site.source)}`}
+      className="btn btn-sm btn-outline"
+      style={{ borderColor: site.color, color: site.color, whiteSpace: 'nowrap' }}
+    >
+      Browse jobs
+    </Link>
+  ) : (
+    <a
+      href={site.href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="btn btn-sm btn-outline"
+      style={{ borderColor: site.color, color: site.color, whiteSpace: 'nowrap' }}
+    >
+      Open search
+    </a>
+  );
+
+  return (
+    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: hasBrandIcon(site.key) ? '#fff' : site.color,
+          border: hasBrandIcon(site.key) ? '1px solid var(--border)' : 'none',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          {hasBrandIcon(site.key) ? (
+            <BrandIcon platform={site.key} size={22} />
+          ) : (
+            <span style={{ color: '#fff', fontWeight: 700, fontSize: '.78rem' }}>{site.name.slice(0, 2).toUpperCase()}</span>
+          )}
+        </div>
+        <div style={{ flex: '1 1 210px', minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{site.name}</span>
+            <span style={{
+              fontSize: '.65rem', fontWeight: 700,
+              color: site.live ? '#047857' : '#475569',
+              background: site.live ? '#ECFDF5' : '#F1F5F9',
+              padding: '1px 6px', borderRadius: 4,
+            }}>
+              {site.live ? 'Live in Opportunities' : site.loginRequired ? 'Official login' : 'Official search'}
+            </span>
+          </div>
+          <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>{site.description}</div>
+        </div>
+        <div style={{ marginLeft: 'auto', flexShrink: 0 }}>{action}</div>
+      </div>
     </div>
   );
 }
