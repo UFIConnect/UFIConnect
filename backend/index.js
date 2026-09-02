@@ -7632,6 +7632,7 @@ async function getCachedGuestFeedPage({ cursor, cursorMap, limit }) {
     sources: AGGREGATE_FEED_SOURCES,
     cursorMap,
     limit,
+    maxPostsPerSource: 2,
   }).then((page) => {
     guestFeedPageCache.set(key, { computedAt: Date.now(), page });
     trimOldestMapEntries(guestFeedPageCache, GUEST_FEED_PAGE_CACHE_MAX);
@@ -9076,10 +9077,18 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
 // page/scroll-load with zero diversity. Personal Feed, All Collected, and
 // the "All" tab (which is Personal Feed with no source filter) all route
 // through this now.
-function enforceFeedDiversity(posts, feedLimit, sortMode) {
-  const srcCap = sortMode === 'balanced'
-    ? Math.max(3, Math.ceil(feedLimit * 0.10))   // balanced: =10% per source
-    : Math.max(5, Math.ceil(feedLimit * 0.18));   // other modes: =18% per source
+const BLENDED_FEED_MAX_POSTS_PER_SOURCE = 2;
+
+function isBlendedFeedSelection(sourceFilter, sourcesParam = []) {
+  return (!sourceFilter && sourcesParam.length === 0) || sourcesParam.length > 1;
+}
+
+function enforceFeedDiversity(posts, feedLimit, _sortMode) {
+  // A delivered blended page never contains more than two posts from one
+  // source. This is intentionally a page-level cap, not merely a
+  // "no-three-in-a-row" rule: a 50-post load can otherwise still feel like
+  // a source takeover even when its posts are spaced apart.
+  const srcCap = BLENDED_FEED_MAX_POSTS_PER_SOURCE;
   const srcCounts = {};
   const cappedPosts = [];
   for (const p of posts) {
@@ -13632,10 +13641,22 @@ const FEED_SOCIAL_TABS = new Set(['twitter', 'linkedin', 'facebook']);
 // token WAS set, never joining sort/rank or the composition cap like every
 // other source does.
 const PIPELINE_ONLY_FEED_SOURCES = ['remotive', 'muse'];
-const AGGREGATE_FEED_SOURCES = [...new Set([...Object.keys(SOURCE_CONFIG), ...PIPELINE_ONLY_FEED_SOURCES])]
+// Worker IDs do not always match the persisted/public source name. Keep the
+// aggregate catalog in the latter vocabulary because every feed query reads
+// `feed_posts_cache.source`, while worker health/cache lookup uses
+// feedWorkerKey() below.
+const FEED_SOURCE_ALIASES = Object.freeze({ hn: 'hackernews' });
+function canonicalFeedSourceId(source) {
+  const id = String(source || '').trim().toLowerCase();
+  return FEED_SOURCE_ALIASES[id] || id;
+}
+const AGGREGATE_FEED_SOURCES = [...new Set([
+  ...Object.keys(SOURCE_CONFIG).map(canonicalFeedSourceId),
+  ...PIPELINE_ONLY_FEED_SOURCES,
+])]
   .filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
 const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
-const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(String(source || '').trim().toLowerCase());
+const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(canonicalFeedSourceId(source));
 
 // The unfiltered video feed used to hand every one of AGGREGATE_FEED_SOURCES
 // (36) to getCursorFeedPage on every single request, even though only a
@@ -17455,7 +17476,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -17472,9 +17493,19 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   // than surfacing genuinely different ones — confirmed live on the Videos
   // tab as "refresh reorders the same ~25 videos instead of showing new
   // ones." Deeper here directly widens what a refresh can actually turn up.
-  const perSourceLimit = freshOnly
+  const uncappedPerSourceLimit = freshOnly
     ? Math.max(30, Math.ceil((limit * 2) / sources.length))
     : Math.max(10, Math.ceil((limit * 2) / sources.length));
+  // A blended page is deliberately limited to two contributions from any
+  // one source. Apply the cap before the query/merge so the cursor advances
+  // only through posts that could actually be delivered, never silently
+  // skipping a source's excess posts between pages.
+  const sourcePageCap = Number.isFinite(maxPostsPerSource)
+    ? Math.max(1, Math.floor(maxPostsPerSource))
+    : null;
+  const perSourceLimit = sourcePageCap
+    ? Math.min(uncappedPerSourceLimit, sourcePageCap)
+    : uncappedPerSourceLimit;
   // One query with a per-source cursor join instead of N parallel
   // getPostsFromDB calls (the same ROW_NUMBER()-partition-by-source pattern
   // getBalancedFeedPosts already uses, adapted for a per-source "before"
@@ -17635,7 +17666,13 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   // genuinely different set" — confirmed live on Videos, where an
   // unfiltered refresh only ever had one candidate per source to work with
   // regardless of how deep the query itself went.
-  const fullMerged = roundRobinMerge(allLists);
+  // Extra lists (for example native UFIconnect posts in Archive) bypass the
+  // DB row-number cap above, so apply the same cap at the final merge too.
+  // This makes the two-post rule hold for every source on a blended page.
+  const mergeLists = sourcePageCap
+    ? allLists.map(list => list.slice(0, sourcePageCap))
+    : allLists;
+  const fullMerged = roundRobinMerge(mergeLists);
   const merged = fullMerged.slice(0, limit);
   // Own check, not just filterUnseen's return value — filterUnseen falls
   // back to re-showing already-seen posts rather than an empty page (the
@@ -17738,7 +17775,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
       userId, sources, cursorMap: nextCursor, limit, mediaType, topics,
-      topicBypassSources, timeRange, extraLists, seenIds, freshOnly,
+      topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
       _emptySkips: _emptySkips + 1,
     });
   }
@@ -17788,7 +17825,9 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     // under source='twitter' etc. can only have come from that second,
     // legitimate path, so there's no longer a reason to filter it out here.
     const requestedSources = Array.isArray(source) ? source : source ? [source] : AGGREGATE_FEED_SOURCES;
-    const selectedSources = requestedSources.filter(isAggregateFeedSource);
+    const selectedSources = [...new Set(requestedSources
+      .map(canonicalFeedSourceId)
+      .filter(isAggregateFeedSource))];
     if (!selectedSources.length) return { posts: [], perSourceCount: 0 };
     params.push(selectedSources);
     clauses.push(`source = ANY($${params.length}::text[])`);
@@ -19832,9 +19871,9 @@ async function handleFeedRequest(req, res) {
   // for why this is what makes a refresh return substantially different
   // posts instead of re-displaying the same rotation of the same pool.
   const refreshSeed = (req.query.seed || '').toString().slice(0, 64);
-  const requestedSourceFilter = String(req.query.source || '').trim().toLowerCase() || null;
+  const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
   const requestedSourcesParam = req.query.sources
-    ? req.query.sources.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
     : [];
   const sourceFilter = isFollowingRequest || isAggregateFeedSource(requestedSourceFilter)
     ? requestedSourceFilter
@@ -19843,6 +19882,7 @@ async function handleFeedRequest(req, res) {
     ? requestedSourcesParam
     : requestedSourcesParam.filter(isAggregateFeedSource);
   const isDefaultAggregateView = !sourceFilter && sourcesParam.length === 0;
+  const usesBlendedSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
   const requestedMemberOnlySource = !isFollowingRequest
     && [requestedSourceFilter, ...requestedSourcesParam].some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
   // Topic selector — picks any number of topics from FEED_TOPICS (multi-
@@ -19936,7 +19976,7 @@ async function handleFeedRequest(req, res) {
       userAffinity,
     );
     const offset = (reqPage - 1) * feedLimit;
-    const pageRows = available.slice(offset, offset + feedLimit);
+    const pageRows = enforceFeedDiversity(available.slice(offset), feedLimit, 'newest');
     const hydratedPageRows = feedMode === 'restaurants'
       ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
       : pageRows;
@@ -20015,6 +20055,7 @@ async function handleFeedRequest(req, res) {
       timeRange: cursorTimeRange,
       seenIds,
       freshOnly: req.query.bust === '1',
+      maxPostsPerSource: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
     });
 
     const result = personalizeForUser(cursorPosts.map(p => p.isExternal === false ? p : {
@@ -20048,7 +20089,6 @@ async function handleFeedRequest(req, res) {
   }
 
   if (feedMode === 'following') {
-    const offset = (reqPage - 1) * feedLimit;
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
     const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
@@ -20066,7 +20106,9 @@ async function handleFeedRequest(req, res) {
     // false the instant a thin pool ran out, not a genuine content shortage.
     const equalized = buildEqualizedFollowingPool(rawFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
-    const pageRows = rotated.slice(0, feedLimit);
+    const pageRows = usesBlendedSources
+      ? enforceFeedDiversity(rotated, feedLimit, 'newest')
+      : rotated.slice(0, feedLimit);
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
@@ -20135,6 +20177,7 @@ async function handleFeedRequest(req, res) {
         extraLists,
         seenIds,
         freshOnly: req.query.bust === '1',
+        maxPostsPerSource: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       });
 
       const result = personalizeForUser(cursorPosts.map(p => p.isExternal === false ? p : {
@@ -20170,7 +20213,7 @@ async function handleFeedRequest(req, res) {
       const { posts: balancedRaw } = await getBalancedFeedPosts({ sortMode, timeRange, page: reqPage, perSourcePageSize });
       const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
-        const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
+        const pageRows = enforceFeedDiversity(personalizeForUser(balanced), feedLimit, sortMode);
         const hasMore = balanced.length > pageRows.length || balanced.length >= perSourcePageSize;
         trackPostsSeen(pageRows);
         return res.json({
@@ -20186,7 +20229,7 @@ async function handleFeedRequest(req, res) {
       // transient DB hiccup on the windowed query) rather than a blank page.
     }
 
-    const dbFetchLimit = wantsMix ? feedLimit * 3 + 1 : feedLimit + 1;
+    const dbFetchLimit = usesBlendedSources ? feedLimit * 3 + 1 : feedLimit + 1;
     // getPostsFromDB has no topic param of its own (only q/sort/timeRange) —
     // filtered in JS afterward instead of threading a new one through its
     // own query-building, same "filter the fetched pool" approach the
@@ -20199,8 +20242,10 @@ async function handleFeedRequest(req, res) {
       sort: sortMode,
       timeRange,
     }), seenIds).filter(matchesTopic);
-    let pageRows = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
-    let hasMore = dbRows.length > feedLimit;
+    let pageRows = usesBlendedSources
+      ? enforceFeedDiversity(dbRows, feedLimit, sortMode)
+      : dbRows.slice(0, feedLimit);
+    let hasMore = dbRows.length > pageRows.length;
 
     if (!dbRows.length && offset === 0) {
       const rangeMs = feedTimeRangeMs(timeRange);
@@ -20222,11 +20267,14 @@ async function handleFeedRequest(req, res) {
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       }), seenIds);
-      pageRows = wantsMix ? enforceFeedDiversity(memoryRows, feedLimit, sortMode) : memoryRows.slice(0, feedLimit);
-      hasMore = memoryRows.length > feedLimit;
+      pageRows = usesBlendedSources
+        ? enforceFeedDiversity(memoryRows, feedLimit, sortMode)
+        : memoryRows.slice(0, feedLimit);
+      hasMore = memoryRows.length > pageRows.length;
     }
 
     pageRows = personalizeForUser(pageRows);
+    if (usesBlendedSources) pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows.map(mapFeedRow),
@@ -20295,7 +20343,10 @@ async function handleFeedRequest(req, res) {
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
-    const merged = enforceFeedDiversity(filterUnseen(personalizeForUser(searchRanked), seenIds), feedLimit + 1, sortMode);
+    const searchCandidates = filterUnseen(personalizeForUser(searchRanked), seenIds);
+    const merged = usesBlendedSources
+      ? enforceFeedDiversity(searchCandidates, feedLimit + 1, sortMode)
+      : searchCandidates.slice(0, feedLimit + 1);
     const searchPageRows = merged.slice(0, feedLimit);
     trackPostsSeen(searchPageRows);
     return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
@@ -20308,7 +20359,7 @@ async function handleFeedRequest(req, res) {
     // Feed Manager: no source filter means infinite scroll wants a true mix
     // too — same equal-pull-per-source approach as page 1 and archive mode,
     // just advanced by page instead of restarting from the top each time.
-    const wantsMix = !pageSources;
+    const wantsMix = !sourceFilter && sourcesParam.length === 0;
 
     if (wantsMix) {
       // Slice the same frozen snapshot page 1 reads from, instead of running
@@ -20351,11 +20402,10 @@ async function handleFeedRequest(req, res) {
         const [resumeKeywordsP2, jobPoolP2] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
         personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP2, jobPoolP2);
         personalized = personalizeForUser(personalized);
-        const lo = (reqPage - 1) * feedLimit;
         // Wraps around instead of dead-ending once a page runs past the
         // cached pool's depth — real content is finite, but infinite scroll
         // shouldn't just stop.
-        const pageSlice = personalized.slice(0, feedLimit);
+        const pageSlice = enforceFeedDiversity(personalized, feedLimit, sortMode);
         trackPostsSeen(pageSlice);
         return res.json({
           posts: pageSlice.map(p => ({
@@ -20389,7 +20439,7 @@ async function handleFeedRequest(req, res) {
       ]);
       const balanced = filterUnseen(balancedRaw, seenIds);
       if (balanced.length > 0) {
-        const pageRows = personalizeForUser(balanced).slice(0, feedLimit);
+        const pageRows = enforceFeedDiversity(personalizeForUser(balanced), feedLimit, sortMode);
         const hasMore = balanced.length >= perSourcePageSize;
         trackPostsSeen(pageRows);
         return res.json({
@@ -20414,8 +20464,10 @@ async function handleFeedRequest(req, res) {
       getPostsFromDB([], wantsMix ? feedLimit * 3 + 1 : feedLimit * 2 + 1, offset, pageSources, { sort: sortMode, timeRange: dbTimeRange }).catch(() => []),
       new Promise((resolve) => setTimeout(() => resolve([]), 4000)),
     ]), seenIds);
-    let hasMore      = dbRows.length > feedLimit;
-    let pageRows     = wantsMix ? enforceFeedDiversity(dbRows, feedLimit, sortMode) : dbRows.slice(0, feedLimit);
+    let pageRows     = usesBlendedSources
+      ? enforceFeedDiversity(dbRows, feedLimit, sortMode)
+      : dbRows.slice(0, feedLimit);
+    let hasMore      = dbRows.length > pageRows.length;
 
     if (sourceFilter || sourcesParam.length > 1) {
       // Reads the same frozen, TTL'd pool page 1's copy of this branch
@@ -20431,7 +20483,9 @@ async function handleFeedRequest(req, res) {
       // silently split page 1 and page 2+ onto two different pools again.
       const pool = await getFilteredFeedPool(pageSources, sortMode, timeRange);
       const rotated = filterUnseen(personalizeForUser(rotateForUser(pool, req.user.id, refreshSeed)), seenIds);
-      pageRows = rotated.slice(0, feedLimit);
+      pageRows = usesBlendedSources
+        ? enforceFeedDiversity(rotated, feedLimit, sortMode)
+        : rotated.slice(0, feedLimit);
       hasMore = rotated.length > pageRows.length;
     } else if (!dbRows.length) {
       pageRows = filterUnseen(personalizeForUser(sortFeedBatch(realFeedPosts(globalFeedCache.posts), 'feed-page-memory-only', {
@@ -20439,8 +20493,10 @@ async function handleFeedRequest(req, res) {
         sort: sortMode,
         diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
       })), seenIds).slice(offset, offset + feedLimit + 1);
-      hasMore = pageRows.length > feedLimit;
+      const memoryCandidateCount = pageRows.length;
+      hasMore = memoryCandidateCount > feedLimit;
       pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
+      hasMore = hasMore || memoryCandidateCount > pageRows.length;
     }
 
     function mapDbPost(p) {
@@ -20456,6 +20512,7 @@ async function handleFeedRequest(req, res) {
     }
 
     pageRows = personalizeForUser(pageRows);
+    if (usesBlendedSources) pageRows = enforceFeedDiversity(pageRows, feedLimit, sortMode);
     const result = pageRows.map(mapDbPost);
 
     trackPostsSeen(pageRows);
@@ -20484,19 +20541,24 @@ async function handleFeedRequest(req, res) {
       const [resumeKeywordsP1, jobPoolP1] = await Promise.all([getUserResumeKeywords(req.user.id), getJobCandidatePool()]);
       personalized = applyResumeMatchedJobs(personalized, resumeKeywordsP1, jobPoolP1);
       personalized = personalizeForUser(personalized);
-      const externalPosts = sliceCircular(personalized, 0, feedLimit).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
-      const finalPosts = rankFeedPostsForLocation(
+      const externalPosts = sliceCircular(
+        personalized,
+        0,
+        Math.min(personalized.length, Math.max(feedLimit * 4, 120)),
+      ).map(p => ({ ...p, fromJoinedGroup: joined.has(p.groupId) }));
+      const rankedPosts = rankFeedPostsForLocation(
         [...internal, ...externalPosts],
         locationContext,
         { preserveFirst: Math.min(internal.length, 2) }
-      ).slice(0, feedLimit);
+      );
+      const finalPosts = enforceFeedDiversity(rankedPosts, feedLimit, sortMode);
       // Location ranking can move an external row ahead of an internal row,
       // so persist only the exact final slice returned to this member.
       trackPostsSeen(finalPosts);
       return res.json({
         posts: finalPosts,
         sort: sortMode,
-        hasMore: personalized.length > 0,
+        hasMore: personalized.length > finalPosts.length,
         totalAvailable: snap.posts.length,
         refresh: { ...snap.refresh, cacheRefreshedAt: snap.computedAt },
         sources: snap.sources,
@@ -20841,7 +20903,9 @@ async function handleFeedRequest(req, res) {
   }
   const externalDiversified = isDefaultAggregateView
     ? buildEqualizedFeedPool(feedPoolInput, MAIN_FEED_SNAPSHOT_POOL_SIZE)
-    : enforceFeedDiversity(feedPoolInput, feedLimit, sortMode);
+    : usesBlendedSources
+      ? enforceFeedDiversity(feedPoolInput, feedLimit, sortMode)
+      : feedPoolInput.slice(0, feedLimit);
   // externalDiversified itself stays unrotated/unpersonalized — it's what
   // gets cached as the shared snapshot below and read by every other user,
   // so it can't bake in *this* request's rotation or interests. Rotation +
@@ -20857,11 +20921,14 @@ async function handleFeedRequest(req, res) {
     personalizedExternal = applyResumeMatchedJobs(personalizedExternal, resumeKeywords, feedPoolInput.filter(p => JOB_LISTING_SOURCES.includes(p.source)));
   }
   personalizedExternal = personalizeForUser(personalizedExternal);
-  const responsePosts = rankFeedPostsForLocation(
+  const rankedResponsePosts = rankFeedPostsForLocation(
     [...internal, ...personalizedExternal],
     locationContext,
     { preserveFirst: Math.min(internal.length, 2) }
-  ).slice(0, feedLimit);
+  );
+  const responsePosts = usesBlendedSources
+    ? enforceFeedDiversity(rankedResponsePosts, feedLimit, sortMode)
+    : rankedResponsePosts.slice(0, feedLimit);
 
   const sourcesBreakdown = {
     reddit:        redditPosts.length,
@@ -21084,29 +21151,49 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
   let result = { posts: [], nextCursor: encodeFeedCursor(cursorMap), hasMore: true };
   const playable = [];
   const emitted = new Set();
+  const sourceCap = Number.isFinite(params.maxPostsPerSource)
+    ? Math.max(1, Math.floor(params.maxPostsPerSource))
+    : null;
+  const requestedSources = [...new Set(params.sources || [])];
+  const sourceCounts = new Map(params.initialSourceCounts || []);
+  let activeSources = requestedSources;
   for (let i = 0; i < attempts; i++) {
-    result = await getCursorFeedPage({ ...params, cursorMap });
+    if (!activeSources.length) break;
+    result = await getCursorFeedPage({ ...params, sources: activeSources, cursorMap });
     for (const post of result.posts) {
       if (!isPlayableVideoPost(post) || !post?.id || emitted.has(post.id)) continue;
+      const source = canonicalFeedSourceId(post.source) || 'unknown';
+      if (sourceCap && (sourceCounts.get(source) || 0) >= sourceCap) continue;
       emitted.add(post.id);
+      sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
       playable.push(post);
       if (playable.length >= params.limit) break;
     }
-    if (playable.length >= params.limit || !result.hasMore) break;
+    if (sourceCap) {
+      activeSources = requestedSources.filter(source => (
+        (sourceCounts.get(canonicalFeedSourceId(source)) || 0) < sourceCap
+      ));
+    }
+    if (playable.length >= params.limit || !result.hasMore || !activeSources.length) break;
     cursorMap = decodeFeedCursor(result.nextCursor);
   }
-  return { posts: playable, nextCursor: result.nextCursor, hasMore: result.hasMore };
+  return {
+    posts: playable,
+    nextCursor: result.nextCursor,
+    hasMore: result.hasMore || (sourceCap && playable.length > 0 && !activeSources.length),
+  };
 }
 
 async function handleVideoFeedRequest(req, res) {
   try {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const requestedSourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
       : [];
-    const requestedSourceFilter = String(req.query.source || '').trim().toLowerCase() || null;
+    const requestedSourceFilter = canonicalFeedSourceId(req.query.source) || null;
     const sourceFilter = isAggregateFeedSource(requestedSourceFilter) ? requestedSourceFilter : null;
     const sourcesParam = requestedSourcesParam.filter(isAggregateFeedSource);
+    const usesBlendedVideoSources = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const requestedMemberOnlySource = [requestedSourceFilter, ...requestedSourcesParam]
       .some(source => MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
     if (requestedMemberOnlySource && !sourceFilter && !sourcesParam.length) {
@@ -21224,7 +21311,10 @@ async function handleVideoFeedRequest(req, res) {
         diversify: true,
       });
       const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic));
-      const pageRows = personalizeVideosForUser(equalizeVideosForUser(playable)).slice(0, feedLimit);
+      const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
+      const pageRows = usesBlendedVideoSources
+        ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
+        : videoCandidates.slice(0, feedLimit);
       return sendVideoPage(req, res, pageRows, { hasMore: playable.length > pageRows.length, search: searchQuery });
     }
 
@@ -21251,7 +21341,10 @@ async function handleVideoFeedRequest(req, res) {
       });
       const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
-      const pageRows = personalizeVideosForUser(equalizeVideosForUser(playable)).slice(0, feedLimit);
+      const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
+      const pageRows = usesBlendedVideoSources
+        ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
+        : videoCandidates.slice(0, feedLimit);
       const hasMore = playable.length > pageRows.length || balancedRaw.length >= perSourcePageSize;
       return sendVideoPage(req, res, pageRows, { page: reqPage, hasMore });
     }
@@ -21264,9 +21357,13 @@ async function handleVideoFeedRequest(req, res) {
       const { posts: playable, nextCursor, hasMore } = await fetchPlayableVideoPage({
         userId: req.user.id, sources: cursorSources, cursorMap, limit: feedLimit,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
+        maxPostsPerSource: usesBlendedVideoSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
       });
       const filtered = personalizeVideosForUser(equalizeVideosForUser(applyPersonalTopicFilter(playable.filter(matchesSearch))));
-      return sendVideoPage(req, res, filtered, { cursor: nextCursor, hasMore });
+      const pageRows = usesBlendedVideoSources
+        ? enforceFeedDiversity(filtered, feedLimit, 'balanced')
+        : filtered.slice(0, feedLimit);
+      return sendVideoPage(req, res, pageRows, { cursor: nextCursor, hasMore: hasMore || filtered.length > pageRows.length });
     }
 
     // Phase 1 ("platform intro") — only on a genuinely fresh session (no
@@ -21282,6 +21379,7 @@ async function handleVideoFeedRequest(req, res) {
       const intro = await fetchPlayableVideoPage({
         userId: req.user.id, sources: cursorSources, cursorMap, limit: cursorSources.length,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
+        maxPostsPerSource: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
       });
       introPosts = applyPersonalTopicFilter(intro.posts.filter(matchesSearch));
       cursorAfterIntro = decodeFeedCursor(intro.nextCursor);
@@ -21308,15 +21406,22 @@ async function handleVideoFeedRequest(req, res) {
       const mix = await fetchPlayableVideoPage({
         userId: req.user.id, sources: cursorSources, cursorMap: cursorAfterIntro, limit: remaining * 3,
         mediaType: 'video', topics: scopedVideoTopics, timeRange: scopedVideoTimeRange, seenIds, freshOnly,
+        maxPostsPerSource: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+        initialSourceCounts: introPosts.reduce((counts, post) => {
+          const source = canonicalFeedSourceId(post?.source) || 'unknown';
+          counts.set(source, (counts.get(source) || 0) + 1);
+          return counts;
+        }, new Map()),
       });
       const mixCandidates = mix.posts.filter(p => !introIds.has(p.id)).filter(matchesSearch);
       mixPosts = applyPersonalTopicFilter(mixCandidates).slice(0, remaining);
       nextCursor = mix.nextCursor;
-      hasMore = mix.hasMore;
+      hasMore = mix.hasMore || introPosts.length > 0;
     }
 
-    const posts = personalizeVideosForUser(equalizeVideosForUser([...introPosts, ...mixPosts]));
-    sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore });
+    const videoCandidates = personalizeVideosForUser(equalizeVideosForUser([...introPosts, ...mixPosts]));
+    const posts = enforceFeedDiversity(videoCandidates, feedLimit, 'balanced');
+    sendVideoPage(req, res, posts, { cursor: nextCursor, hasMore: hasMore || videoCandidates.length > posts.length });
   } catch (e) {
     console.error('[/feed/videos] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -21337,9 +21442,10 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const feedLimit = Math.min(Math.max(parseInt(req.query.limit || '20', 10) || 20, 1), 50);
     const reqPage = Math.max(parseInt(req.query.page || '1', 10) || 1, 1);
     const sourcesParam = req.query.sources
-      ? req.query.sources.split(',').map(s => s.trim()).filter(Boolean)
+      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
       : [];
-    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (req.query.source || null);
+    const sourceFilter = sourcesParam.length > 1 ? sourcesParam : (canonicalFeedSourceId(req.query.source) || null);
+    const usesBlendedFollowingVideos = isBlendedFeedSelection(sourceFilter, sourcesParam);
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
 
     const { posts: all, sourceErrors } = await getFollowingFeedPosts(req.user.id, sourceFilter, { bust: req.query.bust === '1', surface: 'videos' });
@@ -21359,7 +21465,6 @@ async function handleFollowingVideoFeedRequest(req, res) {
       : hasSavedVideoScope
         ? filterByUserTopics(videos, userTopics, { fallbackToInput: false })
         : [];
-    const offset = (reqPage - 1) * feedLimit;
     // Same fix as handleFeedRequest's feedMode==='following' branch, applied
     // after the video-only filter above (equalizing the full mixed pool
     // first would waste round-robin fairness on posts that get dropped
@@ -21382,7 +21487,9 @@ async function handleFollowingVideoFeedRequest(req, res) {
     );
     const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
-    const pageRows = rotated.slice(0, feedLimit);
+    const pageRows = usesBlendedFollowingVideos
+      ? enforceFeedDiversity(rotated, feedLimit, 'balanced')
+      : rotated.slice(0, feedLimit);
     sendVideoPage(req, res, pageRows, {
       page: reqPage,
       mode: 'following',
@@ -23124,8 +23231,9 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
   // the dedicated Remotive and Muse sweeps too; they are not topic-cycler
   // workers, but they do pull live listings into the same feed cache.
   const sourceHealthArr = AGGREGATE_FEED_SOURCES.map((id) => {
-    const h = workerHealth.get(id);
-    const cache = agentSourceCache.get(id);
+    const workerId = feedWorkerKey(id);
+    const h = workerHealth.get(workerId);
+    const cache = agentSourceCache.get(workerId);
     const cachedPosts = realFeedPosts(cache?.posts || []);
     const globalPosts = realFeedPosts(globalFeedCache.posts).filter(post => post.source === id);
     const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPosts.length);
@@ -23133,13 +23241,13 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
     return {
-      id, emoji: officeBadgeCode(id, AGENT_DEFS[id]?.emoji), color: AGENT_DEFS[id]?.color,
-      name: AGENT_DEFS[id]?.name || id,
+      id, emoji: officeBadgeCode(workerId, AGENT_DEFS[workerId]?.emoji), color: AGENT_DEFS[workerId]?.color,
+      name: AGENT_DEFS[workerId]?.name || id,
       status,
       // Real configured cadence — lets the office compare rates across
       // platforms directly instead of guessing from post counts alone.
-      cadence: AGENT_DEFS[id]?.interval || null,
-      cycleMinutes: AGENT_DEFS[id]?.cycleMinutes ?? null,
+      cadence: AGENT_DEFS[workerId]?.interval || null,
+      cycleMinutes: AGENT_DEFS[workerId]?.cycleMinutes ?? null,
       consecutiveErrors: h?.consecutiveErrors ?? 0,
       totalErrors: h?.totalErrors ?? 0,
       fetchCount: h?.fetchCount ?? 0,
