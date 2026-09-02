@@ -27009,6 +27009,41 @@ const CONTENT_DRAFT_PLATFORM_LABELS = {
   tiktok: 'TikTok', instagram: 'Instagram', linkedin: 'LinkedIn',
   twitter: 'X/Twitter', threads: 'Threads', general: 'social media',
 };
+
+function fallbackContentDrafts(topic, platformLabel, tone) {
+  const subject = resumeDraftInput(topic, 300) || 'this idea';
+  const voice = resumeDraftInput(tone, 80) || 'clear and genuine';
+  return [
+    `${subject}\n\nA small update worth sharing: I am working on this with a ${voice} approach and would love to hear what stands out to you.`,
+    `Still thinking about ${subject}. The best work usually starts with a useful question, a little momentum, and room to learn in public. What is your take?`,
+    `${subject}\n\nBuilding, learning, and refining as I go. Sharing the process here in case it helps someone else take their next step.`,
+  ].map(draft => `${draft}\n\n#${platformLabel.replace(/[^A-Za-z0-9]/g, '') || 'Social'}`);
+}
+
+function parseContentDrafts(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  const parts = raw
+    .split(/(?:^|\n)\s*(?:\d+[.)]|draft\s*\d+:)\s*/i)
+    .map(part => part.trim())
+    .filter(Boolean);
+  return (parts.length ? parts : [raw]).map(part => part.slice(0, 2400)).slice(0, 3);
+}
+
+function completeContentDrafts(drafts, fallbackDrafts) {
+  const complete = [];
+  const seen = new Set();
+  for (const draft of [...drafts, ...fallbackDrafts]) {
+    const value = String(draft || '').trim();
+    const key = value.toLowerCase();
+    if (!value || seen.has(key)) continue;
+    seen.add(key);
+    complete.push(value);
+    if (complete.length === 3) break;
+  }
+  return complete;
+}
+
 app.post('/command-center/content-draft', authenticate, aiContentDraftLimiter, async (req, res) => {
   const user = await getUser(req.user.id);
   // Cost-bearing (a real per-call LLM API charge) — gated to paid plans
@@ -27018,27 +27053,30 @@ app.post('/command-center/content-draft', authenticate, aiContentDraftLimiter, a
     return res.status(403).json({ message: 'The AI Content Hub is a Pro feature — upgrade to use it.' });
   }
   const provider = configuredOpenAITextProvider();
-  if (!provider) {
-    return res.status(503).json({ message: "AI content drafting isn't configured yet." });
-  }
   const { platform, topic, tone } = req.body || {};
   if (!topic || typeof topic !== 'string' || !topic.trim()) {
     return res.status(400).json({ message: 'topic is required.' });
   }
   const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[platform] || 'social media';
   const toneLabel = (tone && typeof tone === 'string' && tone.trim()) ? tone.trim().slice(0, 40) : 'engaging and authentic';
-  const prompt = `Write 3 distinct, ready-to-post ${platformLabel} caption/post drafts about: "${topic.trim().slice(0, 300)}".\nTone: ${toneLabel}.\nKeep each draft platform-appropriate in length and style (short and punchy for TikTok/Instagram, more professional for LinkedIn). Number them 1, 2, 3, each on its own paragraph. No preamble or explanation — just the three drafts.`;
+  const fallbackDrafts = fallbackContentDrafts(topic, platformLabel, toneLabel);
+  const prompt = [
+    `Write three distinct, ready-to-post ${platformLabel} captions about: "${topic.trim().slice(0, 300)}".`,
+    `Tone: ${toneLabel}.`,
+    'Make each caption specific, natural, and original. Include a hook, a useful or personal takeaway that does not invent facts, and a simple conversation prompt where appropriate. Keep TikTok and Instagram punchy, LinkedIn thoughtful and professional, and other platforms concise.',
+    'Return exactly three numbered captions, each as its own paragraph. No preamble or explanation.',
+  ].join('\n\n');
+
+  if (!provider) {
+    return res.json({ drafts: fallbackDrafts, provider: 'template', fallback: true });
+  }
   try {
     const text = await callOpenAIText(provider.apiKey, prompt, provider.model);
-    const drafts = text
-      .split(/\n(?=\d\.\s)/)
-      .map(s => s.replace(/^\d\.\s*/, '').trim())
-      .filter(Boolean)
-      .slice(0, 3);
-    res.json({ drafts: drafts.length ? drafts : [text.trim()].filter(Boolean), provider: 'openai' });
+    const drafts = completeContentDrafts(parseContentDrafts(text), fallbackDrafts);
+    res.json({ drafts, provider: 'openai' });
   } catch (e) {
-    console.error('[/command-center/content-draft] error:', e.message);
-    res.status(502).json({ message: 'Could not generate drafts right now. Please try again.' });
+    console.error('[/command-center/content-draft] OpenAI unavailable; using template:', e.message);
+    res.json({ drafts: fallbackDrafts, provider: 'template', fallback: true });
   }
 });
 
@@ -27060,8 +27098,45 @@ function normalizeHashtagList(values, limit = 30) {
 
 function parseHashtagDraftGroups(text) {
   const raw = String(text || '').trim();
-  const hashtags = normalizeHashtagList([raw]);
-  return hashtags.length ? [{ label: 'Copy set', hashtags }] : [];
+  if (!raw) return [];
+  return raw
+    .split(/\r?\n+/)
+    .map((line, index) => ({ label: `Copy set ${index + 1}`, hashtags: normalizeHashtagList([line], 8) }))
+    .filter(group => group.hashtags.length);
+}
+
+function hashtagFromText(value, fallback) {
+  const tag = String(value || '')
+    .replace(/[^A-Za-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map(word => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join('');
+  return `#${tag || fallback}`;
+}
+
+function fallbackHashtagGroups({ topic, audience, location, platformLabel }) {
+  const topicTag = hashtagFromText(topic, 'YourIdea');
+  const audienceTag = audience ? hashtagFromText(audience, 'Community') : '#CreatorCommunity';
+  const locationTag = location ? hashtagFromText(location, 'Worldwide') : '#Worldwide';
+  const platformTag = hashtagFromText(platformLabel, 'SocialMedia');
+  const sets = [
+    [topicTag, platformTag, audienceTag, '#ContentCreator', '#ShareYourWork', '#CreativeProcess', '#Community', '#DiscoverMore'],
+    [topicTag, audienceTag, '#BuildInPublic', '#LearningByDoing', '#IdeasInAction', '#CreatorsOfToday', '#MakeItHappen', '#NextStep'],
+    [topicTag, locationTag, '#FreshPerspective', '#EverydayProgress', '#WorkInProgress', '#KeepCreating', '#PeopleAndIdeas', '#StartWhereYouAre'],
+  ];
+  return sets.map((tags, index) => ({ label: `Copy set ${index + 1}`, hashtags: normalizeHashtagList(tags, 8) }));
+}
+
+function completeHashtagGroups(groups, fallbackGroups) {
+  const complete = groups.slice(0, 3).map((group, index) => ({
+    label: group.label || `Copy set ${index + 1}`,
+    hashtags: normalizeHashtagList([...(group.hashtags || []), ...(fallbackGroups[index]?.hashtags || [])], 8),
+  }));
+  while (complete.length < 3) complete.push(fallbackGroups[complete.length]);
+  return complete;
 }
 
 app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, async (req, res) => {
@@ -27070,7 +27145,6 @@ app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, a
     return res.status(403).json({ message: 'The AI Content Hub is a Pro feature - upgrade to use it.' });
   }
   const provider = configuredOpenAITextProvider();
-  if (!provider) return res.status(503).json({ message: "AI content drafting isn't configured yet." });
 
   const topic = typeof req.body?.topic === 'string' ? req.body.topic.trim().slice(0, 300) : '';
   const audience = typeof req.body?.audience === 'string' ? req.body.audience.trim().slice(0, 160) : '';
@@ -27078,6 +27152,7 @@ app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, a
   if (!topic) return res.status(400).json({ message: 'topic is required.' });
 
   const platformLabel = CONTENT_DRAFT_PLATFORM_LABELS[req.body?.platform] || 'social media';
+  const fallbackGroups = fallbackHashtagGroups({ topic, audience, location, platformLabel });
   const prompt = [
     `Create three distinct, relevant hashtag sets for a ${platformLabel} post about: "${topic}".`,
     `Audience: ${audience || 'people interested in the topic'}.`,
@@ -27085,13 +27160,17 @@ app.post('/command-center/hashtag-draft', authenticate, aiContentDraftLimiter, a
     'Return exactly three lines of eight specific hashtags each. Mix broad discovery, niche, and community tags. Avoid banned, misleading, or unrelated tags. Do not claim a tag is currently trending and do not include labels, markdown, or explanation.',
   ].join('\n');
 
+  if (!provider) return res.json({ groups: fallbackGroups, provider: 'template', fallback: true });
+
   try {
-    const groups = parseHashtagDraftGroups(await callOpenAIText(provider.apiKey, prompt, provider.model));
-    if (!groups.length) throw new Error('OpenAI did not return hashtags.');
+    const groups = completeHashtagGroups(
+      parseHashtagDraftGroups(await callOpenAIText(provider.apiKey, prompt, provider.model)),
+      fallbackGroups,
+    );
     res.json({ groups, provider: 'openai' });
   } catch (error) {
-    console.error('[/command-center/hashtag-draft] error:', error.message);
-    res.status(502).json({ message: 'Could not generate hashtags right now. Please try again.' });
+    console.error('[/command-center/hashtag-draft] OpenAI unavailable; using template:', error.message);
+    res.json({ groups: fallbackGroups, provider: 'template', fallback: true });
   }
 });
 
