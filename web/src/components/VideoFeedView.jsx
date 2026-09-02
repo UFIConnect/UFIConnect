@@ -193,111 +193,6 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-// The shared YouTube player sits outside the scrollable slide list so the
-// IFrame API can survive slide changes. On mobile that means a gesture begun
-// over the video has no native scrolling ancestor. This small transparent
-// layer forwards only the video-frame gestures into the real scroll container
-// while keeping the player and top controls independently tappable.
-function SharedYouTubeGestureSurface({ scrollContainerRef, onTogglePlay }) {
-  const gestureRef = useRef(null);
-  const suppressClickRef = useRef(false);
-
-  function finishGesture(event, cancelled = false) {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    gestureRef.current = null;
-    try {
-      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    } catch {}
-    if (cancelled) return;
-
-    if (!gesture.dragged) {
-      suppressClickRef.current = true;
-      onTogglePlay();
-      return;
-    }
-
-    suppressClickRef.current = true;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const frameHeight = Math.max(1, container.clientHeight);
-    const distance = event.clientY - gesture.startY;
-    const threshold = Math.max(44, frameHeight * 0.12);
-    const target = Math.abs(distance) >= threshold
-      ? gesture.startScrollTop + (distance < 0 ? frameHeight : -frameHeight)
-      : Math.round(container.scrollTop / frameHeight) * frameHeight;
-    container.scrollTo({
-      top: Math.max(0, Math.min(target, container.scrollHeight - frameHeight)),
-      behavior: 'smooth',
-    });
-  }
-
-  function handlePointerDown(event) {
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    event.preventDefault();
-    event.stopPropagation();
-    gestureRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startScrollTop: container.scrollTop,
-      dragged: false,
-    };
-    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
-  }
-
-  function handlePointerMove(event) {
-    const gesture = gestureRef.current;
-    if (!gesture || gesture.pointerId !== event.pointerId) return;
-    const distance = event.clientY - gesture.startY;
-    if (!gesture.dragged && Math.abs(distance) < 6) return;
-    gesture.dragged = true;
-    const container = scrollContainerRef.current;
-    if (container) container.scrollTop = Math.max(0, Math.min(gesture.startScrollTop - distance, container.scrollHeight - container.clientHeight));
-    event.preventDefault();
-    event.stopPropagation();
-  }
-
-  function handleClick(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (suppressClickRef.current) {
-      suppressClickRef.current = false;
-      return;
-    }
-    onTogglePlay();
-  }
-
-  function handleWheel(event) {
-    const container = scrollContainerRef.current;
-    if (!container || !event.deltaY) return;
-    event.preventDefault();
-    event.stopPropagation();
-    container.scrollTop = Math.max(0, Math.min(container.scrollTop + event.deltaY, container.scrollHeight - container.clientHeight));
-  }
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label="Play or pause video. Swipe up or down to change videos."
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={finishGesture}
-      onPointerCancel={event => finishGesture(event, true)}
-      onClick={handleClick}
-      onWheel={handleWheel}
-      onKeyDown={event => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        event.preventDefault();
-        onTogglePlay();
-      }}
-      style={{ position: 'absolute', inset: 0, zIndex: 2, pointerEvents: 'auto', touchAction: 'none', cursor: 'grab' }}
-    />
-  );
-}
-
 // sharedYt: { paused, duration, currentTime, failed, togglePlay, seekTo } —
 // the one YouTube player VideoFeedView keeps alive across every slide (see
 // its own top comment) instead of each slide owning/destroying its own.
@@ -2640,7 +2535,7 @@ export default function VideoFeedView({ onExit }) {
             // the brief instant before the very first measurement lands.
             style={{
               width: ytBoxSize.width || '100%', height: ytBoxSize.height || '100%',
-              position: 'relative', pointerEvents: activeSrc?.kind === 'youtube' ? 'auto' : 'none',
+              position: 'relative', pointerEvents: 'none',
             }}
           >
             <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
@@ -2654,12 +2549,6 @@ export default function VideoFeedView({ onExit }) {
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
                 allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                 title={videoPosts[activeIndex]?.title}
-              />
-            )}
-            {activeSrc?.kind === 'youtube' && (
-              <SharedYouTubeGestureSurface
-                scrollContainerRef={containerRef}
-                onTogglePlay={sharedYtTogglePlay}
               />
             )}
           </div>
