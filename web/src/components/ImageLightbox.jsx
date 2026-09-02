@@ -86,6 +86,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     return Math.min(Math.max(Number(startIndex) || 0, 0), last);
   });
   const touchStartX = useRef(null);
+  const nearEndRequestRef = useRef('');
   const navigate = useNavigate();
   // Muted by default, even though opening the lightbox is itself a
   // deliberate click — a *previous* version of this started unmuted on the
@@ -131,8 +132,19 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   const panDragRef = useRef(null); // { x, y, panX, panY } while a pan/drag is live
   const lastTapRef = useRef(0);
 
-  const goNext = useCallback(() => setIndex(i => Math.min(mediaItems.length - 1, i + 1)), [mediaItems.length]);
-  const goPrev = useCallback(() => setIndex(i => Math.max(0, i - 1)), []);
+  const pauseActiveMedia = useCallback(() => {
+    try { fileVideoRef.current?.pause(); } catch {}
+    try { hlsVideoRef.current?.pause(); } catch {}
+    try { ytPlayerRef.current?.pauseVideo(); } catch {}
+  }, []);
+  const goNext = useCallback(() => {
+    pauseActiveMedia();
+    setIndex(i => Math.min(mediaItems.length - 1, i + 1));
+  }, [mediaItems.length, pauseActiveMedia]);
+  const goPrev = useCallback(() => {
+    pauseActiveMedia();
+    setIndex(i => Math.max(0, i - 1));
+  }, [pauseActiveMedia]);
 
   function resetZoom() { setZoom(1); setPan({ x: 0, y: 0 }); }
 
@@ -208,7 +220,11 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // the last few already-loaded items, so scrolling keeps updating with
   // fresh photos/videos instead of stopping.
   useEffect(() => {
-    if (onNearEnd && index >= mediaItems.length - 3) onNearEnd();
+    if (!onNearEnd || mediaItems.length === 0 || index < mediaItems.length - 3) return;
+    const requestKey = `${index}:${mediaItems.length}`;
+    if (nearEndRequestRef.current === requestKey) return;
+    nearEndRequestRef.current = requestKey;
+    onNearEnd();
   }, [index, mediaItems.length, onNearEnd]);
 
   // Derived before the hooks below (rather than after, past an early
@@ -266,7 +282,13 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // video's state. Scrub state resets the same way so the bar doesn't
   // briefly show the previous video's progress before the new one's own
   // onLoadedMetadata/onReady fires.
-  useEffect(() => { setPaused(false); setDuration(0); setCurrentTime(0); setSeeking(false); }, [index]);
+  useEffect(() => {
+    setPaused(false);
+    setDuration(0);
+    setCurrentTime(0);
+    setSeeking(false);
+    seekingRef.current = false;
+  }, [index]);
 
   // youtube: the real IFrame Player API, same as VideoFeedView's swipe
   // feed — a raw <iframe src="..."> embed has no programmatic control at
@@ -302,20 +324,22 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
             try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
-            setDuration(e.target.getDuration() || 0);
-            if (startUnmuted) e.target.unMute();
+            try { setDuration(e.target.getDuration() || 0); } catch {}
+            try { if (startUnmuted) e.target.unMute(); } catch {}
             // Same fix as VideoFeedView's YouTube slide: playerVars.autoplay:1
             // alone isn't reliable on every re-construction (confirmed live
             // there — a re-activated player's iframe carried autoplay=1 the
             // same as its first activation, yet never actually started).
             // Explicit call removes the dependency on implicit autoplay.
-            e.target.playVideo();
+            try { e.target.playVideo(); } catch { setYtFailed(true); }
           },
           onStateChange: (e) => {
             if (cancelled) return;
             setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
-            const d = e.target.getDuration();
-            if (d) setDuration(d);
+            try {
+              const d = e.target.getDuration();
+              if (d) setDuration(d);
+            } catch {}
           },
           onError: () => { if (!cancelled) setYtFailed(true); },
         },
@@ -344,14 +368,18 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // mute button — the mount effect above only sets it once, at onReady.
   useEffect(() => {
     if (!youtubeId || !ytPlayerRef.current) return;
-    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+    try {
+      if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+    } catch {}
   }, [muted, youtubeId]);
 
   function togglePlay() {
     if (youtubeId) {
       const p = ytPlayerRef.current;
       if (!p) return;
-      if (paused) p.playVideo(); else p.pauseVideo();
+      try {
+        if (paused) p.playVideo(); else p.pauseVideo();
+      } catch {}
       return;
     }
     const v = getNativeEl();
@@ -371,7 +399,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     const time = fraction * (duration || 0);
     setCurrentTime(time);
     if (youtubeId) {
-      ytPlayerRef.current?.seekTo(time, true);
+      try { ytPlayerRef.current?.seekTo(time, true); } catch {}
     } else {
       const v = getNativeEl();
       if (v) v.currentTime = time;
@@ -439,6 +467,12 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
     if (delta < 0) goNext(); else goPrev();
   }
 
+  function handleTouchCancel() {
+    touchStartX.current = null;
+    pinchRef.current = null;
+    panDragRef.current = null;
+  }
+
   return (
     <div
       role="dialog"
@@ -448,6 +482,7 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
       className="media-lightbox"
       style={{
         position: 'fixed', inset: 0, zIndex: 2500,
