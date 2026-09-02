@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
@@ -37,6 +37,7 @@ function ShellIcon({ name, size = 20 }) {
 // "Opportunities" (13 characters each) wrap badly at that width. The
 // desktop sidebar has room to spare, so it always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
+const MOBILE_FEED_OPTIONS = new Set(['feed', 'following', 'countries', 'restaurants']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
@@ -75,7 +76,7 @@ function NavBadge({ count }) {
 }
 
 export default function Layout({ children, wide = false }) {
-  const { profile, logout } = useAuth();
+  const { profile, logout, updateProfileLocally } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const { canInstall, installed, triggerInstall } = useInstallPrompt();
@@ -85,6 +86,7 @@ export default function Layout({ children, wide = false }) {
   // competing for the same small dot.
   const [notifBadge, setNotifBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const mobileHomeTapTimer = useRef(null);
 
   // Polled from the shell itself, not the Notifications page — the whole
   // point of a nav badge is being visible from anywhere else in the app,
@@ -117,6 +119,10 @@ export default function Layout({ children, wide = false }) {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
 
+  useEffect(() => () => {
+    if (mobileHomeTapTimer.current) window.clearTimeout(mobileHomeTapTimer.current);
+  }, []);
+
   function handleLogout() {
     logout();
     navigate('/login');
@@ -132,23 +138,8 @@ export default function Layout({ children, wide = false }) {
     }
   }
 
-  // Mobile Home is the entry point to the member's feed picker. A second tap
-  // is an intentional reset to the all-feed, so accidental navigation does
-  // not discard the feed the member was reading.
-  function handleMobileHomeClick(event) {
-    event.preventDefault();
-    if (!mobileMenuOpen) {
-      setMobileMenuOpen(true);
-      return;
-    }
-    setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    navigate(HOME_FEED_PATH, { replace: true, state: { refreshHomeAt: Date.now() } });
-  }
-
-  function selectMobileFeed(feed) {
-    const current = mobileFeedMode || 'feed';
-    const next = current === feed ? 'feed' : feed;
+  function navigateToMobileFeed(feed) {
+    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
     navigate(next === 'feed' ? HOME_FEED_PATH : `/?feed=${encodeURIComponent(next)}`, {
@@ -156,8 +147,44 @@ export default function Layout({ children, wide = false }) {
     });
   }
 
+  function saveMobileFeed(feed) {
+    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
+    const previous = profile?.roleSettings || {};
+    const roleSettings = { ...previous, mobileSelectedFeed: next };
+    updateProfileLocally({ roleSettings });
+    client.patch('/profile', { roleSettings }).catch(() => {
+      updateProfileLocally({ roleSettings: previous });
+    });
+  }
+
+  // A single mobile Home tap restores the member's saved feed; a quick second
+  // tap deliberately resets to the complete Home/All feed.
+  function handleMobileHomeClick(event) {
+    event.preventDefault();
+    if (mobileHomeTapTimer.current) {
+      window.clearTimeout(mobileHomeTapTimer.current);
+      mobileHomeTapTimer.current = null;
+      navigateToMobileFeed('feed');
+      return;
+    }
+    mobileHomeTapTimer.current = window.setTimeout(() => {
+      mobileHomeTapTimer.current = null;
+      navigateToMobileFeed(selectedMobileFeed);
+    }, 250);
+  }
+
+  function selectMobileFeed(feed) {
+    const current = mobileFeedMode || 'feed';
+    const next = current === feed ? 'feed' : feed;
+    saveMobileFeed(next);
+    navigateToMobileFeed(next);
+  }
+
   const requestedFeed = new URLSearchParams(location.search).get('feed');
-  const mobileFeedMode = requestedFeed === 'local' ? 'countries' : requestedFeed;
+  const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
+  const selectedMobileFeed = MOBILE_FEED_OPTIONS.has(profile?.roleSettings?.mobileSelectedFeed)
+    ? profile.roleSettings.mobileSelectedFeed
+    : 'feed';
   const isHomeFeedRoute = location.pathname === '/';
   const mobileUsesSourceControls = !['countries', 'restaurants'].includes(mobileFeedMode);
   const mobileSourceIds = mobileFeedMode === 'following'
