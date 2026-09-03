@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "UFconnect",
-  "short_name": "UFconnect",
-  "description": "UFconnect is a free, ad-free professional network with personalized feeds, communities, messaging, posts, and opportunities for every career path.",
+  "name": "UFIconnect",
+  "short_name": "UFIconnect",
+  "description": "UFIconnect is a social network with personalized feeds, communities, messaging, videos, and job discovery in one place.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -35,14 +35,14 @@
     {
       "name": "Feed",
       "short_name": "Feed",
-      "description": "Live professional feed",
+      "description": "Live personalized social feed",
       "url": "/",
       "icons": [{ "src": "/icon.svg", "sizes": "any" }]
     },
     {
       "name": "Find People",
       "short_name": "Search",
-      "description": "Search professionals",
+      "description": "Find people and communities",
       "url": "/search",
       "icons": [{ "src": "/icon.svg", "sizes": "any" }]
     },

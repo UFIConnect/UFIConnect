@@ -2695,8 +2695,8 @@ export default function Feed({ forcedMode } = {}) {
   return (
     <Layout wide={!forcedMode}>
       <Helmet>
-        <title>{forcedMode ? 'You | UFIconnect' : 'Home | UFIconnect'}</title>
-        <meta name="description" content="Your live UFIconnect home: posts, videos, jobs, communities, and connected-account updates balanced into one useful scroll." />
+        <title>{forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
+        <meta name="description" content="Your personalized UFIconnect social feed brings posts, people, communities, videos, and job discovery into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>

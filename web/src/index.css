@@ -939,7 +939,7 @@ input, textarea, select { font-family: inherit; }
   background: var(--primary);
   border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 900; font-size: 1.1rem;
+  color: #fff; font-weight: 900; font-size: .86rem;
 }
 .auth-logo-name { font-weight: 900; font-size: 1.2rem; }
 .auth-tagline { font-size: .85rem; color: var(--muted); margin-bottom: 28px; }

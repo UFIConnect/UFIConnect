@@ -1,6 +1,6 @@
 // Change this with each web release so installed clients discard obsolete
 // app-shell assets as soon as the updated worker activates.
-const CACHE_NAME = 'uficonnect-v6';
+const CACHE_NAME = 'uficonnect-v7';
 const API_ORIGINS = new Set([
   'https://api.uficonnect.org',
   'https://uficonnect-api-708r.onrender.com',
@@ -81,8 +81,8 @@ self.addEventListener('fetch', (e) => {
 // itself.
 self.addEventListener('push', (e) => {
   let data = {};
-  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'UFconnect', body: e.data ? e.data.text() : '' }; }
-  const title = data.title || 'UFconnect';
+  try { data = e.data ? e.data.json() : {}; } catch { data = { title: 'UFIconnect', body: e.data ? e.data.text() : '' }; }
+  const title = data.title || 'UFIconnect';
   e.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || '',

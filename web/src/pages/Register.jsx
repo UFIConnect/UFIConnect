@@ -562,12 +562,12 @@ export default function Register() {
   return (
     <>
       <Helmet>
-        <title>Join UFIconnect — Professional Network for All Careers</title>
+        <title>Join UFIconnect | Social Network &amp; Job Discovery</title>
         <meta name="description" content="Create your UFIconnect account and get a personalized feed from day one." />
         <link rel="canonical" href="https://uficonnect.org/register" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/register" />
-        <meta property="og:title" content="Join UFIconnect | Free Professional Network" />
+        <meta property="og:title" content="Join UFIconnect | Social Network &amp; Job Discovery" />
         <meta property="og:description" content="Create your UFIconnect account and get a personalized feed, communities, posts, messaging, and opportunities from day one." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
@@ -576,7 +576,7 @@ export default function Register() {
       <div className="auth-page">
         <div className="auth-card" style={{ maxWidth: step === 0 ? 460 : 620 }}>
           <div className="auth-logo">
-            <div className="auth-logo-icon">UF</div>
+            <div className="auth-logo-icon">UFI</div>
             <span className="auth-logo-name">UFIconnect</span>
           </div>
 

@@ -35,7 +35,7 @@ export default function ForgotPassword() {
       <div className="auth-page">
         <div className="auth-card">
           <div className="auth-logo">
-            <div className="auth-logo-icon">UF</div>
+            <div className="auth-logo-icon">UFI</div>
             <span className="auth-logo-name">UFIconnect</span>
           </div>
 

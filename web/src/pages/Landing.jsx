@@ -60,7 +60,7 @@ const FAQS = [
 ];
 
 const SHARE_URL = 'https://uficonnect.org';
-const SHARE_TEXT = 'Welcome to UFIconnect - a live place for feeds, communities, messaging, videos, and real opportunities.';
+const SHARE_TEXT = 'UFIconnect brings people, posts, communities, messaging, videos, and job discovery into one social network.';
 const SHARE_LINKS = [
   {
     label: 'Share on X',
@@ -139,9 +139,9 @@ export default function Landing() {
   return (
     <>
       <Helmet>
-        <title>UFIconnect - Official Home</title>
-        <meta name="description" content="Welcome to UFIconnect, a live home for personalized feeds, communities, messaging, videos, and real opportunities." />
-        <meta name="keywords" content="live feed, global feed, communities, messaging, jobs, opportunities, videos, UFIconnect, ufi connect" />
+        <title>UFIconnect | Social Network &amp; Job Discovery</title>
+        <meta name="description" content="UFIconnect is a social network for connecting, posting, messaging, joining communities, watching videos, and finding jobs in one personalized experience." />
+        <meta name="keywords" content="social network, personalized feed, communities, messaging, job search, opportunities, videos, UFIconnect" />
         <meta name="author" content="UFIconnect" />
         <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
         <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
@@ -171,8 +171,8 @@ export default function Landing() {
                 <div className="landing-eyebrow">Official home</div>
                 <h1>UFIconnect</h1>
                 <p>
-                  Welcome to a calmer place to scroll: live posts, useful communities,
-                  direct messaging, videos, and real opportunities in one place.
+                  A social network for people, posts, communities, messaging, videos,
+                  and finding your next job in one personalized scroll.
                 </p>
                 <div className="landing-actions">
                   <Link to="/register" className="landing-primary-action">Join free</Link>

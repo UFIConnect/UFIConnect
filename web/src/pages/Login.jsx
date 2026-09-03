@@ -43,10 +43,10 @@ export default function Login() {
       <div className="auth-page">
       <div className="auth-card">
         <div className="auth-logo">
-          <div className="auth-logo-icon">UF</div>
+          <div className="auth-logo-icon">UFI</div>
           <span className="auth-logo-name">UFIconnect</span>
         </div>
-        <p className="auth-tagline">Professional networking, no ads.</p>
+        <p className="auth-tagline">Social connection meets job discovery.</p>
 
         <h1 className="auth-heading">Welcome back</h1>
         <p className="auth-sub">Sign in to your account to continue.</p>

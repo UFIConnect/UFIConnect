@@ -29,17 +29,17 @@ for (let i = 0; i <= 630; i += 60) {
   ctx.stroke();
 }
 
-// Main text: UFconnect
+// Main text: UFIconnect
 ctx.fillStyle = '#ffffff';
 ctx.font = 'bold 100px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
 ctx.textAlign = 'center';
 ctx.textBaseline = 'middle';
-ctx.fillText('UFconnect', 600, 260);
+ctx.fillText('UFIconnect', 600, 260);
 
 // Tagline
 ctx.fillStyle = 'rgba(255,255,255,0.85)';
 ctx.font = 'regular 36px Inter, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif';
-ctx.fillText('Professional Networking - No Ads', 600, 380);
+ctx.fillText('Social Network + Job Discovery', 600, 380);
 
 // Save to file
 const publicDir = path.join(__dirname, '..', 'public');
