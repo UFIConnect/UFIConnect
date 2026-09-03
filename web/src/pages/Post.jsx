@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import PostList from '../components/PostList';
@@ -7,6 +7,8 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useToast } from '../contexts/ToastContext';
 import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -61,7 +63,6 @@ export function UfiFeedContent({ embedded = false }) {
   const placeholder = PROMPTS[Math.floor(Math.random() * PROMPTS.length)];
 
   useEffect(() => {
-    // Load internal communities
     client.get('/groups/internal')
       .then(({ data }) => {
         const internal = data.groups || [];
@@ -72,17 +73,29 @@ export function UfiFeedContent({ embedded = false }) {
         }
       })
       .catch(() => {});
+  }, []);
 
-    // Load recent community posts without calling the full live feed.
-    setFeedLoading(true);
-    client.get('/posts', { params: { limit: FEED_PAGE_SIZE } })
-      .then(({ data }) => {
-        setFeed(data.posts || []);
-        setFeedHasMore(!!data.hasMore);
-      })
-      .catch(() => {})
-      .finally(() => setFeedLoading(false));
-  }, [posted]);
+  const loadRecentFeed = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setFeedLoading(true);
+    try {
+      const { data } = await client.get('/posts', { params: { limit: FEED_PAGE_SIZE } });
+      setFeed(orderNewestFeedCohorts(data.posts || []));
+      setFeedHasMore(!!data.hasMore);
+    } catch {
+      // Keep the last successful page visible during a refresh failure.
+    } finally {
+      setFeedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRecentFeed();
+  }, [posted, loadRecentFeed]);
+
+  useScrollToRefresh(
+    () => loadRecentFeed({ silent: true }),
+    { enabled: !feedLoading && !feedLoadingMore }
+  );
 
   // Lets ImageLightbox's "max view" (opened from a post's photo/video) keep
   // pulling in more posts as the viewer scrolls near the end of what's
@@ -98,7 +111,7 @@ export function UfiFeedContent({ embedded = false }) {
       const incoming = data.posts || [];
       setFeed(prev => {
         const knownIds = new Set(prev.map(p => p.id));
-        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+        return orderNewestFeedCohorts([...prev, ...incoming.filter(p => !knownIds.has(p.id))]);
       });
       setFeedHasMore(!!data.hasMore);
     } catch {}
@@ -186,10 +199,7 @@ export function UfiFeedContent({ embedded = false }) {
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
-      <div className="page-header">
-        <h1 className="page-title">UFI</h1>
-        <p className="page-subtitle">Write a post and see what the UFIconnect community is sharing.</p>
-      </div>
+      {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
       {/* ── Compose card ── */}
       <div className="card" style={{ maxWidth: embedded ? 'none' : 640, marginBottom: 16 }}>

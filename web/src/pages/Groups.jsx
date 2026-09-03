@@ -216,7 +216,6 @@ export function GroupsContent({ embedded = false }) {
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
-  const [lastRefresh, setLastRefresh] = useState(null);
   const [showCreate,  setShowCreate]  = useState(false);
   const [joiningId,   setJoiningId]   = useState(null);
 
@@ -245,7 +244,6 @@ export function GroupsContent({ embedded = false }) {
         setGroups(gRes.data.groups || []);
         setCategories(cRes.data.categories || []);
         setJoined(new Set(pRes.data.joinedGroups || []));
-        setLastRefresh(new Date());
       })
       .catch(err => {
         console.error('Failed to load groups:', err);
@@ -783,19 +781,6 @@ export function GroupsContent({ embedded = false }) {
             })}
           </div>
 
-          {/* Last refresh info */}
-          {lastRefresh && (
-            <div
-              style={{
-                textAlign: 'center',
-                marginTop: 20,
-                fontSize: '.75rem',
-                color: 'var(--muted)',
-              }}
-            >
-              Updated {new Date(lastRefresh).toLocaleTimeString()}
-            </div>
-          )}
         </div>
       )}
 

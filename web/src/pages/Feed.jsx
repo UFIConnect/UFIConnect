@@ -17,6 +17,8 @@ import HomeFeedTools from '../components/HomeFeedTools';
 import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportEngagementSignal } from '../api/engagement';
 import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
@@ -87,8 +89,8 @@ function feedPostTime(post) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function normalizeFeedSort(value) {
-  return ['ranked', 'newest', 'popular', 'balanced', 'bylink'].includes(value) ? value : 'ranked';
+function normalizeFeedSort() {
+  return 'newest';
 }
 
 // Mirrors handleFeedRequest's own date-cursor eligibility check
@@ -101,31 +103,10 @@ function isCursorEligible(mode, sort, search) {
   return mode === 'feed' && normalizeFeedSort(sort) === 'newest' && !search.trim();
 }
 
-function extractDomain(url) {
-  try { return new URL(url).hostname.replace(/^www\./, ''); }
-  catch { return url || ''; }
-}
-
-function sortByLink(posts = []) {
-  return [...posts].sort((a, b) => {
-    const da = extractDomain(a.sourceUrl || '');
-    const db = extractDomain(b.sourceUrl || '');
-    return da.localeCompare(db) || feedPostTime(b) - feedPostTime(a);
-  });
-}
-
-// The backend already sorts every mode except "By Domain" (bylink is a
-// pure client-side grouping with no server equivalent) — ranked/newest/
-// popular/balanced all arrive pre-sorted and, for balanced/ranked/newest,
-// pre-diversified across sources. Re-sorting any of those client-side on
-// top of an already-correct response undid that work on every single
-// event that touched the post list — a manual refresh, a live merge, or
-// just scrolling to load the next page — which is exactly what made a
-// carefully interleaved feed look like it kept reshuffling itself. Only
-// bylink still needs a real client-side sort; everything else trusts
-// what the server already sent, unchanged.
-function sortPostsForView(list = [], sort = 'ranked') {
-  return normalizeFeedSort(sort) === 'bylink' ? sortByLink(list) : list;
+// Keep newer minute-level cohorts above older ones while preserving the
+// server's source-equalized order inside each cohort.
+function sortPostsForView(list = []) {
+  return orderNewestFeedCohorts(list);
 }
 
 function mergeFeedPosts(list = [], sort = 'ranked') {
@@ -345,6 +326,7 @@ function loadFeedState(userId) {
       ? s.activeTabs.filter(source => allowedSourceIds.includes(source))
       : [];
     const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
+    filters.sort = 'newest';
     filters.sources = Array.isArray(filters.sources)
       ? filters.sources.filter(source => allowedSourceIds.includes(source))
       : [];
@@ -506,31 +488,6 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       }}>
         <button onClick={reset} className="btn btn-ghost btn-sm" style={{ flex: 1 }}>Reset</button>
         <button onClick={apply} className="btn btn-primary btn-sm" style={{ flex: 2 }}>Apply filters</button>
-      </div>
-
-      {/* Sort */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>Sort</div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {[
-            { value: 'ranked',   label: 'Ranked' },
-            { value: 'newest',   label: 'Newest' },
-            { value: 'popular',  label: 'Popular' },
-            { value: 'balanced', label: 'Balanced' },
-            { value: 'bylink',   label: 'By Domain' },
-          ].map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setLocal(f => ({ ...f, sort: value }))}
-              style={{
-                flex: '1 1 46%', padding: '7px 0', borderRadius: 8, fontSize: '.8rem', fontWeight: 600,
-                border: `1.5px solid ${local.sort === value ? 'var(--primary)' : 'var(--border)'}`,
-                background: local.sort === value ? 'var(--primary)' : 'var(--surface)',
-                color: local.sort === value ? '#fff' : 'var(--text)', cursor: 'pointer',
-              }}
-            >{label}</button>
-          ))}
-        </div>
       </div>
 
       {/* Time range */}
@@ -1908,9 +1865,7 @@ export default function Feed({ forcedMode } = {}) {
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
-  const [lastRefresh,   setLastRefresh]  = useState(null);
   const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
-  const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
@@ -1964,11 +1919,7 @@ export default function Feed({ forcedMode } = {}) {
   // pool every time, since neither the user nor the still-warm pool changed.
   const refreshSeedRef = useRef(Math.random().toString(36).slice(2));
   // Opaque date-cursor from the backend (see getCursorFeedPage server-side)
-  // for the newest-sort feed/filtered views — null means "start from now."
-  // Only meaningful when isCursorEligible() below is true; ignored
-  // otherwise (Ranked/Popular/Balanced sort and Following mode still page
-  // by number, since neither has a natural date-cursor semantic — see
-  // handleFeedRequest's own eligibility check, which this mirrors).
+  // for newest-sort feed views. Following still pages by number.
   const remoteCursorRef = useRef(null);
 
   const loadFeed = useCallback(async (manual = false, tabs = [], options = {}) => {
@@ -1996,7 +1947,7 @@ export default function Feed({ forcedMode } = {}) {
     // asked for a refresh, and nowhere else.
     if (manual) refreshSeedRef.current = Math.random().toString(36).slice(2);
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
-    activeFilters.sort = normalizeFeedSort(activeFilters.sort);
+    activeFilters.sort = 'newest';
     const activeMode = requestedMode || viewModeRef.current;
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
@@ -2052,7 +2003,6 @@ export default function Feed({ forcedMode } = {}) {
         setPosts([]);
         setTravelLiveFeeds([]);
         setRemoteHasMore(false);
-        setLastRefresh(new Date());
         return;
       }
       setLockedPlatform(null);
@@ -2064,14 +2014,6 @@ export default function Feed({ forcedMode } = {}) {
         setTravelLiveFeeds([]);
       }
       const previous = postsRef.current;
-      // "Updated Xm ago" used to always show however long ago the browser
-      // last fetched, even when the feed is served from the server's
-      // 10-minute stable-sort snapshot — the label could claim "just now"
-      // while the actual content was sorted up to 10 minutes earlier.
-      // snapshotAt is only present when the response came from that cache;
-      // a freshly-computed response has no staleness to report, so "now" is
-      // accurate for that case.
-      const refreshTimestamp = data.snapshotAt || Date.now();
       const shouldMerge = (manual || live) && !replace;
       // previous first, incoming second — mergeFeedPosts' dedup keeps
       // whichever copy of a post it sees *last* on a createdAt tie (its
@@ -2110,7 +2052,6 @@ export default function Feed({ forcedMode } = {}) {
       // in it (e.g. Following with zero followed-people posts) silently
       // left the *previous* view's posts on screen instead of showing empty.
       if (manual && !replace && nextPosts.length === 0 && previous.length > 0) {
-        setLastRefresh(new Date(refreshTimestamp));
         return;
       }
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
@@ -2127,7 +2068,6 @@ export default function Feed({ forcedMode } = {}) {
         remoteCursorRef.current = data.cursor || null;
       }
       setRemoteHasMore(data.hasMore !== false);
-      setLastRefresh(new Date(refreshTimestamp));
       setSourceErrors(data.sourceErrors || {});
       if (['countries', 'restaurants'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
@@ -2188,7 +2128,7 @@ export default function Feed({ forcedMode } = {}) {
     if (!profile?.id || activeMemberIdRef.current === profile.id) return;
     activeMemberIdRef.current = profile.id;
     const saved = loadFeedState(profile.id);
-    const nextFilters = saved?.filters || DEFAULT_FILTERS;
+    const nextFilters = { ...DEFAULT_FILTERS, ...(saved?.filters || {}), sort: 'newest' };
     const nextTabs = saved?.activeTabs || [];
     const nextSearch = saved?.search || '';
     const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
@@ -2304,7 +2244,7 @@ export default function Feed({ forcedMode } = {}) {
 
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
-    next.sort = normalizeFeedSort(next.sort);
+    next.sort = 'newest';
     if (next.sources.length > 0) {
       activeTabsRef.current = [];
       setActiveTabs([]);
@@ -2401,8 +2341,7 @@ export default function Feed({ forcedMode } = {}) {
     if (key === 'all') {
       activeTabsRef.current = [];
       setActiveTabs([]);
-      // Clears source filtering only — sort/timeRange stay whatever's set in
-      // the Sort filter (Ranked by default, Balanced still available there).
+      // Clears source filtering only; the time range and topics stay active.
       // Has to clear filters.sources too, not just activeTabs: they're two
       // independent ways to pick sources (this chip row vs. the Filter panel
       // checkboxes), and loadFeed prefers filters.sources when both are set
@@ -2448,7 +2387,7 @@ export default function Feed({ forcedMode } = {}) {
     try {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
-      activeFilters.sort = normalizeFeedSort(activeFilters.sort);
+      activeFilters.sort = 'newest';
       const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
         : [];
@@ -2554,31 +2493,17 @@ export default function Feed({ forcedMode } = {}) {
     };
   }, [loadFeed]);
 
-  // Scroll-to-refresh: scrolling back up to the very top acts as pull-to-refresh
-  useEffect(() => {
-    let lastScrollY = window.scrollY;
-    let lastPullAt = 0;
-    const PULL_COOLDOWN_MS = 8000;
-    const handleScroll = () => {
-      const y = window.scrollY;
-      const pulledToTop = y <= 0 && lastScrollY > 40;
-      lastScrollY = y;
-      if (!pulledToTop || !['feed', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
-      const state = loadStateRef.current;
-      if (state.loading || state.refreshing || state.loadingMore) return;
-      if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
-      lastPullAt = Date.now();
-      // bust:false unless exactly one source is active — same reasoning as
-      // the tab-click refreshes: this shouldn't be able to trigger the
-      // all-30+-sources burst on every scroll-to-top, even with a cooldown.
-      loadFeed(true, activeTabsRef.current, {
-        preserveScroll: true,
-        bust: activeTabsRef.current.length === 1,
-      });
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+  const refreshCurrentFeed = useCallback(() => {
+    if (!['feed', 'following', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return undefined;
+    const state = loadStateRef.current;
+    if (state.loading || state.refreshing || state.loadingMore) return undefined;
+    return loadFeed(true, activeTabsRef.current, {
+      preserveScroll: true,
+      bust: activeTabsRef.current.length === 1,
+    });
   }, [loadFeed]);
+
+  useScrollToRefresh(refreshCurrentFeed, { enabled: Boolean(profile?.id) });
 
   // Fetch social connection status for personalisation banners
   useEffect(() => {
@@ -2619,10 +2544,7 @@ export default function Feed({ forcedMode } = {}) {
         if (cancelled) return;
         const token = localStorage.getItem('pc_token') || '';
         es = new EventSource(`${base}/feed/stream?token=${encodeURIComponent(token)}`);
-        setLiveActive(false);
-
         es.onopen = () => {
-          setLiveActive(true);
           reconnectAttempt = 0; // Reset backoff on successful connection
         };
 
@@ -2666,7 +2588,6 @@ export default function Feed({ forcedMode } = {}) {
 
         es.onerror = () => {
           if (cancelled) return;
-          setLiveActive(false);
           markApiOriginFailure(base);
           es?.close();
           es = null;
@@ -2681,7 +2602,6 @@ export default function Feed({ forcedMode } = {}) {
         };
       } catch (err) {
         console.error('[SSE] Setup error:', err);
-        setLiveActive(false);
       }
     }
 
@@ -2698,7 +2618,6 @@ export default function Feed({ forcedMode } = {}) {
         es.close();
         es = null;
       }
-      setLiveActive(false);
     };
   }, [loadFeed, markKnownId]);
 
@@ -2839,11 +2758,10 @@ export default function Feed({ forcedMode } = {}) {
     ? mediaPosts.findIndex(p => p.id === mediaLightboxPostId)
     : -1;
 
-  const firstName = profile?.name?.split(' ')[0] || '';
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(locationFilters);
-  const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.sort !== 'newest' ? 1 : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -2860,31 +2778,6 @@ export default function Feed({ forcedMode } = {}) {
         <UfiFeedContent embedded />
       ) : (
       <>
-      <div className="page-header">
-        <h1 className="page-title">
-          {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Home')}
-          <span style={{
-            marginLeft: 10, display: 'inline-flex', alignItems: 'center', gap: 4,
-            fontSize: '.65rem', fontWeight: 700, padding: '3px 9px', borderRadius: 20,
-            background: liveActive ? '#DCFCE7' : '#F1F5F9',
-            color: liveActive ? '#15803D' : '#94A3B8',
-            verticalAlign: 'middle',
-          }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: liveActive ? '#22C55E' : '#CBD5E1', display: 'inline-block', animation: liveActive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-            {liveActive ? 'LIVE' : 'connecting...'}
-          </span>
-        </h1>
-        <p className="page-subtitle">
-          {viewMode === 'countries'
-            ? 'Live views, destination guides, and current travel ideas from around the world. Pick a place that makes the next vacation feel inevitable.'
-            : viewMode === 'restaurants'
-              ? 'Fresh restaurant-opening reports from around the world. Add a country or city to gently move familiar places toward the top.'
-              : viewMode === 'groups'
-                ? 'Posts from your joined UFIconnect groups and connected social communities, balanced into one useful scroll.'
-              : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
-        </p>
-      </div>
-
       {/* Feed controls. Post search lives on /search so Home stays unfiltered. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
         {/* Filter button */}
@@ -3001,8 +2894,6 @@ export default function Feed({ forcedMode } = {}) {
 
       {((usesSourceControls && activeTabs.length > 0) || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
-          <span style={{ color: 'var(--muted)', fontWeight: 500, marginRight: 2 }}>Showing:</span>
-
           {usesSourceControls && (activeTabs.length > 0 ? activeTabs.map(key => {
             const meta = SOURCE_META[key] || {};
             const color = meta.color || 'var(--primary)';
@@ -3034,21 +2925,6 @@ export default function Feed({ forcedMode } = {}) {
             }}>
               {filters.timeRange === '1h' ? 'Past hour' : filters.timeRange === '6h' ? 'Past 6h' : filters.timeRange === 'today' ? 'Past 24h' : filters.timeRange === 'week' ? 'Past week' : filters.timeRange}
               <button onClick={() => applyFilters({ ...filtersRef.current, timeRange: 'all' })} style={{
-                marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
-                color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
-              }}>×</button>
-            </span>
-          )}
-
-          {filters.sort !== 'newest' && (
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 4,
-              padding: '3px 9px', borderRadius: 12,
-              background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
-              border: '1px solid var(--border)',
-            }}>
-              Sort: {filters.sort}
-              <button onClick={() => applyFilters({ ...filtersRef.current, sort: 'newest' })} style={{
                 marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                 color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
               }}>×</button>
@@ -3134,29 +3010,6 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       )}
 
-      {/* Last refresh time */}
-      {lastRefresh && (
-        <div style={{
-          fontSize: '.78rem', color: 'var(--muted)', marginBottom: 16,
-          padding: '8px 12px', borderRadius: 8, background: 'var(--card)',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          border: '1px solid var(--border)'
-        }}>
-          <div>
-            {activeTabs.length > 0 && (
-              <span style={{ fontWeight: 600, color: SOURCE_META[activeTabs[0]]?.color || 'var(--primary)', marginRight: 8 }}>
-                {activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ')}
-              </span>
-            )}
-            <span style={{ fontWeight: 500 }}>Updated {timeAgo(lastRefresh.toISOString())}</span>
-            {posts.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {posts.length.toLocaleString()} post{posts.length !== 1 ? 's' : ''}</span>}
-            {viewMode === 'countries' && travelLiveFeeds.length > 0 && <span style={{ marginLeft: 8, opacity: 0.7 }}>· {travelLiveFeeds.length.toLocaleString()} live camera{travelLiveFeeds.length !== 1 ? 's' : ''}</span>}
-            {search && <span style={{ marginLeft: 8, opacity: 0.7 }}>· searching "{search}"</span>}
-            {refreshing && <span style={{ marginLeft: 8, opacity: 0.7 }}>· refreshing…</span>}
-          </div>
-        </div>
-      )}
-
       {lockedPlatform ? (
         <SocialConnectGate
           platform={lockedPlatform}
@@ -3173,22 +3026,13 @@ export default function Feed({ forcedMode } = {}) {
       ) : loading ? (
         <div>
           <div style={{
-            marginBottom: 16,
-            color: 'var(--primary)',
-            fontSize: '.85rem',
-            fontWeight: 600,
+            padding: '20px 0',
             display: 'flex',
             alignItems: 'center',
+            justifyContent: 'center',
             gap: 8
           }}>
             <span className="spinner spinner-primary" style={{ width: 14, height: 14 }} />
-            {viewMode === 'countries'
-              ? 'Loading live cameras, destination guides, and travel ideas...'
-              : viewMode === 'restaurants'
-                ? 'Loading restaurant openings from around the world...'
-                : viewMode === 'groups'
-                  ? 'Loading posts from your groups and connected communities...'
-                : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
           </div>
           <PostCardSkeleton />
           <PostCardSkeleton />
@@ -3317,11 +3161,6 @@ export default function Feed({ forcedMode } = {}) {
           {viewMode === 'countries' && contentPosts.length > 0 && (
             <div className="travel-content-heading">
               <span>{travelLocationLabel ? `From ${travelLocationLabel}` : 'Travel picks'}</span>
-              <small>
-                {travelLocationLabel
-                  ? 'Live views, guides, and current travel stories from your selected region.'
-                  : 'Fresh places, guides, and reasons to keep scrolling.'}
-              </small>
             </div>
           )}
 
@@ -3347,16 +3186,6 @@ export default function Feed({ forcedMode } = {}) {
           {loadingMore && (
             <div style={{ textAlign: 'center', padding: '16px 0 24px' }}>
               <span className="spinner spinner-primary" />
-            </div>
-          )}
-          {!hasMore && contentPosts.length > 0 && (
-            <div style={{
-              textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', marginBottom: 24,
-              padding: '12px 16px', borderRadius: 8, background: 'var(--card)',
-              border: '1px dashed var(--border)'
-            }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>You are caught up</div>
-              Showing {contentPosts.length.toLocaleString()} post{contentPosts.length !== 1 ? 's' : ''}. Pull to refresh for new content.
             </div>
           )}
         </>

@@ -6,6 +6,7 @@ import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, useGlobalMuted, SoundIcon } from '../components/videoMedia';
 
 function timeAgo(iso) {
@@ -50,7 +51,7 @@ function mergeGuestPosts(primary = [], secondary = []) {
     seen.add(key);
     merged.push(post);
   }
-  return merged;
+  return orderNewestFeedCohorts(merged);
 }
 
 // Lighter than VideoFeedView's own player — no shared cross-slide YouTube
@@ -229,8 +230,8 @@ export default function GuestFeed() {
         : rawIncoming.filter(p => !knownIds.current.has(p.id));
       incoming.forEach(p => markKnownId(p.id));
       setPosts(prev => {
-        if (reset) return merge ? mergeGuestPosts(incoming, prev).slice(0, 120) : incoming;
-        return [...prev, ...incoming];
+        if (reset) return merge ? mergeGuestPosts(incoming, prev).slice(0, 120) : mergeGuestPosts(incoming, []);
+        return mergeGuestPosts(prev, incoming);
       });
       setCursor(data.cursor || null);
       if (reset) {
@@ -329,10 +330,7 @@ export default function GuestFeed() {
       </Helmet>
       <div className="guest-feed-main">
         <div className="guest-feed-banner">
-          <span className="guest-feed-banner-copy">
-            {refreshing ? 'Refreshing...' : "You're browsing as a guest. Scroll around; sign in when you want the feed to remember your taste."}
-          </span>
-          <div className="guest-feed-banner-actions">
+          <div className="guest-feed-banner-actions" style={{ marginLeft: 'auto' }}>
             <button
               type="button" onClick={handleRefresh} disabled={refreshing || loading}
               className="btn btn-ghost btn-sm"

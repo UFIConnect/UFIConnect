@@ -1087,21 +1087,8 @@ export default function VideoFeedView({ onExit }) {
   const [topicFilters, setTopicFilters] = useState([]);
   const searchQueryRef = useRef('');
   const topicFiltersRef = useRef([]);
-  // 'newest' (default — the cursor/round-robin mix below) or 'balanced'
-  // (an even share per active source instead — see handleVideoFeedRequest's
-  // getBalancedFeedPosts branch server-side, the exact distinction the
-  // main Feed's own Ranked/Newest/Popular/Balanced sort already draws).
-  // Applied immediately on tap rather than deferred to Done, same as the
-  // platform chips — unlike search/topic there's no text/selection state
-  // to "commit," just a straight toggle.
-  const [sortMode, setSortMode] = useState('newest');
-  const sortModeRef = useRef('newest');
-  // Balanced pagination is page-number-based (getBalancedFeedPosts, like
-  // Following mode below), not cursor-based — its own counter so switching
-  // back to Newest doesn't inherit a stale page number, and vice versa.
-  const balancedPageRef = useRef(1);
   // Whether the search sheet (just the text input) or the filter sheet
-  // (topic/platform/sort) is open — two separate buttons/sheets rather
+  // (topic/platform) is open — two separate buttons/sheets rather
   // than one combined one, so each stays focused and quick to scan
   // instead of a single sheet trying to do three different jobs at once.
   const [searchOpen, setSearchOpen] = useState(false);
@@ -1156,7 +1143,7 @@ export default function VideoFeedView({ onExit }) {
       if (reset) emptyStreakRef.current = 0;
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
-      let params = `limit=10`;
+      let params = `limit=10&sort=newest`;
       // Same ?source= (single)/?sources= (multi) convention as the main feed.
       if (src.length === 1) params += `&source=${encodeURIComponent(src[0])}`;
       else if (src.length > 1) params += `&sources=${src.map(encodeURIComponent).join(',')}`;
@@ -1177,11 +1164,6 @@ export default function VideoFeedView({ onExit }) {
         // times "Refresh now" was tapped.
         if (bust) params += `&bust=1`;
         endpoint = '/office/feed/videos/following';
-      } else if (sortModeRef.current === 'balanced') {
-        if (reset) balancedPageRef.current = 1;
-        params += `&sort=balanced&page=${balancedPageRef.current}`;
-        if (bust) params += `&bust=1`;
-        endpoint = '/office/feed/videos';
       } else {
         if (reset) cursorRef.current = null;
         if (cursorRef.current) params += `&cursor=${encodeURIComponent(cursorRef.current)}`;
@@ -1228,7 +1210,6 @@ export default function VideoFeedView({ onExit }) {
           : (reset ? fresh : [...prev, ...fresh]);
       });
       if (mode === 'following') followingPageRef.current += 1;
-      else if (sortModeRef.current === 'balanced') balancedPageRef.current += 1;
       else if (data.cursor) cursorRef.current = data.cursor;
       // Was `data.hasMore !== false && incoming.length > 0` — conflated
       // "this one page happened to have zero results" with "there's
@@ -1312,14 +1293,6 @@ export default function VideoFeedView({ onExit }) {
     setViewMode(next);
     sourceFilterRef.current = [];
     setSourceFilter([]);
-    // Following has no Balanced-sort support of its own (getFollowingFeedPosts
-    // is a separate, per-user live query, not getBalancedFeedPosts) — reset
-    // to Newest so switching modes never silently sends ?sort=balanced=&page=
-    // to an endpoint that doesn't do anything with it.
-    if (next === 'following') {
-      sortModeRef.current = 'newest';
-      setSortMode('newest');
-    }
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
@@ -1341,19 +1314,6 @@ export default function VideoFeedView({ onExit }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
-  // Applies immediately, same as the platform chips — no text/selection
-  // state to defer to a Done tap, just a straight toggle between the two
-  // modes. No-op in Following (see switchViewMode's own comment).
-  const toggleSortMode = useCallback((mode) => {
-    if (viewModeRef.current === 'following' || mode === sortModeRef.current) return;
-    sortModeRef.current = mode;
-    setSortMode(mode);
-    setActiveIndex(0);
-    if (containerRef.current) containerRef.current.scrollTop = 0;
-    setLoading(true);
-    loadPage({ reset: true });
-  }, [loadPage]);
-
   const clearSourceFilter = useCallback(() => {
     if (!sourceFilterRef.current.length) return;
     sourceFilterRef.current = [];
@@ -1365,8 +1325,8 @@ export default function VideoFeedView({ onExit }) {
   }, [loadPage]);
 
   // Multi-select, applies immediately — same pattern as toggleSourceFilter
-  // and toggleSortMode above, now that Topic lives in the same
-  // immediate-apply Filter sheet as Platform/Sort rather than paired with
+  // above, now that Topic lives in the same immediate-apply Filter sheet as
+  // Platform rather than paired with
   // Search's own text input (which does need to defer to a Done tap —
   // fetching on every keystroke isn't reasonable, but a topic pick isn't
   // keystroke-driven, so there's no reason to defer this one either).
@@ -1385,18 +1345,14 @@ export default function VideoFeedView({ onExit }) {
     loadPage({ reset: true });
   }, [loadPage]);
 
-  // Filter sheet's "Clear all" — source, topic, and sort together (not
-  // search, which is its own separate button/sheet now with its own
-  // Clear). Sort resets to 'newest' rather than being left at 'balanced'
-  // with nothing else filtered.
+  // Filter sheet's "Clear all" resets source and topic together. Search
+  // remains independent in its own sheet.
   const clearFilters = useCallback(() => {
-    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length && sortModeRef.current === 'newest') return;
+    if (!sourceFilterRef.current.length && !topicFiltersRef.current.length) return;
     sourceFilterRef.current = [];
     setSourceFilter([]);
     topicFiltersRef.current = [];
     setTopicFilters([]);
-    sortModeRef.current = 'newest';
-    setSortMode('newest');
     setActiveIndex(0);
     if (containerRef.current) containerRef.current.scrollTop = 0;
     setLoading(true);
@@ -2036,7 +1992,7 @@ export default function VideoFeedView({ onExit }) {
 
         {/* Search + Filter — two separate buttons/sheets, each doing one
             job, rather than one combined sheet trying to do three (search/
-            topic/platform/sort) at once. Following mode uses its own,
+            topic/platform) at once. Following mode uses its own,
             separate source list (FOLLOWING_VIDEO_SOURCES) — the Filter
             sheet switches between them based on viewMode. */}
         <button
@@ -2060,8 +2016,8 @@ export default function VideoFeedView({ onExit }) {
           aria-label="Filter videos"
           style={{
             ...OVERLAY_BTN_STYLE, width: 36, height: 36, flexShrink: 0, position: 'relative',
-            border: `1px solid ${(sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? '#fff' : 'rgba(255,255,255,.18)'}`,
-            background: (sourceFilter.length || topicFilters.length || sortMode !== 'newest') ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
+            border: `1px solid ${(sourceFilter.length || topicFilters.length) ? '#fff' : 'rgba(255,255,255,.18)'}`,
+            background: (sourceFilter.length || topicFilters.length) ? 'rgba(255,255,255,.22)' : 'rgba(0,0,0,.4)',
           }}
         >
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -2069,7 +2025,7 @@ export default function VideoFeedView({ onExit }) {
             <line x1="4" y1="12" x2="20" y2="12" /><circle cx="16" cy="12" r="2" fill="currentColor" stroke="none" />
             <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
           </svg>
-          {(sourceFilter.length || topicFilters.length || sortMode !== 'newest') > 0 && (
+          {(sourceFilter.length || topicFilters.length) > 0 && (
             <span style={{ position: 'absolute', top: 4, right: 4, width: 7, height: 7, borderRadius: '50%', background: '#4ADE80', border: '1px solid rgba(0,0,0,.4)' }} />
           )}
         </button>
@@ -2186,7 +2142,7 @@ export default function VideoFeedView({ onExit }) {
           <div style={{
             background: '#161616', color: '#fff', borderRadius: '20px 20px 0 0',
             // maxHeight back to the original 72vh (was briefly bumped to
-            // 80vh when Sort/Topic/Platform all landed in this one sheet)
+            // 80vh when Topic/Platform both landed in this one sheet)
             // — the sheet's own on-screen footprint shouldn't grow just
             // because there's more to scroll through inside it; the
             // content area's own overflowY:auto (below) is what's meant to
@@ -2200,7 +2156,7 @@ export default function VideoFeedView({ onExit }) {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>Filter</h2>
                 {/* Every selection here already applies immediately on tap
-                    (Sort/Topic/Platform, unlike Search's own deferred
+                    (Topic/Platform, unlike Search's own deferred
                     text input) — this Done button, same as the one in the
                     footer below, is really just "close the sheet," not
                     "apply." A proper button up here instead of just the
@@ -2216,35 +2172,6 @@ export default function VideoFeedView({ onExit }) {
               </div>
             </div>
             <div style={{ overflowY: 'auto', padding: '0 20px 16px', flex: 1 }}>
-              {/* Sort — Following has no Balanced-sort support of its own
-                  (see toggleSortMode/switchViewMode), so this section is
-                  hidden there entirely rather than shown disabled. */}
-              {viewMode !== 'following' && (
-                <>
-                  <div style={{ fontSize: '.72rem', fontWeight: 700, letterSpacing: '.02em', opacity: 0.6, margin: '4px 0 8px', textTransform: 'uppercase' }}>Sort</div>
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
-                    {[{ key: 'newest', label: 'Newest' }, { key: 'balanced', label: 'Balanced' }].map(({ key, label }) => {
-                      const active = sortMode === key;
-                      return (
-                        <button
-                          key={key}
-                          onClick={() => toggleSortMode(key)}
-                          style={{
-                            padding: '6px 14px', borderRadius: 16, cursor: 'pointer',
-                            fontWeight: 700, fontSize: '.78rem',
-                            border: `1px solid ${active ? '#fff' : 'rgba(255,255,255,.2)'}`,
-                            background: active ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.05)',
-                            color: '#fff',
-                          }}
-                        >
-                          {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-
               {/* Platform before Topic (was the reverse) — Topic's ~230
                   chips are by far the longest list in this sheet, so with
                   it first, Platform ended up buried below a whole
@@ -2311,13 +2238,13 @@ export default function VideoFeedView({ onExit }) {
             <div style={{ padding: '10px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid rgba(255,255,255,.12)', flexShrink: 0 }}>
               <button
                 onClick={() => clearFilters()}
-                disabled={sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest'}
+                disabled={sourceFilter.length === 0 && topicFilters.length === 0}
                 style={{
                   flex: 1, padding: '10px 0', borderRadius: 10, marginTop: 10,
                   border: '1px solid rgba(255,255,255,.25)', background: 'transparent',
-                  color: (sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest') ? 'rgba(255,255,255,.35)' : '#fff',
+                  color: (sourceFilter.length === 0 && topicFilters.length === 0) ? 'rgba(255,255,255,.35)' : '#fff',
                   fontWeight: 700, fontSize: '.85rem',
-                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0 && sortMode === 'newest') ? 'default' : 'pointer',
+                  cursor: (sourceFilter.length === 0 && topicFilters.length === 0) ? 'default' : 'pointer',
                 }}
               >
                 Clear all

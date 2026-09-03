@@ -5,6 +5,8 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 
 const PAGE_SIZE = 40;
 const AUTO_REFRESH_MS = 45 * 1000;
@@ -26,7 +28,7 @@ function mergePosts(existing, incoming) {
     if (!post?.id || byId.has(post.id)) return;
     byId.set(post.id, post);
   });
-  return [...byId.values()].sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  return orderNewestFeedCohorts([...byId.values()]);
 }
 
 function SourceBadge({ source }) {
@@ -130,9 +132,8 @@ export default function YourPostsFeed() {
         connectedPlatforms: data.connectedPlatforms || [],
         sourceErrors: data.sourceErrors || {},
         totalAvailable: data.totalAvailable || 0,
-        refreshedAt: data.refreshedAt,
       });
-      setPosts(prev => replace ? (data.posts || []) : mergePosts(prev, data.posts || []));
+      setPosts(prev => replace ? mergePosts([], data.posts || []) : mergePosts(prev, data.posts || []));
       setPage(pageNo);
       setHasMore(data.hasMore !== false);
     } catch (err) {
@@ -153,6 +154,12 @@ export default function YourPostsFeed() {
     const id = setInterval(() => loadPage({ pageNo: 1, silent: true }), AUTO_REFRESH_MS);
     return () => clearInterval(id);
   }, [loadPage]);
+
+  const refreshFeed = useCallback(
+    () => loadPage({ pageNo: 1, replace: true, bust: true, silent: true }),
+    [loadPage]
+  );
+  useScrollToRefresh(refreshFeed, { enabled: !loading && !refreshing });
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -179,17 +186,11 @@ export default function YourPostsFeed() {
         <meta name="robots" content="noindex" />
       </Helmet>
       <Layout>
-        <div style={{ marginBottom: 20 }}>
-          <h1 className="page-title">Your Connected Posts</h1>
-          <p className="page-subtitle">
-            A live, equalized scroll from your connected accounts. Same you, tidier timeline, fewer tabs to babysit.
-          </p>
-        </div>
+        <h1 className="page-title" style={{ marginBottom: 20 }}>Your Connected Posts</h1>
 
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 18, alignItems: 'center' }}>
           <div className="tag tag-primary">{(meta.totalAvailable || posts.length).toLocaleString()} posts</div>
           <div className="tag">{activeSources.length.toLocaleString()} active sources</div>
-          {meta.refreshedAt && <div className="tag">Updated {timeAgo(meta.refreshedAt)}</div>}
           <button
             type="button"
             className="btn btn-ghost btn-sm"

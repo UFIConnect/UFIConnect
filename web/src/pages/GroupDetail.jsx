@@ -8,6 +8,7 @@ import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -69,7 +70,7 @@ export default function GroupDetail() {
   function loadGroupPosts(opts = {}) {
     if (!opts.silent) setPostsLoading(true);
     client.get(`/groups/${id}/posts`)
-      .then(({ data }) => { setGroupPosts(data.posts || []); setPostsHasMore(!!data.hasMore); })
+      .then(({ data }) => { setGroupPosts(orderNewestFeedCohorts(data.posts || [])); setPostsHasMore(!!data.hasMore); })
       .catch(() => { setGroupPosts([]); setPostsHasMore(false); })
       .finally(() => setPostsLoading(false));
   }
@@ -88,7 +89,7 @@ export default function GroupDetail() {
       const incoming = data.posts || [];
       setGroupPosts(prev => {
         const knownIds = new Set(prev.map(p => p.id));
-        return [...prev, ...incoming.filter(p => !knownIds.has(p.id))];
+        return orderNewestFeedCohorts([...prev, ...incoming.filter(p => !knownIds.has(p.id))]);
       });
       setPostsHasMore(!!data.hasMore);
     } catch {}

@@ -11975,6 +11975,21 @@ function buildFullMemberFeedEqualizer(posts, userTopics, userAffinity, options =
   return buildTwoPhaseMix(uniqueEqualizerPosts(posts), userTopics, userAffinity, options);
 }
 
+const FEED_RECENCY_COHORT_MS = 60 * 1000;
+
+function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS) {
+  const cohorts = new Map();
+  for (const post of posts || []) {
+    const timestamp = parseTimestampMs(post?.createdAt) || 0;
+    const cohort = Math.floor(timestamp / cohortMs);
+    if (!cohorts.has(cohort)) cohorts.set(cohort, []);
+    cohorts.get(cohort).push(post);
+  }
+  return [...cohorts.entries()]
+    .sort(([left], [right]) => right - left)
+    .flatMap(([, cohort]) => cohort);
+}
+
 // Travel and Restaurants are explicitly newest-first discovery surfaces.
 // Location and member engagement choose the order only inside a short
 // timestamp cohort, so a useful local event can lead its near-simultaneous
@@ -20805,6 +20820,7 @@ async function handleFeedRequest(req, res) {
   ]);
   const joined = new Set(user?.joinedGroups || []);
   const prefs  = user?.preferences || {};
+  const requestedSortMode = normalizeFeedSort(req.query.sort, 'newest');
   const locationContext = getFeedLocationContext(req, user);
   // Drives filterByUserTopics/buildTwoPhaseMix below, as well as
   // connected-social keyword search further down — moved up here (used to
@@ -20866,7 +20882,8 @@ async function handleFeedRequest(req, res) {
     const scoped = filterForUser(items);
     const equalizerTopics = topicsFilter.length ? topicsFilter : userTopics;
     const equalized = buildFullMemberFeedEqualizer(scoped, equalizerTopics, userAffinity);
-    return personalizeAuthenticatedFeedPosts(equalized, user, prefs, userAffinity, { ...options, locationContext, request: req });
+    const personalized = personalizeAuthenticatedFeedPosts(equalized, user, prefs, userAffinity, { ...options, locationContext, request: req });
+    return requestedSortMode === 'newest' ? orderNewestFeedCohorts(personalized) : personalized;
   };
   // Client-generated, changes only when the user explicitly hits refresh
   // (kept stable across pagination within that sitting) — see rotateForUser
@@ -20912,7 +20929,7 @@ async function handleFeedRequest(req, res) {
   // Existing shared links and stored client state can still ask for `local`.
   // Keep those working while the public surface has moved to Countries.
   const feedMode = requestedFeedMode === 'local' ? 'countries' : requestedFeedMode;
-  const sortMode = normalizeFeedSort(req.query.sort, feedMode === 'archive' ? 'newest' : 'ranked');
+  const sortMode = requestedSortMode;
   const timeRange = normalizeFeedTimeRange(req.query.timeRange || req.query.range);
   // 'ranked' sort computes its score per row with no supporting index, so an
   // unfiltered, unbounded 'all' range means Postgres sorts the whole table
@@ -22176,7 +22193,7 @@ app.get('/feed/guest', async (req, res) => {
     });
     const locationContext = getFeedLocationContext(req);
     const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts), locationContext);
-    res.json({ posts: locationRanked, cursor: nextCursor, hasMore, guest: true });
+    res.json({ posts: orderNewestFeedCohorts(locationRanked), cursor: nextCursor, hasMore, guest: true });
   } catch (e) {
     console.error('[/feed/guest] error:', e.message);
     res.status(500).json({ posts: [], hasMore: false });
@@ -22393,9 +22410,16 @@ async function handleVideoFeedRequest(req, res) {
     const prefs = user?.preferences || {};
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
-    const personalizeVideosForUser = (items, options = {}) => (
-      personalizeAuthenticatedFeedPosts(items, user, prefs, userAffinity, { ...options, locationContext, request: req })
-    );
+    const personalizeVideosForUser = (items, options = {}) => {
+      const personalized = personalizeAuthenticatedFeedPosts(
+        items,
+        user,
+        prefs,
+        userAffinity,
+        { ...options, locationContext, request: req },
+      );
+      return req.query.sort === 'balanced' ? personalized : orderNewestFeedCohorts(personalized);
+    };
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
     const videoPreferenceContext = {
@@ -22615,7 +22639,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     // wraparound instead of hard-stopping once a small connected pool runs out.
     const userAffinity = await getUserAffinity(req.user.id);
     const locationContext = getFeedLocationContext(req, user);
-    const equalized = personalizeAuthenticatedFeedPosts(
+    const equalized = orderNewestFeedCohorts(personalizeAuthenticatedFeedPosts(
       buildFullMemberFeedEqualizer(
         buildEqualizedFollowingPool(scopedVideos, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }),
         topicsFilter.length ? topicsFilter : userTopics,
@@ -22626,7 +22650,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
       prefs,
       userAffinity,
       { locationContext, request: req }
-    );
+    ));
     const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
     const rotated = filterUnseen(equalized, seenIds);
     const pageRows = usesBlendedFollowingVideos
@@ -29407,7 +29431,9 @@ app.get('/command-center/your-content/feed', authenticate, async (req, res) => {
   }
 
   const equalized = buildEqualizedFollowingPool(allPosts, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
-  const locationRanked = rankFeedPostsForLocation(equalized, getFeedLocationContext(req, user));
+  const locationRanked = orderNewestFeedCohorts(
+    rankFeedPostsForLocation(equalized, getFeedLocationContext(req, user))
+  );
   const pageRows = locationRanked.slice(offset, offset + limit);
   res.json({
     posts: pageRows,
