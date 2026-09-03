@@ -358,10 +358,6 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="groups" size={18} />
             Join a group
           </NavLink>
-          <NavLink to="/messages" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="messages" size={18} />
-            Messages
-          </NavLink>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
             <ShellIcon name="countries" size={18} />
             Travel
@@ -370,6 +366,10 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="restaurants" size={18} />
             Restaurants
           </button>
+          <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="messages" size={18} />
+            Messages
+          </NavLink>
           <HomeFeedTools
             showSources
             sourceIds={mobileSourceIds}
