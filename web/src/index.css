@@ -1286,12 +1286,8 @@ input, textarea, select { font-family: inherit; }
   font-weight: 700;
 }
 .landing-plan-card.is-muted,
-.landing-resume-soon,
 .landing-resume-live {
   background: #f8fafc;
-}
-.landing-resume-soon .landing-plan-price {
-  display: none;
 }
 .landing-plan-link {
   display: inline-flex;

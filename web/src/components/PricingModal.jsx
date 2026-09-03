@@ -17,6 +17,7 @@ export const TIERS = [
     price: '199.94',
     tagline: 'For hiring teams',
     icon: 'Biz',
+    locked: true,
     note: 'Career sources, role-matched opportunities, and hiring workflows.',
   },
 ];
@@ -64,6 +65,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
           {TIERS.map(t => {
             const businessSetupPending = t.tier === 'business' && billingConfig && !billingConfig.tiers?.business;
             const unavailable = Boolean(t.locked || businessSetupPending);
+            const unavailableLabel = t.locked ? 'COMING SOON' : businessSetupPending ? 'SETUP PENDING' : '';
             return (
             <div
               key={t.tier}
@@ -85,7 +87,7 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
                     <span style={{
                       fontSize: '.65rem', fontWeight: 700, color: 'var(--muted)',
                       background: 'var(--bg-secondary)', borderRadius: 6, padding: '2px 6px',
-                    }}>{businessSetupPending ? 'SETUP PENDING' : 'COMING SOON'}</span>
+                    }}>{unavailableLabel}</span>
                   )}
                 </div>
                 <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>{t.tagline}</div>
@@ -112,7 +114,11 @@ export default function PricingModal({ onClose, onSelectTier, loadingTier }) {
             {t.name}: {t.note}
           </p>
         ))}
-        {billingConfig && !billingConfig.tiers?.business && (
+        {TIERS.some(t => t.tier === 'business' && t.locked) ? (
+          <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
+            Business membership is coming soon.
+          </p>
+        ) : billingConfig && !billingConfig.tiers?.business && (
           <p style={{ margin: '8px 2px 0', fontSize: '.72rem', color: 'var(--muted)' }}>
             Business checkout activates automatically once its Stripe Price is configured.
           </p>

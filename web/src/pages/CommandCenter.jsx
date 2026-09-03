@@ -75,8 +75,8 @@ function LockedState({ onUpgrade }) {
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Unlock the Command Center</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
         See everything from your connected accounts in one place, draft social
-        content with AI, and track your job search — all with a Pro or
-        Business plan.
+        content with AI, and track your job search with Pro. Business membership
+        is coming soon.
       </p>
       <div className="command-center-pricing" aria-label="Command Center plans">
         {TIERS.map((tier) => (
