@@ -348,11 +348,17 @@ input, textarea, select { font-family: inherit; }
 }
 .home-feed-right-tabs .profile-panel-summary { display: none; }
 .home-feed-source-panel .profile-panel-content { padding: 10px; }
-.home-feed-source-copy {
-  margin: 0 0 10px;
-  color: var(--muted);
-  font-size: .76rem;
-  line-height: 1.45;
+.home-feed-source-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.home-feed-source-actions .btn {
+  width: 100%;
+  min-width: 0;
+  padding-right: 6px;
+  padding-left: 6px;
 }
 .home-feed-source-list {
   display: flex;
@@ -437,6 +443,71 @@ input, textarea, select { font-family: inherit; }
 }
 .home-feed-source-toggle.is-on .home-feed-source-toggle-track { background: var(--primary); }
 .home-feed-source-toggle.is-on .home-feed-source-toggle-track span { transform: translateX(6px); }
+.home-connected-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+}
+.home-connected-account-row {
+  min-height: 40px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.home-connected-account-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: .76rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-connected-account-status {
+  display: block;
+  margin-top: 1px;
+  color: #047857;
+  font-size: .62rem;
+  font-weight: 700;
+}
+.home-connected-account-row .btn {
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: .68rem;
+  white-space: nowrap;
+}
+.home-connected-account-loading,
+.home-connected-account-empty {
+  padding: 12px 6px;
+  color: var(--muted);
+  font-size: .76rem;
+  text-align: center;
+}
+.home-connected-account-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid #FECACA;
+  border-radius: 6px;
+  background: #FEF2F2;
+  color: #B91C1C;
+  font-size: .72rem;
+}
+.home-connected-account-error span { flex: 1; }
+.home-connected-account-handle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  padding-top: 4px;
+}
+.home-connected-account-handle .form-input { grid-column: 1 / -1; }
 
 .travel-live-loop {
   margin: 0 0 20px;

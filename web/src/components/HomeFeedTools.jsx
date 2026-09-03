@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import client from '../api/client';
-import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META } from './sourceMeta';
+import client, { publicOAuthRequestConfig } from '../api/client';
+import { CONNECTED_SOCIAL_PLATFORMS, SOURCE_META, withCareerAccountFallback } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 
 const LINK_FIELDS = [
@@ -54,10 +53,14 @@ function scoreStyle(score) {
 export default function HomeFeedTools({ showSources = true, sourceIds = [], activePanel, onActivePanelChange }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
-  const navigate = useNavigate();
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
   const [disabledSources, setDisabledSources] = useState(new Set());
   const [savingSourceId, setSavingSourceId] = useState(null);
+  const [accountPlatforms, setAccountPlatforms] = useState(null);
+  const [accountConnected, setAccountConnected] = useState({});
+  const [accountError, setAccountError] = useState('');
+  const [accountAction, setAccountAction] = useState(null);
+  const [blueskyHandle, setBlueskyHandle] = useState(null);
   const [skills, setSkills] = useState([]);
   const [skillInput, setSkillInput] = useState('');
   const [savingSkills, setSavingSkills] = useState(false);
@@ -88,14 +91,64 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
       .finally(() => setAttachmentsLoading(false));
   }, [openPanel, attachments.length, attachmentsLoading]);
 
+  useEffect(() => {
+    if (openPanel !== 'accounts' || accountPlatforms !== null) return;
+    let cancelled = false;
+    setAccountError('');
+    client.get('/social/platforms')
+      .then(({ data }) => {
+        if (cancelled) return;
+        const includeCareer = data.careerOnly === true || profile?.plan === 'business';
+        setAccountPlatforms(withCareerAccountFallback(data.platforms, includeCareer));
+        setAccountConnected(data.connected || {});
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setAccountPlatforms({});
+          setAccountError(error?.response?.data?.message || 'Could not load connected accounts.');
+        }
+      });
+    return () => { cancelled = true; };
+  }, [openPanel, accountPlatforms, profile?.plan]);
+
   const toggle = (key) => {
     const next = openPanel === key ? null : key;
     if (activePanel === undefined) setUncontrolledOpenPanel(next);
     onActivePanelChange?.(next);
   };
-  const connected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
+  const profileConnected = (profile?.connectedPlatforms || CONNECTED_SOCIAL_PLATFORMS.filter(key => profile?.connectedSocial?.[key] || profile?.socialConnected?.[key]));
   const availableSources = useMemo(() => [...new Set(sourceIds)].filter(source => SOURCE_META[source]), [sourceIds]);
   const enabledSourceCount = availableSources.filter(source => !disabledSources.has(source)).length;
+  const visibleAccountPlatforms = useMemo(() => {
+    if (accountPlatforms === null) return [];
+    const entries = Object.entries(accountPlatforms);
+    return profile?.plan === 'business'
+      ? entries.filter(([, platform]) => platform.category === 'career')
+      : entries.filter(([, platform]) => platform.category !== 'career' && !platform.commandCenterOnly);
+  }, [accountPlatforms, profile?.plan]);
+  const connectedAccountCount = accountPlatforms === null
+    ? profileConnected.length
+    : visibleAccountPlatforms.filter(([key]) => accountConnected[key]).length;
+
+  async function persistDisabledSources(next, previous, pendingKey, successMessage) {
+    setDisabledSources(next);
+    setSavingSourceId(pendingKey);
+    try {
+      const { data } = await client.patch('/profile', {
+        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
+      });
+      const savedProfile = data.profile || data;
+      updateProfileLocally(savedProfile);
+      const persisted = savedProfile?.roleSettings?.disabledSources;
+      setDisabledSources(new Set(Array.isArray(persisted) ? persisted : [...next]));
+      showToast(successMessage, 'success');
+    } catch (error) {
+      setDisabledSources(previous);
+      showToast(error?.response?.data?.message || 'Could not save your source choice.', 'error');
+    } finally {
+      setSavingSourceId(null);
+    }
+  }
 
   async function toggleSource(source) {
     if (!profile || savingSourceId) return;
@@ -103,19 +156,71 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
     const next = new Set(previous);
     if (next.has(source)) next.delete(source);
     else next.add(source);
-    setDisabledSources(next);
-    setSavingSourceId(source);
+    await persistDisabledSources(
+      next,
+      previous,
+      source,
+      `${SOURCE_META[source]?.label || source} is ${next.has(source) ? 'off' : 'on'} for your feed.`,
+    );
+  }
+
+  async function setAllSources(enabled) {
+    if (!profile || savingSourceId || availableSources.length === 0) return;
+    const previous = new Set(disabledSources);
+    const next = new Set(previous);
+    availableSources.forEach(source => {
+      if (enabled) next.delete(source);
+      else next.add(source);
+    });
+    await persistDisabledSources(
+      next,
+      previous,
+      '__all__',
+      enabled ? 'All feed sources are on.' : 'All feed sources are off.',
+    );
+  }
+
+  function reloadAccounts() {
+    setAccountPlatforms(null);
+    setAccountError('');
+  }
+
+  async function startAccountConnection(platform, handle = '') {
+    const handleParam = handle.trim() ? `?handle=${encodeURIComponent(handle.trim())}` : '';
+    setAccountAction(`connect:${platform}`);
+    setAccountError('');
     try {
-      const { data } = await client.patch('/profile', {
-        roleSettings: { ...(profile.roleSettings || {}), disabledSources: [...next] },
-      });
-      updateProfileLocally(data.profile || data);
-      showToast(`${SOURCE_META[source]?.label || source} is ${next.has(source) ? 'off' : 'on'} for your feed.`, 'success');
+      const { data } = await client.get(
+        `/auth/social/${platform}/start${handleParam}`,
+        publicOAuthRequestConfig(),
+      );
+      if (!data?.url) throw new Error('Missing provider authorization URL.');
+      window.location.href = data.url;
     } catch (error) {
-      setDisabledSources(previous);
-      showToast(error?.response?.data?.message || 'Could not save your source choice.', 'error');
+      setAccountError(error?.response?.data?.detail || error?.response?.data?.error || error.message || 'Could not start this connection.');
+      setAccountAction(null);
+    }
+  }
+
+  function connectAccount(platform) {
+    if (platform === 'bluesky') {
+      setBlueskyHandle('');
+      return;
+    }
+    startAccountConnection(platform);
+  }
+
+  async function disconnectAccount(platform) {
+    setAccountAction(`disconnect:${platform}`);
+    setAccountError('');
+    try {
+      await client.delete(`/social/connect/${platform}`);
+      setAccountConnected(current => ({ ...current, [platform]: false }));
+      showToast(`${accountPlatforms?.[platform]?.name || platform} disconnected.`, 'success');
+    } catch (error) {
+      setAccountError(error?.response?.data?.error || 'Could not disconnect this account.');
     } finally {
-      setSavingSourceId(null);
+      setAccountAction(null);
     }
   }
 
@@ -224,9 +329,14 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         open={openPanel === 'sources'}
         onToggle={() => toggle('sources')}
       >
-        <p className="home-feed-source-copy">
-          These choices are yours. Turn a source off to keep it out of this feed.
-        </p>
+        <div className="home-feed-source-actions" aria-label="All feed source controls">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(true)} disabled={savingSourceId !== null || enabledSourceCount === availableSources.length}>
+            {savingSourceId === '__all__' ? 'Saving...' : 'Enable all'}
+          </button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAllSources(false)} disabled={savingSourceId !== null || enabledSourceCount === 0}>
+            {savingSourceId === '__all__' ? 'Saving...' : 'Disable all'}
+          </button>
+        </div>
         <div className="home-feed-source-list" aria-label="Feed source controls">
           {availableSources.map(source => {
             const enabled = !disabledSources.has(source);
@@ -251,12 +361,62 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
             );
           })}
         </div>
-        <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none', alignSelf: 'flex-start' }}>All source details</Link>
       </ToolPanel>}
 
-      <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
-        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Connect the accounts that should shape your personal feed.</p>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/connected-accounts')}>Manage accounts</button>
+      <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
+        <div className="home-connected-account-list" aria-label="Connected account controls">
+          {accountPlatforms === null && <div className="home-connected-account-loading"><span className="spinner spinner-primary" /></div>}
+          {accountError && (
+            <div className="home-connected-account-error" role="alert">
+              <span>{accountError}</span>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={reloadAccounts}>Retry</button>
+            </div>
+          )}
+          {accountPlatforms !== null && visibleAccountPlatforms.map(([key, platform]) => {
+            const isConnected = Boolean(accountConnected[key]);
+            const isConnecting = accountAction === `connect:${key}`;
+            const isDisconnecting = accountAction === `disconnect:${key}`;
+            const comingSoon = !isConnected && (platform.forceComingSoon || !platform.configured);
+            return (
+              <div className="home-connected-account-row" key={key}>
+                <SourceMark source={key} />
+                <span className="home-connected-account-name">
+                  {platform.name || SOURCE_META[key]?.label || key}
+                  {isConnected && <span className="home-connected-account-status">Connected</span>}
+                </span>
+                {isConnected ? (
+                  <button type="button" className="btn btn-danger btn-sm" onClick={() => disconnectAccount(key)} disabled={accountAction !== null}>
+                    {isDisconnecting ? 'Wait...' : 'Disconnect'}
+                  </button>
+                ) : comingSoon ? (
+                  <button type="button" className="btn btn-ghost btn-sm" disabled>Coming soon</button>
+                ) : platform.locked ? (
+                  <button type="button" className="btn btn-ghost btn-sm" disabled>Membership</button>
+                ) : (
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => connectAccount(key)} disabled={accountAction !== null}>
+                    {isConnecting ? 'Opening...' : 'Connect'}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {accountPlatforms !== null && !accountError && visibleAccountPlatforms.length === 0 && (
+            <div className="home-connected-account-empty">No account connections are available yet.</div>
+          )}
+          {blueskyHandle !== null && (
+            <form className="home-connected-account-handle" onSubmit={event => {
+              event.preventDefault();
+              if (!blueskyHandle.trim()) return;
+              const handle = blueskyHandle;
+              setBlueskyHandle(null);
+              startAccountConnection('bluesky', handle);
+            }}>
+              <input className="form-input" autoFocus value={blueskyHandle} onChange={event => setBlueskyHandle(event.target.value)} placeholder="name.bsky.social" />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={!blueskyHandle.trim()}>Connect</button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setBlueskyHandle(null)}>Cancel</button>
+            </form>
+          )}
+        </div>
       </ToolPanel>
 
       <ToolPanel title="Skills" summary={skills.length ? `${skills.length} saved` : 'Add your skills'} open={openPanel === 'skills'} onToggle={() => toggle('skills')}>
