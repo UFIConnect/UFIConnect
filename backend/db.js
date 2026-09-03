@@ -176,6 +176,7 @@ async function initBackupDB() {
     // and-external-sort cost failover exists to avoid, the moment any real
     // traffic actually lands on it.
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_id_idx ON feed_posts_cache(source, post_created_at DESC, id DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
     client.release();
     backupPool = backup;

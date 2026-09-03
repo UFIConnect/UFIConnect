@@ -1122,11 +1122,9 @@ export default function VideoFeedView({ onExit }) {
   // Keep a session-wide set so pagination cannot reappend a video that was
   // already delivered while a consumed-state write is in flight.
   const knownIds = useRef(new Set());
-  // Feed mode: opaque date-cursor from the backend (see getCursorFeedPage
-  // server-side) — null means "start from now." Following mode still pages
-  // by number (getFollowingFeedPosts is a live per-user query with no
-  // cursor of its own), tracked separately since the two modes pull from
-  // entirely different endpoints/pools (see switchViewMode).
+  // Both modes use opaque backend cursors. Feed advances through retained
+  // database history; Following advances through each connected source's
+  // live pool without relying on delayed viewed-state writes.
   const cursorRef = useRef(null);
   const followingPageRef = useRef(1);
   const markKnownId = useCallback((id) => {
@@ -1154,8 +1152,12 @@ export default function VideoFeedView({ onExit }) {
       if (topicFiltersRef.current.length) params += `&topics=${topicFiltersRef.current.map(encodeURIComponent).join(',')}`;
       let endpoint;
       if (mode === 'following') {
-        if (reset) followingPageRef.current = 1;
+        if (reset) {
+          followingPageRef.current = 1;
+          cursorRef.current = null;
+        }
         params += `&page=${followingPageRef.current}`;
+        if (cursorRef.current) params += `&cursor=${encodeURIComponent(cursorRef.current)}`;
         // getFollowingFeedPosts backend-side now has its own caching per
         // connected source (YouTube's subscription feed) — bust=1 does
         // apply here, same as the main feed: without
@@ -1211,8 +1213,10 @@ export default function VideoFeedView({ onExit }) {
           : (reset ? fresh : [...prev, ...fresh]);
         return orderNewestFeedCohorts(nextVideos);
       });
-      if (mode === 'following') followingPageRef.current += 1;
-      else if (data.cursor) cursorRef.current = data.cursor;
+      if (mode === 'following') {
+        followingPageRef.current += 1;
+        if (data.cursor) cursorRef.current = data.cursor;
+      } else if (data.cursor) cursorRef.current = data.cursor;
       // Was `data.hasMore !== false && incoming.length > 0` — conflated
       // "this one page happened to have zero results" with "there's
       // nothing left at all." A search/topic filter is applied server-

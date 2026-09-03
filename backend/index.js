@@ -11975,7 +11975,9 @@ function buildFullMemberFeedEqualizer(posts, userTopics, userAffinity, options =
   return buildTwoPhaseMix(uniqueEqualizerPosts(posts), userTopics, userAffinity, options);
 }
 
-const FEED_RECENCY_COHORT_MS = 60 * 1000;
+// Preserve equalizer order only when timestamps are actually identical.
+// Every genuinely newer post leads, regardless of source.
+const FEED_RECENCY_COHORT_MS = 1;
 
 function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS) {
   const cohorts = new Map();
@@ -11995,7 +11997,7 @@ function orderNewestFeedCohorts(posts, cohortMs = FEED_RECENCY_COHORT_MS) {
 // timestamp cohort, so a useful local event can lead its near-simultaneous
 // peers without an older story jumping ahead of fresher content. Each cohort
 // is still source-equalized before the page-level diversity guard runs.
-const LOCATION_FEED_RECENCY_COHORT_MS = 2 * 60 * 1000;
+const LOCATION_FEED_RECENCY_COHORT_MS = 1;
 
 function locationFeedUsageScore(post, userAffinity) {
   const sourceWeight = Number(userAffinity?.source?.get(post?.source) || 0);
@@ -12009,6 +12011,19 @@ function locationFeedRelevanceScore(post, locationContext, userAffinity) {
     ? (post.locationMatch === 'local' ? 24 : 18)
     : feedPostLocationMatch(post, locationContext).score;
   return locationScore + locationFeedUsageScore(post, userAffinity);
+}
+
+function locationFeedEqualizerLane(post) {
+  const source = String(post?.source || 'unknown').toLowerCase();
+  if (['restaurants', 'travelnews', 'travelevents'].includes(source)) {
+    const publisher = post?.author?.organization || post?.author?.name || post?.authorName;
+    const region = post?.coverageRegion || post?.country || post?.city;
+    return `${source}:${String(publisher || region || 'discovery').toLowerCase()}`;
+  }
+  if (source === 'wikivoyage') {
+    return `${source}:${String(post?.countryCode || post?.country || post?.city || 'guide').toLowerCase()}`;
+  }
+  return source;
 }
 
 function buildLocationAwareMemberEqualizer(posts, userAffinity, locationContext) {
@@ -12031,7 +12046,7 @@ function buildLocationAwareMemberEqualizer(posts, userAffinity, locationContext)
       .flatMap(([, cohort]) => {
         const bySource = new Map();
         for (const entry of cohort) {
-          const source = entry.post?.source || 'unknown';
+          const source = locationFeedEqualizerLane(entry.post);
           if (!bySource.has(source)) bySource.set(source, []);
           bySource.get(source).push(entry);
         }
@@ -16966,6 +16981,7 @@ async function migrateDB() {
     // runs. A compound index lets it jump straight to the source's own
     // slice, already in the right order, and stop after N rows.
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_id_idx ON feed_posts_cache(source, post_created_at DESC, id DESC)`);
     // getCursorFeedPage's video path additionally filters media_type='video'
     // — not covered by fpc_source_time_idx above, so the planner still has
     // to heap-fetch and recheck every candidate row it walks per source to
@@ -18485,6 +18501,105 @@ function decodeFeedCursor(str) {
     return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
   } catch { return {}; }
 }
+
+function poolPostCursorKey(post) {
+  return String(post?.id || equalizerPostKey(post));
+}
+
+// Cursor pagination for feeds assembled from live/in-memory pools rather
+// than feed_posts_cache. Each lane advances independently, so a strict
+// two-per-source page never discards that source's remaining posts. A page
+// number is still honored for older clients by walking the same cursor
+// state forward internally.
+function paginateEqualizedPool(posts, {
+  mode,
+  cursorMap = {},
+  page = 1,
+  limit = 20,
+  seenIds = null,
+  laneForPost = post => post?.source || 'unknown',
+  maxPerLane = BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+} = {}) {
+  const list = uniqueEqualizerPosts(posts);
+  const lanes = new Map();
+  for (const post of list) {
+    const lane = String(laneForPost(post) || 'unknown');
+    if (!lanes.has(lane)) lanes.set(lane, []);
+    lanes.get(lane).push(post);
+  }
+
+  const hasCursor = cursorMap?.__poolMode === mode
+    && cursorMap?.__laneCursors
+    && typeof cursorMap.__laneCursors === 'object';
+  let state = hasCursor
+    ? {
+      __poolMode: mode,
+      __poolPage: Math.max(0, Number(cursorMap.__poolPage) || 0),
+      __laneCursors: { ...cursorMap.__laneCursors },
+    }
+    : { __poolMode: mode, __poolPage: 0, __laneCursors: {} };
+  const iterations = hasCursor ? 1 : Math.max(1, Math.min(Number(page) || 1, 1000));
+  const laneCap = Number.isFinite(maxPerLane) ? Math.max(1, Math.floor(maxPerLane)) : Infinity;
+  let pageRows = [];
+  let hasMore = false;
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const starts = new Map();
+    for (const [lane, queue] of lanes) {
+      const lastKey = String(state.__laneCursors[lane] || '');
+      const found = lastKey ? queue.findIndex(post => poolPostCursorKey(post) === lastKey) : -1;
+      starts.set(lane, found >= 0 ? found + 1 : 0);
+    }
+
+    const visitedByLane = new Map();
+    const selectedByLane = new Map();
+    const selectedKeys = new Set();
+    pageRows = [];
+    for (const post of list) {
+      const lane = String(laneForPost(post) || 'unknown');
+      const visited = visitedByLane.get(lane) || 0;
+      visitedByLane.set(lane, visited + 1);
+      if (visited < (starts.get(lane) || 0)) continue;
+      const key = poolPostCursorKey(post);
+      if (post?.id && seenIds?.has(post.id)) continue;
+      const laneCount = selectedByLane.get(lane) || 0;
+      if (pageRows.length >= limit || laneCount >= laneCap) continue;
+      selectedByLane.set(lane, laneCount + 1);
+      selectedKeys.add(key);
+      pageRows.push(post);
+    }
+
+    const nextLaneCursors = { ...state.__laneCursors };
+    hasMore = false;
+    for (const [lane, queue] of lanes) {
+      let index = starts.get(lane) || 0;
+      let lastHandled = null;
+      while (index < queue.length) {
+        const candidate = queue[index];
+        const handled = selectedKeys.has(poolPostCursorKey(candidate))
+          || (candidate?.id && seenIds?.has(candidate.id));
+        if (!handled) break;
+        lastHandled = candidate;
+        index += 1;
+      }
+      if (lastHandled) nextLaneCursors[lane] = poolPostCursorKey(lastHandled);
+      if (queue.slice(index).some(post => !post?.id || !seenIds?.has(post.id))) hasMore = true;
+    }
+    state = {
+      __poolMode: mode,
+      __poolPage: state.__poolPage + 1,
+      __laneCursors: nextLaneCursors,
+    };
+    if (!hasMore && iteration + 1 < iterations) pageRows = [];
+  }
+
+  return {
+    posts: pageRows,
+    nextCursor: encodeFeedCursor(state),
+    hasMore,
+    totalAvailable: list.filter(post => !post?.id || !seenIds?.has(post.id)).length,
+  };
+}
 // A per-source cursorMap entry is now a compound {ts, id} (see
 // getCursorFeedPage's own comment on why) rather than a bare ISO string —
 // callers outside getCursorFeedPage that just need "how far back did this
@@ -18532,10 +18647,10 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   const perSourceLimit = sourcePageCap
     ? Math.min(uncappedPerSourceLimit, sourcePageCap)
     : uncappedPerSourceLimit;
-  // One query with a per-source cursor join instead of N parallel
-  // getPostsFromDB calls (the same ROW_NUMBER()-partition-by-source pattern
-  // getBalancedFeedPosts already uses, adapted for a per-source "before"
-  // cursor instead of one shared time range). Confirmed live as a severe
+  // One query with an indexed LATERAL lookup per source instead of N
+  // network round trips or a ROW_NUMBER() pass over every matching row.
+  // The per-source LIMIT can stop on the source/time index as soon as each
+  // source has supplied its page share. Confirmed live as a severe
   // bottleneck otherwise: with no source filter this fired one query per
   // source — up to 36, see AGGREGATE_FEED_SOURCES — each independently
   // planned and executed against feed_posts_cache. Response times of
@@ -18650,13 +18765,16 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       // instead of an empty page. See db.js's readQuery/initBackupDB.
       const { rows } = await db.readQuery(
         `WITH c(source, before_ts, before_id) AS (VALUES ${cursorValues})
-         SELECT * FROM (
-           SELECT fp.*, ROW_NUMBER() OVER (PARTITION BY fp.source ORDER BY ${order}) AS rn
+         SELECT picked.*
+         FROM c
+         CROSS JOIN LATERAL (
+           SELECT fp.*
            FROM feed_posts_cache fp
-           JOIN c ON c.source = fp.source
-           WHERE ${clauses.join(' AND ')}
-         ) ranked
-         WHERE rn <= $${limitParam}
+           WHERE fp.source = c.source
+             AND ${clauses.join(' AND ')}
+           ORDER BY ${order}
+           LIMIT $${limitParam}
+         ) picked
          ORDER BY ${order}`,
         params
       );
@@ -18782,9 +18900,18 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
   } else {
     // Advance across consumed candidates too, otherwise an all-consumed
     // window can leave a cursor stuck on the same rows forever.
-    const cursorPosts = page.length < limit ? merged : page;
-    for (const src of allSources) {
-      const shown = cursorPosts.filter(p => p.source === src);
+    const deliveredIds = new Set(page.map(post => post?.id).filter(Boolean));
+    for (let sourceIndex = 0; sourceIndex < allSources.length; sourceIndex += 1) {
+      const src = allSources[sourceIndex];
+      const shown = [];
+      // Only cross a source's contiguous delivered/consumed prefix. An
+      // unseen candidate beyond the global page limit stays available.
+      for (const candidate of mergeLists[sourceIndex] || []) {
+        const delivered = candidate?.id ? deliveredIds.has(candidate.id) : page.includes(candidate);
+        const consumed = candidate?.id && seenIds?.has(candidate.id);
+        if (!delivered && !consumed) break;
+        shown.push(candidate);
+      }
       if (!shown.length) continue; // no new post from this source this page — leave its cursor where it was
       // Matches the query's own ORDER BY (post_created_at DESC, id DESC):
       // the "last shown" boundary is the smallest timestamp, and among
@@ -21039,13 +21166,33 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
-    const available = buildLocationAwareMemberEqualizer(
-      filterUnseen(filterPostsForMemberLanguages(localFeed.posts, user, req), seenIds),
+    const locationSearchWords = splitSearchWords(searchQuery);
+    const eligiblePosts = filterPostsForMemberLanguages(localFeed.posts, user, req)
+      .filter(matchesTopic)
+      .filter((post) => {
+        if (!locationSearchWords.length) return true;
+        const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.authorName || ''} ${post.location || ''} ${post.city || ''} ${post.country || ''}`.toLowerCase();
+        return locationSearchWords.every(word => text.includes(word));
+      });
+    // Equalize the complete discovery pool first, then page through that
+    // stable order. The old path sliced at page*50 and applied a two-per-
+    // source cap afterwards; Restaurants has one synthetic source, so it
+    // returned two rows and silently skipped the other 48 on every page.
+    const available = orderNewestFeedCohorts(buildLocationAwareMemberEqualizer(
+      eligiblePosts,
       userAffinity,
       locationContext,
-    );
-    const offset = (reqPage - 1) * feedLimit;
-    const pageRows = enforceFeedDiversity(available.slice(offset), feedLimit, 'newest');
+    ));
+    const locationPage = paginateEqualizedPool(available, {
+      mode: feedMode,
+      cursorMap: decodeFeedCursor(req.query.cursor),
+      page: reqPage,
+      limit: feedLimit,
+      seenIds,
+      laneForPost: locationFeedEqualizerLane,
+      maxPerLane: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+    });
+    const pageRows = locationPage.posts;
     const hydratedPageRows = feedMode === 'restaurants'
       ? await hydrateRestaurantPostEngagement(pageRows, req.user.id)
       : pageRows;
@@ -21059,12 +21206,13 @@ async function handleFeedRequest(req, res) {
       mode: feedMode,
       sort: 'newest',
       page: reqPage,
-      hasMore: offset + pageRows.length < available.length,
-      totalAvailable: available.length,
+      cursor: locationPage.nextCursor,
+      hasMore: locationPage.hasMore,
+      totalAvailable: locationPage.totalAvailable,
       fetchedAt: localFeed.fetchedAt,
       equalizer: {
         ...(localFeed.equalizer || {}),
-        memberMode: 'topic-source',
+        memberMode: 'newest-location-publisher',
         memberPosts: available.length,
       },
       location: {
@@ -21079,6 +21227,7 @@ async function handleFeedRequest(req, res) {
   }
 
   if (feedMode === 'groups') {
+    const groupCursor = decodeFeedCursor(req.query.cursor);
     const joinedGroupModels = groups.filter(group => joined.has(group.id));
     const nativeGroupIds = joinedGroupModels.filter(group => !group.isExternal).map(group => group.id);
     const joinedExternalIds = new Set(joinedGroupModels.filter(group => group.isExternal).map(group => group.id));
@@ -21086,7 +21235,10 @@ async function handleFeedRequest(req, res) {
       .filter(([, token]) => Boolean(token))
       .map(([source]) => canonicalFeedSourceId(source) || source)
       .filter(source => FOLLOWING_SOURCE_FETCHERS[source] || CONNECTED_SOCIAL_SEARCH_FETCHERS[source]))];
-    const nativeLimit = Math.min(1500, Math.max(250, feedLimit * reqPage * 4));
+    const cursorPage = groupCursor.__poolMode === 'groups'
+      ? Math.max(1, Number(groupCursor.__poolPage) + 1 || 1)
+      : reqPage;
+    const nativeLimit = Math.min(1500, Math.max(250, feedLimit * cursorPage * 4));
     const [nativeResult, connectedResult] = await Promise.all([
       nativeGroupIds.length
         ? getCommunityPosts({ viewerId: req.user.id, groupIds: nativeGroupIds, limit: nativeLimit, offset: 0 })
@@ -21144,7 +21296,7 @@ async function handleFeedRequest(req, res) {
       userAffinity,
       { filterTopics: false },
     );
-    const personalized = filterUnseen(personalizeAuthenticatedFeedPosts(
+    const personalizedResult = personalizeAuthenticatedFeedPosts(
       equalized,
       user,
       prefs,
@@ -21152,38 +21304,32 @@ async function handleFeedRequest(req, res) {
       // Location belongs to Travel and Restaurants; Groups stays scoped by
       // membership, connected accounts, language, preferences, and usage.
       { request: req },
-    ), seenIds);
+    );
+    const personalized = sortMode === 'newest'
+      ? orderNewestFeedCohorts(personalizedResult)
+      : personalizedResult;
 
     // A native UFI group is its own community lane; connected posts without
     // a group use their social source as the lane. Each page takes at most
     // two from a lane, then later pages continue with that lane's remainder.
-    let remaining = personalized;
-    let pageRows = [];
-    for (let page = 1; page <= reqPage; page++) {
-      const laneCounts = new Map();
-      const nextRemaining = [];
-      const selected = [];
-      for (const post of remaining) {
-        const lane = post.groupId || post.group?.id || post.source || 'unknown';
-        const count = laneCounts.get(lane) || 0;
-        if (selected.length < feedLimit && count < BLENDED_FEED_MAX_POSTS_PER_SOURCE) {
-          laneCounts.set(lane, count + 1);
-          selected.push(post);
-        } else {
-          nextRemaining.push(post);
-        }
-      }
-      pageRows = selected;
-      remaining = nextRemaining;
-      if (page === reqPage || !pageRows.length) break;
-    }
+    const groupPage = paginateEqualizedPool(personalized, {
+      mode: 'groups',
+      cursorMap: groupCursor,
+      page: reqPage,
+      limit: feedLimit,
+      seenIds,
+      laneForPost: post => post.groupId || post.group?.id || post.source || 'unknown',
+      maxPerLane: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+    });
+    const pageRows = groupPage.posts;
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'groups',
-      hasMore: remaining.length > 0 || nativeResult.hasMore,
-      totalAvailable: personalized.length,
+      cursor: groupPage.nextCursor,
+      hasMore: groupPage.hasMore || nativeResult.hasMore,
+      totalAvailable: groupPage.totalAvailable,
       joinedGroupCount: joinedGroupModels.length,
       connectedSourceCount: connectedSources.length,
       nativeUficonnectIncluded: true,
@@ -21224,11 +21370,18 @@ async function handleFeedRequest(req, res) {
     // A member's interests must not turn a broad source selection into a
     // twenty-day backlog. Keep a deliberately selected single source deep,
     // but keep Home's multi-source mix fresh enough to feel live.
-    const cursorTimeRange = usesSavedTopicScope && !isSourceFiltered
-      ? '24h'
-      : dbTimeRange;
+    const hasCursorProgress = Object.keys(cursorMap).some(key => !key.startsWith('__'));
+    // Keep page one tightly bounded for low TTFB, then let the source-indexed
+    // cursor continue through the complete retained history. Reapplying the
+    // initial 1h/24h floor to every page created a hard scroll wall even
+    // though older unique posts were still present.
+    const cursorTimeRange = hasCursorProgress
+      ? 'all'
+      : usesSavedTopicScope && !isSourceFiltered
+        ? '24h'
+        : dbTimeRange;
 
-    const { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+    const cursorOptions = {
       userId: req.user.id,
       sources: cursorSources,
       cursorMap,
@@ -21239,7 +21392,17 @@ async function handleFeedRequest(req, res) {
       seenIds,
       freshOnly: req.query.bust === '1',
       maxPostsPerSource: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
-    });
+    };
+    let { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage(cursorOptions);
+    // A quiet first-page window must not look like the feed is empty while
+    // older retained posts are available. The indexed query makes this
+    // all-history fallback cheap and subsequent pages already use it.
+    if (!cursorPosts.length && cursorTimeRange !== 'all') {
+      ({ posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage({
+        ...cursorOptions,
+        timeRange: 'all',
+      }));
+    }
 
     const result = personalizeForUser(cursorPosts.map(p => p.isExternal === false ? p : {
       ...p,
@@ -21295,22 +21458,25 @@ async function handleFeedRequest(req, res) {
     // live as the Following feed's actual complaint: hasMore going flat
     // false the instant a thin pool ran out, not a genuine content shortage.
     const equalized = buildEqualizedFollowingPool(matchingFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
-    const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
-    // Passive consumers such as Search do not mutate the member's seen set,
-    // so they need a real offset. The primary scrolling feed keeps its
-    // unseen-queue pagination and starts at zero on each request.
-    const followingOffset = passivePreview ? (reqPage - 1) * feedLimit : 0;
-    const followingPagePool = rotated.slice(followingOffset);
-    const pageRows = usesBlendedSources
-      ? enforceFeedDiversity(followingPagePool, feedLimit, 'newest')
-      : followingPagePool.slice(0, feedLimit);
+    const followingPool = personalizeForUser(equalized);
+    const followingPage = paginateEqualizedPool(followingPool, {
+      mode: 'following',
+      cursorMap: decodeFeedCursor(req.query.cursor),
+      page: reqPage,
+      limit: feedLimit,
+      seenIds,
+      laneForPost: post => post?.source || 'unknown',
+      maxPerLane: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
+    });
+    const pageRows = followingPage.posts;
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'following',
-      hasMore: followingOffset + pageRows.length < rotated.length,
-      totalAvailable: rotated.length,
+      cursor: followingPage.nextCursor,
+      hasMore: followingPage.hasMore,
+      totalAvailable: followingPage.totalAvailable,
       followingCount: followingIds.size,
       nativeUficonnectIncluded: true,
       sourceErrors,
@@ -22703,15 +22869,21 @@ async function handleFollowingVideoFeedRequest(req, res) {
       { locationContext, request: req }
     ));
     const seenIds = searchQuery ? new Set() : await getUserSeenSet(req.user.id, 'videos');
-    const rotated = filterUnseen(equalized, seenIds);
-    const pageRows = usesBlendedFollowingVideos
-      ? enforceFeedDiversity(rotated, feedLimit, 'balanced')
-      : rotated.slice(0, feedLimit);
-    sendVideoPage(req, res, pageRows, {
+    const followingVideoPage = paginateEqualizedPool(equalized, {
+      mode: 'following-videos',
+      cursorMap: decodeFeedCursor(req.query.cursor),
+      page: reqPage,
+      limit: feedLimit,
+      seenIds,
+      laneForPost: post => post?.source || 'unknown',
+      maxPerLane: usesBlendedFollowingVideos ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
+    });
+    sendVideoPage(req, res, followingVideoPage.posts, {
       page: reqPage,
       mode: 'following',
-      hasMore: rotated.length > pageRows.length,
-      totalAvailable: rotated.length,
+      cursor: followingVideoPage.nextCursor,
+      hasMore: followingVideoPage.hasMore,
+      totalAvailable: followingVideoPage.totalAvailable,
       followingCount: followingIds.size,
       sourceErrors,
     });

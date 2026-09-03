@@ -1,4 +1,6 @@
-const DEFAULT_RECENCY_COHORT_MS = 60 * 1000;
+// Preserve the equalizer's order only when timestamps are actually equal.
+// Anything genuinely newer must lead every feed, regardless of source.
+const DEFAULT_RECENCY_COHORT_MS = 1;
 
 export function orderNewestFeedCohorts(posts = [], cohortMs = DEFAULT_RECENCY_COHORT_MS) {
   const cohorts = new Map();
@@ -12,4 +14,3 @@ export function orderNewestFeedCohorts(posts = [], cohortMs = DEFAULT_RECENCY_CO
     .sort(([left], [right]) => right - left)
     .flatMap(([, cohort]) => cohort);
 }
-

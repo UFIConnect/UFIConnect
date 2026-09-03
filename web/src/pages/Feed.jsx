@@ -100,6 +100,9 @@ function normalizeFeedSort() {
 // function so loadMoreRemote's choice of ?cursor= vs ?page= can't drift
 // from what the backend actually honors.
 function isCursorEligible(mode, sort, search) {
+  if (['following', 'groups', 'countries', 'restaurants'].includes(mode)) {
+    return normalizeFeedSort(sort) === 'newest';
+  }
   return mode === 'feed' && normalizeFeedSort(sort) === 'newest' && !search.trim();
 }
 
@@ -179,6 +182,7 @@ function equalizeGroupFeed(posts, sort) {
 
 const FOLLOWING_NATIVE_COMPAT_TTL_MS = 30_000;
 const followingNativeCompatCache = new Map();
+const locationFeedCursorSupport = new Map();
 
 function requestedFeedSources(params) {
   return [...new Set([
@@ -317,12 +321,24 @@ async function loadGroupsFeedCompatibility(params) {
 }
 
 async function requestFeedPage(params, viewer) {
-  const { data } = await client.get(`/office/feed?${params.toString()}`);
-  if (params.get('mode') === 'groups'
+  const mode = params.get('mode');
+  const requestParams = new URLSearchParams(params);
+  // The previous API paginates discovery feeds by page number and applies a
+  // two-per-source cap after calculating the offset. Ask it for two at a
+  // time so it cannot jump over unseen cards. A cursor-capable API advertises
+  // itself on that first compact page; every later request returns to 50.
+  if (['countries', 'restaurants'].includes(mode) && locationFeedCursorSupport.get(mode) !== true) {
+    requestParams.set('limit', '2');
+  }
+  const { data } = await client.get(`/office/feed?${requestParams.toString()}`);
+  if (['countries', 'restaurants'].includes(mode)) {
+    locationFeedCursorSupport.set(mode, typeof data?.cursor === 'string' && data.cursor.length > 0);
+  }
+  if (mode === 'groups'
       && (data?.mode !== 'groups' || data?.nativeUficonnectIncluded !== true)) {
     return loadGroupsFeedCompatibility(params);
   }
-  if (params.get('mode') === 'following' && data?.nativeUficonnectIncluded !== true) {
+  if (mode === 'following' && data?.nativeUficonnectIncluded !== true) {
     return loadFollowingFeedCompatibility(params, data, viewer);
   }
   return data;
@@ -2487,7 +2503,12 @@ export default function Feed({ forcedMode } = {}) {
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
         : [];
       const q = searchRef.current.trim();
-      const useCursor = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
+      const cursorEligible = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
+      // Home has always used a cursor. Travel/Restaurants opt into it only
+      // after page one proves the deployed API supports their new cursor;
+      // this keeps scrolling correct during a rolling frontend/API deploy.
+      const useCursor = cursorEligible
+        && (viewModeRef.current === 'feed' || Boolean(remoteCursorRef.current));
       const params = new URLSearchParams({
         limit: `${FEED_PAGE_SIZE}`,
         mode: viewModeRef.current,
