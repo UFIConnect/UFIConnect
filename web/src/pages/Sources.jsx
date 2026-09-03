@@ -5,6 +5,7 @@ import Layout from '../components/Layout';
 import client from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 
 const SOURCE_META = {
   reddit:        { label: 'Reddit',           icon: 'RD', color: '#FF4500', desc: 'Community discussions and threads' },
@@ -132,11 +133,11 @@ function SourceRow({ sourceId, health, enabled, onToggle, expanded, onExpand, sa
         {/* Icon */}
         <div style={{
           width: 38, height: 38, borderRadius: 10,
-          background: meta.color, flexShrink: 0,
+          background: '#fff', border: `1px solid ${meta.color}33`, flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '1rem', color: '#fff', fontWeight: 700,
+          fontSize: '1rem', color: meta.color, fontWeight: 700,
         }}>
-          {meta.icon}
+          {hasBrandIcon(sourceId) ? <BrandIcon platform={sourceId} size={24} /> : meta.icon}
         </div>
 
         {/* Name + desc */}

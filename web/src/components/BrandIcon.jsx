@@ -1,10 +1,8 @@
+import { useEffect, useState } from 'react';
+
 // Official brand marks (path data + hex from the Simple Icons project,
-// CC0-licensed), rendered inline so there's no external request/CDN
-// dependency at runtime. LinkedIn is deliberately excluded — Simple Icons
-// itself pulled LinkedIn's mark from its published package after a
-// trademark request from LinkedIn, so ConnectedAccounts keeps its existing
-// initials-in-a-circle treatment for that one platform instead of sourcing
-// the logo from elsewhere.
+// CC0-licensed), rendered inline so common sources need no external request.
+// The wider source set uses each publisher's official mark or favicon below.
 const BRAND_ICONS = {
   github:    { path: 'M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12', hex: '181717' },
   gitlab:    { path: 'm23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z', hex: 'FC6D26' },
@@ -36,14 +34,15 @@ const EXTERNAL_BRAND_ICON_URLS = {
   pinterest:     'https://cdn.simpleicons.org/pinterest/E60023',
   tumblr:        'https://cdn.simpleicons.org/tumblr/001935',
   wordpress:     'https://cdn.simpleicons.org/wordpress/21759B',
+  lobsters:      'https://cdn.simpleicons.org/lobsters/AC130D',
   arxiv:         'https://cdn.simpleicons.org/arxiv/B31B1B',
   indeed:        'https://www.indeed.com/favicon.ico',
-  usajobs:       'https://www.usajobs.gov/favicon.ico',
-  glassdoor:     'https://www.glassdoor.com/favicon.ico',
+  usajobs:       'https://www.google.com/s2/favicons?domain=usajobs.gov&sz=64',
+  glassdoor:     'https://cdn.simpleicons.org/glassdoor/0CAA41',
   handshake:     'https://app.joinhandshake.com/favicon.ico',
   wellfound:     'https://wellfound.com/favicon.ico',
   ziprecruiter:  'https://www.ziprecruiter.com/favicon.ico',
-  dice:          'https://www.dice.com/favicon.ico',
+  dice:          'https://www.google.com/s2/favicons?domain=dice.com&sz=64',
   producthunt:   'https://cdn.simpleicons.org/producthunt/DA552F',
   techcrunch:    'https://cdn.simpleicons.org/techcrunch/0D9F3F',
   theverge:      'https://www.theverge.com/favicon.ico',
@@ -54,23 +53,100 @@ const EXTERNAL_BRAND_ICON_URLS = {
   venturebeat:   'https://venturebeat.com/favicon.ico',
   smashing:      'https://cdn.simpleicons.org/smashingmagazine/E9620A',
   infoq:         'https://cdn.simpleicons.org/infoq/67B346',
-  mittr:         'https://www.technologyreview.com/favicon.ico',
+  mittr:         'https://www.technologyreview.com/static/media/favicon.1cfcdb44759a0f93ddf5feb5405dd4cc.ico',
   theregister:   'https://www.theregister.com/favicon.ico',
   freecodecamp:  'https://cdn.simpleicons.org/freecodecamp/006400',
-  phoronix:      'https://www.phoronix.com/favicon.ico',
+  phoronix:      'https://www.google.com/s2/favicons?domain=phoronix.com&sz=64',
   remoteok:      'https://remoteok.com/favicon.ico',
   remotive:      'https://remotive.com/favicon.ico',
   muse:          'https://www.themuse.com/favicon.ico',
   yc:            'https://cdn.simpleicons.org/ycombinator/FF6600',
   crunchbase:    'https://cdn.simpleicons.org/crunchbase/146AFF',
+  designweb:     'https://cdn.simpleicons.org/awwwards/111111',
+  uficonnect:    '/icon.svg',
   wikivoyage:    'https://en.wikivoyage.org/static/favicon/wikivoyage.ico',
   travelnews:    'https://www.gstatic.com/images/branding/product/ico/googleg_lodp.ico',
   travelevents:  'https://www.gstatic.com/images/branding/product/ico/googleg_lodp.ico',
 };
 
-// True for every platform this can actually render as a real brand mark —
-// callers fall back to their own initials-badge treatment otherwise
-// (currently just LinkedIn, see the module comment above).
+// Retry a blocked publisher favicon through Google's cache for the same
+// official domain. A final compact label keeps the slot visible offline.
+const OFFICIAL_SOURCE_DOMAINS = {
+  linkedin: 'linkedin.com',
+  tiktok: 'tiktok.com',
+  hackernews: 'news.ycombinator.com',
+  devto: 'dev.to',
+  stackoverflow: 'stackoverflow.com',
+  mastodon: 'joinmastodon.org',
+  pinterest: 'pinterest.com',
+  tumblr: 'tumblr.com',
+  wordpress: 'wordpress.com',
+  lobsters: 'lobste.rs',
+  arxiv: 'arxiv.org',
+  indeed: 'indeed.com',
+  usajobs: 'usajobs.gov',
+  glassdoor: 'glassdoor.com',
+  handshake: 'joinhandshake.com',
+  wellfound: 'wellfound.com',
+  ziprecruiter: 'ziprecruiter.com',
+  dice: 'dice.com',
+  producthunt: 'producthunt.com',
+  techcrunch: 'techcrunch.com',
+  theverge: 'theverge.com',
+  indiehackers: 'indiehackers.com',
+  hashnode: 'freecodecamp.org',
+  arstechnica: 'arstechnica.com',
+  wired: 'wired.com',
+  venturebeat: 'venturebeat.com',
+  smashing: 'smashingmagazine.com',
+  infoq: 'infoq.com',
+  mittr: 'technologyreview.com',
+  theregister: 'theregister.com',
+  freecodecamp: 'freecodecamp.org',
+  phoronix: 'phoronix.com',
+  remoteok: 'remoteok.com',
+  remotive: 'remotive.com',
+  muse: 'themuse.com',
+  yc: 'ycombinator.com',
+  crunchbase: 'crunchbase.com',
+  designweb: 'awwwards.com',
+  wikivoyage: 'wikivoyage.org',
+  travelnews: 'news.google.com',
+  travelevents: 'google.com',
+};
+
+function ExternalBrandIcon({ platform, src, size }) {
+  const [attempt, setAttempt] = useState(0);
+  const domain = OFFICIAL_SOURCE_DOMAINS[platform];
+  const fallback = domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=64` : null;
+  const sources = fallback && fallback !== src ? [src, fallback] : [src];
+
+  useEffect(() => { setAttempt(0); }, [platform, src]);
+
+  if (attempt >= sources.length) {
+    return (
+      <span aria-hidden="true" style={{ color: '#475569', fontSize: Math.max(7, Math.round(size * 0.45)), fontWeight: 800, lineHeight: 1 }}>
+        {String(platform || 'source').slice(0, 2).toUpperCase()}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      src={sources[attempt]}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      draggable="false"
+      onError={() => setAttempt(current => current + 1)}
+      style={{ display: 'block', objectFit: 'contain' }}
+    />
+  );
+}
+
+// True for every platform this can render as a real brand mark. Callers keep
+// their compact initials treatment for unknown future source IDs.
 export function hasBrandIcon(key) {
   return !!BRAND_ICONS[key] || !!EXTERNAL_BRAND_ICON_URLS[key];
 }
@@ -80,7 +156,7 @@ export default function BrandIcon({ platform, size = 20 }) {
   if (!icon) {
     const src = EXTERNAL_BRAND_ICON_URLS[platform];
     if (!src) return null;
-    return <img src={src} alt="" width={size} height={size} loading="lazy" draggable="false" style={{ display: 'block', objectFit: 'contain' }} />;
+    return <ExternalBrandIcon platform={platform} src={src} size={size} />;
   }
   return (
     <svg
