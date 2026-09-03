@@ -254,6 +254,16 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none', alignSelf: 'flex-start' }}>All source details</Link>
       </ToolPanel>}
 
+      <ToolPanel title="UFI" summary="Create and view posts" open={openPanel === 'ufi'} onToggle={() => toggle('ufi')}>
+        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Share a post and see what the UFIconnect community is discussing.</p>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/post')}>Open UFI</button>
+      </ToolPanel>
+
+      <ToolPanel title="Groups" summary="Your communities" open={openPanel === 'groups'} onToggle={() => toggle('groups')}>
+        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Browse your communities and join conversations around shared interests.</p>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/groups')}>Open groups</button>
+      </ToolPanel>
+
       <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Connect the accounts that should shape your personal feed.</p>
         <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/connected-accounts')}>Manage accounts</button>

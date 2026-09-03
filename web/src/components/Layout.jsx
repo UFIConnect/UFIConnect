@@ -32,20 +32,16 @@ function ShellIcon({ name, size = 20 }) {
   return <svg {...common}>{paths[name] || paths.home}</svg>;
 }
 
-// shortLabel is used only in the mobile bottom-nav — 8 items sharing one
-// row at .62rem leaves each column ~40-47px wide, and "Notifications" /
-// "Opportunities" (13 characters each) wrap badly at that width. The
-// desktop sidebar has room to spare, so it always uses the full label.
+// shortLabel is used only in the mobile bottom-nav so longer destination
+// names stay readable. The desktop sidebar always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
 const MOBILE_FEED_OPTIONS = new Set(['feed', 'following', 'countries', 'restaurants']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
-  { to: '/post',          icon: 'posts',         label: 'UFI'          },
   { to: '/search',        icon: 'search',        label: 'Search'       },
   { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
-  { to: '/groups',        icon: 'groups',        label: 'Groups'       },
   { to: '/opportunities', icon: 'opportunities', label: 'Opportunities', shortLabel: 'Jobs' },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
