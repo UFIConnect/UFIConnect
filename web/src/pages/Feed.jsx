@@ -28,15 +28,6 @@ const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
 
-// Utility: debounce function for search input
-function debounce(fn, delay) {
-  let timeoutId;
-  return function(...args) {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
-  };
-}
-
 function timeAgo(iso) {
   if (!iso) return '';
   const t = new Date(iso).getTime();
@@ -342,7 +333,7 @@ function loadFeedState(userId) {
   try {
     const key = memberStorageKey(FEED_STATE_KEY, userId);
     if (!key) return null;
-    const raw = sessionStorage.getItem(key);
+    const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
     if (!raw) return null;
     const s = JSON.parse(raw);
     const requestedMode = s.viewMode === 'local' ? 'countries' : s.viewMode;
@@ -361,18 +352,32 @@ function loadFeedState(userId) {
     return {
       filters,
       activeTabs,
-      search:     typeof s.search === 'string' ? s.search : '',
+      // Post search now lives on /search. Ignore legacy persisted queries so
+      // Home cannot reopen with an invisible search filtering its feed.
+      search:     '',
       viewMode,
       location:   normalizeLocationFilters(s.location),
     };
   } catch { return null; }
 }
 
-function saveFeedState(userId, filters, activeTabs, search, viewMode, location) {
+function saveFeedState(userId, filters, activeTabs, _search, viewMode, location) {
   try {
     const key = memberStorageKey(FEED_STATE_KEY, userId);
     if (!key) return;
-    sessionStorage.setItem(key, JSON.stringify({ filters, activeTabs, search, viewMode, location }));
+    const value = JSON.stringify({ filters, activeTabs, search: '', viewMode, location });
+    sessionStorage.setItem(key, value);
+    localStorage.setItem(key, value);
+
+    if (viewMode === 'feed' || viewMode === 'following') {
+      const suggestionKey = memberStorageKey(`ufi_feed_suggestions:${viewMode}`, userId);
+      const sources = filters?.sources?.length ? filters.sources : activeTabs;
+      localStorage.setItem(suggestionKey, JSON.stringify({
+        sources: Array.isArray(sources) ? sources : [],
+        topics: Array.isArray(filters?.topics) ? filters.topics : [],
+        updatedAt: Date.now(),
+      }));
+    }
   } catch {}
 }
 
@@ -1228,7 +1233,7 @@ function commentUrl(post) {
   }
 }
 
-const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
+export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdated, isMediaOpen }) {
   const { profile, token } = useAuth();
   const { showToast } = useToast();
   const [moreOpen,   setMoreOpen]   = useState(false);
@@ -1901,7 +1906,6 @@ export default function Feed({ forcedMode } = {}) {
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
   const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
   const [search,        setSearch]       = useState(_saved?.search || '');
-  const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [lastRefresh,   setLastRefresh]  = useState(null);
@@ -2197,7 +2201,6 @@ export default function Feed({ forcedMode } = {}) {
     setFilters(nextFilters);
     setActiveTabs(nextTabs);
     setSearch(nextSearch);
-    setSearchInput(nextSearch);
     setViewMode(nextMode);
     setLocationFilters(nextLocation);
     setRemotePage(2);
@@ -2244,7 +2247,6 @@ export default function Feed({ forcedMode } = {}) {
     if (resetHome) {
       searchRef.current = '';
       setSearch('');
-      setSearchInput('');
     }
     setViewMode(nextMode);
     setActiveTabs(nextTabs);
@@ -2326,7 +2328,6 @@ export default function Feed({ forcedMode } = {}) {
     setActiveTabs([]);
     setFilters(DEFAULT_FILTERS);
     setSearch('');
-    setSearchInput('');
     setRemotePage(2);
     setRemoteHasMore(true);
     loadFeed(false, [], { filters: DEFAULT_FILTERS, q: '', replace: true });
@@ -2389,22 +2390,9 @@ export default function Feed({ forcedMode } = {}) {
     }
   }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
 
-  // Debounced search handler
-  const debouncedSearch = useMemo(
-    () => debounce((query) => {
-      searchRef.current = query.trim();
-      setSearch(query.trim());
-      setRemotePage(2);
-      setRemoteHasMore(true);
-      loadFeed(false, activeTabsRef.current, { q: query.trim(), replace: true });
-    }, 400),
-    [loadFeed]
-  );
-
   const toggleTab = useCallback((key) => {
     searchRef.current = '';
     setSearch('');
-    setSearchInput('');
     // Source tabs just change which filter is active now — they no longer
     // double as their own refresh (that's Feed's job now, see
     // switchViewMode). manual:false means no seed reshuffle, no forced
@@ -2897,63 +2885,8 @@ export default function Feed({ forcedMode } = {}) {
         </p>
       </div>
 
-      {/* Toolbar: search + filter + refresh */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
-        {/* Search */}
-        <div style={{ flex: 1, position: 'relative', display: 'flex', gap: 6 }}>
-          <div style={{ flex: 1, position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.75rem', fontWeight: 800, opacity: 0.55, pointerEvents: 'none' }}>Q</span>
-            <input
-              className="form-input home-feed-search-input"
-              placeholder="Search posts…"
-              value={searchInput}
-              onChange={e => {
-                setSearchInput(e.target.value);
-                debouncedSearch(e.target.value);
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  const nextQ = searchInput.trim();
-                  searchRef.current = nextQ;
-                  setSearch(nextQ);
-                  setRemotePage(2);
-                  setRemoteHasMore(true);
-                  loadFeed(false, activeTabsRef.current, { q: nextQ, replace: true });
-                }
-              }}
-              style={{ paddingLeft: 36, borderRadius: 22, padding: '9px 14px 9px 36px', fontSize: '.875rem' }}
-            />
-            {searchInput && (
-              <button type="button" aria-label="Clear search" onClick={() => {
-                searchRef.current = '';
-                setSearchInput('');
-                setSearch('');
-                loadFeed(false, activeTabsRef.current, { q: '', replace: true });
-              }}
-                style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '1rem', color: 'var(--muted)' }}>×</button>
-            )}
-          </div>
-          <button
-            type="button"
-            className="feed-toolbar-control"
-            onClick={() => {
-              const nextQ = searchInput.trim();
-              searchRef.current = nextQ;
-              setSearch(nextQ);
-              loadFeed(false, activeTabsRef.current, { q: nextQ, replace: true });
-            }}
-            style={{
-              padding: '9px 16px', borderRadius: 22, border: '1.5px solid var(--border)',
-              background: searchInput.trim() ? 'var(--primary)' : 'var(--surface)',
-              color: searchInput.trim() ? '#fff' : 'var(--muted)',
-              fontWeight: 600, fontSize: '.875rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-              transition: 'background .15s, color .15s',
-            }}
-          >
-            Search
-          </button>
-        </div>
-
+      {/* Feed controls. Post search lives on /search so Home stays unfiltered. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
         {/* Filter button */}
         <div style={{ position: 'relative' }}>
           <button
@@ -3290,7 +3223,6 @@ export default function Feed({ forcedMode } = {}) {
                 <button className="btn btn-ghost btn-sm" onClick={() => {
                   searchRef.current = '';
                   setSearch('');
-                  setSearchInput('');
                   setRemotePage(2);
                   setRemoteHasMore(true);
                   loadFeed(false, activeTabsRef.current, { q: '', replace: true });
@@ -3481,6 +3413,7 @@ export default function Feed({ forcedMode } = {}) {
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key, { resetHome: key === 'feed' })}>{label}</button>
             ))}
             <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => switchViewMode('groups')}>Groups</button>
+            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
             <Link to="/messages" className="home-feed-rail-tab">
               Messages
             </Link>

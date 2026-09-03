@@ -21208,6 +21208,13 @@ async function handleFeedRequest(req, res) {
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
     const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
+    const followingSearchWords = splitSearchWords(searchQuery);
+    const matchingFollowing = followingSearchWords.length
+      ? rawFollowing.filter((post) => {
+          const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.source || ''} ${post.topic || ''}`.toLowerCase();
+          return followingSearchWords.every(word => text.includes(word));
+        })
+      : rawFollowing;
     // Equalized by source with a time factor (see buildEqualizedFollowingPool's
     // own comment) so one especially chatty connected platform (e.g. a big
     // Reddit home feed) doesn't crowd out a quieter one (e.g. a handful of
@@ -21220,20 +21227,26 @@ async function handleFeedRequest(req, res) {
     // truly dead-end" philosophy as the main Feed's own paging. Confirmed
     // live as the Following feed's actual complaint: hasMore going flat
     // false the instant a thin pool ran out, not a genuine content shortage.
-    const equalized = buildEqualizedFollowingPool(rawFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
+    const equalized = buildEqualizedFollowingPool(matchingFollowing, { recencyDays: null, limitPerSource: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS });
     const rotated = filterUnseen(personalizeForUser(equalized), seenIds);
+    // Passive consumers such as Search do not mutate the member's seen set,
+    // so they need a real offset. The primary scrolling feed keeps its
+    // unseen-queue pagination and starts at zero on each request.
+    const followingOffset = passivePreview ? (reqPage - 1) * feedLimit : 0;
+    const followingPagePool = rotated.slice(followingOffset);
     const pageRows = usesBlendedSources
-      ? enforceFeedDiversity(rotated, feedLimit, 'newest')
-      : rotated.slice(0, feedLimit);
+      ? enforceFeedDiversity(followingPagePool, feedLimit, 'newest')
+      : followingPagePool.slice(0, feedLimit);
     trackPostsSeen(pageRows);
     return res.json({
       posts: pageRows,
       page: reqPage,
       mode: 'following',
-      hasMore: rotated.length > pageRows.length,
+      hasMore: followingOffset + pageRows.length < rotated.length,
       totalAvailable: rotated.length,
       followingCount: followingIds.size,
       sourceErrors,
+      ...(searchQuery ? { search: searchQuery } : {}),
     });
   }
 
@@ -21404,12 +21417,14 @@ async function handleFeedRequest(req, res) {
 
   // -- Full-text search across all sources ----------------------------------
   if (searchQuery) {
-    const searchSources = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
+    const searchSources = sourcesParam.length ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
+    const searchOffset = (reqPage - 1) * feedLimit;
+    const searchCandidateLimit = Math.min(1000, searchOffset + (feedLimit * 3));
     const allCached = sortFeedBatch(realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
     ]), 'feed-search-memory', {
-      limit: Math.max(feedLimit * 3, feedLimit + 1),
+      limit: Math.max(searchCandidateLimit, feedLimit + 1),
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
@@ -21426,7 +21441,7 @@ async function handleFeedRequest(req, res) {
     let dbMatches = [];
     if (db.isConnected()) {
       try {
-        const rows = await getPostsFromDB([], feedLimit * 3, 0, searchSources, {
+        const rows = await getPostsFromDB([], searchCandidateLimit, 0, searchSources, {
           q: searchQuery,
           sort: sortMode,
           timeRange,
@@ -21455,17 +21470,25 @@ async function handleFeedRequest(req, res) {
     // to pick from, rather than capping an already-narrow feedLimit+1 list
     // down to almost nothing.
     const searchRanked = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
-      limit: feedLimit * 3,
+      limit: searchCandidateLimit,
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     const searchCandidates = filterUnseen(personalizeForUser(searchRanked), seenIds);
+    const pageWindow = searchOffset + feedLimit + 1;
     const merged = usesBlendedSources
-      ? enforceFeedDiversity(searchCandidates, feedLimit + 1, sortMode)
-      : searchCandidates.slice(0, feedLimit + 1);
-    const searchPageRows = merged.slice(0, feedLimit);
+      ? enforceFeedDiversity(searchCandidates, pageWindow, sortMode)
+      : searchCandidates.slice(0, pageWindow);
+    const searchPageRows = merged.slice(searchOffset, searchOffset + feedLimit);
     trackPostsSeen(searchPageRows);
-    return res.json({ posts: searchPageRows, hasMore: merged.length > feedLimit, search: searchQuery, sort: sortMode });
+    return res.json({
+      posts: searchPageRows,
+      page: reqPage,
+      hasMore: merged.length > searchOffset + feedLimit,
+      totalAvailable: searchCandidates.length,
+      search: searchQuery,
+      sort: sortMode,
+    });
   }
 
   // -- Page 2+: serve from DB cache only (no live-API calls) ----------------

@@ -53,7 +53,7 @@ const Profile        = lazy(() => import('./pages/Profile'));
 const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
-const Search         = lazy(() => import('./pages/Search'));
+const Search         = lazy(() => import('./pages/SearchExperience'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
