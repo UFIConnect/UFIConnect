@@ -97,6 +97,12 @@ export function UfiFeedContent({ embedded = false }) {
     { enabled: !feedLoading && !feedLoadingMore }
   );
 
+  useEffect(() => {
+    const refreshSelectedFeed = () => loadRecentFeed({ silent: true });
+    window.addEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
+    return () => window.removeEventListener('ufi:refresh-selected-feed', refreshSelectedFeed);
+  }, [loadRecentFeed]);
+
   // Lets ImageLightbox's "max view" (opened from a post's photo/video) keep
   // pulling in more posts as the viewer scrolls near the end of what's
   // already loaded — see PostList's onNearEnd. Offset by feed.length rather

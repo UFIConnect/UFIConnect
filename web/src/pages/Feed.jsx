@@ -2505,6 +2505,11 @@ export default function Feed({ forcedMode } = {}) {
 
   useScrollToRefresh(refreshCurrentFeed, { enabled: Boolean(profile?.id) });
 
+  useEffect(() => {
+    window.addEventListener('ufi:refresh-selected-feed', refreshCurrentFeed);
+    return () => window.removeEventListener('ufi:refresh-selected-feed', refreshCurrentFeed);
+  }, [refreshCurrentFeed]);
+
   // Fetch social connection status for personalisation banners
   useEffect(() => {
     if (!profile) { setConnectedSocial({}); return; }

@@ -36,6 +36,7 @@ function ShellIcon({ name, size = 20 }) {
 // shortLabel is used only in the mobile bottom-nav so longer destination
 // names stay readable. The desktop sidebar always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
+const HOME_FEED_REFRESH_EVENT = 'ufi:refresh-selected-feed';
 const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 
 const NAV = [
@@ -134,7 +135,11 @@ export default function Layout({ children, wide = false }) {
       navigate(HOME_FEED_PATH, { replace: location.pathname === '/', state: { refreshHomeAt: Date.now() } });
       return;
     }
-    if (location.pathname !== '/') navigate('/');
+    if (location.pathname === '/') {
+      window.dispatchEvent(new Event(HOME_FEED_REFRESH_EVENT));
+      return;
+    }
+    navigate('/');
   }
 
   // A desktop Home click returns to the top without replacing the member's
@@ -184,6 +189,12 @@ export default function Layout({ children, wide = false }) {
     }
     mobileHomeTapTimer.current = window.setTimeout(() => {
       mobileHomeTapTimer.current = null;
+      if (location.pathname === '/') {
+        setMobileMenuOpen(false);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.dispatchEvent(new Event(HOME_FEED_REFRESH_EVENT));
+        return;
+      }
       navigateToMobileFeed(selectedMobileFeed);
     }, 250);
   }
