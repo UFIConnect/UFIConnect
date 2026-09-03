@@ -4,6 +4,7 @@ import { extractYouTubeId, extractVimeoId, deriveBlueskyPlaylistUrl, isDirectVid
 import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS } from './sourceMeta';
 import BrandIcon, { hasBrandIcon } from './BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
@@ -1205,9 +1206,10 @@ export default function VideoFeedView({ onExit }) {
         // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
         // old and new videos interleaved indefinitely.
-        return reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0
+        const nextVideos = reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0
           ? prev
           : (reset ? fresh : [...prev, ...fresh]);
+        return orderNewestFeedCohorts(nextVideos);
       });
       if (mode === 'following') followingPageRef.current += 1;
       else if (data.cursor) cursorRef.current = data.cursor;
