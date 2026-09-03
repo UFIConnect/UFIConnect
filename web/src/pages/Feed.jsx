@@ -177,6 +177,96 @@ function equalizeGroupFeed(posts, sort) {
   return result;
 }
 
+const FOLLOWING_NATIVE_COMPAT_TTL_MS = 30_000;
+const followingNativeCompatCache = new Map();
+
+function requestedFeedSources(params) {
+  return [...new Set([
+    params.get('source'),
+    ...String(params.get('sources') || '').split(','),
+  ].map(value => String(value || '').trim().toLowerCase()).filter(Boolean))];
+}
+
+function capFeedPageBySource(posts, limit, maxPerSource = 2) {
+  const selected = [];
+  const counts = new Map();
+  for (const post of posts) {
+    const source = String(post?.source || 'uficonnect').toLowerCase();
+    const count = counts.get(source) || 0;
+    if (count >= maxPerSource) continue;
+    selected.push(post);
+    counts.set(source, count + 1);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
+async function getFollowingNativeCompatibility(viewer, bust = false) {
+  if (!viewer?.id) return [];
+  const cached = followingNativeCompatCache.get(viewer.id);
+  if (!bust && cached?.expiresAt > Date.now()) return cached.posts;
+
+  const [postsResponse, groupsResponse, followingResponse] = await Promise.all([
+    client.get('/posts?limit=100&offset=0'),
+    client.get('/groups'),
+    client.get(`/users/${encodeURIComponent(viewer.id)}/following`),
+  ]);
+  const joinedIds = new Set(viewer.joinedGroups || []);
+  const visibleGroupIds = new Set((groupsResponse.data?.groups || []).map(group => group.id));
+  const followedIds = new Set((followingResponse.data?.users || []).map(user => user.id));
+  const nativePosts = (postsResponse.data?.posts || []).filter((post) => {
+    if ((post.source || 'uficonnect') !== 'uficonnect') return false;
+    const isOwnPost = post.authorId === viewer.id || post.author?.id === viewer.id;
+    const isFollowedAuthor = followedIds.has(post.authorId || post.author?.id);
+    const postGroupId = post.groupId || post.group?.id;
+    const isJoinedGroup = postGroupId && joinedIds.has(postGroupId);
+    const canSeePostGroup = !postGroupId || visibleGroupIds.has(postGroupId);
+    return (isOwnPost || isFollowedAuthor || isJoinedGroup) && (isOwnPost || canSeePostGroup);
+  });
+  const posts = sortPostsForView(nativePosts);
+  followingNativeCompatCache.set(viewer.id, {
+    posts,
+    expiresAt: Date.now() + FOLLOWING_NATIVE_COMPAT_TTL_MS,
+  });
+  return posts;
+}
+
+async function loadFollowingFeedCompatibility(params, responseData, viewer) {
+  const sources = requestedFeedSources(params);
+  if (sources.length && !sources.includes('uficonnect')) return responseData;
+
+  const limit = Math.max(1, Math.min(250, Number(params.get('limit')) || FEED_PAGE_SIZE));
+  const page = Math.max(1, Number(params.get('page')) || 1);
+  const queryWords = String(params.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const topics = String(params.get('topics') || '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+  const allNativePosts = await getFollowingNativeCompatibility(viewer, params.get('bust') === '1');
+  const matchingNativePosts = allNativePosts.filter((post) => {
+    if (topics.length && !topics.includes(String(post.topic || '').toLowerCase())) return false;
+    if (!queryWords.length) return true;
+    const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
+    return queryWords.every(word => text.includes(word));
+  });
+  const onlyUfi = sources.length === 1 && sources[0] === 'uficonnect';
+  const nativePageSize = onlyUfi ? limit : 2;
+  const nativeOffset = (page - 1) * nativePageSize;
+  const nativePage = matchingNativePosts.slice(nativeOffset, nativeOffset + nativePageSize);
+  const merged = mergeFeedPosts([
+    ...(onlyUfi ? [] : responseData?.posts || []),
+    ...nativePage,
+  ], 'newest');
+  const posts = onlyUfi ? merged.slice(0, limit) : capFeedPageBySource(merged, limit);
+
+  return {
+    ...responseData,
+    posts,
+    page,
+    mode: 'following',
+    nativeUficonnectIncluded: true,
+    hasMore: responseData?.hasMore !== false || nativeOffset + nativePage.length < matchingNativePosts.length,
+    totalAvailable: Number(responseData?.totalAvailable || 0) + matchingNativePosts.length,
+  };
+}
+
 async function loadGroupsFeedCompatibility(params) {
   const limit = Math.max(1, Math.min(250, Number(params.get('limit')) || FEED_PAGE_SIZE));
   const page = Math.max(1, Number(params.get('page')) || 1);
@@ -220,15 +310,20 @@ async function loadGroupsFeedCompatibility(params) {
     page,
     totalAvailable: balanced.length,
     joinedGroupCount: joinedGroups.length,
+    nativeUficonnectIncluded: true,
     sourceErrors: connectedResponse.data?.sourceErrors || {},
     equalizer: { mode: 'compatibility-community-source', maxPerCommunityPerPage: 2 },
   };
 }
 
-async function requestFeedPage(params) {
+async function requestFeedPage(params, viewer) {
   const { data } = await client.get(`/office/feed?${params.toString()}`);
-  if (params.get('mode') === 'groups' && data?.mode !== 'groups') {
+  if (params.get('mode') === 'groups'
+      && (data?.mode !== 'groups' || data?.nativeUficonnectIncluded !== true)) {
     return loadGroupsFeedCompatibility(params);
+  }
+  if (params.get('mode') === 'following' && data?.nativeUficonnectIncluded !== true) {
+    return loadFollowingFeedCompatibility(params, data, viewer);
   }
   return data;
 }
@@ -1988,7 +2083,7 @@ export default function Feed({ forcedMode } = {}) {
       if (bust) {
         params.set('bust', '1');
       }
-      const data = await requestFeedPage(params);
+      const data = await requestFeedPage(params, profile);
       // A response from the view the member just left must never replace the
       // newer Home/Following/Travel response that is already on screen.
       if (!isCurrentRequest()) return;
@@ -2089,7 +2184,7 @@ export default function Feed({ forcedMode } = {}) {
         setRefreshing(false);
       }
     }
-  }, [profile?.id]);
+  }, [profile]);
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
@@ -2416,7 +2511,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      const data = await requestFeedPage(params);
+      const data = await requestFeedPage(params, profile);
       if (requestIdAtStart !== feedRequestIdRef.current) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
@@ -2457,7 +2552,7 @@ export default function Feed({ forcedMode } = {}) {
       setRemoteHasMore(data.hasMore !== false);
     } catch {}
     finally { loadingMoreRef.current = false; setLoadingMore(false); }
-  }, [remoteHasMore, remotePage]);
+  }, [profile, remoteHasMore, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
@@ -2561,12 +2656,15 @@ export default function Feed({ forcedMode } = {}) {
           try {
             const { posts: incoming } = JSON.parse(e.data);
             if (!incoming?.length) return;
-            // Native posts are exclusive to Following, so Home does not
-            // reflow every time a member publishes one.
+            // Native posts belong in Following and joined Groups, while
+            // Home remains the external/public-source feed.
             const relevantIncoming = viewModeRef.current === 'feed'
               ? incoming.filter(post => post?.source !== 'uficonnect')
               : incoming;
             if (!relevantIncoming.length) return;
+            if (profile?.id && relevantIncoming.some(post => (post?.source || 'uficonnect') === 'uficonnect')) {
+              followingNativeCompatCache.delete(profile.id);
+            }
             let sawFresh = false;
             relevantIncoming.forEach(p => {
               if (!p?.id) return;
@@ -2577,7 +2675,7 @@ export default function Feed({ forcedMode } = {}) {
             liveRefreshTimeoutRef.current = window.setTimeout(() => {
               liveRefreshTimeoutRef.current = null;
               const state = loadStateRef.current;
-              if (viewModeRef.current !== 'feed') return;
+              if (!['feed', 'following', 'groups'].includes(viewModeRef.current)) return;
               if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
               loadFeed(false, activeTabsRef.current, {
                 silent: true,
@@ -2624,7 +2722,7 @@ export default function Feed({ forcedMode } = {}) {
         es = null;
       }
     };
-  }, [loadFeed, markKnownId]);
+  }, [loadFeed, markKnownId, profile?.id]);
 
   // Time range cutoff helper
   function timeRangeCutoff(range) {

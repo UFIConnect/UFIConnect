@@ -15716,21 +15716,36 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   const wantsSource = (src) => !wanted || wanted.has(src);
 
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
+  const user = await getUser(userId);
+  const joinedNativeGroupIds = (user?.joinedGroups || []).filter((groupId) => {
+    const group = groups.find(candidate => candidate.id === groupId);
+    return group && !group.isExternal && canSeeGroup(group, userId);
+  });
   // Capped per followed author, same FOLLOWING_PER_SOURCE_CAP as every
   // external page below — an author you follow is this pool's own version
   // of "a page," so their backlog gets the same recency cap an external
   // connected account's does, rather than dumping their entire history in.
-  const internalPosts = (followingIds.size && wantsSource('uficonnect'))
-    ? (() => {
+  const internalPosts = wantsSource('uficonnect')
+    ? await (async () => {
+        const nativeResult = await getCommunityPosts({
+          viewerId: userId,
+          audienceAuthorIds: [userId, ...followingIds],
+          audienceGroupIds: joinedNativeGroupIds,
+          limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
+          offset: 0,
+        });
         const byAuthor = new Map();
-        for (const p of posts) {
-          if ((p.source || 'uficonnect') !== 'uficonnect' || !followingIds.has(p.authorId)) continue;
+        for (const p of nativeResult.posts || []) {
+          const group = p.groupId ? groups.find(candidate => candidate.id === p.groupId) : null;
+          if (p.authorId !== userId && group && !canSeeGroup(group, userId)) continue;
           if (!byAuthor.has(p.authorId)) byAuthor.set(p.authorId, []);
           byAuthor.get(p.authorId).push(p);
         }
         const capped = [];
-        for (const arr of byAuthor.values()) capped.push(...capFollowingPosts(arr));
-        return capped.map(p => serializeCommunityPost(p, userId));
+        for (const arr of byAuthor.values()) {
+          capped.push(...capFollowingPosts(arr, { days: null, limit: CONNECTED_ACCOUNT_HISTORY_MAX_POSTS }));
+        }
+        return capped;
       })()
     : [];
 
@@ -15743,7 +15758,6 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   // which from the UI. Collected here and returned alongside posts so a
   // real failure can actually be diagnosed instead of guessed at.
   const sourceErrors = {};
-  const user = await getUser(userId);
 
   if (Object.keys(FOLLOWING_SOURCE_FETCHERS).length) {
     for (const [source, fetcher] of Object.entries(FOLLOWING_SOURCE_FETCHERS)) {
@@ -16074,16 +16088,41 @@ async function hydrateRestaurantPostEngagement(posts, viewerId = null) {
 // dead-ending there — that dead-end was most visible in each page's own
 // ImageLightbox "max view" (see PostList's onNearEnd), which had nothing to
 // call to fetch more since none of these endpoints supported it at all.
-async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, groupIds = null, limit = 50, offset = 0 } = {}) {
+async function getCommunityPosts({
+  viewerId = null,
+  authorId = null,
+  groupId = null,
+  groupIds = null,
+  audienceAuthorIds = null,
+  audienceGroupIds = null,
+  limit = 50,
+  offset = 0,
+} = {}) {
   const scopedGroupIds = Array.isArray(groupIds)
     ? [...new Set(groupIds.filter(Boolean))]
     : null;
+  const scopedAudienceAuthorIds = Array.isArray(audienceAuthorIds)
+    ? [...new Set(audienceAuthorIds.filter(Boolean))]
+    : null;
+  const scopedAudienceGroupIds = Array.isArray(audienceGroupIds)
+    ? [...new Set(audienceGroupIds.filter(Boolean))]
+    : null;
   if (scopedGroupIds && scopedGroupIds.length === 0) return { posts: [], hasMore: false };
+  if (scopedAudienceAuthorIds && scopedAudienceGroupIds
+      && scopedAudienceAuthorIds.length === 0 && scopedAudienceGroupIds.length === 0) {
+    return { posts: [], hasMore: false };
+  }
   const scopedGroupIdSet = scopedGroupIds ? new Set(scopedGroupIds) : null;
+  const audienceAuthorIdSet = scopedAudienceAuthorIds ? new Set(scopedAudienceAuthorIds) : null;
+  const audienceGroupIdSet = scopedAudienceGroupIds ? new Set(scopedAudienceGroupIds) : null;
+  const hasAudienceScope = Boolean(audienceAuthorIdSet || audienceGroupIdSet);
   let result = posts.filter((p) =>
     (p.source || 'uficonnect') === 'uficonnect'
     && (!authorId || p.authorId === authorId)
     && (scopedGroupIdSet ? scopedGroupIdSet.has(p.groupId) : (!groupId || p.groupId === groupId))
+    && (!hasAudienceScope
+      || audienceAuthorIdSet?.has(p.authorId)
+      || audienceGroupIdSet?.has(p.groupId))
   );
 
   if (db.isConnected()) {
@@ -16101,6 +16140,16 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
         params.push(groupId);
         clauses.push(`group_id=$${params.length}`);
       }
+      const audienceClauses = [];
+      if (scopedAudienceAuthorIds?.length) {
+        params.push(scopedAudienceAuthorIds);
+        audienceClauses.push(`author_id = ANY($${params.length}::text[])`);
+      }
+      if (scopedAudienceGroupIds?.length) {
+        params.push(scopedAudienceGroupIds);
+        audienceClauses.push(`group_id = ANY($${params.length}::text[])`);
+      }
+      if (audienceClauses.length) clauses.push(`(${audienceClauses.join(' OR ')})`);
       // +1 (see the slice below) so the caller can tell "exactly limit posts
       // exist" apart from "there's at least one more page" without a
       // separate COUNT query.
@@ -21137,6 +21186,7 @@ async function handleFeedRequest(req, res) {
       totalAvailable: personalized.length,
       joinedGroupCount: joinedGroupModels.length,
       connectedSourceCount: connectedSources.length,
+      nativeUficonnectIncluded: true,
       sourceErrors: connectedResult.sourceErrors || {},
       equalizer: { mode: 'member-topic-source-community', maxPerCommunityPerPage: BLENDED_FEED_MAX_POSTS_PER_SOURCE },
     });
@@ -21262,6 +21312,7 @@ async function handleFeedRequest(req, res) {
       hasMore: followingOffset + pageRows.length < rotated.length,
       totalAvailable: rotated.length,
       followingCount: followingIds.size,
+      nativeUficonnectIncluded: true,
       sourceErrors,
       ...(searchQuery ? { search: searchQuery } : {}),
     });
