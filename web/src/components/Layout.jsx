@@ -42,7 +42,7 @@ const MOBILE_FEED_OPTIONS = new Set(['feed', 'following', 'countries', 'restaura
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
-  { to: '/post',          icon: 'posts',         label: 'Posts'        },
+  { to: '/post',          icon: 'posts',         label: 'UFI'          },
   { to: '/search',        icon: 'search',        label: 'Search'       },
   { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
   { to: '/groups',        icon: 'groups',        label: 'Groups'       },

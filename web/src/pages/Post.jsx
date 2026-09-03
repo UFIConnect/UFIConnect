@@ -185,7 +185,7 @@ export default function Post() {
   return (
     <Layout>
       <div className="page-header">
-        <h1 className="page-title">Posts</h1>
+        <h1 className="page-title">UFI</h1>
         <p className="page-subtitle">Write a post and see what the UFIconnect community is sharing.</p>
       </div>
 
