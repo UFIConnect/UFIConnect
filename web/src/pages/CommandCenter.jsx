@@ -877,13 +877,14 @@ function MemberAccountsSection() {
     setError('');
     try {
       const { data } = await client.get('/social/platforms');
-      setPlatforms(Object.entries(withCareerAccountFallback(data.platforms)));
+      const includeCareer = data.careerOnly === true || isBusinessMembership;
+      setPlatforms(Object.entries(withCareerAccountFallback(data.platforms, includeCareer)));
       setConnected(data.connected || {});
     } catch (requestError) {
       setError(requestError?.response?.data?.message || 'Could not load Command Center accounts.');
       setPlatforms([]);
     }
-  }, []);
+  }, [isBusinessMembership]);
 
   useEffect(() => {
     loadAccounts();

@@ -55,10 +55,11 @@ export default function ConnectedAccounts() {
 
   useEffect(() => {
     client.get('/social/platforms').then((pRes) => {
-      setPlatforms(Object.entries(withCareerAccountFallback(pRes.data.platforms)));
+      const includeCareer = pRes.data.careerOnly === true || isBusinessMembership;
+      setPlatforms(Object.entries(withCareerAccountFallback(pRes.data.platforms, includeCareer)));
       setConnected(pRes.data.connected || {});
     }).catch(console.error).finally(() => setLoading(false));
-  }, []);
+  }, [isBusinessMembership]);
 
   // Handle OAuth callback redirect params (?social_connected=platform or ?social_error=platform)
   useEffect(() => {
@@ -163,7 +164,7 @@ export default function ConnectedAccounts() {
         <p className="page-subtitle">
           {isBusinessMembership
             ? 'Your Business membership keeps account connections focused on career providers.'
-            : 'Connect social, magazine, and article accounts alongside career sources.'}
+            : 'Connect your social, magazine, and article accounts.'}
         </p>
       </div>
 
@@ -239,7 +240,7 @@ export default function ConnectedAccounts() {
             </>
           )}
 
-          {careerPlatforms.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
+          {isBusinessMembership && careerPlatforms.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
               Career accounts
             </div>

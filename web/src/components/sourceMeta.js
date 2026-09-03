@@ -74,10 +74,9 @@ export const CAREER_ACCOUNT_PLATFORMS = [
   'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
 ];
 
-// Render deploys the static web app and API independently. Keep a display-
-// only Coming Soon record for each career provider so a newer frontend never
-// renders an empty section while the API is still switching revisions. Any
-// API record wins as soon as it is available.
+// Render deploys the static web app and API independently. Business members
+// get display-only Coming Soon records while the API is switching revisions;
+// other plans must never receive career-account cards from this fallback.
 const CAREER_ACCOUNT_FALLBACK = Object.fromEntries(CAREER_ACCOUNT_PLATFORMS.map((key) => {
   const source = SOURCE_META[key];
   return [key, {
@@ -90,11 +89,17 @@ const CAREER_ACCOUNT_FALLBACK = Object.fromEntries(CAREER_ACCOUNT_PLATFORMS.map(
     configured: false,
     forceComingSoon: true,
     commandCenterOnly: false,
+    requiresMembership: 'business',
     locked: false,
   }];
 }));
 
-export function withCareerAccountFallback(platforms = {}) {
+export function withCareerAccountFallback(platforms = {}, includeCareer = false) {
+  if (!includeCareer) {
+    return Object.fromEntries(Object.entries(platforms).filter(([key, platform]) => (
+      !CAREER_ACCOUNT_PLATFORMS.includes(key) && platform?.category !== 'career'
+    )));
+  }
   return { ...CAREER_ACCOUNT_FALLBACK, ...platforms };
 }
 

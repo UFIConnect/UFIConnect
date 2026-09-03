@@ -14526,10 +14526,13 @@ const CAREER_ACCOUNT_PLATFORMS = new Set([
   'indeed', 'usajobs', 'remoteok', 'remotive', 'muse',
   'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
 ]);
-const ACCOUNT_PLATFORM_CATALOG = new Set([
+const NON_BUSINESS_ACCOUNT_PLATFORMS = new Set([
   ...CONNECTED_SOCIAL_PLATFORMS,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
   ...PUBLICATION_ACCOUNT_PLATFORMS,
+]);
+const ACCOUNT_PLATFORM_CATALOG = new Set([
+  ...NON_BUSINESS_ACCOUNT_PLATFORMS,
   ...CAREER_ACCOUNT_PLATFORMS,
 ]);
 
@@ -19618,6 +19621,22 @@ app.get('/auth/social/config', authenticate, async (req, res) => {
 app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   const { platform } = req.params;
   if (!PLATFORMS[platform]) return res.status(404).json({ error: 'Unknown platform' });
+  const user = await getUser(req.user.id);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+  if (CAREER_ACCOUNT_PLATFORMS.has(platform) && user.plan !== 'business') {
+    return res.status(403).json({
+      error: 'Career account connections are available with Business membership.',
+      detail: 'Business keeps career-provider connections separate from personal social accounts.',
+      code: 'business_required',
+    });
+  }
+  if (user.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform)) {
+    return res.status(403).json({
+      error: 'Business memberships use Career Sites instead of social account connections.',
+      detail: 'Open Connected Accounts to connect an available career provider.',
+      code: 'business_career_only',
+    });
+  }
   if (FORCE_COMING_SOON_PLATFORMS.has(platform)) {
     return res.status(503).json({
       error: `${PLATFORMS[platform].name} connection is coming soon.`,
@@ -19627,15 +19646,6 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   }
   const cfg = SOCIAL_CFG[platform];
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
-  const user = await getUser(req.user.id);
-  if (!user) return res.status(401).json({ error: 'User not found' });
-  if (user.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform)) {
-    return res.status(403).json({
-      error: 'Business memberships use Career Sites instead of social account connections.',
-      detail: 'Open Connected Accounts to connect an available career provider.',
-      code: 'business_career_only',
-    });
-  }
 
   const status = socialCredentialStatus(platform, req);
   if (!status.configured) return res.status(501).json({
@@ -19824,7 +19834,7 @@ app.get('/social/platforms', authenticate, async (req, res) => {
   const careerOnly = user?.plan === 'business';
   const visiblePlatforms = careerOnly
     ? [...CAREER_ACCOUNT_PLATFORMS]
-    : [...ACCOUNT_PLATFORM_CATALOG];
+    : [...NON_BUSINESS_ACCOUNT_PLATFORMS];
   const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];
@@ -19843,10 +19853,10 @@ app.get('/social/platforms', authenticate, async (req, res) => {
       // See FORCE_COMING_SOON_PLATFORMS' own comment.
       forceComingSoon: FORCE_COMING_SOON_PLATFORMS.has(key),
       commandCenterOnly,
-      // Account connections themselves are not membership-gated. Keep the
-      // commandCenterOnly flag as catalog metadata for the workspace, while
-      // the paid-only actions remain protected at their own API routes.
-      requiresMembership: false,
+      // Career connections are isolated to Business accounts at both the
+      // catalog and authorization boundaries. Other account connections stay
+      // available without using this metadata as a UI-only security check.
+      requiresMembership: CAREER_ACCOUNT_PLATFORMS.has(key) ? 'business' : false,
       locked: false,
       crossPost: getCrossPostCapability(key),
     }];
