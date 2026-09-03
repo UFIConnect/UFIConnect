@@ -1123,7 +1123,7 @@ function socialCredentialStatus(platform, req) {
     };
   }
   const cfg = SOCIAL_CFG[platform];
-  // Catalog-only publisher integrations are intentionally visible before we
+  // Catalog-only provider integrations are intentionally visible before we
   // have their OAuth app/review work in place. They must never be presented
   // as configured just because they do not use this generic OAuth shape.
   if (!cfg) {
@@ -14401,15 +14401,78 @@ const PLATFORMS = {
     note: 'freeCodeCamp account connection and Cross-Post support are coming soon.',
   },
   indeed: {
-    name: 'Indeed', color: '#003A9B', icon: 'indeed',
-    description: 'Get job recommendations matched to your profile and groups.',
+    name: 'Indeed', color: '#003A9B', icon: 'indeed', category: 'career',
+    description: 'Connect your Indeed account for future job and recruiting tools.',
     scopes: ['employer', 'resume_read', 'job_search'],
     authUrl: 'https://secure.indeed.com/account/oauth2/v2/authorize',
     loginUrl: 'https://secure.indeed.com/account/login',
     setupUrl: 'https://developer.indeed.com',
     reviewRequired: true,
     comingSoon: true,
-    note: 'Indeed Publisher API requires application approval. Integration coming soon.',
+    note: 'Indeed account authorization requires provider approval. Connection is coming soon.',
+  },
+  usajobs: {
+    name: 'USAJobs', color: '#005EA8', icon: 'usajobs', category: 'career',
+    description: 'Connect your USAJobs account for future federal career tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'USAJobs account authorization is coming soon. Live federal listings remain available in Opportunities.',
+  },
+  remoteok: {
+    name: 'Remote OK', color: '#10B981', icon: 'remoteok', category: 'career',
+    description: 'Connect your Remote OK account for future remote-work tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Remote OK account authorization is coming soon. Live listings remain available in Opportunities.',
+  },
+  remotive: {
+    name: 'Remotive', color: '#2563EB', icon: 'remotive', category: 'career',
+    description: 'Connect your Remotive account for future remote-career tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Remotive account authorization is coming soon. Live listings remain available in Opportunities.',
+  },
+  muse: {
+    name: 'The Muse', color: '#7C3AED', icon: 'muse', category: 'career',
+    description: 'Connect your The Muse account for future career and recruiting tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'The Muse account authorization is coming soon. Live listings remain available in Opportunities.',
+  },
+  glassdoor: {
+    name: 'Glassdoor', color: '#0CAA41', icon: 'glassdoor', category: 'career',
+    description: 'Connect your Glassdoor account for future job and employer tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Glassdoor account authorization is coming soon.',
+  },
+  handshake: {
+    name: 'Handshake', color: '#F97316', icon: 'handshake', category: 'career',
+    description: 'Connect your Handshake account for future campus-career tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Handshake account authorization is coming soon.',
+  },
+  wellfound: {
+    name: 'Wellfound', color: '#111827', icon: 'wellfound', category: 'career',
+    description: 'Connect your Wellfound account for future startup-career tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Wellfound account authorization is coming soon.',
+  },
+  ziprecruiter: {
+    name: 'ZipRecruiter', color: '#E92C2C', icon: 'ziprecruiter', category: 'career',
+    description: 'Connect your ZipRecruiter account for future job-search tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'ZipRecruiter account authorization is coming soon.',
+  },
+  dice: {
+    name: 'Dice', color: '#0066CC', icon: 'dice', category: 'career',
+    description: 'Connect your Dice account for future technology-career tools.',
+    reviewRequired: true,
+    comingSoon: true,
+    note: 'Dice account authorization is coming soon.',
   },
   bluesky: {
     name: 'Bluesky', color: '#0085FF', icon: 'bluesky',
@@ -14459,10 +14522,15 @@ const PUBLICATION_ACCOUNT_PLATFORMS = new Set([
   'wired', 'mittr', 'smashing', 'infoq', 'theregister',
   'arstechnica', 'phoronix', 'devto', 'freecodecamp',
 ]);
-const SOCIAL_PLATFORM_CATALOG = new Set([
+const CAREER_ACCOUNT_PLATFORMS = new Set([
+  'indeed', 'usajobs', 'remoteok', 'remotive', 'muse',
+  'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
+]);
+const ACCOUNT_PLATFORM_CATALOG = new Set([
   ...CONNECTED_SOCIAL_PLATFORMS,
   ...PUBLISHING_ONLY_SOCIAL_PLATFORMS,
   ...PUBLICATION_ACCOUNT_PLATFORMS,
+  ...CAREER_ACCOUNT_PLATFORMS,
 ]);
 
 // Platforms in this set stay in Connected Accounts' "Coming Soon" bucket
@@ -14475,6 +14543,7 @@ const FORCE_COMING_SOON_PLATFORMS = new Set([
   'linkedin', 'tiktok',
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
   ...PUBLICATION_ACCOUNT_PLATFORMS,
+  ...CAREER_ACCOUNT_PLATFORMS,
 ]);
 
 // Feed tabs that ALSO support a live, per-user connected-account fetch when
@@ -16056,11 +16125,12 @@ function fullProfile(user) {
     }
   });
   // Business is a career-only membership. Existing social tokens are kept
-  // intact so a later downgrade never loses account data, but they are not
-  // exposed to Business surfaces or used as visible connections.
-  const connectedPlatforms = user.plan === 'business'
-    ? []
-    : Object.keys(user.socialTokens || {}).filter(platform => !!user.socialTokens[platform]);
+  // intact so a later downgrade never loses account data, but only career
+  // connections are exposed while the Business plan is active.
+  const connectedPlatforms = Object.keys(user.socialTokens || {}).filter(platform => (
+    !!user.socialTokens[platform]
+      && (user.plan !== 'business' || CAREER_ACCOUNT_PLATFORMS.has(platform))
+  ));
 
   return {
     id: user.id, name: user.name, email: user.email, title: user.title,
@@ -19016,7 +19086,7 @@ function requireOfficeToken(req, res, next) {
 // so production configuration can be audited without creating another secret
 // surface in the browser or API logs.
 app.get('/office/oauth-status', requireOfficeToken, (_req, res) => {
-  const platforms = Object.fromEntries([...SOCIAL_PLATFORM_CATALOG].map(platform => {
+  const platforms = Object.fromEntries([...ACCOUNT_PLATFORM_CATALOG].map(platform => {
     const status = socialCredentialStatus(platform);
     const hasOAuthFlow = Boolean(SOCIAL_CFG[platform]) || platform === 'bluesky';
     const forceComingSoon = FORCE_COMING_SOON_PLATFORMS.has(platform);
@@ -19559,10 +19629,10 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
   if (!cfg) return res.status(404).json({ error: 'Unknown platform' });
   const user = await getUser(req.user.id);
   if (!user) return res.status(401).json({ error: 'User not found' });
-  if (user.plan === 'business') {
+  if (user.plan === 'business' && !CAREER_ACCOUNT_PLATFORMS.has(platform)) {
     return res.status(403).json({
       error: 'Business memberships use Career Sites instead of social account connections.',
-      detail: 'Open Connected Accounts to browse career sources and official job searches.',
+      detail: 'Open Connected Accounts to connect an available career provider.',
       code: 'business_career_only',
     });
   }
@@ -19597,7 +19667,7 @@ app.get('/auth/social/:platform/start', authenticate, async (req, res) => {
 
   // State is a signed JWT — survives server restarts, expires in 10 min
   const returnToCommandCenter = req.query.returnTo === 'command-center'
-    && SOCIAL_PLATFORM_CATALOG.has(platform);
+    && ACCOUNT_PLATFORM_CATALOG.has(platform);
   params.set('state', createOAuthState(
     req.user.id,
     platform,
@@ -19614,7 +19684,7 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
   const { code, state, error: oauthError } = req.query;
   const entry = verifyOAuthState(state, platform);
   const frontendProfile = entry?.extra?.returnTo === 'command-center'
-    && SOCIAL_PLATFORM_CATALOG.has(platform)
+    && ACCOUNT_PLATFORM_CATALOG.has(platform)
     ? `${FRONTEND_BASE}/command-center?tab=accounts`
     : `${FRONTEND_BASE}/connected-accounts`;
   const resultSeparator = frontendProfile.includes('?') ? '&' : '?';
@@ -19752,7 +19822,9 @@ app.get('/auth/social/:platform/callback', async (req, res) => {
 app.get('/social/platforms', authenticate, async (req, res) => {
   const user = await getUser(req.user.id);
   const careerOnly = user?.plan === 'business';
-  const visiblePlatforms = careerOnly ? [] : [...SOCIAL_PLATFORM_CATALOG];
+  const visiblePlatforms = careerOnly
+    ? [...CAREER_ACCOUNT_PLATFORMS]
+    : [...ACCOUNT_PLATFORM_CATALOG];
   const connected = Object.fromEntries(visiblePlatforms.map(p => {
     const token = user?.socialTokens?.[p];
     return [p, Boolean(token)];

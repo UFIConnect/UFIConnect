@@ -3,7 +3,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { CAREER_SITES } from '../components/careerSites';
 import { useAuth } from '../contexts/AuthContext';
 
 const PLATFORM_BENEFITS = {
@@ -27,6 +26,12 @@ const PUBLICATION_BENEFITS = [
   'Connect your publication account when provider access opens',
   'Prepare article drafts in the AI Content Hub',
   'Publish from Cross-Post after the integration is approved',
+];
+
+const CAREER_BENEFITS = [
+  'Authorize access at the career provider',
+  'Keep account access revocable from UFIconnect',
+  'Use connected career tools as provider access becomes available',
 ];
 
 export default function ConnectedAccounts() {
@@ -137,7 +142,9 @@ export default function ConnectedAccounts() {
   // Account-owned integrations live in Command Center. Keeping them out of
   // this general page prevents a member from connecting a source here and
   // then wondering why it only appears in their private workspace.
-  const generalPlatforms = platforms.filter(([, p]) => !p.commandCenterOnly);
+  const careerPlatforms = platforms.filter(([, p]) => p.category === 'career');
+  const generalPlatforms = platforms.filter(([, p]) => p.category !== 'career' && !p.commandCenterOnly);
+  const connectedCareerCount = careerPlatforms.filter(([key]) => connected[key]).length;
   const connectedList   = generalPlatforms.filter(([k]) => connected[k]);
   const availableList   = generalPlatforms.filter(([k, p]) => !connected[k] && p.configured && !p.forceComingSoon);
   const comingSoonList  = generalPlatforms.filter(([k, p]) => !connected[k] && (p.forceComingSoon || !p.configured));
@@ -154,7 +161,7 @@ export default function ConnectedAccounts() {
         <h1 className="page-title">{isBusinessMembership ? 'Business Career Connections' : 'Connected Accounts'}</h1>
         <p className="page-subtitle">
           {isBusinessMembership
-            ? 'Your Business membership keeps connections focused on live career sources and official job searches.'
+            ? 'Your Business membership keeps account connections focused on career providers.'
             : 'Connect social, magazine, and article accounts alongside career sources.'}
         </p>
       </div>
@@ -184,8 +191,8 @@ export default function ConnectedAccounts() {
             }}>
               <div style={{ fontSize: '.8rem', fontWeight: 800, color: 'var(--primary)' }}>BIZ</div>
               <div>
-                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>Career connections ready</div>
-                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Five live job sources and five official career searches.</div>
+                <div style={{ fontWeight: 700, fontSize: '.95rem' }}>{connectedCareerCount} of {careerPlatforms.length} career accounts connected</div>
+                <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>Career providers use the same secure authorization flow as social accounts.</div>
               </div>
             </div>
           )}
@@ -231,15 +238,33 @@ export default function ConnectedAccounts() {
             </>
           )}
 
-          <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
+          {careerPlatforms.length > 0 && <section style={{ marginBottom: 28 }} aria-labelledby="career-sites-heading">
             <div id="career-sites-heading" style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.6px', marginBottom: 6 }}>
-              Career sites
+              Career accounts
             </div>
             <p style={{ fontSize: '.8rem', color: 'var(--muted)', lineHeight: 1.5, margin: '0 0 10px' }}>
-              Live sources open directly in Opportunities. Other sites open their official job search and keep their own sign-in.
+              Connect through each provider's authorization flow. Job browsing remains in Opportunities.
             </p>
-            {CAREER_SITES.map(site => <CareerSiteCard key={site.key} site={site} />)}
-          </section>
+            {careerPlatforms.map(([key, p]) => {
+              const unavailable = p.forceComingSoon || !p.configured;
+              return (
+                <PlatformCard
+                  key={key}
+                  platformKey={key}
+                  p={p}
+                  isConnected={Boolean(connected[key])}
+                  comingSoon={!connected[key] && unavailable}
+                  expanded={expanded === key}
+                  onToggle={() => setExpanded(expanded === key ? null : key)}
+                  onConnect={() => handleConnect(key)}
+                  onDisconnect={() => handleDisconnect(key)}
+                  connecting={connecting === key}
+                  disconnecting={disconnecting === key}
+                  locked={Boolean(p.locked)}
+                />
+              );
+            })}
+          </section>}
 
           {/* Connected section */}
           {!isBusinessMembership && connectedList.length > 0 && (
@@ -361,7 +386,7 @@ function PlatformCard({
   onDisconnect, onConnect, connecting, disconnecting, locked,
 }) {
   const benefits = PLATFORM_BENEFITS[platformKey]
-    || (p.category === 'publication' ? PUBLICATION_BENEFITS : []);
+    || (p.category === 'publication' ? PUBLICATION_BENEFITS : p.category === 'career' ? CAREER_BENEFITS : []);
 
   return (
     <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
@@ -473,62 +498,6 @@ function PlatformCard({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function CareerSiteCard({ site }) {
-  const action = site.live ? (
-    <Link
-      to={`/opportunities?sources=${encodeURIComponent(site.source)}`}
-      className="btn btn-sm btn-outline"
-      style={{ borderColor: site.color, color: site.color, whiteSpace: 'nowrap' }}
-    >
-      Browse jobs
-    </Link>
-  ) : (
-    <a
-      href={site.href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="btn btn-sm btn-outline"
-      style={{ borderColor: site.color, color: site.color, whiteSpace: 'nowrap' }}
-    >
-      Open search
-    </a>
-  );
-
-  return (
-    <div className="card" style={{ marginBottom: 10, padding: '14px 16px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{
-          width: 40, height: 40, borderRadius: 10,
-          background: hasBrandIcon(site.key) ? '#fff' : site.color,
-          border: hasBrandIcon(site.key) ? '1px solid var(--border)' : 'none',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-        }}>
-          {hasBrandIcon(site.key) ? (
-            <BrandIcon platform={site.key} size={22} />
-          ) : (
-            <span style={{ color: '#fff', fontWeight: 700, fontSize: '.78rem' }}>{site.name.slice(0, 2).toUpperCase()}</span>
-          )}
-        </div>
-        <div style={{ flex: '1 1 210px', minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontWeight: 700, fontSize: '.92rem' }}>{site.name}</span>
-            <span style={{
-              fontSize: '.65rem', fontWeight: 700,
-              color: site.live ? '#047857' : '#475569',
-              background: site.live ? '#ECFDF5' : '#F1F5F9',
-              padding: '1px 6px', borderRadius: 4,
-            }}>
-              {site.live ? 'Live in Opportunities' : site.loginRequired ? 'Official login' : 'Official search'}
-            </span>
-          </div>
-          <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: 1 }}>{site.description}</div>
-        </div>
-        <div style={{ marginLeft: 'auto', flexShrink: 0 }}>{action}</div>
-      </div>
     </div>
   );
 }

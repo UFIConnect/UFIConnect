@@ -22,6 +22,11 @@ export const SOURCE_META = {
   arxiv:         { label: 'arXiv',         color: '#B31B1B', icon: 'arXiv' },
   indeed:        { label: 'Indeed',        color: '#2557A7', icon: 'IN' },
   usajobs:       { label: 'USAJobs',       color: '#005EA8', icon: 'US' },
+  glassdoor:     { label: 'Glassdoor',     color: '#0CAA41', icon: 'GD' },
+  handshake:     { label: 'Handshake',     color: '#F97316', icon: 'HS' },
+  wellfound:     { label: 'Wellfound',     color: '#111827', icon: 'WF' },
+  ziprecruiter:  { label: 'ZipRecruiter',  color: '#E92C2C', icon: 'ZR' },
+  dice:          { label: 'Dice',          color: '#0066CC', icon: 'DI' },
   producthunt:   { label: 'Product Hunt',  color: '#DA552F', icon: 'PH' },
   techcrunch:    { label: 'TechCrunch',      color: '#0D9F3F', icon: 'TC' },
   theverge:      { label: 'The Verge',       color: '#FF3333', icon: 'TV' },
@@ -59,6 +64,14 @@ export const SOURCE_META = {
 export const COMMAND_CENTER_ACCOUNT_PLATFORMS = [
   'linkedin', 'instagram', 'tiktok', 'threads',
   'mastodon', 'pinterest', 'tumblr', 'wordpress',
+];
+
+// Career providers use the same connection lifecycle as social accounts.
+// They remain separate from CONNECTED_SOCIAL_PLATFORMS so authorizing a
+// career account can never make it appear as a Following-feed source.
+export const CAREER_ACCOUNT_PLATFORMS = [
+  'indeed', 'usajobs', 'remoteok', 'remotive', 'muse',
+  'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
 ];
 
 // Cross-Post shows supported providers and planned publishing destinations.

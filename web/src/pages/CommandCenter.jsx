@@ -5,9 +5,8 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { CAREER_SITES } from '../components/careerSites';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 
@@ -887,9 +886,8 @@ function MemberAccountsSection() {
   }, []);
 
   useEffect(() => {
-    if (isBusinessMembership) return;
     loadAccounts();
-  }, [isBusinessMembership, loadAccounts]);
+  }, [loadAccounts]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -897,7 +895,7 @@ function MemberAccountsSection() {
     const failedPlatform = params.get('social_error');
     const reason = params.get('reason');
     const target = connectedPlatform || failedPlatform;
-    if (!target || !COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(target)) return;
+    if (!target || ![...COMMAND_CENTER_ACCOUNT_PLATFORMS, ...CAREER_ACCOUNT_PLATFORMS].includes(target)) return;
 
     if (connectedPlatform) {
       setConnected(current => ({ ...current, [connectedPlatform]: true }));
@@ -938,62 +936,33 @@ function MemberAccountsSection() {
     }
   }
 
-  if (isBusinessMembership) {
-    return (
-      <div>
-        <div style={{ marginBottom: 14 }}>
-          <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>Business career connections</h3>
-          <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
-            Business memberships use live job sources and official career searches instead of social account connections.
-          </p>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(235px, 1fr))', gap: 10 }}>
-          {CAREER_SITES.map(site => {
-            const action = site.live ? (
-              <Link to={`/opportunities?sources=${encodeURIComponent(site.source)}`} className="btn btn-ghost btn-sm">Browse jobs</Link>
-            ) : (
-              <a href={site.href} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">Open search</a>
-            );
-            return (
-              <div key={site.key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 14px' }}>
-                <span style={{ width: 34, height: 34, borderRadius: 8, background: hasBrandIcon(site.key) ? '#fff' : site.color, border: hasBrandIcon(site.key) ? '1px solid var(--border)' : 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  {hasBrandIcon(site.key) ? <BrandIcon platform={site.key} size={19} /> : <span style={{ color: '#fff', fontSize: '.68rem', fontWeight: 800 }}>{site.name.slice(0, 2).toUpperCase()}</span>}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <strong style={{ display: 'block', fontSize: '.83rem' }}>{site.name}</strong>
-                  <span style={{ display: 'block', color: 'var(--muted)', fontSize: '.7rem', marginTop: 2 }}>{site.live ? 'Live in Opportunities' : site.loginRequired ? 'Official login' : 'Official search'}</span>
-                </div>
-                {action}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
   if (platforms === null) return <div className="empty-state"><span className="spinner spinner-primary" /></div>;
 
-  const memberPlatforms = platforms.filter(([key, platform]) => (
-    platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
-  ));
+  const memberPlatforms = isBusinessMembership
+    ? platforms.filter(([, platform]) => platform.category === 'career')
+    : platforms.filter(([key, platform]) => (
+      platform.commandCenterOnly || COMMAND_CENTER_ACCOUNT_PLATFORMS.includes(key)
+    ));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="card" style={{ padding: '18px 20px' }}>
-        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>Member account connections</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: '.98rem' }}>{isBusinessMembership ? 'Business career connections' : 'Member account connections'}</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.55, margin: 0 }}>
-          Account-only sources import or publish only from the account you explicitly authorize. Publisher integrations stay here until their provider setup is ready.
+          {isBusinessMembership
+            ? 'Career providers use the same secure Connect, Connected, and Disconnect flow as other accounts. Job browsing remains in Opportunities.'
+            : 'Account-only sources import or publish only from the account you explicitly authorize. Publisher integrations stay here until their provider setup is ready.'}
         </p>
       </div>
       {error && <SectionError message={error} onRetry={loadAccounts} />}
       {!memberPlatforms.length && !error && (
-        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>No member-only account connections are available yet.</div>
+        <div className="card" style={{ textAlign: 'center', padding: 28, color: 'var(--muted)', fontSize: '.85rem' }}>{isBusinessMembership ? 'No career account connections are available yet.' : 'No member-only account connections are available yet.'}</div>
       )}
       {memberPlatforms.map(([key, platform]) => {
         const isConnected = !!connected[key];
         const unavailable = !platform.configured || platform.forceComingSoon;
         const accountOnly = ['instagram', 'tiktok', 'threads'].includes(key);
+        const accountType = isBusinessMembership ? 'Career account' : accountOnly ? 'Own posts only' : 'Publisher setup';
         return (
           <div key={key} className="card" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <span style={{ width: 42, height: 42, borderRadius: 8, background: '#fff', border: '1px solid var(--border)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1002,7 +971,7 @@ function MemberAccountsSection() {
             <div style={{ flex: 1, minWidth: 180 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: '.92rem' }}>{platform.name}</strong>
-                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountOnly ? 'Own posts only' : 'Publisher setup'}</span>
+                <span style={{ fontSize: '.64rem', fontWeight: 750, color: 'var(--primary)', background: 'var(--primary-light)', padding: '2px 6px', borderRadius: 4 }}>{accountType}</span>
                 {isConnected && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: 4 }}>Connected</span>}
                 {!isConnected && unavailable && <span style={{ fontSize: '.64rem', fontWeight: 750, color: '#92400E', background: '#FEF3C7', padding: '2px 6px', borderRadius: 4 }}>Coming soon</span>}
               </div>
