@@ -26,6 +26,7 @@ const {
   screenImportedFeedPost,
   screenExternalComment,
 } = require('./content-screening');
+const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
 
 dotenv.config();
 
@@ -18502,103 +18503,12 @@ function decodeFeedCursor(str) {
   } catch { return {}; }
 }
 
-function poolPostCursorKey(post) {
-  return String(post?.id || equalizerPostKey(post));
-}
-
-// Cursor pagination for feeds assembled from live/in-memory pools rather
-// than feed_posts_cache. Each lane advances independently, so a strict
-// two-per-source page never discards that source's remaining posts. A page
-// number is still honored for older clients by walking the same cursor
-// state forward internally.
-function paginateEqualizedPool(posts, {
-  mode,
-  cursorMap = {},
-  page = 1,
-  limit = 20,
-  seenIds = null,
-  laneForPost = post => post?.source || 'unknown',
-  maxPerLane = BLENDED_FEED_MAX_POSTS_PER_SOURCE,
-} = {}) {
-  const list = uniqueEqualizerPosts(posts);
-  const lanes = new Map();
-  for (const post of list) {
-    const lane = String(laneForPost(post) || 'unknown');
-    if (!lanes.has(lane)) lanes.set(lane, []);
-    lanes.get(lane).push(post);
-  }
-
-  const hasCursor = cursorMap?.__poolMode === mode
-    && cursorMap?.__laneCursors
-    && typeof cursorMap.__laneCursors === 'object';
-  let state = hasCursor
-    ? {
-      __poolMode: mode,
-      __poolPage: Math.max(0, Number(cursorMap.__poolPage) || 0),
-      __laneCursors: { ...cursorMap.__laneCursors },
-    }
-    : { __poolMode: mode, __poolPage: 0, __laneCursors: {} };
-  const iterations = hasCursor ? 1 : Math.max(1, Math.min(Number(page) || 1, 1000));
-  const laneCap = Number.isFinite(maxPerLane) ? Math.max(1, Math.floor(maxPerLane)) : Infinity;
-  let pageRows = [];
-  let hasMore = false;
-
-  for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const starts = new Map();
-    for (const [lane, queue] of lanes) {
-      const lastKey = String(state.__laneCursors[lane] || '');
-      const found = lastKey ? queue.findIndex(post => poolPostCursorKey(post) === lastKey) : -1;
-      starts.set(lane, found >= 0 ? found + 1 : 0);
-    }
-
-    const visitedByLane = new Map();
-    const selectedByLane = new Map();
-    const selectedKeys = new Set();
-    pageRows = [];
-    for (const post of list) {
-      const lane = String(laneForPost(post) || 'unknown');
-      const visited = visitedByLane.get(lane) || 0;
-      visitedByLane.set(lane, visited + 1);
-      if (visited < (starts.get(lane) || 0)) continue;
-      const key = poolPostCursorKey(post);
-      if (post?.id && seenIds?.has(post.id)) continue;
-      const laneCount = selectedByLane.get(lane) || 0;
-      if (pageRows.length >= limit || laneCount >= laneCap) continue;
-      selectedByLane.set(lane, laneCount + 1);
-      selectedKeys.add(key);
-      pageRows.push(post);
-    }
-
-    const nextLaneCursors = { ...state.__laneCursors };
-    hasMore = false;
-    for (const [lane, queue] of lanes) {
-      let index = starts.get(lane) || 0;
-      let lastHandled = null;
-      while (index < queue.length) {
-        const candidate = queue[index];
-        const handled = selectedKeys.has(poolPostCursorKey(candidate))
-          || (candidate?.id && seenIds?.has(candidate.id));
-        if (!handled) break;
-        lastHandled = candidate;
-        index += 1;
-      }
-      if (lastHandled) nextLaneCursors[lane] = poolPostCursorKey(lastHandled);
-      if (queue.slice(index).some(post => !post?.id || !seenIds?.has(post.id))) hasMore = true;
-    }
-    state = {
-      __poolMode: mode,
-      __poolPage: state.__poolPage + 1,
-      __laneCursors: nextLaneCursors,
-    };
-    if (!hasMore && iteration + 1 < iterations) pageRows = [];
-  }
-
-  return {
-    posts: pageRows,
-    nextCursor: encodeFeedCursor(state),
-    hasMore,
-    totalAvailable: list.filter(post => !post?.id || !seenIds?.has(post.id)).length,
-  };
+function paginateEqualizedPool(posts, options = {}) {
+  return paginateEqualizedPoolCore(posts, {
+    ...options,
+    keyForPost: post => String(post?.id || equalizerPostKey(post)),
+    encodeCursor: encodeFeedCursor,
+  });
 }
 // A per-source cursorMap entry is now a compound {ts, id} (see
 // getCursorFeedPage's own comment on why) rather than a bare ISO string —
