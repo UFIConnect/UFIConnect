@@ -288,13 +288,13 @@ export default function Layout({ children, wide = false }) {
           <Link
             to={HOME_FEED_PATH}
             className="mobile-app-header-brand"
+            aria-label="Home"
             onClick={event => {
               setMobileMenuOpen(false);
               handleMobileHomeClick(event);
             }}
           >
             <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
-            <span>UFIconnect</span>
           </Link>
 
           <div className="mobile-command-menu">
