@@ -193,9 +193,27 @@ const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics:
 const FEED_PAGE_SIZE = 50;
 const FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const FEED_STATE_KEY = 'ufi_feed_state';
+const SOCIAL_CONNECT_PROMPT_KEY = 'ufi_social_connect_prompt_v1';
+const SOCIAL_CONNECT_PROMPT_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
 function memberStorageKey(baseKey, userId) {
   return userId ? `${baseKey}:${userId}` : null;
+}
+
+function wasSocialConnectPromptRecentlyShown(userId) {
+  try {
+    const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
+    if (!key) return false;
+    const shownAt = Number(localStorage.getItem(key));
+    return Number.isFinite(shownAt) && Date.now() - shownAt < SOCIAL_CONNECT_PROMPT_COOLDOWN_MS;
+  } catch { return false; }
+}
+
+function markSocialConnectPromptShown(userId) {
+  try {
+    const key = memberStorageKey(SOCIAL_CONNECT_PROMPT_KEY, userId);
+    if (key) localStorage.setItem(key, String(Date.now()));
+  } catch {}
 }
 
 function normalizeLocationFilters(value = {}) {
@@ -1744,7 +1762,8 @@ export default function Feed({ forcedMode } = {}) {
   const routeRequestedFeed = routeFeedParams.get('feed');
   const routeRequestsAllHome = !forcedMode && routeRequestedFeed === 'feed' && routeFeedParams.get('all') === '1';
   const [connectedSocial, setConnectedSocial] = useState(null); // null = not yet fetched
-  const [socialBannerDismissed, setSocialBannerDismissed] = useState(false);
+  const [socialBannerDismissed, setSocialBannerDismissed] = useState(() => wasSocialConnectPromptRecentlyShown(profile?.id));
+  const socialConnectPromptShownRef = useRef(false);
   const [connecting,    setConnecting]   = useState(false);
   // Set from a single-source-tab response's `locked:true` (see FEED_SOCIAL_TABS
   // server-side) — a gated platform tab clicked without that account connected.
@@ -2469,6 +2488,23 @@ export default function Feed({ forcedMode } = {}) {
     client.get('/profile/social').then(({ data }) => setConnectedSocial(data.connected || {})).catch(() => setConnectedSocial({}));
   }, [profile]);
 
+  useEffect(() => {
+    socialConnectPromptShownRef.current = false;
+    setSocialBannerDismissed(wasSocialConnectPromptRecentlyShown(profile?.id));
+  }, [profile?.id]);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    if (viewMode !== 'feed') {
+      if (socialConnectPromptShownRef.current) setSocialBannerDismissed(true);
+      return;
+    }
+    if (connectedSocial === null || socialBannerDismissed || socialConnectPromptShownRef.current) return;
+    if (Object.values(connectedSocial).some(Boolean)) return;
+    markSocialConnectPromptShown(profile.id);
+    socialConnectPromptShownRef.current = true;
+  }, [connectedSocial, profile?.id, socialBannerDismissed, viewMode]);
+
 
   // SSE: stream new posts from all source workers in real time — with reconnection logic
   useEffect(() => {
@@ -3019,7 +3055,7 @@ export default function Feed({ forcedMode } = {}) {
       )}
 
       {/* Social connect prompt — logged-in users with no social accounts connected */}
-      {profile && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
+      {profile && viewMode === 'feed' && connectedSocial !== null && !socialBannerDismissed && !Object.values(connectedSocial).some(Boolean) && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16,
           padding: '12px 16px', borderRadius: 12,
@@ -3041,7 +3077,10 @@ export default function Feed({ forcedMode } = {}) {
             Connect now
           </Link>
           <button
-            onClick={() => setSocialBannerDismissed(true)}
+            onClick={() => {
+              markSocialConnectPromptShown(profile.id);
+              setSocialBannerDismissed(true);
+            }}
             style={{
               marginLeft: 4, background: 'none', border: 'none', cursor: 'pointer', color: '#92400E',
               fontSize: '1.1rem', opacity: 0.6, padding: '0 4px', flexShrink: 0,
