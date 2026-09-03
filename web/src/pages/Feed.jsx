@@ -149,6 +149,118 @@ function mergeFeedPosts(list = [], sort = 'ranked') {
   return sortPostsForView([...byId.values()], sort);
 }
 
+function groupFeedLane(post) {
+  return post?.groupId || post?.group?.id || post?.source || 'unknown';
+}
+
+function paginateGroupFeed(posts, page, limit) {
+  let remaining = posts;
+  let selected = [];
+  for (let currentPage = 1; currentPage <= page; currentPage++) {
+    const laneCounts = new Map();
+    const nextRemaining = [];
+    selected = [];
+    for (const post of remaining) {
+      const lane = groupFeedLane(post);
+      const count = laneCounts.get(lane) || 0;
+      if (selected.length < limit && count < 2) {
+        laneCounts.set(lane, count + 1);
+        selected.push(post);
+      } else {
+        nextRemaining.push(post);
+      }
+    }
+    remaining = nextRemaining;
+    if (currentPage === page || !selected.length) break;
+  }
+  return { posts: selected, hasMore: remaining.length > 0 };
+}
+
+function equalizeGroupFeed(posts, sort) {
+  const ordered = [...posts].sort((left, right) => {
+    if (sort === 'popular') {
+      const leftEngagement = Number(left.likesCount || 0) + Number(left.commentsCount || 0) * 2;
+      const rightEngagement = Number(right.likesCount || 0) + Number(right.commentsCount || 0) * 2;
+      return (rightEngagement - leftEngagement) || (feedPostTime(right) - feedPostTime(left));
+    }
+    return feedPostTime(right) - feedPostTime(left);
+  });
+  const lanes = new Map();
+  for (const post of ordered) {
+    const lane = groupFeedLane(post);
+    if (!lanes.has(lane)) lanes.set(lane, []);
+    lanes.get(lane).push(post);
+  }
+  const queues = [...lanes.values()];
+  const result = [];
+  for (let round = 0; result.length < ordered.length; round++) {
+    let added = false;
+    for (const queue of queues) {
+      if (!queue[round]) continue;
+      result.push(queue[round]);
+      added = true;
+    }
+    if (!added) break;
+  }
+  return result;
+}
+
+async function loadGroupsFeedCompatibility(params) {
+  const limit = Math.max(1, Math.min(250, Number(params.get('limit')) || FEED_PAGE_SIZE));
+  const page = Math.max(1, Number(params.get('page')) || 1);
+  const sort = normalizeFeedSort(params.get('sort'));
+  const queryWords = String(params.get('q') || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const topics = String(params.get('topics') || '').toLowerCase().split(',').map(value => value.trim()).filter(Boolean);
+  const [profileResponse, groupsResponse, connectedResponse] = await Promise.all([
+    client.get('/profile'),
+    client.get('/groups'),
+    client.get(`/office/feed?mode=following&limit=250&sort=${encodeURIComponent(sort)}&passive=1`),
+  ]);
+  const joinedIds = new Set(profileResponse.data?.joinedGroups || []);
+  const joinedGroups = (groupsResponse.data?.groups || []).filter(group => joinedIds.has(group.id));
+  const nativeGroups = joinedGroups.filter(group => !group.isExternal);
+  const nativeResults = await Promise.allSettled(nativeGroups.map(group =>
+    client.get(`/groups/${encodeURIComponent(group.id)}/posts?limit=100&offset=0`)
+  ));
+  const nativePosts = nativeResults.flatMap(result => result.status === 'fulfilled' ? result.value.data?.posts || [] : []);
+  const connectedPosts = (connectedResponse.data?.posts || []).filter(post =>
+    (post.source || 'uficonnect') !== 'uficonnect' || joinedIds.has(post.groupId || post.group?.id)
+  );
+  const groupById = new Map(joinedGroups.map(group => [group.id, group]));
+  const candidates = mergeFeedPosts([...nativePosts, ...connectedPosts], sort).map(post => {
+    const group = groupById.get(post.groupId || post.group?.id);
+    return group ? {
+      ...post,
+      group: { id: group.id, name: group.name, category: group.category, externalUrl: group.externalUrl },
+      fromJoinedGroup: true,
+    } : post;
+  }).filter(post => {
+    if (topics.length && !topics.includes(String(post.topic || '').toLowerCase())) return false;
+    if (!queryWords.length) return true;
+    const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
+    return queryWords.every(word => text.includes(word));
+  });
+  const balanced = equalizeGroupFeed(candidates, sort);
+  const pageResult = paginateGroupFeed(balanced, page, limit);
+  return {
+    ...pageResult,
+    mode: 'groups',
+    page,
+    totalAvailable: balanced.length,
+    joinedGroupCount: joinedGroups.length,
+    sourceErrors: connectedResponse.data?.sourceErrors || {},
+    equalizer: { mode: 'compatibility-community-source', maxPerCommunityPerPage: 2 },
+  };
+}
+
+async function requestFeedPage(params) {
+  const { data } = await client.get(`/office/feed?${params.toString()}`);
+  if (params.get('mode') === 'groups' && data?.mode !== 'groups') {
+    return loadGroupsFeedCompatibility(params);
+  }
+  return data;
+}
+
 // Shared-source tabs deliberately exclude account-owned networks such as
 // Instagram. Those appear only in Following after the member connects them.
 // Kept as an explicit, hand-ordered list (most-recognizable platforms first)
@@ -1921,8 +2033,7 @@ export default function Feed({ forcedMode } = {}) {
       if (bust) {
         params.set('bust', '1');
       }
-      const url = `/office/feed?${params.toString()}`;
-      const { data } = await client.get(url);
+      const data = await requestFeedPage(params);
       // A response from the view the member just left must never replace the
       // newer Home/Following/Travel response that is already on screen.
       if (!isCurrentRequest()) return;
@@ -2378,7 +2489,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
-      const { data } = await client.get(`/office/feed?${params.toString()}`);
+      const data = await requestFeedPage(params);
       if (requestIdAtStart !== feedRequestIdRef.current) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
         setTravelLiveFeeds(data.liveFeeds);
