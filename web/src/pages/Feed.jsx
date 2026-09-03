@@ -1976,7 +1976,9 @@ export default function Feed({ forcedMode } = {}) {
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
-  const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
+  const [filters, setFilters] = useState(
+    ['feed', 'following'].includes(initialViewMode) ? DEFAULT_FILTERS : (_saved?.filters || DEFAULT_FILTERS)
+  );
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
@@ -2239,10 +2241,12 @@ export default function Feed({ forcedMode } = {}) {
     if (!profile?.id || activeMemberIdRef.current === profile.id) return;
     activeMemberIdRef.current = profile.id;
     const saved = loadFeedState(profile.id);
-    const nextFilters = { ...DEFAULT_FILTERS, ...(saved?.filters || {}), sort: 'newest' };
+    const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
+    const nextFilters = ['feed', 'following'].includes(nextMode)
+      ? { ...DEFAULT_FILTERS }
+      : { ...DEFAULT_FILTERS, ...(saved?.filters || {}), sort: 'newest' };
     const nextTabs = saved?.activeTabs || [];
     const nextSearch = saved?.search || '';
-    const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
     const nextLocation = normalizeLocationFilters(profile.roleSettings?.feedLocation);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
@@ -2286,10 +2290,8 @@ export default function Feed({ forcedMode } = {}) {
     const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
     const nextTabs = resetHome ? [] : (usesSources ? activeTabsRef.current : []);
-    const nextFilters = resetHome
-      ? { ...DEFAULT_FILTERS, sources: [], topics: [] }
-      : usesSources
-      ? filtersRef.current
+    const nextFilters = usesSources
+      ? { ...DEFAULT_FILTERS }
       : { ...filtersRef.current, sources: [] };
     const nextSearch = resetHome ? '' : searchRef.current;
     viewModeRef.current = nextMode;
@@ -2884,6 +2886,7 @@ export default function Feed({ forcedMode } = {}) {
 
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
+  const showsAdvancedFilters = !usesSourceControls;
   const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
@@ -2902,8 +2905,8 @@ export default function Feed({ forcedMode } = {}) {
         <UfiFeedContent embedded />
       ) : (
       <>
-      {/* Feed controls. Post search lives on /search so Home stays unfiltered. */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
+      {/* Advanced filters remain available for specialized feeds only. */}
+      {showsAdvancedFilters && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
         {/* Filter button */}
         <div style={{ position: 'relative' }}>
           <button
@@ -2934,7 +2937,7 @@ export default function Feed({ forcedMode } = {}) {
           )}
         </div>
 
-      </div>
+      </div>}
 
       {['countries', 'restaurants'].includes(viewMode) && (
         <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
