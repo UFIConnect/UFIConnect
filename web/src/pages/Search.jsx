@@ -9,6 +9,12 @@ function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
+function initialSearchTab() {
+  if (typeof window === 'undefined') return 'people';
+  const requested = new URLSearchParams(window.location.search).get('tab');
+  return ['people', 'communities', 'groups'].includes(requested) ? requested : 'people';
+}
+
 const ROLE_META = {
   'Engineer / Developer':    { icon: 'ED', color: '#2563EB', bg: '#EFF6FF' },
   'Designer / Creative':     { icon: 'DC', color: '#7C3AED', bg: '#F3EEFF' },
@@ -46,7 +52,7 @@ export default function Search() {
   const { profile } = useAuth();
   const navigate    = useNavigate();
 
-  const [activeTab,   setActiveTab]   = useState('people');
+  const [activeTab,   setActiveTab]   = useState(initialSearchTab);
   const [query,       setQuery]       = useState('');
   const [roleFilter,  setRoleFilter]  = useState('All');
   const [sortBy,      setSortBy]      = useState('relevance');
@@ -88,7 +94,7 @@ export default function Search() {
 
   // ── Groups fetch ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (activeTab !== 'groups' || allGroups.length > 0) return;
+    if (!['communities', 'groups'].includes(activeTab) || allGroups.length > 0) return;
     setGroupsLoading(true);
     Promise.all([
       client.get('/groups'),
@@ -151,8 +157,13 @@ export default function Search() {
     return 0; // relevance = server order
   });
 
-  // Filter groups
-  const filteredGroups = allGroups.filter(g => {
+  // External communities and native UFIconnect groups are intentionally
+  // separate discovery surfaces. They share one API response, but never one
+  // result list, so the two tabs do not duplicate each other.
+  const visibleGroups = allGroups.filter(group => activeTab === 'communities'
+    ? group.isExternal === true
+    : group.isExternal !== true);
+  const filteredGroups = visibleGroups.filter(g => {
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return g.name?.toLowerCase().includes(q) ||
@@ -165,12 +176,12 @@ export default function Search() {
   return (
     <Layout>
       <Helmet>
-        <title>Find People & Communities | UFIconnect</title>
+        <title>Find People, Communities & Groups | UFIconnect</title>
         <meta name="description" content="Search professionals by role, skill, or organization. Discover 160+ communities across tech, design, startups, and more." />
         <link rel="canonical" href="https://uficonnect.org/search" />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://uficonnect.org/search" />
-        <meta property="og:title" content="Find People & Communities | UFIconnect" />
+        <meta property="og:title" content="Find People, Communities & Groups | UFIconnect" />
         <meta property="og:description" content="Search professionals by role, skill, or organization. Discover UFIconnect communities across tech, design, startups, and more." />
         <meta property="og:image" content="https://uficonnect.org/og-image.png" />
         <meta name="twitter:card" content="summary_large_image" />
@@ -183,7 +194,8 @@ export default function Search() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
         {[
           { key: 'people', label: 'People' },
-          { key: 'groups', label: 'Communities' },
+          { key: 'communities', label: 'Communities' },
+          { key: 'groups', label: 'Groups' },
         ].map(tab => (
           <button
             key={tab.key}
@@ -214,7 +226,9 @@ export default function Search() {
             className="form-input"
             placeholder={activeTab === 'people'
               ? 'Search by name, role, skill, or interest…'
-              : 'Search communities by name or topic…'}
+              : activeTab === 'communities'
+                ? 'Search communities by name or topic…'
+                : 'Search UFIconnect groups by name or topic…'}
             value={query}
             onChange={handleQueryChange}
             autoFocus
@@ -434,8 +448,8 @@ export default function Search() {
         </>
       )}
 
-      {/* ── COMMUNITIES TAB ─────────────────────────────────────────────────── */}
-      {activeTab === 'groups' && (
+      {/* ── COMMUNITIES / GROUPS TABS ───────────────────────────────────────── */}
+      {['communities', 'groups'].includes(activeTab) && (
         <>
           {groupsLoading && (
             <div style={{ textAlign: 'center', padding: 48 }}>
@@ -447,14 +461,14 @@ export default function Search() {
             <>
               <div style={{ maxWidth: 640, marginBottom: 12, fontSize: '.78rem', color: 'var(--muted)', fontWeight: 500 }}>
                 {hasQuery
-                  ? `${filteredGroups.length} communit${filteredGroups.length !== 1 ? 'ies' : 'y'} matching "${query}"`
-                  : `${filteredGroups.length} communities`}
+                  ? `${filteredGroups.length} ${activeTab === 'communities' ? `communit${filteredGroups.length !== 1 ? 'ies' : 'y'}` : `group${filteredGroups.length !== 1 ? 's' : ''}`} matching "${query}"`
+                  : `${filteredGroups.length} ${activeTab === 'communities' ? 'communities' : `UFIconnect group${filteredGroups.length !== 1 ? 's' : ''}`}`}
               </div>
 
               {filteredGroups.length === 0 && (
                 <div className="card" style={{ textAlign: 'center', padding: '32px 24px', maxWidth: 640 }}>
                   <div style={{ fontSize: '2.5rem', marginBottom: 12, fontWeight: 800 }}>Groups</div>
-                  <div style={{ fontWeight: 700, marginBottom: 6 }}>No communities found</div>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>No {activeTab === 'communities' ? 'communities' : 'groups'} found</div>
                   <p style={{ color: 'var(--muted)', fontSize: '.88rem', margin: 0 }}>
                     Try a different keyword or browse without a filter.
                   </p>
@@ -471,7 +485,9 @@ export default function Search() {
                       key={group.id}
                       className="card"
                       style={{ cursor: 'pointer', transition: 'box-shadow .15s' }}
-                      onClick={() => navigate(`/groups`)}
+                      onClick={() => group.isExternal
+                        ? window.open(group.externalUrl, '_blank', 'noopener,noreferrer')
+                        : navigate(`/groups/${group.id}`)}
                       onMouseOver={e => e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,.08)'}
                       onMouseOut={e => e.currentTarget.style.boxShadow = ''}
                     >

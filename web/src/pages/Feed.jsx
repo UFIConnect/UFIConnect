@@ -23,11 +23,10 @@ import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
-import { GroupsContent } from './Groups';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
-const EMBEDDED_HOME_MODES = new Set(['ufi', 'groups']);
+const EMBEDDED_HOME_MODES = new Set(['ufi']);
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -1886,8 +1885,8 @@ export default function Feed({ forcedMode } = {}) {
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
     if (EMBEDDED_HOME_MODES.has(activeMode)) {
-      // UFI and Groups keep their existing focused APIs and interaction
-      // components, but live inside Home. Invalidate any older feed request
+      // UFI keeps its existing focused API and interaction component, but
+      // lives inside Home. Invalidate any older feed request
       // so it cannot overwrite the selected in-place view when it finishes.
       feedRequestIdRef.current += 1;
       setLoading(false);
@@ -2441,7 +2440,7 @@ export default function Feed({ forcedMode } = {}) {
   useEffect(() => {
     const refreshQuietly = () => {
       const state = loadStateRef.current;
-      if (!['feed', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
+      if (!['feed', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
       if (document.hidden || state.loading || state.refreshing || state.loadingMore) return;
       loadFeed(false, activeTabsRef.current, { silent: true, live: true, preserveScroll: true });
     };
@@ -2465,7 +2464,7 @@ export default function Feed({ forcedMode } = {}) {
       const y = window.scrollY;
       const pulledToTop = y <= 0 && lastScrollY > 40;
       lastScrollY = y;
-      if (!pulledToTop || !['feed', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
+      if (!pulledToTop || !['feed', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return;
       const state = loadStateRef.current;
       if (state.loading || state.refreshing || state.loadingMore) return;
       if (Date.now() - lastPullAt < PULL_COOLDOWN_MS) return;
@@ -2760,8 +2759,6 @@ export default function Feed({ forcedMode } = {}) {
       <div className="home-feed-content">
       {viewMode === 'ufi' ? (
         <UfiFeedContent embedded />
-      ) : viewMode === 'groups' ? (
-        <GroupsContent embedded />
       ) : (
       <>
       <div className="page-header">
@@ -2783,6 +2780,8 @@ export default function Feed({ forcedMode } = {}) {
             ? 'Live views, destination guides, and current travel ideas from around the world. Pick a place that makes the next vacation feel inevitable.'
             : viewMode === 'restaurants'
               ? 'Fresh restaurant-opening reports from around the world. Add a country or city to gently move familiar places toward the top.'
+              : viewMode === 'groups'
+                ? 'Posts from your joined UFIconnect groups and connected social communities, balanced into one useful scroll.'
               : 'Good to see you. Posts, videos, job listings, and the occasional tiny plot twist stay mixed into one live scroll.'}
         </p>
       </div>
@@ -3143,6 +3142,8 @@ export default function Feed({ forcedMode } = {}) {
               ? 'Loading live cameras, destination guides, and travel ideas...'
               : viewMode === 'restaurants'
                 ? 'Loading restaurant openings from around the world...'
+                : viewMode === 'groups'
+                  ? 'Loading posts from your groups and connected communities...'
                 : activeTabs.length > 0 ? `Loading ${selectedSourceLabel} posts...` : 'Loading Home... warming up the scroll.'}
           </div>
           <PostCardSkeleton />
@@ -3166,10 +3167,10 @@ export default function Feed({ forcedMode } = {}) {
           <div className="empty-icon">
             {activeTabs.length === 1
               ? <SourceMark source={activeTabs[0]} label={SOURCE_META[activeTabs[0]]?.icon} size={24} />
-              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
+              : (search ? 'Search' : viewMode === 'following' ? 'Following' : viewMode === 'groups' ? 'Groups' : viewMode === 'countries' ? 'Travel' : viewMode === 'restaurants' ? 'Restaurants' : 'Home')}
           </div>
           <div className="empty-title">
-            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
+            {search ? `No posts match "${search}"` : viewMode === 'following' ? 'No posts from people you follow yet' : viewMode === 'groups' ? 'No group posts yet' : viewMode === 'countries' ? 'No travel discoveries are available yet' : viewMode === 'restaurants' ? 'No restaurant openings are available yet' : activeTabs.length > 0 ? `No ${selectedSourceLabel} posts yet` : 'Home is empty'}
           </div>
           <div className="empty-desc">
             {search ? (
@@ -3210,6 +3211,14 @@ export default function Feed({ forcedMode } = {}) {
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <button className="btn btn-primary btn-sm" onClick={() => toggleTab('all')}>Explore all sources</button>
                   <button className="btn btn-ghost btn-sm" onClick={() => loadFeed(true, activeTabsRef.current, { replace: true, bust: activeTabsRef.current.length === 1 })}>Refresh now</button>
+                </div>
+              </>
+            ) : viewMode === 'groups' ? (
+              <>
+                <p style={{ marginBottom: 12 }}>Join a UFIconnect group or connect a social account to build this feed.</p>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <Link to="/search?tab=groups" className="btn btn-primary btn-sm">Find groups</Link>
+                  <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>
                 </div>
               </>
             ) : (viewMode === 'countries' || viewMode === 'restaurants') ? (

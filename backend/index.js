@@ -16059,11 +16059,16 @@ async function hydrateRestaurantPostEngagement(posts, viewerId = null) {
 // dead-ending there — that dead-end was most visible in each page's own
 // ImageLightbox "max view" (see PostList's onNearEnd), which had nothing to
 // call to fetch more since none of these endpoints supported it at all.
-async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, limit = 50, offset = 0 } = {}) {
+async function getCommunityPosts({ viewerId = null, authorId = null, groupId = null, groupIds = null, limit = 50, offset = 0 } = {}) {
+  const scopedGroupIds = Array.isArray(groupIds)
+    ? [...new Set(groupIds.filter(Boolean))]
+    : null;
+  if (scopedGroupIds && scopedGroupIds.length === 0) return { posts: [], hasMore: false };
+  const scopedGroupIdSet = scopedGroupIds ? new Set(scopedGroupIds) : null;
   let result = posts.filter((p) =>
     (p.source || 'uficonnect') === 'uficonnect'
     && (!authorId || p.authorId === authorId)
-    && (!groupId || p.groupId === groupId)
+    && (scopedGroupIdSet ? scopedGroupIdSet.has(p.groupId) : (!groupId || p.groupId === groupId))
   );
 
   if (db.isConnected()) {
@@ -16074,7 +16079,10 @@ async function getCommunityPosts({ viewerId = null, authorId = null, groupId = n
         params.push(authorId);
         clauses.push(`author_id=$${params.length}`);
       }
-      if (groupId) {
+      if (scopedGroupIds) {
+        params.push(scopedGroupIds);
+        clauses.push(`group_id = ANY($${params.length}::text[])`);
+      } else if (groupId) {
         params.push(groupId);
         clauses.push(`group_id=$${params.length}`);
       }
@@ -20898,7 +20906,7 @@ async function handleFeedRequest(req, res) {
     parseInt(req.query.limit || `${DEFAULT_FEED_LIMIT}`, 10) || DEFAULT_FEED_LIMIT,
     1
   ), 250);
-  const requestedFeedMode = ['archive', 'following', 'local', 'countries', 'restaurants'].includes(req.query.mode)
+  const requestedFeedMode = ['archive', 'following', 'groups', 'local', 'countries', 'restaurants'].includes(req.query.mode)
     ? req.query.mode
     : 'feed';
   // Existing shared links and stored client state can still ask for `local`.
@@ -21001,6 +21009,119 @@ async function handleFeedRequest(req, res) {
       },
       locationRequired: localFeed.locationRequired || null,
       providerError: localFeed.providerError || null,
+    });
+  }
+
+  if (feedMode === 'groups') {
+    const joinedGroupModels = groups.filter(group => joined.has(group.id));
+    const nativeGroupIds = joinedGroupModels.filter(group => !group.isExternal).map(group => group.id);
+    const joinedExternalIds = new Set(joinedGroupModels.filter(group => group.isExternal).map(group => group.id));
+    const connectedSources = [...new Set(Object.entries(user?.socialTokens || {})
+      .filter(([, token]) => Boolean(token))
+      .map(([source]) => canonicalFeedSourceId(source) || source)
+      .filter(source => FOLLOWING_SOURCE_FETCHERS[source] || CONNECTED_SOCIAL_SEARCH_FETCHERS[source]))];
+    const nativeLimit = Math.min(1500, Math.max(250, feedLimit * reqPage * 4));
+    const [nativeResult, connectedResult] = await Promise.all([
+      nativeGroupIds.length
+        ? getCommunityPosts({ viewerId: req.user.id, groupIds: nativeGroupIds, limit: nativeLimit, offset: 0 })
+        : Promise.resolve({ posts: [], hasMore: false }),
+      connectedSources.length
+        ? getFollowingFeedPosts(req.user.id, connectedSources, { bust: req.query.bust === '1', surface: null })
+        : Promise.resolve({ posts: [], sourceErrors: {} }),
+    ]);
+
+    // Source workers retain groupId in memory even though the durable feed
+    // cache is source-oriented. This supplies posts for external communities
+    // a member explicitly joined without adding per-request third-party calls.
+    const cachedJoinedCommunityPosts = joinedExternalIds.size
+      ? realFeedPosts([
+          ...(globalFeedCache.posts || []),
+          ...[...agentSourceCache.values()].flatMap(cache => cache.posts || []),
+        ]).filter(post => joinedExternalIds.has(post.groupId || post.group?.id))
+      : [];
+    const connectedSocialPosts = realFeedPosts(connectedResult.posts || [])
+      .filter(post => (post.source || 'uficonnect') !== 'uficonnect');
+    const groupById = new Map(joinedGroupModels.map(group => [group.id, group]));
+    const annotateGroup = (rawPost) => {
+      const post = normalizeFeedPost(rawPost);
+      const group = groupById.get(post.groupId || post.group?.id);
+      return {
+        ...post,
+        group: group
+          ? { id: group.id, name: group.name, category: group.category, externalUrl: group.externalUrl }
+          : post.group,
+        likedByMe: Boolean(post.likedByMe),
+        fromJoinedGroup: Boolean(group),
+      };
+    };
+    const queryWords = splitSearchWords(searchQuery);
+    const candidates = uniqueEqualizerPosts([
+      ...(nativeResult.posts || []),
+      ...cachedJoinedCommunityPosts,
+      ...connectedSocialPosts,
+    ].map(annotateGroup)).filter((post) => {
+      const source = String(post.source || '').trim().toLowerCase();
+      if (disabledFeedSources.has(source) || !matchesTopic(post)) return false;
+      if (!queryWords.length) return true;
+      const haystack = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
+      return queryWords.every(word => haystack.includes(word));
+    });
+    const sorted = sortFeedBatch(candidates, 'joined-groups-feed', {
+      limit: Math.max(candidates.length, feedLimit),
+      sort: sortMode,
+      diversify: true,
+      maxConsecutivePerSource: 2,
+    });
+    const equalized = buildFullMemberFeedEqualizer(
+      sorted,
+      topicsFilter.length ? topicsFilter : userTopics,
+      userAffinity,
+      { filterTopics: false },
+    );
+    const personalized = filterUnseen(personalizeAuthenticatedFeedPosts(
+      equalized,
+      user,
+      prefs,
+      userAffinity,
+      // Location belongs to Travel and Restaurants; Groups stays scoped by
+      // membership, connected accounts, language, preferences, and usage.
+      { request: req },
+    ), seenIds);
+
+    // A native UFI group is its own community lane; connected posts without
+    // a group use their social source as the lane. Each page takes at most
+    // two from a lane, then later pages continue with that lane's remainder.
+    let remaining = personalized;
+    let pageRows = [];
+    for (let page = 1; page <= reqPage; page++) {
+      const laneCounts = new Map();
+      const nextRemaining = [];
+      const selected = [];
+      for (const post of remaining) {
+        const lane = post.groupId || post.group?.id || post.source || 'unknown';
+        const count = laneCounts.get(lane) || 0;
+        if (selected.length < feedLimit && count < BLENDED_FEED_MAX_POSTS_PER_SOURCE) {
+          laneCounts.set(lane, count + 1);
+          selected.push(post);
+        } else {
+          nextRemaining.push(post);
+        }
+      }
+      pageRows = selected;
+      remaining = nextRemaining;
+      if (page === reqPage || !pageRows.length) break;
+    }
+    trackPostsSeen(pageRows);
+    return res.json({
+      posts: pageRows,
+      page: reqPage,
+      mode: 'groups',
+      hasMore: remaining.length > 0 || nativeResult.hasMore,
+      totalAvailable: personalized.length,
+      joinedGroupCount: joinedGroupModels.length,
+      connectedSourceCount: connectedSources.length,
+      sourceErrors: connectedResult.sourceErrors || {},
+      equalizer: { mode: 'member-topic-source-community', maxPerCommunityPerPage: BLENDED_FEED_MAX_POSTS_PER_SOURCE },
     });
   }
 
