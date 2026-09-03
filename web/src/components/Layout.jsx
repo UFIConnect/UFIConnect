@@ -45,6 +45,7 @@ const NAV = [
   { to: '/opportunities', icon: 'opportunities', label: 'Opportunities', shortLabel: 'Jobs' },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
+const MOBILE_BOTTOM_NAV = NAV.filter(({ icon }) => icon !== 'search');
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -289,7 +290,7 @@ export default function Layout({ children, wide = false }) {
             className="mobile-app-header-brand"
             onClick={event => {
               setMobileMenuOpen(false);
-              handleNavClick(event, HOME_FEED_PATH);
+              handleMobileHomeClick(event);
             }}
           >
             <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
@@ -297,6 +298,15 @@ export default function Layout({ children, wide = false }) {
           </Link>
 
           <div className="mobile-command-menu">
+            <NavLink
+              to="/search"
+              className={({ isActive }) => `mobile-app-header-search${isActive ? ' active' : ''}`}
+              aria-label="Search"
+              title="Search"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <ShellIcon name="search" size={19} />
+            </NavLink>
             <button
               type="button"
               className="mobile-command-menu-trigger"
@@ -361,7 +371,7 @@ export default function Layout({ children, wide = false }) {
       )}
       {/* ── Mobile bottom tab bar ── */}
       <nav className="bottom-nav">
-        {NAV.map(({ to, icon, label, shortLabel }) => (
+        {MOBILE_BOTTOM_NAV.map(({ to, icon, label, shortLabel }) => (
           <NavLink
             key={to}
             to={to}

@@ -1952,8 +1952,33 @@ input, textarea, select { font-family: inherit; }
     letter-spacing: 0;
   }
   .mobile-command-menu {
-    display: block;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
     position: static;
+  }
+  .mobile-app-header-search {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    min-width: 42px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--primary);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--primary);
+    box-shadow: var(--shadow-sm);
+    text-decoration: none;
+  }
+  .mobile-app-header-search.active,
+  .mobile-app-header-search:active {
+    background: var(--primary-light);
+  }
+  .mobile-app-header-search:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
   .mobile-command-menu-trigger {
     display: inline-flex;
