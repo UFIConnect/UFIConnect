@@ -290,7 +290,6 @@ export default function Layout({ children, wide = false }) {
               onClick={() => setMobileMenuOpen((open) => !open)}
             >
               <ShellIcon name="menu" size={19} />
-              <span className="mobile-command-menu-trigger-label">Menu</span>
             </button>
           </div>
         </header>

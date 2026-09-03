@@ -1959,10 +1959,10 @@ input, textarea, select { font-family: inherit; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 42px;
     min-width: 42px;
     height: 40px;
-    gap: 6px;
-    padding: 0 11px;
+    padding: 0;
     border: 1px solid var(--primary);
     border-radius: 8px;
     background: var(--primary);
