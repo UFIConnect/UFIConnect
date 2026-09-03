@@ -51,7 +51,7 @@ function scoreStyle(score) {
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools({ showSources = true, sourceIds = [], activePanel, onActivePanelChange }) {
+export default function HomeFeedTools({ showSources = true, showNavigationButtons = true, sourceIds = [], activePanel, onActivePanelChange }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -254,24 +254,21 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none', alignSelf: 'flex-start' }}>All source details</Link>
       </ToolPanel>}
 
-      <ToolPanel title="UFI" summary="Create and view posts" open={openPanel === 'ufi'} onToggle={() => toggle('ufi')}>
-        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Share a post and see what the UFIconnect community is discussing.</p>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/post')}>Open UFI</button>
-      </ToolPanel>
-
-      <ToolPanel title="Groups" summary="Your communities" open={openPanel === 'groups'} onToggle={() => toggle('groups')}>
-        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Browse your communities and join conversations around shared interests.</p>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/groups')}>Open groups</button>
-      </ToolPanel>
+      {showNavigationButtons && <div className="home-feed-navigation-buttons">
+        <Link to="/post" className="home-feed-rail-tab home-feed-navigation-button">
+          <span>UFI</span><span aria-hidden="true">&rarr;</span>
+        </Link>
+        <Link to="/groups" className="home-feed-rail-tab home-feed-navigation-button">
+          <span>Groups</span><span aria-hidden="true">&rarr;</span>
+        </Link>
+        <Link to="/messages" className="home-feed-rail-tab home-feed-navigation-button">
+          <span>Messages</span><span aria-hidden="true">&rarr;</span>
+        </Link>
+      </div>}
 
       <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Connect the accounts that should shape your personal feed.</p>
         <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/connected-accounts')}>Manage accounts</button>
-      </ToolPanel>
-
-      <ToolPanel title="Messages" summary="Conversations and inbox" open={openPanel === 'messages'} onToggle={() => toggle('messages')}>
-        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Read your conversations or start a new message.</p>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/messages')}>Open messages</button>
       </ToolPanel>
 
       <ToolPanel title="Skills" summary={skills.length ? `${skills.length} saved` : 'Add your skills'} open={openPanel === 'skills'} onToggle={() => toggle('skills')}>

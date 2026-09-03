@@ -345,6 +345,18 @@ input, textarea, select { font-family: inherit; }
   gap: 10px;
   position: static;
 }
+.home-feed-navigation-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.home-feed-navigation-button {
+  justify-content: space-between;
+}
+.home-feed-navigation-button > span:last-child {
+  color: currentColor;
+  font-weight: 750;
+}
 .home-feed-right-tabs .profile-panel,
 .home-feed-right-tabs .profile-panel-trigger,
 .home-feed-right-tabs .profile-panel-content {
