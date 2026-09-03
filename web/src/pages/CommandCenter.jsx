@@ -5,7 +5,7 @@ import PricingModal, { TIERS } from '../components/PricingModal';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client, { publicOAuthRequestConfig } from '../api/client';
-import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS } from '../components/sourceMeta';
+import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFORMS, CAREER_ACCOUNT_PLATFORMS, CROSS_POST_PLATFORM_IDS, withCareerAccountFallback } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
@@ -877,7 +877,7 @@ function MemberAccountsSection() {
     setError('');
     try {
       const { data } = await client.get('/social/platforms');
-      setPlatforms(Object.entries(data.platforms || {}));
+      setPlatforms(Object.entries(withCareerAccountFallback(data.platforms)));
       setConnected(data.connected || {});
     } catch (requestError) {
       setError(requestError?.response?.data?.message || 'Could not load Command Center accounts.');

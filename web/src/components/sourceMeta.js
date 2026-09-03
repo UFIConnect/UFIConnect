@@ -74,6 +74,30 @@ export const CAREER_ACCOUNT_PLATFORMS = [
   'glassdoor', 'handshake', 'wellfound', 'ziprecruiter', 'dice',
 ];
 
+// Render deploys the static web app and API independently. Keep a display-
+// only Coming Soon record for each career provider so a newer frontend never
+// renders an empty section while the API is still switching revisions. Any
+// API record wins as soon as it is available.
+const CAREER_ACCOUNT_FALLBACK = Object.fromEntries(CAREER_ACCOUNT_PLATFORMS.map((key) => {
+  const source = SOURCE_META[key];
+  return [key, {
+    name: source.label,
+    color: source.color,
+    icon: key,
+    category: 'career',
+    description: `Connect your ${source.label} account for future career tools.`,
+    note: `${source.label} account authorization is coming soon.`,
+    configured: false,
+    forceComingSoon: true,
+    commandCenterOnly: false,
+    locked: false,
+  }];
+}));
+
+export function withCareerAccountFallback(platforms = {}) {
+  return { ...CAREER_ACCOUNT_FALLBACK, ...platforms };
+}
+
 // Cross-Post shows supported providers and planned publishing destinations.
 // The server marks each one as selectable only when its provider flow is
 // configured and supported.

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client, { publicOAuthRequestConfig } from '../api/client';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { withCareerAccountFallback } from '../components/sourceMeta';
 import { useAuth } from '../contexts/AuthContext';
 
 const PLATFORM_BENEFITS = {
@@ -54,7 +55,7 @@ export default function ConnectedAccounts() {
 
   useEffect(() => {
     client.get('/social/platforms').then((pRes) => {
-      setPlatforms(Object.entries(pRes.data.platforms || {}));
+      setPlatforms(Object.entries(withCareerAccountFallback(pRes.data.platforms)));
       setConnected(pRes.data.connected || {});
     }).catch(console.error).finally(() => setLoading(false));
   }, []);
