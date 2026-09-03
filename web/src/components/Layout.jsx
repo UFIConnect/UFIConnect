@@ -82,6 +82,7 @@ export default function Layout({ children, wide = false }) {
   // competing for the same small dot.
   const [notifBadge, setNotifBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const desktopHomeClickTimer = useRef(null);
   const mobileHomeTapTimer = useRef(null);
 
   // Polled from the shell itself, not the Notifications page — the whole
@@ -116,6 +117,7 @@ export default function Layout({ children, wide = false }) {
   }, []);
 
   useEffect(() => () => {
+    if (desktopHomeClickTimer.current) window.clearTimeout(desktopHomeClickTimer.current);
     if (mobileHomeTapTimer.current) window.clearTimeout(mobileHomeTapTimer.current);
   }, []);
 
@@ -124,14 +126,29 @@ export default function Layout({ children, wide = false }) {
     navigate('/login');
   }
 
-  // Home is a reliable reset point. Re-selecting it opens a new route entry
-  // so Feed clears any remembered filters and reloads the full Home mix.
-  function handleNavClick(event, to) {
-    if (to === HOME_FEED_PATH && location.pathname === '/') {
-      event.preventDefault();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      navigate(HOME_FEED_PATH, { replace: true, state: { refreshHomeAt: Date.now() } });
+  function navigateToDesktopHome({ showAll = false } = {}) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (showAll) {
+      navigate(HOME_FEED_PATH, { replace: location.pathname === '/', state: { refreshHomeAt: Date.now() } });
+      return;
     }
+    if (location.pathname !== '/') navigate('/');
+  }
+
+  // A desktop Home click returns to the top without replacing the member's
+  // selected feed. A quick second click deliberately opens the complete mix.
+  function handleDesktopHomeClick(event) {
+    event.preventDefault();
+    if (desktopHomeClickTimer.current) {
+      window.clearTimeout(desktopHomeClickTimer.current);
+      desktopHomeClickTimer.current = null;
+      navigateToDesktopHome({ showAll: true });
+      return;
+    }
+    desktopHomeClickTimer.current = window.setTimeout(() => {
+      desktopHomeClickTimer.current = null;
+      navigateToDesktopHome();
+    }, 250);
   }
 
   function navigateToMobileFeed(feed) {
@@ -191,7 +208,7 @@ export default function Layout({ children, wide = false }) {
     <div className="shell">
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={event => handleNavClick(event, HOME_FEED_PATH)} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleDesktopHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-logo-icon">UFI</div>
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
@@ -204,7 +221,7 @@ export default function Layout({ children, wide = false }) {
               end={icon === 'home'}
               aria-label={label}
               title={label}
-              onClick={event => handleNavClick(event, to)}
+              onClick={icon === 'home' ? handleDesktopHomeClick : undefined}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
@@ -349,7 +366,7 @@ export default function Layout({ children, wide = false }) {
             key={to}
             to={to}
             end={icon === 'home'}
-            onClick={icon === 'home' ? handleMobileHomeClick : event => handleNavClick(event, to)}
+            onClick={icon === 'home' ? handleMobileHomeClick : undefined}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon" style={{ position: 'relative' }}>
