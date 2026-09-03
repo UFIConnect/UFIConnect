@@ -1782,7 +1782,7 @@ export default function Feed({ forcedMode } = {}) {
   ), [profile?.roleSettings?.disabledSources]);
   const requestedHomeToolPanel = useMemo(() => {
     const panel = new URLSearchParams(routeLocation.search).get('panel');
-    return ['sources', 'accounts', 'skills', 'files'].includes(panel) ? panel : null;
+    return ['sources', 'accounts', 'messages', 'skills', 'files'].includes(panel) ? panel : null;
   }, [routeLocation.search]);
 
   const filterBtnRef  = useRef(null);

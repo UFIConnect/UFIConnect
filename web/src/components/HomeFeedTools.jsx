@@ -259,6 +259,11 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/connected-accounts')}>Manage accounts</button>
       </ToolPanel>
 
+      <ToolPanel title="Messages" summary="Conversations and inbox" open={openPanel === 'messages'} onToggle={() => toggle('messages')}>
+        <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Read your conversations or start a new message.</p>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => navigate('/messages')}>Open messages</button>
+      </ToolPanel>
+
       <ToolPanel title="Skills" summary={skills.length ? `${skills.length} saved` : 'Add your skills'} open={openPanel === 'skills'} onToggle={() => toggle('skills')}>
         {skills.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
           {skills.map(skill => <span key={skill} className="tag tag-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '.76rem' }}>

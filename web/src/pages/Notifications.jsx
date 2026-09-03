@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
@@ -19,7 +19,6 @@ function timeAgo(iso) {
 }
 
 export default function Notifications() {
-  const navigate = useNavigate();
   const { showToast } = useToast();
   const [items,      setItems]      = useState([]);
   const [loading,    setLoading]    = useState(true);
@@ -82,20 +81,13 @@ export default function Notifications() {
 
   return (
     <Layout>
-      <div className="page-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <div className="page-header">
         <div>
           <h1 className="page-title">Notifications</h1>
           <p className="page-subtitle">
             {items.length > 0 ? `${items.length} update${items.length > 1 ? 's' : ''}` : 'All caught up'}
           </p>
         </div>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={() => navigate('/messages')}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
-        >
-          Messages
-        </button>
       </div>
 
       {loading ? (
