@@ -30,7 +30,7 @@ const COMMUNITY_ICONS = {
   'ufi-wellness': 'WELL',
 };
 
-export default function Post() {
+export function UfiFeedContent({ embedded = false }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const textareaRef = useRef(null);
@@ -182,15 +182,17 @@ export default function Post() {
     }
   }
 
+  const ContentShell = embedded ? 'section' : Layout;
+
   return (
-    <Layout>
+    <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
       <div className="page-header">
         <h1 className="page-title">UFI</h1>
         <p className="page-subtitle">Write a post and see what the UFIconnect community is sharing.</p>
       </div>
 
       {/* ── Compose card ── */}
-      <div className="card" style={{ maxWidth: 640, marginBottom: 16 }}>
+      <div className="card" style={{ maxWidth: embedded ? 'none' : 640, marginBottom: 16 }}>
         {!composing ? (
           /* Collapsed — click to open */
           <div
@@ -323,7 +325,7 @@ export default function Post() {
       </div>
 
       {/* ── Community feed ── */}
-      <div style={{ maxWidth: 640 }}>
+      <div style={{ maxWidth: embedded ? 'none' : 640 }}>
         <PostList
           posts={feed}
           loading={feedLoading}
@@ -332,8 +334,13 @@ export default function Post() {
           emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
           currentUserId={profile?.id}
           onNearEnd={loadMoreFeed}
+          maxWidth={embedded ? 'none' : 640}
         />
       </div>
-    </Layout>
+    </ContentShell>
   );
+}
+
+export default function Post() {
+  return <UfiFeedContent />;
 }

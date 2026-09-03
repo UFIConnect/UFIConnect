@@ -192,8 +192,6 @@ function CreateGroupModal({ categories, onClose, onCreate }) {
 }
 
 export default function Groups() {
-  const navigate = useNavigate();
-
   return (
     <>
       <Helmet>
@@ -202,12 +200,12 @@ export default function Groups() {
         <meta name="keywords" content="professional communities, tech communities, developer groups, connect communities, networking groups, Discord communities, Reddit communities, LinkedIn groups, Facebook Groups, tech groups, engineering communities, design communities, startup communities, news communities, group networking, professional groups, career groups" />
         <link rel="canonical" href="https://uficonnect.org/groups" />
       </Helmet>
-      {GroupsContent()}
+      <GroupsContent />
     </>
   );
 }
 
-function GroupsContent() {
+export function GroupsContent({ embedded = false }) {
   const navigate = useNavigate();
   const [groups,      setGroups]      = useState([]);
   const [joined,      setJoined]      = useState(new Set());
@@ -322,8 +320,10 @@ function GroupsContent() {
       )
     : byFilter;
 
+  const ContentShell = embedded ? 'section' : Layout;
+
   return (
-    <Layout>
+    <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
       <div
         className="page-header"
         style={{
@@ -802,6 +802,6 @@ function GroupsContent() {
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
-    </Layout>
+    </ContentShell>
   );
 }

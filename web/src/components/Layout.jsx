@@ -36,7 +36,7 @@ function ShellIcon({ name, size = 20 }) {
 // shortLabel is used only in the mobile bottom-nav so longer destination
 // names stay readable. The desktop sidebar always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
-const MOBILE_FEED_OPTIONS = new Set(['feed', 'following', 'countries', 'restaurants']);
+const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 
 const NAV = [
   { to: HOME_FEED_PATH,  icon: 'home',           label: 'Home'         },
@@ -201,7 +201,6 @@ export default function Layout({ children, wide = false }) {
     ? profile.roleSettings.mobileSelectedFeed
     : 'feed';
   const isHomeFeedRoute = location.pathname === '/';
-  const mobileUsesSourceControls = !['countries', 'restaurants'].includes(mobileFeedMode);
   const mobileSourceIds = mobileFeedMode === 'following'
     ? FOLLOWING_FEED_SOURCE_IDS
     : HOME_FEED_SOURCE_IDS;
@@ -328,6 +327,10 @@ export default function Layout({ children, wide = false }) {
           collapse instead of filling the available viewport. */}
       {profile && mobileMenuOpen && (
         <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
+            <ShellIcon name="posts" size={18} />
+            UFI
+          </button>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'feed' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'feed'} onClick={() => selectMobileFeed('feed')}>
             <ShellIcon name="home" size={18} />
             All feed
@@ -336,6 +339,14 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="following" size={18} />
             Following
           </button>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
+            <ShellIcon name="groups" size={18} />
+            Groups
+          </button>
+          <NavLink to="/messages" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+            <ShellIcon name="messages" size={18} />
+            Messages
+          </NavLink>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
             <ShellIcon name="countries" size={18} />
             Travel
@@ -344,22 +355,8 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="restaurants" size={18} />
             Restaurants
           </button>
-          <NavLink to="/post" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="posts" size={18} />
-            UFI
-          </NavLink>
-          <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="groups" size={18} />
-            Groups
-          </NavLink>
-          <NavLink to="/messages" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="messages" size={18} />
-            Messages
-          </NavLink>
-          <div className="mobile-command-menu-label">Your tools</div>
           <HomeFeedTools
-            showSources={mobileUsesSourceControls}
-            showNavigationButtons={false}
+            showSources
             sourceIds={mobileSourceIds}
           />
           <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>

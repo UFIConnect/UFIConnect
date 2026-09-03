@@ -22,8 +22,12 @@ import { reportClientError } from '../api/errorReporting';
 import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
+import { UfiFeedContent } from './Post';
+import { GroupsContent } from './Groups';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
+const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
+const EMBEDDED_HOME_MODES = new Set(['ufi', 'groups']);
 
 // Utility: debounce function for search input
 function debounce(fn, delay) {
@@ -212,7 +216,8 @@ function loadFeedState(userId) {
     const raw = sessionStorage.getItem(key);
     if (!raw) return null;
     const s = JSON.parse(raw);
-    const viewMode = s.viewMode === 'local' ? 'countries' : ['following', 'countries', 'restaurants'].includes(s.viewMode) ? s.viewMode : 'feed';
+    const requestedMode = s.viewMode === 'local' ? 'countries' : s.viewMode;
+    const viewMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
       : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
@@ -1763,6 +1768,8 @@ export default function Feed({ forcedMode } = {}) {
   // A direct Home action must not restore the last saved mode or source
   // filters. It opens the member's full personalized Home mix instead.
   const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
+  const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
+  const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [searchInput,   setSearchInput]  = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
@@ -1771,7 +1778,7 @@ export default function Feed({ forcedMode } = {}) {
   const [filters, setFilters] = useState(_saved?.filters || DEFAULT_FILTERS);
   const [liveActive,    setLiveActive]    = useState(false);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
-  const [viewMode,      setViewMode]      = useState(forcedMode || _saved?.viewMode || 'feed');
+  const [viewMode,      setViewMode]      = useState(initialViewMode);
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const [locationSaving, setLocationSaving] = useState(false);
   const [locationMessage, setLocationMessage] = useState('');
@@ -1802,7 +1809,7 @@ export default function Feed({ forcedMode } = {}) {
   const loadingMoreRef = useRef(false);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
-  const viewModeRef   = useRef(forcedMode || _saved?.viewMode || 'feed');
+  const viewModeRef   = useRef(initialViewMode);
   const locationFiltersRef = useRef(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const searchRef     = useRef(_saved?.search || '');
   const postsRef      = useRef([]);
@@ -1859,6 +1866,19 @@ export default function Feed({ forcedMode } = {}) {
     const activeMode = requestedMode || viewModeRef.current;
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
+    if (EMBEDDED_HOME_MODES.has(activeMode)) {
+      // UFI and Groups keep their existing focused APIs and interaction
+      // components, but live inside Home. Invalidate any older feed request
+      // so it cannot overwrite the selected in-place view when it finishes.
+      feedRequestIdRef.current += 1;
+      setLoading(false);
+      setRefreshing(false);
+      setLoadingMore(false);
+      setLockedPlatform(null);
+      setFeedError(null);
+      setRemoteHasMore(false);
+      return;
+    }
     const requestedSources = ['feed', 'following'].includes(activeMode)
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
       : [];
@@ -2038,7 +2058,7 @@ export default function Feed({ forcedMode } = {}) {
     const nextFilters = saved?.filters || DEFAULT_FILTERS;
     const nextTabs = saved?.activeTabs || [];
     const nextSearch = saved?.search || '';
-    const nextMode = saved?.viewMode || 'feed';
+    const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
     const nextLocation = normalizeLocationFilters(profile.roleSettings?.feedLocation);
     filtersRef.current = nextFilters;
     activeTabsRef.current = nextTabs;
@@ -2054,7 +2074,7 @@ export default function Feed({ forcedMode } = {}) {
     setRemotePage(2);
     setRemoteHasMore(true);
     remoteCursorRef.current = null;
-  }, [profile?.id, profile?.roleSettings?.feedLocation]);
+  }, [forcedMode, profile?.id, profile?.roleSettings?.feedLocation, routeInitialMode]);
   useEffect(() => {
     loadStateRef.current = { loading, refreshing, loadingMore };
   }, [loading, refreshing, loadingMore]);
@@ -2080,7 +2100,7 @@ export default function Feed({ forcedMode } = {}) {
   // own version of it.
   const switchViewMode = useCallback((mode, { resetHome = false } = {}) => {
     const requestedMode = mode === 'local' ? 'countries' : mode;
-    const nextMode = ['following', 'countries', 'restaurants'].includes(requestedMode) ? requestedMode : 'feed';
+    const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
     const nextTabs = resetHome ? [] : (usesSources ? activeTabsRef.current : []);
     const nextFilters = resetHome
@@ -2147,7 +2167,7 @@ export default function Feed({ forcedMode } = {}) {
       return;
     }
     allHomeRouteKeyRef.current = null;
-    if (!['countries', 'restaurants', 'following', 'feed'].includes(requested) || requested === viewModeRef.current) return;
+    if (!HOME_VIEW_MODES.has(requested) || requested === viewModeRef.current) return;
     switchViewMode(requested);
   }, [forcedMode, routeLocation.key, routeLocation.search, switchViewMode]);
 
@@ -2702,6 +2722,12 @@ export default function Feed({ forcedMode } = {}) {
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
       <div className="home-feed-content">
+      {viewMode === 'ufi' ? (
+        <UfiFeedContent embedded />
+      ) : viewMode === 'groups' ? (
+        <GroupsContent embedded />
+      ) : (
+      <>
       <div className="page-header">
         <h1 className="page-title">
           {forcedMode ? 'You' : (firstName ? `Welcome back, ${firstName}` : 'Home')}
@@ -3282,35 +3308,46 @@ export default function Feed({ forcedMode } = {}) {
           onNearEnd={loadMoreRemote}
         />
       )}
+      </>
+      )}
       </div>
       {!forcedMode && (
         <aside className="home-feed-right-tabs" aria-label="Home feed controls">
           <div className="home-feed-view-tabs">
             {[
+              { key: 'ufi', label: 'UFI' },
+              { key: 'feed', label: 'All feed' },
               { key: 'following', label: 'Following' },
+            ].map(({ key, label }) => (
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key, { resetHome: key === 'feed' })}>{label}</button>
+            ))}
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => switchViewMode('groups')}>Groups</button>
+            <Link to="/messages" className="home-feed-rail-tab">
+              Messages
+            </Link>
+            {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
             ))}
-            <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
-              <span>
-                <span className="home-feed-command-center-title">Command Center</span>
-                <span className="home-feed-command-center-summary">
-                  {hasCommandCenterMembership
-                    ? 'Tools and automation'
-                    : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
-                </span>
-              </span>
-              <span className="home-feed-command-center-arrow" aria-hidden="true">&rarr;</span>
-            </Link>
           </div>
           <HomeFeedTools
-            showSources={usesSourceControls}
+            showSources
             sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
             activePanel={requestedHomeToolPanel}
             onActivePanelChange={setHomeToolPanel}
           />
+          <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
+            <span>
+              <span className="home-feed-command-center-title">Command Center</span>
+              <span className="home-feed-command-center-summary">
+                {hasCommandCenterMembership
+                  ? 'Tools and automation'
+                  : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
+              </span>
+            </span>
+          </Link>
         </aside>
       )}
       </div>

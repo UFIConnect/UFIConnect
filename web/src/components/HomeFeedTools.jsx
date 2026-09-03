@@ -51,7 +51,7 @@ function scoreStyle(score) {
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools({ showSources = true, showNavigationButtons = true, sourceIds = [], activePanel, onActivePanelChange }) {
+export default function HomeFeedTools({ showSources = true, sourceIds = [], activePanel, onActivePanelChange }) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -253,18 +253,6 @@ export default function HomeFeedTools({ showSources = true, showNavigationButton
         </div>
         <Link to="/sources" className="btn btn-ghost btn-sm" style={{ marginTop: 10, textDecoration: 'none', alignSelf: 'flex-start' }}>All source details</Link>
       </ToolPanel>}
-
-      {showNavigationButtons && <div className="home-feed-navigation-buttons">
-        <Link to="/post" className="home-feed-rail-tab home-feed-navigation-button">
-          <span>UFI</span><span aria-hidden="true">&rarr;</span>
-        </Link>
-        <Link to="/groups" className="home-feed-rail-tab home-feed-navigation-button">
-          <span>Groups</span><span aria-hidden="true">&rarr;</span>
-        </Link>
-        <Link to="/messages" className="home-feed-rail-tab home-feed-navigation-button">
-          <span>Messages</span><span aria-hidden="true">&rarr;</span>
-        </Link>
-      </div>}
 
       <ToolPanel title="Connected accounts" summary={connected.length ? `${connected.length} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <p style={{ margin: '0 0 12px', color: 'var(--muted)', fontSize: '.82rem', lineHeight: 1.5 }}>Connect the accounts that should shape your personal feed.</p>

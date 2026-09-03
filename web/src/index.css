@@ -302,6 +302,7 @@ input, textarea, select { font-family: inherit; }
 .home-feed-rail-tab.active { font-weight: 750; }
 .home-feed-command-center-link {
   min-height: 64px;
+  margin-top: 10px;
   justify-content: space-between;
   border-color: var(--primary);
   background: var(--primary);
@@ -326,18 +327,6 @@ input, textarea, select { font-family: inherit; }
   color: #E0E7FF;
   font-size: .74rem;
 }
-.home-feed-command-center-arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, .18);
-  color: #fff;
-  font-weight: 700;
-  flex: 0 0 auto;
-}
 .home-feed-side-tools {
   min-width: 0;
   display: flex;
@@ -345,18 +334,7 @@ input, textarea, select { font-family: inherit; }
   gap: 10px;
   position: static;
 }
-.home-feed-navigation-buttons {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.home-feed-navigation-button {
-  justify-content: space-between;
-}
-.home-feed-navigation-button > span:last-child {
-  color: currentColor;
-  font-weight: 750;
-}
+.home-embedded-feed { min-width: 0; }
 .home-feed-right-tabs .profile-panel,
 .home-feed-right-tabs .profile-panel-trigger,
 .home-feed-right-tabs .profile-panel-content {
@@ -2051,14 +2029,6 @@ input, textarea, select { font-family: inherit; }
   .mobile-command-menu-panel .profile-panel-summary { display: none; }
   .mobile-command-menu-panel .profile-panel-content { padding: 0 10px 10px; }
   .mobile-command-menu-panel .home-feed-source-panel .profile-panel-content { padding: 10px; }
-  .mobile-command-menu-label {
-    padding: 8px 10px 4px;
-    color: var(--muted);
-    font-size: .68rem;
-    font-weight: 750;
-    letter-spacing: 0;
-    text-transform: uppercase;
-  }
   .mobile-command-menu-item {
     display: flex;
     align-items: center;
