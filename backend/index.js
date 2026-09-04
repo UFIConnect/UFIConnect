@@ -8660,7 +8660,7 @@ const SORT_AGENT_INTERVAL_MS = envNumber('SORT_AGENT_INTERVAL_MS', 3 * 60 * 1000
 const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 30 * 60 * 1000);
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
 const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
-const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://uficonnect-api-708r.onrender.com';
+const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://api.uficonnect.org';
 const WEB_OPTIMIZER_LATENCY_TARGET_MS = envNumber('WEB_OPTIMIZER_LATENCY_TARGET_MS', 80, 20, 1000);
 const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
 const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
@@ -13941,7 +13941,7 @@ async function runDeployCheck() {
 }
 async function runDeployCheckAll() {
   const targets = [
-    { name: 'API',    url: 'https://uficonnect-api-708r.onrender.com/health' },
+    { name: 'API',    url: 'https://api.uficonnect.org/health' },
     { name: 'Web',    url: 'https://uficonnect.org' },
     { name: 'Office', url: 'https://office.uficonnect.org' },
   ];
@@ -24303,7 +24303,10 @@ const AUTOFIX_VERIFY_WINDOW_MS = envNumber('AUTOFIX_VERIFY_WINDOW_MS', 15 * 60 *
 // AUTOFIX_CHECK_INTERVAL_MS lives near the top of the file now, not here —
 // see that declaration's own comment for why.
 const AUTOFIX_GITHUB_OWNER = process.env.AUTOFIX_GITHUB_OWNER || 'yosufkaka99-alt';
-const AUTOFIX_GITHUB_REPO = process.env.AUTOFIX_GITHUB_REPO || 'UFConnect';
+const configuredAutofixRepo = process.env.AUTOFIX_GITHUB_REPO || 'UFIConnect';
+const AUTOFIX_GITHUB_REPO = configuredAutofixRepo.toLowerCase() === 'ufconnect'
+  ? 'UFIConnect'
+  : configuredAutofixRepo;
 // Sole v1-allowlisted file — the scope gate below rejects anything whose
 // source_file doesn't match this before a patch is even attempted.
 const AUTOFIX_TARGET_PATH = 'backend/index.js';
@@ -25704,7 +25707,7 @@ app.get('/office/versions', requireOfficeToken, (req, res) => {
   res.json({
     backend: { version: pkg.version, name: pkg.name, node: process.version },
     services: [
-      { name: 'Backend API',  slug: 'api',      url: 'https://uficonnect-api-708r.onrender.com',      domain: 'uficonnect-api-708r.onrender.com' },
+      { name: 'Backend API',  slug: 'api',      url: 'https://api.uficonnect.org',                    domain: 'api.uficonnect.org' },
       { name: 'Pipeline',     slug: 'pipeline', url: 'https://uficonnect-pipeline-708r.onrender.com', domain: 'uficonnect-pipeline-708r.onrender.com' },
       { name: 'Web Frontend', slug: 'web',      url: 'https://uficonnect.org',                        domain: 'uficonnect.org' },
       { name: 'Office',       slug: 'office',   url: 'https://office.uficonnect.org',                 domain: 'office.uficonnect.org' },

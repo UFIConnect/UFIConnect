@@ -340,7 +340,7 @@ services:
       - key: AUTOFIX_GITHUB_OWNER
         value: yosufkaka99-alt
       - key: AUTOFIX_GITHUB_REPO
-        value: UFConnect
+        value: UFIConnect
 
   # ── Pipeline (same codebase as uficonnect-api, SERVICE_ROLE=pipeline) ───
   # Does all real external-source fetching — the ~30 continuous background

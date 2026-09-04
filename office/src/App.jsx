@@ -1056,9 +1056,9 @@ function VersionsView({ versions, status, pipelineStatus }) {
   };
   const repos = [
     {
-      name: 'UFconnect Monorepo',
+      name: 'UFIConnect Monorepo',
       desc: 'Backend (Node.js) · Web (React) · Mobile (Expo) · Office (React)',
-      url: 'https://github.com/yosufkaka99-alt/UFConnect',
+      url: 'https://github.com/yosufkaka99-alt/UFIConnect',
       icon: 'PKG',
     },
   ];
@@ -2822,7 +2822,7 @@ function TopicsView() {
         <div>
           <h1 style={H1}>Topics</h1>
           <p style={SUBTITLE}>
-            All {topics.length} topics UFconnect fetches for, live from the database — how many posts each actually
+            All {topics.length} topics UFIConnect fetches for, live from the database — how many posts each actually
             has, and exactly which platforms filled it. Real totals, not the capped in-memory pool.
           </p>
         </div>
@@ -3167,7 +3167,7 @@ export default function App() {
         <aside style={asideStyle}>
           <div style={{ padding: isMobile ? '16px 14px 12px' : '26px 20px 18px' }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: '#fff', letterSpacing: -0.5 }}>
-              UFconnect
+              UFIConnect
             </div>
             <div style={{ fontSize: 10, color: '#334155', marginTop: 2, textTransform: 'uppercase', letterSpacing: 1.2 }}>
               Operations Office
