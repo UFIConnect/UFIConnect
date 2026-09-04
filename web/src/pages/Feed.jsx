@@ -441,6 +441,9 @@ function loadFeedState(userId) {
     filters.sources = Array.isArray(filters.sources)
       ? filters.sources.filter(source => allowedSourceIds.includes(source))
       : [];
+    filters.topics = Array.isArray(filters.topics)
+      ? filters.topics.filter(topic => ALL_INTERESTS.includes(topic))
+      : [];
     if (activeTabs.length) filters.sources = [];
     return {
       filters,
@@ -546,8 +549,108 @@ function PostCardSkeleton() {
 }
 
 
+function TopicChoices({ selectedTopics = [], onToggle, search = '' }) {
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleTopics = normalizedSearch
+    ? ALL_INTERESTS.filter(topic => topic.toLowerCase().includes(normalizedSearch))
+    : ALL_INTERESTS;
+
+  if (visibleTopics.length === 0) {
+    return <div className="feed-topic-filter-empty">No matching topics</div>;
+  }
+
+  return (
+    <div className="feed-topic-filter-options" role="group" aria-label="Topics">
+      {visibleTopics.map(topic => {
+        const active = selectedTopics.includes(topic);
+        return (
+          <button
+            key={topic}
+            type="button"
+            className={`feed-topic-filter-option${active ? ' active' : ''}`}
+            aria-pressed={active}
+            onClick={() => onToggle(topic)}
+          >
+            {topic}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TopicFilterControl({ topics = [], onChange, open, onToggle, buttonRef, panelRef }) {
+  const activeTopics = Array.isArray(topics) ? topics : [];
+  const [draftTopics, setDraftTopics] = useState(activeTopics);
+  const [topicSearch, setTopicSearch] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setDraftTopics(Array.isArray(topics) ? topics : []);
+    setTopicSearch('');
+  }, [open, topics]);
+
+  function toggleTopic(topic) {
+    setDraftTopics(current => current.includes(topic)
+      ? current.filter(item => item !== topic)
+      : [...current, topic]);
+  }
+
+  function applyTopics() {
+    onChange(draftTopics);
+    onToggle(false);
+  }
+
+  return (
+    <div className="feed-topic-filter">
+      <button
+        ref={buttonRef}
+        type="button"
+        className={`feed-toolbar-control feed-topic-filter-trigger${open || activeTopics.length ? ' active' : ''}`}
+        aria-label="Filter feed by topic"
+        aria-expanded={open}
+        onClick={() => onToggle(!open)}
+      >
+        Topics{activeTopics.length ? ` (${activeTopics.length})` : ''}
+      </button>
+      {open && (
+        <div ref={panelRef} className="feed-topic-filter-popover">
+          <div className="feed-topic-filter-actions">
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              disabled={draftTopics.length === 0}
+              onClick={() => setDraftTopics([])}
+            >
+              Clear
+            </button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={applyTopics}>
+              Apply topics
+            </button>
+          </div>
+          <label className="feed-topic-filter-search">
+            <input
+              type="search"
+              className="form-input"
+              aria-label="Search topics"
+              value={topicSearch}
+              placeholder="Search topics"
+              autoFocus
+              onChange={event => setTopicSearch(event.target.value)}
+            />
+          </label>
+          <div className="feed-topic-filter-count" aria-live="polite">
+            {draftTopics.length ? `${draftTopics.length} selected` : 'All topics'}
+          </div>
+          <TopicChoices selectedTopics={draftTopics} onToggle={toggleTopic} search={topicSearch} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Filter panel dropdown */
-function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
+function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTopics = true }) {
   const [local, setLocal] = useState({ ...filters });
 
   useEffect(() => {
@@ -567,7 +670,10 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
   }
 
   function reset() {
-    const cleared = { ...DEFAULT_FILTERS };
+    const cleared = {
+      ...DEFAULT_FILTERS,
+      topics: includeTopics ? [] : filters.topics,
+    };
     setLocal(cleared);
     onChange(cleared);
     onClose();
@@ -627,7 +733,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
       </div>
 
       {/* Sources */}
-      <div style={{ marginBottom: 18 }}>
+      {sources.length > 0 && <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
           Sources {local.sources.length > 0 && `(${local.sources.length} selected)`}
         </div>
@@ -654,7 +760,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
             );
           })}
         </div>
-      </div>
+      </div>}
 
       {/* Topic — multi-select (a post matches if its topic is ANY of the
           ones picked here), reusing the exact same interest vocabulary
@@ -669,30 +775,18 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef }) {
           panel's single outer scroll instead doesn't block reaching
           anything — Reset/Apply filters are pinned to the top of the
           panel now, not down here. */}
-      <div style={{ marginBottom: 18 }}>
+      {includeTopics && <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: '.72rem', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 8 }}>
           Topic {local.topics.length > 0 && `(${local.topics.length} selected)`}
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-          {ALL_INTERESTS.map(topic => {
-            const active = local.topics.includes(topic);
-            return (
-              <button
-                key={topic}
-                onClick={() => setLocal(f => ({ ...f, topics: f.topics.includes(topic) ? f.topics.filter(t => t !== topic) : [...f.topics, topic] }))}
-                style={{
-                  padding: '4px 10px', borderRadius: 16, fontSize: '.73rem', fontWeight: 600,
-                  border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-                  background: active ? 'var(--primary)' : 'var(--surface)',
-                  color: active ? '#fff' : 'var(--muted)', cursor: 'pointer',
-                }}
-              >
-                {topic}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+        <TopicChoices
+          selectedTopics={local.topics}
+          onToggle={topic => setLocal(f => ({
+            ...f,
+            topics: f.topics.includes(topic) ? f.topics.filter(item => item !== topic) : [...f.topics, topic],
+          }))}
+        />
+      </div>}
     </div>
   );
 }
@@ -2050,12 +2144,17 @@ export default function Feed({ forcedMode } = {}) {
   const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
   const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
   const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
+  const initialFilters = ['feed', 'following'].includes(initialViewMode)
+    ? {
+        ...DEFAULT_FILTERS,
+        topics: Array.isArray(_saved?.filters?.topics) ? _saved.filters.topics : [],
+      }
+    : { ...DEFAULT_FILTERS, ...(_saved?.filters || {}), sort: 'newest' };
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
+  const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
-  const [filters, setFilters] = useState(
-    ['feed', 'following'].includes(initialViewMode) ? DEFAULT_FILTERS : (_saved?.filters || DEFAULT_FILTERS)
-  );
+  const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
   const [viewMode,      setViewMode]      = useState(initialViewMode);
   const [locationFilters, setLocationFilters] = useState(() => normalizeLocationFilters(profile?.roleSettings?.feedLocation));
@@ -2073,6 +2172,8 @@ export default function Feed({ forcedMode } = {}) {
 
   const filterBtnRef  = useRef(null);
   const panelRef      = useRef(null);
+  const topicFilterBtnRef = useRef(null);
+  const topicPanelRef = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
@@ -2087,7 +2188,7 @@ export default function Feed({ forcedMode } = {}) {
   // all start their own fetch. A ref updates immediately, in the same tick.
   const loadingMoreRef = useRef(false);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
-  const filtersRef    = useRef(_saved?.filters || DEFAULT_FILTERS);
+  const filtersRef    = useRef(initialFilters);
   const viewModeRef   = useRef(initialViewMode);
   const locationFiltersRef = useRef(normalizeLocationFilters(profile?.roleSettings?.feedLocation));
   const searchRef     = useRef(_saved?.search || '');
@@ -2319,8 +2420,9 @@ export default function Feed({ forcedMode } = {}) {
     activeMemberIdRef.current = profile.id;
     const saved = loadFeedState(profile.id);
     const nextMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : saved?.viewMode || 'feed');
+    const savedTopics = Array.isArray(saved?.filters?.topics) ? saved.filters.topics : [];
     const nextFilters = ['feed', 'following'].includes(nextMode)
-      ? { ...DEFAULT_FILTERS }
+      ? { ...DEFAULT_FILTERS, topics: savedTopics }
       : { ...DEFAULT_FILTERS, ...(saved?.filters || {}), sort: 'newest' };
     const nextTabs = saved?.activeTabs || [];
     const nextSearch = saved?.search || '';
@@ -2367,8 +2469,9 @@ export default function Feed({ forcedMode } = {}) {
     const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
     const nextTabs = resetHome ? [] : (usesSources ? activeTabsRef.current : []);
+    const currentTopics = Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
     const nextFilters = usesSources
-      ? { ...DEFAULT_FILTERS }
+      ? { ...DEFAULT_FILTERS, topics: currentTopics }
       : { ...filtersRef.current, sources: [] };
     const nextSearch = resetHome ? '' : searchRef.current;
     viewModeRef.current = nextMode;
@@ -2381,6 +2484,8 @@ export default function Feed({ forcedMode } = {}) {
     setViewMode(nextMode);
     setActiveTabs(nextTabs);
     setFilters(nextFilters);
+    setFilterOpen(false);
+    setTopicFilterOpen(false);
     setRemotePage(2);
     setRemoteHasMore(true);
     if (nextMode !== 'countries') setTravelLiveFeeds([]);
@@ -2449,6 +2554,13 @@ export default function Feed({ forcedMode } = {}) {
       replace: true,
     });
   }, [loadFeed]);
+
+  const applyTopicFilters = useCallback((topics) => {
+    applyFilters({
+      ...filtersRef.current,
+      topics: Array.isArray(topics) ? topics : [],
+    });
+  }, [applyFilters]);
 
 
   const clearFeedControls = useCallback(() => {
@@ -2914,7 +3026,7 @@ export default function Feed({ forcedMode } = {}) {
     return () => obs.disconnect();
   }, [loadMoreRemote, loading, processed.length]);
 
-  // Close filter panel and source picker on outside click
+  // Close either feed-filter popover on an outside click.
   useEffect(() => {
     function handleClick(e) {
       if (
@@ -2922,10 +3034,15 @@ export default function Feed({ forcedMode } = {}) {
         panelRef.current && !panelRef.current.contains(e.target) &&
         filterBtnRef.current && !filterBtnRef.current.contains(e.target)
       ) setFilterOpen(false);
+      if (
+        topicFilterOpen &&
+        topicPanelRef.current && !topicPanelRef.current.contains(e.target) &&
+        topicFilterBtnRef.current && !topicFilterBtnRef.current.contains(e.target)
+      ) setTopicFilterOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [filterOpen]);
+  }, [filterOpen, topicFilterOpen]);
 
   // Compute active source list from actual posts
   const activeSources = useMemo(
@@ -2974,6 +3091,9 @@ export default function Feed({ forcedMode } = {}) {
   const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
+    + (filters.timeRange !== 'all' ? 1 : 0)
+    + (isLocationFeed ? 0 : filters.topics.length);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
 
   return (
@@ -2999,31 +3119,50 @@ export default function Feed({ forcedMode } = {}) {
           </div>
         )}
 
-        <div className="feed-specialized-filter">
-          <button
-            ref={filterBtnRef}
-            className="feed-toolbar-control"
-            aria-label="Open filter panel"
-            aria-expanded={filterOpen}
-            onClick={() => setFilterOpen(o => !o)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              padding: '9px 14px', borderRadius: 22, border: `1.5px solid ${filterOpen || activeFilterCount > 0 ? 'var(--primary)' : 'var(--border)'}`,
-              background: activeFilterCount > 0 ? 'var(--primary)' : 'var(--surface)',
-              color: activeFilterCount > 0 ? '#fff' : 'var(--text)',
-              cursor: 'pointer', fontWeight: 600, fontSize: '.875rem', whiteSpace: 'nowrap',
-            }}
-          >
-            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''} {filterOpen ? 'Hide' : 'Show'}
-          </button>
+        <div className="feed-specialized-actions">
+          <div className="feed-specialized-filter">
+            <button
+              ref={filterBtnRef}
+              className="feed-toolbar-control"
+              aria-label="Open filter panel"
+              aria-expanded={filterOpen}
+              onClick={() => {
+                setTopicFilterOpen(false);
+                setFilterOpen(open => !open);
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '9px 14px', borderRadius: 22, border: `1.5px solid ${filterOpen || advancedFilterCount > 0 ? 'var(--primary)' : 'var(--border)'}`,
+                background: advancedFilterCount > 0 ? 'var(--primary)' : 'var(--surface)',
+                color: advancedFilterCount > 0 ? '#fff' : 'var(--text)',
+                cursor: 'pointer', fontWeight: 600, fontSize: '.875rem', whiteSpace: 'nowrap',
+              }}
+            >
+              Filter{advancedFilterCount > 0 ? ` (${advancedFilterCount})` : ''} {filterOpen ? 'Hide' : 'Show'}
+            </button>
 
-          {filterOpen && (
-            <FilterPanel
-              filters={filters}
-              onChange={applyFilters}
-              sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : viewMode === 'feed' ? ALL_FILTER_SOURCES : []}
-              onClose={() => setFilterOpen(false)}
-              panelRef={panelRef}
+            {filterOpen && (
+              <FilterPanel
+                filters={filters}
+                onChange={applyFilters}
+                sources={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : viewMode === 'feed' ? ALL_FILTER_SOURCES : []}
+                onClose={() => setFilterOpen(false)}
+                panelRef={panelRef}
+                includeTopics={!isLocationFeed}
+              />
+            )}
+          </div>
+          {isLocationFeed && (
+            <TopicFilterControl
+              topics={filters.topics}
+              onChange={applyTopicFilters}
+              open={topicFilterOpen}
+              onToggle={(open) => {
+                setFilterOpen(false);
+                setTopicFilterOpen(open);
+              }}
+              buttonRef={topicFilterBtnRef}
+              panelRef={topicPanelRef}
             />
           )}
         </div>
@@ -3084,35 +3223,46 @@ export default function Feed({ forcedMode } = {}) {
       {/* Source tabs — Feed and Following each filter over their own
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
           list of sources can appear in the other view. */}
-      {usesSourceControls && (<div style={{
-        display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 14,
-        paddingBottom: 4, scrollbarWidth: 'none',
-        WebkitOverflowScrolling: 'touch', msOverflowStyle: 'none',
-      }}>
-        {(viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS).map(tab => {
-          const meta  = SOURCE_META[tab.key];
-          const color = meta?.color || 'var(--primary)';
-          const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
-          const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
-          return (
-            <button
-              key={tab.key}
-              onClick={() => toggleTab(tab.key)}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-                border: `1.5px solid ${active ? activeColor : 'var(--border)'}`,
-                background: active ? activeColor : 'var(--surface)',
-                color: active ? '#fff' : 'var(--text)',
-                fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-              }}
-            >
-              {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>)}
+      {usesSourceControls && (
+        <div className="feed-source-filter-row">
+          <div className="feed-source-tabs" aria-label={`${viewMode === 'following' ? 'Following' : 'All feed'} sources`}>
+            {(viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS).map(tab => {
+              const meta  = SOURCE_META[tab.key];
+              const color = meta?.color || 'var(--primary)';
+              const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
+              const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => toggleTab(tab.key)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
+                    padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
+                    border: `1.5px solid ${active ? activeColor : 'var(--border)'}`,
+                    background: active ? activeColor : 'var(--surface)',
+                    color: active ? '#fff' : 'var(--text)',
+                    fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
+                  }}
+                >
+                  {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
+          <TopicFilterControl
+            topics={filters.topics}
+            onChange={applyTopicFilters}
+            open={topicFilterOpen}
+            onToggle={(open) => {
+              setFilterOpen(false);
+              setTopicFilterOpen(open);
+            }}
+            buttonRef={topicFilterBtnRef}
+            panelRef={topicPanelRef}
+          />
+        </div>
+      )}
 
       {((usesSourceControls && activeTabs.length > 0) || activeFilterCount > 0) && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
