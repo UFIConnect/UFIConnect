@@ -1,4 +1,4 @@
-# UFconnect
+# UFIconnect
 
 A starter workspace for an ad-free professional networking app that connects groups and people.
 
