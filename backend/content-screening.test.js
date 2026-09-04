@@ -57,14 +57,21 @@ test('requires a publisher link for imported posts', () => {
 });
 
 test('blocks account-marketplace spam found in otherwise real source feeds', () => {
-  const result = screenImportedFeedPost({
-    id: 'spam-1', source: 'devto',
-    title: 'Top trusted websites to buy verified Wise accounts',
-    content: 'A list of sellers and account packages.',
-    sourceUrl: 'https://example.com/spam',
-  });
-  assert.equal(result.allowed, false);
-  assert.equal(result.reason, 'spam_or_solicitation');
+  const titles = [
+    'Top trusted websites to buy verified Wise accounts',
+    'Buying Verified Telegram Accounts: How Businesses Can Save Time',
+    '12 Best Sites For Buying Aged Gmail Accounts Safely',
+    'Top 10 Place Guide to Buy Old Twitter Accounts',
+  ];
+  for (const [index, title] of titles.entries()) {
+    const result = screenImportedFeedPost({
+      id: `spam-${index + 1}`, source: 'devto', title,
+      content: 'A list of sellers and account packages.',
+      sourceUrl: `https://example.com/spam-${index + 1}`,
+    });
+    assert.equal(result.allowed, false, title);
+    assert.equal(result.reason, 'spam_or_solicitation', title);
+  }
 });
 
 test('blocks placeholder, malformed-link, and future-dated imports', () => {

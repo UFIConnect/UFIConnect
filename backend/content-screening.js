@@ -14,6 +14,8 @@ const SCAM_PATTERNS = [
   /\b(?:guaranteed|risk[- ]?free)\b.{0,72}\b(?:profit|return|income)\b/i,
   /\b(?:send|deposit)\b.{0,72}\b(?:bitcoin|crypto|usdt|ethereum)\b/i,
   /\b(?:dm|message|contact)\s+(?:me|us)\b.{0,96}\b(?:whatsapp|telegram)\b/i,
+  /\b(?:buy|buying|purchase|purchasing|sell|selling|rent|renting)\b.{0,120}\baccounts?\b/i,
+  /\baccounts?\b.{0,120}\b(?:for sale|seller|buy|buying|purchase|purchasing|rent|renting)\b/i,
   /\b(?:buy|purchase|rent)\b.{0,96}\b(?:verified|aged|stealth)\b.{0,64}\baccounts?\b/i,
   /\b(?:verified|aged|stealth)\b.{0,64}\baccounts?\b.{0,96}\b(?:for sale|seller|buy|purchase)\b/i,
   /\b(?:buy|purchase)\b.{0,96}\b(?:bank|wise|paypal|cash\s*app|stripe|social media)\b.{0,64}\baccounts?\b/i,
