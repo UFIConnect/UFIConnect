@@ -3323,7 +3323,7 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={mainStyle}>
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
-          {view === 'decisions' && <DecisionFoundry apiBase={API} request={officeFetch} />}
+          {view === 'decisions' && <DecisionFoundry apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}

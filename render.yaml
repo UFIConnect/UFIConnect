@@ -340,6 +340,10 @@ services:
       # do not reuse GITHUB_TOKEN above, which stays read-only.
       - key: AUTOFIX_GITHUB_TOKEN
         sync: false
+      # Dedicated Decision Foundry token for reviewed frontend commits and
+      # mobile workflow dispatches. Contents + Actions write on this repo only.
+      - key: OFFICE_GITHUB_TOKEN
+        sync: false
       - key: AUTOFIX_GITHUB_OWNER
         value: yosufkaka99-alt
       - key: AUTOFIX_GITHUB_REPO

@@ -39,6 +39,12 @@ const {
   normalizeOfficeWorkspaceKey,
   validateOfficeWorkspacePayload,
 } = require('./office-workspace');
+const {
+  buildOfficeControlCatalog,
+  findOfficeControl,
+  normalizeOfficeFrontendPath,
+  validateOfficeControlExecution,
+} = require('./office-controls');
 
 dotenv.config();
 
@@ -17564,6 +17570,29 @@ async function migrateDB() {
       )
     `);
 
+    // Durable audit trail for every allowlisted Decision Foundry command.
+    // The action catalog never accepts shell input, and these rows preserve
+    // who/what decision authorized a public change across deploys.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS office_control_runs (
+        id             TEXT PRIMARY KEY,
+        control_id     TEXT NOT NULL,
+        control_label  TEXT NOT NULL,
+        category       TEXT NOT NULL,
+        target_role    TEXT NOT NULL,
+        decision_id    TEXT NOT NULL,
+        decision_title TEXT,
+        status         TEXT NOT NULL,
+        result         JSONB DEFAULT '{}',
+        error          TEXT,
+        started_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at    TIMESTAMPTZ,
+        duration_ms    INTEGER
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS ocr_started_idx ON office_control_runs(started_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS ocr_decision_idx ON office_control_runs(decision_id, started_at DESC)`);
+
     const { rows } = await db.query('SELECT COUNT(*) FROM users');
     console.log(`? DB migration applied - ${rows[0].count} registered user(s) in DB`);
   } catch (err) { console.warn('DB migration error:', err.message); }
@@ -24613,7 +24642,7 @@ function autofixDenylistHit(text) {
   return AUTOFIX_DENYLIST.find(term => text.includes(term)) || null;
 }
 
-function githubApiRequest(pathAndQuery, method, body) {
+function githubApiRequest(pathAndQuery, method, body, token = process.env.AUTOFIX_GITHUB_TOKEN) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
     const request = https.request({
@@ -24621,7 +24650,7 @@ function githubApiRequest(pathAndQuery, method, body) {
       path: pathAndQuery,
       method,
       headers: {
-        'Authorization': `Bearer ${process.env.AUTOFIX_GITHUB_TOKEN}`,
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         'Accept': 'application/vnd.github+json',
         'User-Agent': 'UFIconnect-Autofix/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
@@ -24644,10 +24673,12 @@ function githubApiRequest(pathAndQuery, method, body) {
   });
 }
 
-async function getGitHubFileContent(filePath) {
+async function getGitHubFileContent(filePath, token = process.env.AUTOFIX_GITHUB_TOKEN) {
   const { statusCode, data } = await githubApiRequest(
     `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/contents/${encodeURIComponent(filePath)}?ref=main`,
-    'GET'
+    'GET',
+    null,
+    token,
   );
   if (statusCode !== 200 || !data?.content) throw new Error(`GitHub GET ${filePath} failed: HTTP ${statusCode}`);
   return { content: Buffer.from(data.content, 'base64').toString('utf8'), sha: data.sha };
@@ -24659,11 +24690,12 @@ async function getGitHubFileContent(filePath) {
 // token (AUTOFIX_GITHUB_TOKEN) from the existing read-only GITHUB_TOKEN
 // used elsewhere in this file, scoped to contents:write on this one repo
 // only, so the broader read-only integration never gains write power.
-async function commitFileToGitHub(filePath, newContent, message, expectedSha) {
+async function commitFileToGitHub(filePath, newContent, message, expectedSha, token = process.env.AUTOFIX_GITHUB_TOKEN) {
   const { statusCode, data } = await githubApiRequest(
     `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/contents/${encodeURIComponent(filePath)}`,
     'PUT',
-    { message, content: Buffer.from(newContent, 'utf8').toString('base64'), sha: expectedSha, branch: 'main' }
+    { message, content: Buffer.from(newContent, 'utf8').toString('base64'), sha: expectedSha, branch: 'main' },
+    token,
   );
   if (statusCode < 200 || statusCode >= 300) throw new Error(`GitHub PUT ${filePath} failed: HTTP ${statusCode} ${JSON.stringify(data).slice(0, 300)}`);
   return { newSha: data.content?.sha, commitSha: data.commit?.sha };
@@ -25974,6 +26006,369 @@ app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   } catch (e) {
     logAgentAction('deploy', 'FAIL', `Deploy "${service}" failed: ${e.message}`, '#F87171');
     return res.status(502).json({ ok: false, service, msg: e.message });
+  }
+});
+
+// --- Decision Foundry public control plane ---------------------------------
+// The Foundry can execute only this catalog. It never accepts a shell command,
+// URL, function name, or arbitrary backend path from the browser.
+const OFFICE_FRONTEND_MAX_BYTES = 400 * 1024;
+
+function officeGithubToken() {
+  return process.env.OFFICE_GITHUB_TOKEN || process.env.AUTOFIX_GITHUB_TOKEN || '';
+}
+
+function officeControlSourceList() {
+  const ids = [...new Set([...Object.keys(SOURCE_CONFIG), ...JOB_LISTING_SOURCES, 'remotive', 'muse'])].sort();
+  return ids.map((id) => ({
+    id,
+    label: String(AGENT_DEFS[id]?.name || id).replace(/\s+Agent$/i, ''),
+  }));
+}
+
+function officeControlCatalog() {
+  const githubConfigured = Boolean(officeGithubToken());
+  return buildOfficeControlCatalog(officeControlSourceList()).map((control) => {
+    const needsGithub = control.input === 'frontend-file' || control.id === 'deploy.mobile';
+    const renderService = control.id.startsWith('deploy.') && control.id !== 'deploy.mobile'
+      ? control.id.slice('deploy.'.length)
+      : null;
+    const renderConfigured = !renderService || Boolean(
+      process.env[`RENDER_HOOK_${renderService.toUpperCase()}`]
+      || (process.env.RENDER_API_KEY && process.env[`RENDER_SERVICE_${renderService.toUpperCase()}_ID`])
+    );
+    const available = (!needsGithub || githubConfigured) && renderConfigured;
+    return {
+      ...control,
+      available,
+      unavailableReason: needsGithub && !githubConfigured
+        ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
+        : !renderConfigured
+          ? `Set RENDER_HOOK_${renderService.toUpperCase()} or the Render API key and service ID.`
+          : null,
+    };
+  });
+}
+
+function frontendTargetForControl(control) {
+  return control?.id === 'commit.web-frontend'
+    ? 'web'
+    : control?.id === 'commit.mobile-frontend'
+      ? 'mobile'
+      : null;
+}
+
+async function readDecisionFoundryRecord(decisionId) {
+  if (!db.isConnected()) return null;
+  const { rows } = await db.query(
+    'SELECT payload FROM office_workspace_state WHERE workspace_key = $1',
+    ['decision-foundry'],
+  );
+  const decisions = rows[0]?.payload?.decisions;
+  return Array.isArray(decisions)
+    ? decisions.find((decision) => decision?.id === decisionId) || null
+    : null;
+}
+
+async function createOfficeControlRun(control, execution, id, startedAt) {
+  await db.query(
+    `INSERT INTO office_control_runs
+       (id, control_id, control_label, category, target_role, decision_id,
+        decision_title, status, result, started_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'running','{}'::jsonb,$8)`,
+    [id, control.id, control.label, control.category, SERVICE_ROLE,
+      execution.decisionId, execution.decisionTitle, startedAt],
+  );
+}
+
+async function finishOfficeControlRun(id, status, result, error, startedAt) {
+  const finishedAt = new Date();
+  await db.query(
+    `UPDATE office_control_runs
+     SET status=$2, result=$3::jsonb, error=$4, finished_at=$5, duration_ms=$6
+     WHERE id=$1`,
+    [id, status, JSON.stringify(result || {}), error || null, finishedAt,
+      Math.max(0, finishedAt.getTime() - startedAt.getTime())],
+  );
+}
+
+async function executeFrontendControl(control, body) {
+  const target = frontendTargetForControl(control);
+  const filePath = normalizeOfficeFrontendPath(target, body?.filePath);
+  if (!filePath) throw new Error(`Choose an existing ${target} frontend source file.`);
+  const content = typeof body?.content === 'string' ? body.content : '';
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (!content || bytes > OFFICE_FRONTEND_MAX_BYTES) {
+    throw new Error(`Frontend content must be between 1 and ${OFFICE_FRONTEND_MAX_BYTES} bytes.`);
+  }
+  const expectedSha = String(body?.expectedSha || '').trim();
+  if (!/^[a-f0-9]{40}$/i.test(expectedSha)) throw new Error('Reload the current GitHub file before committing.');
+  const requestedMessage = String(body?.commitMessage || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  if (requestedMessage.length < 6) throw new Error('Enter a specific commit message.');
+  if (/(?:OFFICE_TOKEN|DATABASE_URL|STRIPE_SECRET_KEY|AUTOFIX_GITHUB_TOKEN)\s*[:=]/i.test(content)) {
+    throw new Error('Potential server secret assignment detected in frontend content.');
+  }
+
+  const token = officeGithubToken();
+  if (!token) throw new Error('OFFICE_GITHUB_TOKEN is not configured.');
+  const current = await getGitHubFileContent(filePath, token);
+  if (current.sha !== expectedSha) throw new Error('The file changed on GitHub. Reload it before committing.');
+  if (current.content === content) throw new Error('There are no file changes to commit.');
+
+  const commit = await commitFileToGitHub(
+    filePath,
+    content,
+    `office(${target}): ${requestedMessage}`,
+    expectedSha,
+    token,
+  );
+  return { target, filePath, commitSha: commit.commitSha, contentSha: commit.newSha, bytes };
+}
+
+async function executeMobileBuild() {
+  const token = officeGithubToken();
+  if (!token) throw new Error('OFFICE_GITHUB_TOKEN is not configured.');
+  const result = await githubApiRequest(
+    `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/actions/workflows/mobile-release.yml/dispatches`,
+    'POST',
+    { ref: 'main', inputs: { platform: 'all', profile: 'production' } },
+    token,
+  );
+  if (result.statusCode !== 204) {
+    throw new Error(`Mobile build dispatch failed: HTTP ${result.statusCode}`);
+  }
+  return { workflow: 'mobile-release.yml', ref: 'main', platform: 'all', profile: 'production' };
+}
+
+async function executeOfficeDecisionControl(control, body) {
+  if (control.input === 'frontend-file') return executeFrontendControl(control, body);
+  if (control.id.startsWith('source.refresh.')) {
+    const sourceId = control.sourceId;
+    if (!SOURCE_FETCHERS[sourceId]) throw new Error(`Source worker ${sourceId} is not available on this service.`);
+    enqueueSourceRefresh([sourceId], 'decision-foundry source refresh');
+    return { queuedSources: [sourceId], pending: sourceRefreshQueue.pendingIds.size };
+  }
+
+  switch (control.id) {
+    case 'feed.refresh-all': {
+      const ids = Object.keys(SOURCE_FETCHERS);
+      enqueueSourceRefresh(ids, 'decision-foundry full refresh');
+      return { queuedSources: ids.length, pending: sourceRefreshQueue.pendingIds.size };
+    }
+    case 'feed.transfer-staging':
+      await transferStagedPosts({ reason: 'decision-foundry' });
+      return { saved: stagingTransferState.lastSavedCount, pending: stagingPostCount, error: stagingTransferState.lastError };
+    case 'feed.equalize': {
+      const before = equalizerPendingTotal();
+      runEqualizerDrain();
+      return { pendingBefore: before, pendingAfter: equalizerPendingTotal(), acceptedTotal: equalizerState.totalAccepted };
+    }
+    case 'feed.sync-cache':
+      runCacheHelperCheck();
+      return { hotPosts: globalFeedCache.posts.length, sourceCaches: agentSourceCache.size };
+    case 'feed.sort-newest':
+      runSortAgentCheck();
+      return { hotPosts: globalFeedCache.posts.length, lastRun: sortAgentState.lastRun };
+    case 'feed.rebalance-sources':
+      await runSortDistribCheck();
+      return { diversified: sortDistribState.lastDiversified, emptySources: sortDistribState.lastEmptySources };
+    case 'feed.optimize-sources':
+      await runFeedOptimizer();
+      return { totalSources: workerHealth.size, pendingRefreshes: sourceRefreshQueue.pendingIds.size };
+    case 'feed.audit-topics':
+      runTopicAuditCheck();
+      return { checked: topicAuditState.lastChecked, mismatches: topicAuditState.lastMismatches, queued: topicMismatchQueue.length };
+    case 'feed.apply-topic-fixes':
+      await runTopicFixCheck();
+      return { fixed: topicFixState.lastFixed, remaining: topicMismatchQueue.length, error: topicFixState.lastError };
+    case 'feed.audit-mix':
+      await runMixOptimizerCheck();
+      return { checkedPools: mixOptimizerState.lastCheckedPools, issues: mixOptimizerState.lastIssues };
+    case 'feed.audit-sorting':
+      runSortOptimizerCheck();
+      return { sampleSize: sortOptimizerState.lastSampleSize, variance: sortOptimizerState.lastVariance };
+    case 'location.refresh': {
+      const cleared = locationLiveFeedCache.size;
+      locationLiveFeedCache.clear();
+      liveCameraLocationRefreshes.clear();
+      liveCameraVerificationExpiresAt = 0;
+      return { clearedLocationCaches: cleared, liveTravelRecheckQueued: true };
+    }
+    case 'location.verify-live-travel': {
+      liveCameraVerificationExpiresAt = 0;
+      const cameras = await verifiedLiveCameraPosts();
+      return { liveCameras: cameras.length, status: liveCameraVerificationState.status, unavailable: liveCameraVerificationState.unavailable };
+    }
+    case 'jobs.refresh': {
+      const ids = JOB_LISTING_SOURCES.filter((id) => SOURCE_FETCHERS[id]);
+      ids.forEach((id) => bustCachePrefix(CACHE_KEY_PREFIX[id] || `${id}_`));
+      enqueueSourceRefresh(ids, 'decision-foundry career refresh');
+      return { queuedSources: ids, pending: sourceRefreshQueue.pendingIds.size };
+    }
+    case 'health.website':
+      await runWebsiteOptimizerCheck();
+      return { status: websiteOptimizerState.status, score: websiteOptimizerState.score, http: websiteOptimizerState.lastStatus, findings: websiteOptimizerState.findings };
+    case 'health.performance': await runWebPerfSubAgent(); return websiteOptimizerState.subAgents.web_perf;
+    case 'health.seo': await runWebSeoSubAgent(); return websiteOptimizerState.subAgents.web_seo;
+    case 'health.cache': await runWebCacheSubAgent(); return websiteOptimizerState.subAgents.web_cache;
+    case 'health.api': await runWebApiSubAgent(); return websiteOptimizerState.subAgents.web_api;
+    case 'health.pipeline': await runWebPipelineSubAgent(); return websiteOptimizerState.subAgents.web_pipeline;
+    case 'health.office': await runWebOfficeSubAgent(); return websiteOptimizerState.subAgents.web_office;
+    case 'health.pwa': await runWebPwaSubAgent(); return websiteOptimizerState.subAgents.web_pwa;
+    case 'health.storage': await runWebStorageSubAgent(); return websiteOptimizerState.subAgents.web_storage;
+    case 'runtime.stability':
+      runStabilityGuard();
+      await waitMs(150);
+      return { mode: refreshControl.mode, rssMB: refreshControl.rssMB, eventLoopLagMs: refreshControl.eventLoopLagMs };
+    case 'runtime.trim-caches': {
+      const before = globalFeedCache.posts.length;
+      trimRuntimeCaches('pressure');
+      return { hotPostsBefore: before, hotPostsAfter: globalFeedCache.posts.length, durableHistoryChanged: false };
+    }
+    case 'storage.run-retention':
+      return { started: runFeedRetentionPass({ reason: 'decision-foundry', steps: FEED_RETENTION_ALL_STEPS }) };
+    case 'automation.audit':
+      await runAutofixCheck();
+      return { enabled: autofixState.enabled, lastRun: autofixState.lastRun, lastError: autofixState.lastError };
+    case 'automation.enable':
+      autofixState.enabled = true;
+      return { enabled: true };
+    case 'automation.disable':
+      autofixState.enabled = false;
+      return { enabled: false };
+    case 'deploy.mobile':
+      return executeMobileBuild();
+    case 'deploy.web':
+    case 'deploy.api':
+    case 'deploy.pipeline':
+    case 'deploy.office': {
+      const service = control.id.slice('deploy.'.length);
+      const hooks = {
+        api: process.env.RENDER_HOOK_API,
+        web: process.env.RENDER_HOOK_WEB,
+        office: process.env.RENDER_HOOK_OFFICE,
+        pipeline: process.env.RENDER_HOOK_PIPELINE,
+      };
+      const deployment = await triggerRenderServiceDeploy(service, hooks[service]);
+      if (!deployment) throw new Error(`No Render deployment configuration is set for ${service}.`);
+      if (deployment.statusCode < 200 || deployment.statusCode >= 300) {
+        throw new Error(`Render rejected the ${service} deployment with HTTP ${deployment.statusCode}.`);
+      }
+      return { service, method: deployment.method, statusCode: deployment.statusCode, deployId: deployment.data?.id || deployment.data?.deploy?.id || null };
+    }
+    default:
+      throw new Error('Control has no executable implementation.');
+  }
+}
+
+app.get('/office/decision-controls', requireOfficeToken, async (_req, res) => {
+  let history = [];
+  if (db.isConnected()) {
+    try {
+      const { rows } = await db.query(
+        `SELECT id, control_id, control_label, category, target_role, decision_id,
+                decision_title, status, result, error, started_at, finished_at, duration_ms
+         FROM office_control_runs ORDER BY started_at DESC LIMIT 100`,
+      );
+      history = rows.map((row) => ({
+        id: row.id,
+        controlId: row.control_id,
+        controlLabel: row.control_label,
+        category: row.category,
+        targetRole: row.target_role,
+        decisionId: row.decision_id,
+        decisionTitle: row.decision_title,
+        status: row.status,
+        result: row.result || {},
+        error: row.error,
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+        durationMs: row.duration_ms,
+      }));
+    } catch (error) {
+      console.warn('[decision controls] history read failed:', error.message);
+    }
+  }
+  res.set('Cache-Control', 'no-store');
+  res.json({ role: SERVICE_ROLE, controls: officeControlCatalog(), history });
+});
+
+app.get('/office/frontend-files', requireOfficeToken, async (req, res) => {
+  const target = req.query.target === 'mobile' ? 'mobile' : req.query.target === 'web' ? 'web' : null;
+  if (!target) return res.status(400).json({ error: 'Target must be web or mobile.' });
+  const token = officeGithubToken();
+  if (!token) return res.status(503).json({ error: 'OFFICE_GITHUB_TOKEN is not configured.' });
+  try {
+    const response = await githubApiRequest(
+      `/repos/${AUTOFIX_GITHUB_OWNER}/${AUTOFIX_GITHUB_REPO}/git/trees/main?recursive=1`,
+      'GET',
+      null,
+      token,
+    );
+    if (response.statusCode !== 200 || !Array.isArray(response.data?.tree)) {
+      throw new Error(`GitHub tree request failed: HTTP ${response.statusCode}`);
+    }
+    const files = response.data.tree
+      .filter((entry) => entry.type === 'blob' && normalizeOfficeFrontendPath(target, entry.path))
+      .map((entry) => ({ path: entry.path, sha: entry.sha, bytes: entry.size || null }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+    return res.json({ target, files });
+  } catch (error) {
+    return res.status(502).json({ error: error.message });
+  }
+});
+
+app.get('/office/frontend-file', requireOfficeToken, async (req, res) => {
+  const target = req.query.target === 'mobile' ? 'mobile' : req.query.target === 'web' ? 'web' : null;
+  const filePath = normalizeOfficeFrontendPath(target, req.query.path);
+  if (!target || !filePath) return res.status(400).json({ error: 'Choose a valid frontend file.' });
+  const token = officeGithubToken();
+  if (!token) return res.status(503).json({ error: 'OFFICE_GITHUB_TOKEN is not configured.' });
+  try {
+    const file = await getGitHubFileContent(filePath, token);
+    return res.json({ target, path: filePath, sha: file.sha, content: file.content });
+  } catch (error) {
+    return res.status(502).json({ error: error.message });
+  }
+});
+
+app.post('/office/decision-controls/:id/execute', requireOfficeToken, async (req, res) => {
+  const control = findOfficeControl(req.params.id, officeControlSourceList());
+  const execution = validateOfficeControlExecution(control, req.body);
+  if (!execution.valid) return res.status(control ? 400 : 404).json({ error: execution.error });
+  const publishedControl = officeControlCatalog().find((entry) => entry.id === control.id);
+  if (publishedControl?.available === false) {
+    return res.status(503).json({ error: publishedControl.unavailableReason || 'This control is not configured.' });
+  }
+  const roleAllowed = control.target === SERVICE_ROLE || control.target === 'both';
+  if (!roleAllowed) {
+    return res.status(409).json({ error: `Run this control on the ${control.target} service.`, target: control.target });
+  }
+  if (!db.isConnected()) return res.status(503).json({ error: 'The Office audit database is unavailable.' });
+
+  let decision;
+  try {
+    decision = await readDecisionFoundryRecord(execution.decisionId);
+  } catch (error) {
+    return res.status(503).json({ error: `Could not validate the linked decision: ${error.message}` });
+  }
+  if (!decision) return res.status(409).json({ error: 'Save this Decision Foundry record before executing an action.' });
+  if (control.impact === 'critical' && decision.status !== 'Decided') {
+    return res.status(409).json({ error: 'Mark this decision as Decided before executing a critical action.' });
+  }
+
+  const runId = `control_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
+  const startedAt = new Date();
+  try {
+    await createOfficeControlRun(control, execution, runId, startedAt);
+    const result = await executeOfficeDecisionControl(control, req.body);
+    await finishOfficeControlRun(runId, 'succeeded', result, null, startedAt);
+    logAgentAction('deploy', 'RUN', `${control.label} executed from Decision Foundry`, '#4ADE80');
+    return res.json({ ok: true, runId, control, result });
+  } catch (error) {
+    await finishOfficeControlRun(runId, 'failed', {}, error.message, startedAt).catch(() => {});
+    logAgentAction('deploy', 'FAIL', `${control.label} failed: ${error.message}`, '#F87171');
+    return res.status(502).json({ ok: false, runId, error: error.message });
   }
 });
 

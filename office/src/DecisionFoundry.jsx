@@ -82,6 +82,7 @@ function newDecision() {
     rationale: '',
     successMeasure: '',
     reviewDate: '',
+    controlId: '',
     decidedAt: '',
     createdAt: now,
     updatedAt: now,
@@ -136,6 +137,35 @@ function formatDate(value) {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+function formatTimestamp(value) {
+  if (!value) return 'Pending';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+async function responsePayload(response) {
+  let payload = {};
+  try { payload = await response.json(); } catch {}
+  if (!response.ok) throw new Error(payload.error || payload.msg || `Request returned ${response.status}`);
+  return payload;
+}
+
+function controlActionLabel(control) {
+  if (control.input === 'frontend-file') return 'Edit and commit';
+  if (control.id === 'deploy.mobile') return 'Build app';
+  if (control.id.startsWith('deploy.')) return 'Deploy';
+  return 'Run';
+}
+
+function resultSummary(value) {
+  if (!value || typeof value !== 'object') return String(value || 'Completed');
+  const text = JSON.stringify(value, null, 2);
+  return text.length > 1800 ? `${text.slice(0, 1800)}\n...` : text;
+}
+
 function decisionBrief(decision) {
   const ranked = decision.options
     .map((option) => ({ ...option, score: weightedScore(decision, option) }))
@@ -148,6 +178,7 @@ function decisionBrief(decision) {
     `Owner: ${decision.owner || 'Unassigned'}`,
     `Decision date: ${decision.decidedAt ? formatDate(decision.decidedAt) : 'Not decided'}`,
     `Review date: ${formatDate(decision.reviewDate)}`,
+    `Public action: ${decision.controlId || 'No action linked'}`,
     '',
     '## Decision question',
     decision.question || 'Not recorded.',
@@ -236,7 +267,7 @@ function SectionHeader({ title, description, action }) {
   );
 }
 
-function DecisionFoundry({ apiBase = '', request = fetch }) {
+function DecisionFoundry({ apiBase = '', pipelineBase = '', request = fetch }) {
   const [decisions, setDecisions] = useState(loadDecisions);
   const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
@@ -244,6 +275,27 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
   const [copied, setCopied] = useState(false);
   const [remoteSyncEnabled, setRemoteSyncEnabled] = useState(false);
   const [syncState, setSyncState] = useState(apiBase ? 'Loading Office data' : 'Browser backup');
+  const [controls, setControls] = useState([]);
+  const [controlHistory, setControlHistory] = useState([]);
+  const [controlQuery, setControlQuery] = useState('');
+  const [controlCategory, setControlCategory] = useState('All controls');
+  const [controlState, setControlState] = useState(apiBase ? 'Loading controls' : 'Controls unavailable');
+  const [controlError, setControlError] = useState('');
+  const [controlNotice, setControlNotice] = useState(null);
+  const [runningControlId, setRunningControlId] = useState('');
+  const [frontendEditor, setFrontendEditor] = useState({
+    open: false,
+    controlId: '',
+    target: 'web',
+    files: [],
+    filePath: '',
+    sha: '',
+    content: '',
+    original: '',
+    commitMessage: '',
+    loading: false,
+    error: '',
+  });
   const decisionsRef = useRef(decisions);
   const [compact, setCompact] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
@@ -310,6 +362,28 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
     return () => window.clearTimeout(timeout);
   }, [apiBase, decisions, remoteSyncEnabled, request]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!apiBase) return undefined;
+    const loadControls = async () => {
+      try {
+        const payload = await responsePayload(await request(`${apiBase}/office/decision-controls`));
+        if (cancelled) return;
+        setControls(Array.isArray(payload.controls) ? payload.controls : []);
+        setControlHistory(Array.isArray(payload.history) ? payload.history : []);
+        setControlState(`${payload.controls?.length || 0} controls ready`);
+        setControlError('');
+      } catch (error) {
+        if (!cancelled) {
+          setControlState('Controls unavailable');
+          setControlError(error.message);
+        }
+      }
+    };
+    loadControls();
+    return () => { cancelled = true; };
+  }, [apiBase, request]);
+
   const selected = decisions.find((decision) => decision.id === selectedId) || decisions[0];
   const selectedKey = selected?.id;
   useEffect(() => {
@@ -321,6 +395,19 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
     const haystack = `${decision.title} ${decision.question} ${decision.owner}`.toLowerCase();
     return matchesStatus && haystack.includes(query.trim().toLowerCase());
   }), [decisions, query, statusFilter]);
+
+  const controlCategories = useMemo(() => (
+    ['All controls', ...new Set(controls.map((control) => control.category))]
+  ), [controls]);
+
+  const filteredControls = useMemo(() => {
+    const search = controlQuery.trim().toLowerCase();
+    return controls.filter((control) => {
+      const matchesCategory = controlCategory === 'All controls' || control.category === controlCategory;
+      const haystack = `${control.label} ${control.description} ${control.category} ${control.id}`.toLowerCase();
+      return matchesCategory && (!search || haystack.includes(search));
+    });
+  }, [controlCategory, controlQuery, controls]);
 
   const ranked = useMemo(() => {
     if (!selected) return [];
@@ -474,13 +561,187 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
     decidedAt: selected.decidedAt || new Date().toISOString(),
   });
 
+  const refreshControlData = async () => {
+    if (!apiBase) return;
+    setControlState('Refreshing controls');
+    try {
+      const payload = await responsePayload(await request(`${apiBase}/office/decision-controls`));
+      setControls(Array.isArray(payload.controls) ? payload.controls : []);
+      setControlHistory(Array.isArray(payload.history) ? payload.history : []);
+      setControlState(`${payload.controls?.length || 0} controls ready`);
+      setControlError('');
+    } catch (error) {
+      setControlState('Controls unavailable');
+      setControlError(error.message);
+    }
+  };
+
+  const persistWorkspace = async (snapshot) => {
+    if (!apiBase) throw new Error('Office API is not configured.');
+    setSyncState('Saving to Office DB');
+    const response = await request(`${apiBase}/office/workspaces/decision-foundry`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ payload: { decisions: snapshot } }),
+    });
+    await responsePayload(response);
+    setSyncState('Saved to Office DB');
+  };
+
+  const openFrontendEditor = async (control) => {
+    if (control.available === false) {
+      setControlNotice({ tone: 'error', text: control.unavailableReason || 'This control is not configured.' });
+      return;
+    }
+    const target = control.frontendTarget;
+    updateSelected({ controlId: control.id });
+    setFrontendEditor((current) => ({
+      ...current,
+      open: true,
+      controlId: control.id,
+      target,
+      files: [],
+      filePath: '',
+      sha: '',
+      content: '',
+      original: '',
+      commitMessage: '',
+      loading: true,
+      error: '',
+    }));
+    try {
+      const payload = await responsePayload(await request(`${apiBase}/office/frontend-files?target=${encodeURIComponent(target)}`));
+      setFrontendEditor((current) => ({ ...current, files: payload.files || [], loading: false }));
+      setControlNotice({ tone: 'info', text: `Choose an existing ${target} frontend file, review it, then commit the change.` });
+    } catch (error) {
+      setFrontendEditor((current) => ({ ...current, loading: false, error: error.message }));
+    }
+  };
+
+  const loadFrontendFile = async (filePath = frontendEditor.filePath) => {
+    if (!filePath) return;
+    setFrontendEditor((current) => ({ ...current, loading: true, error: '' }));
+    try {
+      const url = `${apiBase}/office/frontend-file?target=${encodeURIComponent(frontendEditor.target)}&path=${encodeURIComponent(filePath)}`;
+      const payload = await responsePayload(await request(url));
+      setFrontendEditor((current) => ({
+        ...current,
+        filePath: payload.path,
+        sha: payload.sha,
+        content: payload.content,
+        original: payload.content,
+        loading: false,
+        error: '',
+      }));
+    } catch (error) {
+      setFrontendEditor((current) => ({ ...current, loading: false, error: error.message }));
+    }
+  };
+
+  const executeControl = async (control, extraPayload = null) => {
+    if (!control) {
+      setControlNotice({ tone: 'error', text: 'Choose a public control first.' });
+      return null;
+    }
+    if (control.input === 'frontend-file' && !extraPayload) {
+      await openFrontendEditor(control);
+      return null;
+    }
+    if (control.available === false) {
+      setControlNotice({ tone: 'error', text: control.unavailableReason || 'This control is not configured.' });
+      return null;
+    }
+    if (control.impact === 'critical' && selected.status !== 'Decided') {
+      setControlNotice({ tone: 'error', text: 'Mark this decision as Decided before committing or deploying.' });
+      return null;
+    }
+    if (control.requiresConfirmation && !window.confirm(
+      `Run "${control.label}" for "${selected.title}"? This action will be written to the Office audit history.`,
+    )) return null;
+
+    const linkedDecisions = decisions.map((decision) => (
+      decision.id === selected.id
+        ? { ...decision, controlId: control.id, updatedAt: new Date().toISOString() }
+        : decision
+    ));
+    setDecisions(linkedDecisions);
+    decisionsRef.current = linkedDecisions;
+    setRunningControlId(control.id);
+    setControlNotice({ tone: 'info', text: `${control.label} is running.` });
+
+    try {
+      await persistWorkspace(linkedDecisions);
+      const requestedBases = control.target === 'both'
+        ? [apiBase, pipelineBase || apiBase]
+        : [control.target === 'pipeline' ? (pipelineBase || apiBase) : apiBase];
+      const bases = [...new Set(requestedBases.filter(Boolean))];
+      const results = [];
+      for (const base of bases) {
+        const payload = await responsePayload(await request(`${base}/office/decision-controls/${encodeURIComponent(control.id)}/execute`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            decisionId: selected.id,
+            decisionTitle: selected.title,
+            confirmed: Boolean(control.requiresConfirmation),
+            ...(extraPayload || {}),
+          }),
+        }));
+        results.push({ role: base === apiBase ? 'api' : 'pipeline', ...payload.result });
+      }
+      const result = results.length === 1 ? results[0] : results;
+      setControlNotice({ tone: 'success', text: `${control.label} completed.`, result });
+      await refreshControlData();
+      return results[0] || null;
+    } catch (error) {
+      setControlNotice({ tone: 'error', text: `${control.label} failed: ${error.message}` });
+      await refreshControlData();
+      return null;
+    } finally {
+      setRunningControlId('');
+    }
+  };
+
+  const commitFrontendFile = async () => {
+    const control = controls.find((entry) => entry.id === frontendEditor.controlId);
+    if (!frontendEditor.filePath || !frontendEditor.sha) {
+      setFrontendEditor((current) => ({ ...current, error: 'Choose and load a frontend file first.' }));
+      return;
+    }
+    if (frontendEditor.content === frontendEditor.original) {
+      setFrontendEditor((current) => ({ ...current, error: 'Make a reviewed change before committing.' }));
+      return;
+    }
+    if (frontendEditor.commitMessage.trim().length < 6) {
+      setFrontendEditor((current) => ({ ...current, error: 'Enter a specific commit message.' }));
+      return;
+    }
+    setFrontendEditor((current) => ({ ...current, error: '' }));
+    const result = await executeControl(control, {
+      filePath: frontendEditor.filePath,
+      expectedSha: frontendEditor.sha,
+      content: frontendEditor.content,
+      commitMessage: frontendEditor.commitMessage,
+    });
+    if (result?.contentSha) {
+      setFrontendEditor((current) => ({
+        ...current,
+        sha: result.contentSha,
+        original: current.content,
+        commitMessage: '',
+      }));
+    }
+  };
+
+  const linkedControl = controls.find((control) => control.id === selected.controlId);
+
   return (
     <div style={{ maxWidth: 1500, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f1f5f9', letterSpacing: 0 }}>Decision Foundry</h1>
           <p style={{ margin: '6px 0 0', color: COLORS.muted, fontSize: 13.5, lineHeight: 1.5 }}>
-            Frame consequential choices, compare tradeoffs, and leave a decision record the team can revisit.
+            Decide, execute approved public controls, and keep a durable record of every change.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -503,6 +764,174 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
           </div>
         ))}
       </div>
+
+      <section style={{ ...sectionStyle, marginBottom: 18 }}>
+        <SectionHeader
+          title="Public control plane"
+          description={`${controlState}. Every action is allowlisted, linked to the selected decision, and recorded in the Office database.`}
+          action={<ActionButton tone="neutral" onClick={refreshControlData}>Refresh controls</ActionButton>}
+        />
+
+        {controlError && (
+          <div role="alert" style={{ marginBottom: 12, padding: '10px 12px', border: '1px solid rgba(239,68,68,.28)', borderRadius: 7, background: 'rgba(239,68,68,.07)', color: COLORS.red, fontSize: 11.5 }}>
+            {controlError}
+          </div>
+        )}
+
+        {controlNotice && (
+          <div
+            role="status"
+            style={{
+              marginBottom: 12,
+              padding: '10px 12px',
+              border: `1px solid ${controlNotice.tone === 'error' ? 'rgba(239,68,68,.28)' : controlNotice.tone === 'success' ? 'rgba(34,197,94,.28)' : 'rgba(96,165,250,.28)'}`,
+              borderRadius: 7,
+              background: controlNotice.tone === 'error' ? 'rgba(239,68,68,.07)' : controlNotice.tone === 'success' ? 'rgba(34,197,94,.07)' : 'rgba(59,130,246,.07)',
+              color: controlNotice.tone === 'error' ? COLORS.red : controlNotice.tone === 'success' ? COLORS.green : COLORS.blue,
+              fontSize: 11.5,
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>{controlNotice.text}</strong>
+            {controlNotice.result && (
+              <pre style={{ margin: '7px 0 0', maxHeight: 150, overflow: 'auto', whiteSpace: 'pre-wrap', color: COLORS.subtle, fontSize: 10.5, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>
+                {resultSummary(controlNotice.result)}
+              </pre>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(240px, 1fr) 230px', gap: 9, marginBottom: 8 }}>
+          <input
+            aria-label="Search public controls"
+            value={controlQuery}
+            onChange={(event) => setControlQuery(event.target.value)}
+            placeholder="Search actions, services, or sources"
+            style={inputStyle}
+          />
+          <select aria-label="Filter controls by category" value={controlCategory} onChange={(event) => setControlCategory(event.target.value)} style={inputStyle}>
+            {controlCategories.map((category) => <option key={category}>{category}</option>)}
+          </select>
+        </div>
+
+        <div style={{ maxHeight: 430, overflowY: 'auto', borderTop: `1px solid ${COLORS.border}` }}>
+          {filteredControls.map((control) => {
+            const running = runningControlId === control.id;
+            const unavailable = control.available === false;
+            return (
+              <div
+                key={control.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: compact ? 'minmax(0, 1fr) auto' : 'minmax(260px, 1fr) 150px 90px 120px',
+                  gap: 10,
+                  alignItems: 'center',
+                  padding: '11px 3px',
+                  borderBottom: `1px solid ${COLORS.border}`,
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: COLORS.text, fontSize: 12.5, fontWeight: 800 }}>{control.label}</div>
+                  <div style={{ color: unavailable ? COLORS.red : COLORS.muted, fontSize: 10.5, lineHeight: 1.45, marginTop: 3 }}>
+                    {unavailable ? control.unavailableReason : control.description}
+                  </div>
+                  {compact && <div style={{ color: COLORS.subtle, fontSize: 10, marginTop: 5 }}>{control.category} | {control.target} | {control.impact}</div>}
+                </div>
+                {!compact && <div style={{ color: COLORS.subtle, fontSize: 10.5 }}>{control.category}</div>}
+                {!compact && <div style={{ color: control.impact === 'critical' ? COLORS.red : control.impact === 'high' ? COLORS.amber : COLORS.subtle, fontSize: 10.5, textTransform: 'capitalize' }}>{control.target} | {control.impact}</div>}
+                <ActionButton
+                  tone={control.id.startsWith('deploy.') ? 'success' : control.input === 'frontend-file' ? 'primary' : 'neutral'}
+                  onClick={() => executeControl(control)}
+                  disabled={running || unavailable}
+                  style={{ width: compact ? 112 : '100%' }}
+                >
+                  {running ? 'Running...' : controlActionLabel(control)}
+                </ActionButton>
+              </div>
+            );
+          })}
+          {!filteredControls.length && <div style={{ padding: 14, color: COLORS.muted, fontSize: 12 }}>No controls match this filter.</div>}
+        </div>
+
+        {frontendEditor.open && (
+          <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
+            <SectionHeader
+              title={`${frontendEditor.target === 'web' ? 'Web' : 'App'} frontend change`}
+              description="Only existing frontend text files are editable. GitHub rejects the commit if the file changed after it was loaded."
+              action={<ActionButton tone="neutral" onClick={() => setFrontendEditor((current) => ({ ...current, open: false }))}>Close editor</ActionButton>}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) 110px', gap: 9 }}>
+              <select
+                aria-label="Frontend file"
+                value={frontendEditor.filePath}
+                onChange={(event) => setFrontendEditor((current) => ({
+                  ...current,
+                  filePath: event.target.value,
+                  sha: '',
+                  content: '',
+                  original: '',
+                  error: '',
+                }))}
+                style={inputStyle}
+              >
+                <option value="">{frontendEditor.loading ? 'Loading files...' : 'Choose a frontend file'}</option>
+                {frontendEditor.files.map((file) => <option key={file.path} value={file.path}>{file.path}</option>)}
+              </select>
+              <ActionButton tone="neutral" onClick={() => loadFrontendFile()} disabled={!frontendEditor.filePath || frontendEditor.loading}>
+                {frontendEditor.loading ? 'Loading...' : 'Load file'}
+              </ActionButton>
+            </div>
+            {frontendEditor.error && <div role="alert" style={{ color: COLORS.red, fontSize: 11.5, marginTop: 9 }}>{frontendEditor.error}</div>}
+            {frontendEditor.sha && (
+              <>
+                <textarea
+                  aria-label="Frontend file content"
+                  spellCheck="false"
+                  value={frontendEditor.content}
+                  onChange={(event) => setFrontendEditor((current) => ({ ...current, content: event.target.value, error: '' }))}
+                  rows={compact ? 16 : 24}
+                  style={{ ...inputStyle, marginTop: 10, resize: 'vertical', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace', fontSize: 11, tabSize: 2 }}
+                />
+                <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) auto auto', gap: 9, alignItems: 'end', marginTop: 9 }}>
+                  <Field label="Commit message" hint={`${frontendEditor.content.length.toLocaleString()} characters | ${frontendEditor.content === frontendEditor.original ? 'No changes' : 'Modified'}`}>
+                    <input
+                      value={frontendEditor.commitMessage}
+                      onChange={(event) => setFrontendEditor((current) => ({ ...current, commitMessage: event.target.value, error: '' }))}
+                      placeholder="Describe this frontend change"
+                      maxLength={120}
+                      style={inputStyle}
+                    />
+                  </Field>
+                  <ActionButton tone="neutral" onClick={() => setFrontendEditor((current) => ({ ...current, content: current.original, error: '' }))} disabled={frontendEditor.content === frontendEditor.original}>Reset</ActionButton>
+                  <ActionButton onClick={commitFrontendFile} disabled={runningControlId === frontendEditor.controlId || frontendEditor.content === frontendEditor.original}>
+                    {runningControlId === frontendEditor.controlId ? 'Committing...' : 'Commit to main'}
+                  </ActionButton>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
+          <SectionHeader title="Execution history" description="Latest durable control runs across the API and pipeline." />
+          <div style={{ display: 'grid', gap: 0, maxHeight: 260, overflowY: 'auto' }}>
+            {controlHistory.slice(0, 30).map((run) => (
+              <div key={run.id} style={{ display: 'grid', gridTemplateColumns: compact ? '1fr auto' : 'minmax(220px, 1fr) 100px 160px 95px', gap: 10, padding: '9px 2px', borderTop: `1px solid ${COLORS.border}`, alignItems: 'center' }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: COLORS.text, fontSize: 11.5, fontWeight: 700 }}>{run.controlLabel}</div>
+                  <div style={{ color: run.error ? COLORS.red : COLORS.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{run.error || run.decisionTitle}</div>
+                </div>
+                {!compact && <div style={{ color: COLORS.subtle, fontSize: 10.5, textTransform: 'capitalize' }}>{run.targetRole}</div>}
+                {!compact && <div style={{ color: COLORS.muted, fontSize: 10.5 }}>{formatTimestamp(run.startedAt)}</div>}
+                <div style={{ color: run.status === 'succeeded' ? COLORS.green : run.status === 'failed' ? COLORS.red : COLORS.amber, fontSize: 10.5, fontWeight: 800, textTransform: 'capitalize', textAlign: 'right' }}>
+                  {run.status}{run.durationMs != null ? ` | ${run.durationMs}ms` : ''}
+                </div>
+              </div>
+            ))}
+            {!controlHistory.length && <div style={{ color: COLORS.muted, fontSize: 12, padding: '10px 0' }}>No control runs have been recorded yet.</div>}
+          </div>
+        </div>
+      </section>
 
       <div style={{ display: 'grid', gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '270px minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
         <aside style={{ ...sectionStyle, padding: 12, position: compact ? 'static' : 'sticky', top: 20 }}>
@@ -762,6 +1191,29 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
                     Use score leader: {leader.name} ({scorePercent(leader.weighted)}%)
                   </button>
                 )}
+                <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(0, 1fr) 150px', gap: 9, alignItems: 'end', marginTop: 12 }}>
+                  <Field
+                    label="Linked public action"
+                    hint={linkedControl?.impact === 'critical' ? 'Critical actions require this record to be marked Decided.' : 'The action and its result are written to the execution history.'}
+                  >
+                    <select value={selected.controlId || ''} onChange={(event) => updateSelected({ controlId: event.target.value })} style={inputStyle}>
+                      <option value="">Choose an action</option>
+                      {controlCategories.filter((category) => category !== 'All controls').map((category) => (
+                        <optgroup key={category} label={category}>
+                          {controls.filter((control) => control.category === category).map((control) => (
+                            <option key={control.id} value={control.id} disabled={control.available === false}>{control.label}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </Field>
+                  <ActionButton
+                    onClick={() => executeControl(linkedControl)}
+                    disabled={!linkedControl || runningControlId === linkedControl?.id || linkedControl?.available === false}
+                  >
+                    {runningControlId === linkedControl?.id ? 'Running...' : linkedControl ? controlActionLabel(linkedControl) : 'Run action'}
+                  </ActionButton>
+                </div>
                 <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
                   <Field label="Decision rationale">
                     <textarea value={selected.rationale} onChange={(event) => updateSelected({ rationale: event.target.value })} rows={4} placeholder="Why this option, and which tradeoffs are being accepted?" style={{ ...inputStyle, resize: 'vertical' }} />
@@ -796,6 +1248,7 @@ function DecisionFoundry({ apiBase = '', request = fetch }) {
                     {recommendation?.name || 'No option selected'}
                   </div>
                   {selected.decidedAt && <div style={{ color: COLORS.muted, fontSize: 10.5, marginTop: 6 }}>{formatDate(selected.decidedAt)}</div>}
+                  {linkedControl && <div style={{ color: COLORS.blue, fontSize: 10.5, marginTop: 7 }}>{linkedControl.label}</div>}
                 </div>
                 <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
                   {selected.status === 'Decided'
