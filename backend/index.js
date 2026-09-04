@@ -36,10 +36,6 @@ const {
   splitSearchWords,
 } = require('./search');
 const {
-  normalizeOfficeWorkspaceKey,
-  validateOfficeWorkspacePayload,
-} = require('./office-workspace');
-const {
   buildOfficeControlCatalog,
   findOfficeControl,
   normalizeOfficeFrontendPath,
@@ -17560,19 +17556,10 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS bfa_sig_idx ON bugfix_attempts(signature, detected_at DESC)`);
 
-    // Small, token-protected Office workspaces that need to survive browser
-    // changes and deploys. The workspace key is allowlisted at the route.
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS office_workspace_state (
-        workspace_key TEXT PRIMARY KEY,
-        payload JSONB NOT NULL DEFAULT '{}',
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `);
-
-    // Durable audit trail for every allowlisted Decision Foundry command.
+    // Durable audit trail for every allowlisted Office control.
     // The action catalog never accepts shell input, and these rows preserve
-    // who/what decision authorized a public change across deploys.
+    // the control context and result across deploys. The legacy decision_*
+    // column names are retained so existing production history stays intact.
     await db.query(`
       CREATE TABLE IF NOT EXISTS office_control_runs (
         id             TEXT PRIMARY KEY,
@@ -19506,53 +19493,6 @@ function requireOfficeToken(req, res, next) {
   if (provided === expected) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
-
-app.get('/office/workspaces/:key', requireOfficeToken, async (req, res) => {
-  const key = normalizeOfficeWorkspaceKey(req.params.key);
-  if (!key) return res.status(404).json({ error: 'Office workspace not found.' });
-  if (!db.isConnected()) return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
-
-  try {
-    const { rows } = await db.query(
-      'SELECT payload, updated_at FROM office_workspace_state WHERE workspace_key = $1',
-      [key],
-    );
-    const row = rows[0];
-    res.set('Cache-Control', 'no-store');
-    return res.json({
-      key,
-      payload: row?.payload || null,
-      updatedAt: row?.updated_at || null,
-    });
-  } catch (error) {
-    console.warn(`[office workspace] read failed for ${key}: ${error.message}`);
-    return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
-  }
-});
-
-app.put('/office/workspaces/:key', requireOfficeToken, async (req, res) => {
-  const key = normalizeOfficeWorkspaceKey(req.params.key);
-  if (!key) return res.status(404).json({ error: 'Office workspace not found.' });
-
-  const validation = validateOfficeWorkspacePayload(req.body?.payload);
-  if (!validation.valid) return res.status(400).json({ error: validation.error });
-  if (!db.isConnected()) return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
-
-  try {
-    const { rows } = await db.query(
-      `INSERT INTO office_workspace_state (workspace_key, payload, updated_at)
-       VALUES ($1, $2::jsonb, NOW())
-       ON CONFLICT (workspace_key) DO UPDATE
-       SET payload = EXCLUDED.payload, updated_at = NOW()
-       RETURNING updated_at`,
-      [key, JSON.stringify(req.body.payload)],
-    );
-    return res.json({ key, saved: true, bytes: validation.bytes, updatedAt: rows[0]?.updated_at || null });
-  } catch (error) {
-    console.warn(`[office workspace] write failed for ${key}: ${error.message}`);
-    return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
-  }
-});
 
 // OAuth values live only in Render. This Office-only report deliberately
 // exposes presence and the exact callback URLs, never a client ID or secret,
@@ -26009,8 +25949,8 @@ app.post('/office/deploy/:service', requireOfficeToken, async (req, res) => {
   }
 });
 
-// --- Decision Foundry public control plane ---------------------------------
-// The Foundry can execute only this catalog. It never accepts a shell command,
+// --- Office public control plane --------------------------------------------
+// Office can execute only this catalog. It never accepts a shell command,
 // URL, function name, or arbitrary backend path from the browser.
 const OFFICE_FRONTEND_MAX_BYTES = 400 * 1024;
 
@@ -26058,18 +25998,6 @@ function frontendTargetForControl(control) {
       : null;
 }
 
-async function readDecisionFoundryRecord(decisionId) {
-  if (!db.isConnected()) return null;
-  const { rows } = await db.query(
-    'SELECT payload FROM office_workspace_state WHERE workspace_key = $1',
-    ['decision-foundry'],
-  );
-  const decisions = rows[0]?.payload?.decisions;
-  return Array.isArray(decisions)
-    ? decisions.find((decision) => decision?.id === decisionId) || null
-    : null;
-}
-
 async function createOfficeControlRun(control, execution, id, startedAt) {
   await db.query(
     `INSERT INTO office_control_runs
@@ -26077,7 +26005,7 @@ async function createOfficeControlRun(control, execution, id, startedAt) {
         decision_title, status, result, started_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,'running','{}'::jsonb,$8)`,
     [id, control.id, control.label, control.category, SERVICE_ROLE,
-      execution.decisionId, execution.decisionTitle, startedAt],
+      execution.contextId, execution.contextLabel, startedAt],
   );
 }
 
@@ -26140,23 +26068,23 @@ async function executeMobileBuild() {
   return { workflow: 'mobile-release.yml', ref: 'main', platform: 'all', profile: 'production' };
 }
 
-async function executeOfficeDecisionControl(control, body) {
+async function executeOfficeControl(control, body) {
   if (control.input === 'frontend-file') return executeFrontendControl(control, body);
   if (control.id.startsWith('source.refresh.')) {
     const sourceId = control.sourceId;
     if (!SOURCE_FETCHERS[sourceId]) throw new Error(`Source worker ${sourceId} is not available on this service.`);
-    enqueueSourceRefresh([sourceId], 'decision-foundry source refresh');
+    enqueueSourceRefresh([sourceId], 'office-controls source refresh');
     return { queuedSources: [sourceId], pending: sourceRefreshQueue.pendingIds.size };
   }
 
   switch (control.id) {
     case 'feed.refresh-all': {
       const ids = Object.keys(SOURCE_FETCHERS);
-      enqueueSourceRefresh(ids, 'decision-foundry full refresh');
+      enqueueSourceRefresh(ids, 'office-controls full refresh');
       return { queuedSources: ids.length, pending: sourceRefreshQueue.pendingIds.size };
     }
     case 'feed.transfer-staging':
-      await transferStagedPosts({ reason: 'decision-foundry' });
+      await transferStagedPosts({ reason: 'office-controls' });
       return { saved: stagingTransferState.lastSavedCount, pending: stagingPostCount, error: stagingTransferState.lastError };
     case 'feed.equalize': {
       const before = equalizerPendingTotal();
@@ -26202,7 +26130,7 @@ async function executeOfficeDecisionControl(control, body) {
     case 'jobs.refresh': {
       const ids = JOB_LISTING_SOURCES.filter((id) => SOURCE_FETCHERS[id]);
       ids.forEach((id) => bustCachePrefix(CACHE_KEY_PREFIX[id] || `${id}_`));
-      enqueueSourceRefresh(ids, 'decision-foundry career refresh');
+      enqueueSourceRefresh(ids, 'office-controls career refresh');
       return { queuedSources: ids, pending: sourceRefreshQueue.pendingIds.size };
     }
     case 'health.website':
@@ -26226,7 +26154,7 @@ async function executeOfficeDecisionControl(control, body) {
       return { hotPostsBefore: before, hotPostsAfter: globalFeedCache.posts.length, durableHistoryChanged: false };
     }
     case 'storage.run-retention':
-      return { started: runFeedRetentionPass({ reason: 'decision-foundry', steps: FEED_RETENTION_ALL_STEPS }) };
+      return { started: runFeedRetentionPass({ reason: 'office-controls', steps: FEED_RETENTION_ALL_STEPS }) };
     case 'automation.audit':
       await runAutofixCheck();
       return { enabled: autofixState.enabled, lastRun: autofixState.lastRun, lastError: autofixState.lastError };
@@ -26261,7 +26189,7 @@ async function executeOfficeDecisionControl(control, body) {
   }
 }
 
-app.get('/office/decision-controls', requireOfficeToken, async (_req, res) => {
+app.get('/office/controls', requireOfficeToken, async (_req, res) => {
   let history = [];
   if (db.isConnected()) {
     try {
@@ -26276,8 +26204,8 @@ app.get('/office/decision-controls', requireOfficeToken, async (_req, res) => {
         controlLabel: row.control_label,
         category: row.category,
         targetRole: row.target_role,
-        decisionId: row.decision_id,
-        decisionTitle: row.decision_title,
+        contextId: row.decision_id,
+        contextLabel: row.decision_title,
         status: row.status,
         result: row.result || {},
         error: row.error,
@@ -26286,7 +26214,7 @@ app.get('/office/decision-controls', requireOfficeToken, async (_req, res) => {
         durationMs: row.duration_ms,
       }));
     } catch (error) {
-      console.warn('[decision controls] history read failed:', error.message);
+      console.warn('[office controls] history read failed:', error.message);
     }
   }
   res.set('Cache-Control', 'no-store');
@@ -26332,7 +26260,7 @@ app.get('/office/frontend-file', requireOfficeToken, async (req, res) => {
   }
 });
 
-app.post('/office/decision-controls/:id/execute', requireOfficeToken, async (req, res) => {
+app.post('/office/controls/:id/execute', requireOfficeToken, async (req, res) => {
   const control = findOfficeControl(req.params.id, officeControlSourceList());
   const execution = validateOfficeControlExecution(control, req.body);
   if (!execution.valid) return res.status(control ? 400 : 404).json({ error: execution.error });
@@ -26346,24 +26274,13 @@ app.post('/office/decision-controls/:id/execute', requireOfficeToken, async (req
   }
   if (!db.isConnected()) return res.status(503).json({ error: 'The Office audit database is unavailable.' });
 
-  let decision;
-  try {
-    decision = await readDecisionFoundryRecord(execution.decisionId);
-  } catch (error) {
-    return res.status(503).json({ error: `Could not validate the linked decision: ${error.message}` });
-  }
-  if (!decision) return res.status(409).json({ error: 'Save this Decision Foundry record before executing an action.' });
-  if (control.impact === 'critical' && decision.status !== 'Decided') {
-    return res.status(409).json({ error: 'Mark this decision as Decided before executing a critical action.' });
-  }
-
   const runId = `control_${Date.now()}_${crypto.randomBytes(5).toString('hex')}`;
   const startedAt = new Date();
   try {
     await createOfficeControlRun(control, execution, runId, startedAt);
-    const result = await executeOfficeDecisionControl(control, req.body);
+    const result = await executeOfficeControl(control, req.body);
     await finishOfficeControlRun(runId, 'succeeded', result, null, startedAt);
-    logAgentAction('deploy', 'RUN', `${control.label} executed from Decision Foundry`, '#4ADE80');
+    logAgentAction('deploy', 'RUN', `${control.label} executed from Office Controls`, '#4ADE80');
     return res.json({ ok: true, runId, control, result });
   } catch (error) {
     await finishOfficeControlRun(runId, 'failed', {}, error.message, startedAt).catch(() => {});

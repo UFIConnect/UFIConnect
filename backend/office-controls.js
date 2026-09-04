@@ -218,7 +218,7 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     id: 'automation.audit',
     category: 'Automation',
     label: 'Run Autofix audit',
-    description: 'Scan eligible server errors and update the Autofix decision queue.',
+    description: 'Scan eligible server errors and update the Autofix action queue.',
     target: 'api',
     impact: 'low',
   },
@@ -313,17 +313,13 @@ function validateOfficeControlExecution(control, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return { valid: false, error: 'Control execution payload must be an object.' };
   }
-  const decisionId = String(payload.decisionId || '').trim();
-  if (!decisionId || decisionId.length > 160) {
-    return { valid: false, error: 'A valid linked Decision Foundry record is required.' };
-  }
   if (control.requiresConfirmation && payload.confirmed !== true) {
     return { valid: false, error: 'This control requires explicit confirmation.' };
   }
   return {
     valid: true,
-    decisionId,
-    decisionTitle: String(payload.decisionTitle || 'Untitled decision').trim().slice(0, 180),
+    contextId: String(payload.contextId || 'office-controls').trim().slice(0, 160) || 'office-controls',
+    contextLabel: String(payload.contextLabel || 'Manual Office control').trim().slice(0, 180) || 'Manual Office control',
   };
 }
 

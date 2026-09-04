@@ -7,7 +7,7 @@ const {
   validateOfficeControlExecution,
 } = require('./office-controls');
 
-test('Decision Foundry exposes only allowlisted controls and known sources', () => {
+test('Office exposes only allowlisted controls and known sources', () => {
   const catalog = buildOfficeControlCatalog([
     { id: 'reddit', label: 'Reddit' },
     { id: '../bad', label: 'Bad' },
@@ -31,20 +31,21 @@ test('frontend commits stay inside existing frontend source roots', () => {
   assert.equal(normalizeOfficeFrontendPath('web', 'web/src/logo.png'), null);
 });
 
-test('high-impact controls require confirmation and a linked decision', () => {
+test('high-impact controls require explicit confirmation', () => {
   const sourceList = [{ id: 'reddit', label: 'Reddit' }];
   const deploy = findOfficeControl('deploy.web', sourceList);
   assert.equal(validateOfficeControlExecution(deploy, {}).valid, false);
-  assert.equal(validateOfficeControlExecution(deploy, { decisionId: 'd1' }).valid, false);
   assert.deepEqual(
-    validateOfficeControlExecution(deploy, { decisionId: 'd1', decisionTitle: 'Ship homepage', confirmed: true }),
-    { valid: true, decisionId: 'd1', decisionTitle: 'Ship homepage' },
+    validateOfficeControlExecution(deploy, { contextId: 'web-release', contextLabel: 'Ship homepage', confirmed: true }),
+    { valid: true, contextId: 'web-release', contextLabel: 'Ship homepage' },
   );
 });
 
-test('low-impact controls still require an auditable decision record', () => {
+test('low-impact controls receive a default audit context', () => {
   const health = findOfficeControl('health.website');
   assert.equal(validateOfficeControlExecution(health, null).valid, false);
-  assert.equal(validateOfficeControlExecution(health, { decisionId: '' }).valid, false);
-  assert.equal(validateOfficeControlExecution(health, { decisionId: 'health-check' }).valid, true);
+  assert.deepEqual(
+    validateOfficeControlExecution(health, {}),
+    { valid: true, contextId: 'office-controls', contextLabel: 'Manual Office control' },
+  );
 });

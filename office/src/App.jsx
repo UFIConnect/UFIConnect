@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import DecisionFoundry from './DecisionFoundry';
+import Controls from './Controls';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -2982,7 +2982,7 @@ function mergeAgentMaps(base, incoming) {
 }
 
 export default function App() {
-  const officeViews = ['overview', 'decisions', 'sources', 'pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const officeViews = ['overview', 'controls', 'sources', 'pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
   const [view, setView] = useState(() => {
     const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
     return officeViews.includes(requested) ? requested : 'overview';
@@ -3141,7 +3141,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview' },
-    { id: 'decisions', label: 'Decision Foundry' },
+    { id: 'controls', label: 'Controls' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
     { id: 'topics',   label: 'Topics' },
@@ -3323,7 +3323,7 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={mainStyle}>
           {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
-          {view === 'decisions' && <DecisionFoundry apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
+          {view === 'controls' && <Controls apiBase={API} pipelineBase={PIPELINE_API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
