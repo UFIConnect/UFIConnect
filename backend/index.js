@@ -5157,15 +5157,52 @@ async function fetchTheRegister(keyword) {
 }
 
 // --- VentureBeat: AI, enterprise tech, startup funding news ------------------
+let ventureBeatFeedInFlight = null;
+
+async function fetchVentureBeatFeedItems() {
+  const feedKey = 'vb_feed_items';
+  const cached = getCached(feedKey);
+  if (cached) return cached;
+  if (ventureBeatFeedInFlight) return ventureBeatFeedInFlight;
+
+  ventureBeatFeedInFlight = (async () => {
+    const feeds = [
+      // VentureBeat's own endpoint currently rate-limits even ordinary RSS
+      // readers. Its official FeedBurner mirror carries the same fresh feed
+      // without making every topic shard compete for the origin endpoint.
+      'https://feeds.feedburner.com/venturebeat/SZYF',
+      'https://venturebeat.com/feed/',
+    ];
+    let lastError = null;
+    for (const url of feeds) {
+      try {
+        const xml = await fetchText(url, {
+          'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
+        });
+        const items = parseRSSItems(xml);
+        if (!items.length) throw new Error(`Empty VentureBeat feed for ${url}`);
+        setCached(feedKey, items, SOURCE_CONFIG.venturebeat.ttl);
+        return items;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError || new Error('VentureBeat feed unavailable');
+  })();
+
+  try {
+    return await ventureBeatFeedInFlight;
+  } finally {
+    ventureBeatFeedInFlight = null;
+  }
+}
+
 async function fetchVentureBeat(keyword) {
   const key = `vb_kw_${keyword}`;
   const cached = getCached(key);
   if (cached) return cached;
   try {
-    const xml = await fetchText('https://venturebeat.com/feed/', {
-      'User-Agent': 'Mozilla/5.0 (compatible; UFIconnect/1.0)',
-    });
-    const items = parseRSSItems(xml);
+    const items = await fetchVentureBeatFeedItems();
     const posts = filterAndSlice(items, keyword, 1000).map(it =>
       rssPost(it, 'venturebeat', 'VentureBeat', 'ext_venturebeat', 'VentureBeat', 'Engineering', keyword));
     setCached(key, posts);
