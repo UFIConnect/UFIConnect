@@ -215,8 +215,10 @@ export default function SearchExperience() {
   const [historyFound, setHistoryFound] = useState({ posts: false, following: false });
   const [suggestionsReady, setSuggestionsReady] = useState(false);
   const peopleRequestRef = useRef(0);
+  const groupRequestRef = useRef(0);
   const postRequestRef = useRef({ posts: 0, following: 0 });
   const hydratedProfileRef = useRef(null);
+  const joinedGroupsLoadedRef = useRef(false);
   const query = queries[activeTab] || '';
 
   const disabledSources = useMemo(() => new Set(
@@ -336,16 +338,32 @@ export default function SearchExperience() {
   }, [activeTab, activeSourceKey, activeTopicKey, loadPostResults, queries, suggestionsReady]);
 
   useEffect(() => {
-    if (activeTab !== 'groups' || allGroups.length > 0) return;
-    setGroupsLoading(true);
-    Promise.all([
-      client.get('/groups'),
-      profile?.id ? client.get('/profile').catch(() => ({ data: {} })) : Promise.resolve({ data: {} }),
-    ]).then(([groupResponse, profileResponse]) => {
-      setAllGroups((groupResponse.data.groups || []).filter((group) => group.isExternal !== true));
-      setJoinedGroups(new Set(profileResponse.data.joinedGroups || []));
-    }).catch(() => {}).finally(() => setGroupsLoading(false));
-  }, [activeTab, allGroups.length, profile?.id]);
+    if (activeTab !== 'groups' || !profile?.id || joinedGroupsLoadedRef.current) return;
+    joinedGroupsLoadedRef.current = true;
+    client.get('/profile')
+      .then(({ data }) => setJoinedGroups(new Set(data.joinedGroups || [])))
+      .catch(() => { joinedGroupsLoadedRef.current = false; });
+  }, [activeTab, profile?.id]);
+
+  useEffect(() => {
+    if (activeTab !== 'groups') return undefined;
+    const requestId = ++groupRequestRef.current;
+    const timer = window.setTimeout(async () => {
+      setGroupsLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (queries.groups.trim()) params.set('q', queries.groups.trim());
+        const { data } = await client.get(`/groups?${params}`);
+        if (requestId !== groupRequestRef.current) return;
+        setAllGroups((data.groups || []).filter((group) => group.isExternal !== true));
+      } catch {
+        if (requestId === groupRequestRef.current) setAllGroups([]);
+      } finally {
+        if (requestId === groupRequestRef.current) setGroupsLoading(false);
+      }
+    }, queries.groups.trim() ? 280 : 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, queries.groups]);
 
   function selectTab(tab) {
     setActiveTab(tab);
@@ -389,12 +407,7 @@ export default function SearchExperience() {
   const sortedResults = useMemo(() => [...results].sort((a, b) => (
     sortBy === 'followers' ? (b.followersCount || 0) - (a.followersCount || 0) : 0
   )), [results, sortBy]);
-  const filteredGroups = useMemo(() => {
-    const normalizedQuery = queries.groups.trim().toLowerCase();
-    if (!normalizedQuery) return allGroups;
-    return allGroups.filter((group) => [group.name, group.description, group.category]
-      .some((value) => value?.toLowerCase().includes(normalizedQuery)));
-  }, [allGroups, queries.groups]);
+  const filteredGroups = allGroups;
   const activePostState = POST_TABS.has(activeTab) ? postStates[activeTab] : null;
   const activeLoading = activePostState?.loading || (activeTab === 'people' && loading) || (activeTab === 'groups' && groupsLoading);
   const hasQuery = query.trim().length > 0;

@@ -27,6 +27,13 @@ const {
   screenExternalComment,
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
+const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost } = require('./following-scope');
+const {
+  databaseSearchTerms,
+  matchesRelatedSearch,
+  relatedSearchScore,
+  splitSearchWords,
+} = require('./search');
 
 dotenv.config();
 
@@ -15733,10 +15740,6 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
 
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
   const user = await getUser(userId);
-  const joinedNativeGroupIds = (user?.joinedGroups || []).filter((groupId) => {
-    const group = groups.find(candidate => candidate.id === groupId);
-    return group && !group.isExternal && canSeeGroup(group, userId);
-  });
   // Capped per followed author, same FOLLOWING_PER_SOURCE_CAP as every
   // external page below — an author you follow is this pool's own version
   // of "a page," so their backlog gets the same recency cap an external
@@ -15745,13 +15748,14 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
     ? await (async () => {
         const nativeResult = await getCommunityPosts({
           viewerId: userId,
+          groupId: GENERAL_UFI_GROUP_ID,
           audienceAuthorIds: [userId, ...followingIds],
-          audienceGroupIds: joinedNativeGroupIds,
           limit: Math.min(CONNECTED_ACCOUNT_HISTORY_MAX_POSTS, 1000),
           offset: 0,
         });
         const byAuthor = new Map();
         for (const p of nativeResult.posts || []) {
+          if (!isGeneralUfiFollowingPost(p)) continue;
           const group = p.groupId ? groups.find(candidate => candidate.id === p.groupId) : null;
           if (p.authorId !== userId && group && !canSeeGroup(group, userId)) continue;
           if (!byAuthor.has(p.authorId)) byAuthor.set(p.authorId, []);
@@ -16202,6 +16206,54 @@ async function getCommunityPosts({
   };
 }
 
+async function searchCommunityPosts({ viewerId, q, limit = 300 } = {}) {
+  const search = databaseSearchTerms(q);
+  if (!search.webQuery || !search.prefixQuery) return [];
+
+  let matches = posts.filter(post => (
+    (post.source || 'uficonnect') === 'uficonnect'
+    && matchesRelatedSearch(`${post.title || ''} ${post.content || ''}`, q)
+  ));
+
+  if (db.isConnected()) {
+    try {
+      const vectorSql = `to_tsvector('english',
+        COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' ||
+        COALESCE(author_name, '') || ' ' || COALESCE(source_label, '')
+      )`;
+      const querySql = `(websearch_to_tsquery('english', $1) || to_tsquery('english', $2))`;
+      const { rows } = await db.query(
+        `SELECT *, ts_rank_cd(${vectorSql}, ${querySql}) AS search_rank
+         FROM community_posts
+         WHERE COALESCE(source, 'uficonnect') = 'uficonnect'
+           AND ${vectorSql} @@ ${querySql}
+         ORDER BY search_rank DESC, created_at DESC
+         LIMIT $3`,
+        [search.webQuery, search.prefixQuery, Math.min(Math.max(limit * 2, 50), 1000)]
+      );
+      matches = [...matches, ...rows.map(dbCommunityPostToMemPost)];
+    } catch (error) {
+      console.warn('community post search DB:', error.message);
+    }
+  }
+
+  const seen = new Set();
+  return matches
+    .filter(post => {
+      if (!post?.id || seen.has(post.id)) return false;
+      seen.add(post.id);
+      const group = post.groupId ? groups.find(candidate => candidate.id === post.groupId) : null;
+      return Boolean(group && canSeeGroup(group, viewerId));
+    })
+    .map(post => ({
+      post,
+      score: relatedSearchScore(`${post.title || ''} ${post.content || ''}`, q),
+    }))
+    .sort((a, b) => b.score - a.score || new Date(b.post.createdAt || 0) - new Date(a.post.createdAt || 0))
+    .slice(0, limit)
+    .map(({ post, score }) => ({ ...serializeCommunityPost(post, viewerId), searchRelevance: score }));
+}
+
 function fullProfile(user) {
   // Build platform ? [group] mapping for joined external groups
   const connectedGroupsByPlatform = {};
@@ -16573,6 +16625,9 @@ async function migrateDB() {
     // User-created groups
     await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS created_by TEXT`);
     await db.query(`ALTER TABLE community_groups ADD COLUMN IF NOT EXISTS is_private BOOLEAN DEFAULT false`);
+    await db.query(`CREATE INDEX IF NOT EXISTS community_groups_search_idx ON community_groups USING GIN (
+      to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(category, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(platform, ''))
+    )`);
 
     // Follows table
     await db.query(`
@@ -16900,6 +16955,9 @@ async function migrateDB() {
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS media_type TEXT`);
     await db.query(`ALTER TABLE community_posts ADD COLUMN IF NOT EXISTS title TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS community_posts_source_idx ON community_posts(source, created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS community_posts_search_idx ON community_posts USING GIN (
+      to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(author_name, '') || ' ' || COALESCE(source_label, ''))
+    )`);
     await seedLiveCameraPosts();
 
     await db.query(`
@@ -16970,6 +17028,9 @@ async function migrateDB() {
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_search_idx ON feed_posts_cache USING GIN (
+      to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' || COALESCE(author_name, '') || ' ' || COALESCE(topic, '') || ' ' || COALESCE(source, ''))
+    )`);
     // getCursorFeedPage (the Feed/Video/Archive newest-sort pagination) runs
     // "WHERE source = $1 AND post_created_at < $2 ORDER BY post_created_at
     // DESC LIMIT N" once per selected source, per page — for the unfiltered
@@ -18389,17 +18450,13 @@ function dbRowToFeedPost(r) {
   };
 }
 
-// Search is matched per typed word, not as one literal phrase — "AI
-// startup" now finds a post that says "startup building AI tools" even
-// though "AI startup" never appears adjacent, which a single ILIKE
-// '%AI startup%' would've missed. Every word must appear somewhere
-// (AND across words, checked independently — see the OR-across-columns
-// clause each word gets in getPostsFromDB below and the mirrored JS
-// .every() checks in handleFeedRequest/handleVideoFeedRequest), so more
-// words narrows results the way a search box normally behaves.
-function splitSearchWords(q) {
-  return String(q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-}
+// PostgreSQL full-text search uses the same normalized/expanded terms as
+// the in-memory fallbacks, so stemming, partial words, and closely related
+// product terms behave consistently no matter which cache currently holds a post.
+const FEED_SEARCH_VECTOR_SQL = `to_tsvector('english',
+  COALESCE(title, '') || ' ' || COALESCE(content, '') || ' ' ||
+  COALESCE(author_name, '') || ' ' || COALESCE(topic, '') || ' ' || COALESCE(source, '')
+)`;
 
 async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = null, options = {}) {
   if (!db.isConnected()) return [];
@@ -18424,11 +18481,18 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
       params.push(source);
       clauses.push(`source = $${params.length}`);
     }
+    let searchOrder = '';
     if (options.q) {
-      for (const word of splitSearchWords(options.q)) {
-        params.push(`%${word}%`);
-        const p = params.length;
-        clauses.push(`(title ILIKE $${p} OR content ILIKE $${p} OR author_name ILIKE $${p} OR topic ILIKE $${p} OR source ILIKE $${p})`);
+      const search = databaseSearchTerms(options.q);
+      if (search.webQuery && search.prefixQuery) {
+        params.push(search.webQuery, search.prefixQuery);
+        const webQueryParam = params.length - 1;
+        const prefixQueryParam = params.length;
+        const querySql = `(websearch_to_tsquery('english', $${webQueryParam}) || to_tsquery('english', $${prefixQueryParam}))`;
+        clauses.push(`${FEED_SEARCH_VECTOR_SQL} @@ ${querySql}`);
+        searchOrder = `ts_rank_cd(${FEED_SEARCH_VECTOR_SQL}, ${querySql}) DESC, `;
+      } else {
+        clauses.push('FALSE');
       }
     }
     if (options.mediaType) {
@@ -18463,7 +18527,7 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     const { rows } = await db.query(
       `SELECT * FROM feed_posts_cache
        ${where}
-       ORDER BY ${dbFeedOrder(sortMode)}
+       ORDER BY ${searchOrder}${dbFeedOrder(sortMode)}
        LIMIT $${limitParam} OFFSET $${offsetParam}`,
       params
     );
@@ -20688,10 +20752,52 @@ app.get('/groups', async (req, res) => {
   try {
     if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
     const { category } = req.query;
+    const searchQuery = String(req.query.q || '').trim().slice(0, 160);
     const viewerId = optionalViewerId(req);
-    let result = category ? groups.filter((g) => g.category === category) : groups;
+    let result;
+    if (searchQuery && db.isConnected()) {
+      const search = databaseSearchTerms(searchQuery);
+      try {
+        const params = [search.webQuery, search.prefixQuery];
+        const vectorSql = `to_tsvector('english', COALESCE(name, '') || ' ' || COALESCE(category, '') || ' ' || COALESCE(description, '') || ' ' || COALESCE(platform, ''))`;
+        const querySql = `(websearch_to_tsquery('english', $1) || to_tsquery('english', $2))`;
+        const conditions = [`${vectorSql} @@ ${querySql}`];
+        if (category) {
+          params.push(category);
+          conditions.push(`category = $${params.length}`);
+        }
+        const { rows } = await db.query(
+          `SELECT *, ts_rank_cd(${vectorSql}, ${querySql}) AS search_rank
+           FROM community_groups
+           WHERE ${conditions.join(' AND ')}
+           ORDER BY search_rank DESC, member_count DESC
+           LIMIT 500`,
+          params
+        );
+        result = rows.map(row => ({
+          id: row.id, name: row.name, category: row.category,
+          description: row.description, members: row.member_count,
+          platform: row.platform || (row.subreddit ? 'reddit' : null),
+          platformUrl: row.platform_url, externalUrl: row.external_url,
+          subreddit: row.subreddit, isExternal: row.is_external,
+          relatedGroups: row.related_groups || [], createdBy: row.created_by || null,
+          isPrivate: Boolean(row.is_private),
+        }));
+      } catch (error) {
+        console.warn('group search DB:', error.message);
+      }
+    }
+    if (!result) {
+      result = category ? groups.filter((g) => g.category === category) : groups;
+      if (searchQuery) {
+        result = result.filter(group => matchesRelatedSearch(
+          `${group.name || ''} ${group.description || ''} ${group.category || ''} ${group.platform || ''}`,
+          searchQuery
+        ));
+      }
+    }
     result = result.filter((g) => canSeeGroup(g, viewerId));
-    if (!category) {
+    if (!category && !searchQuery) {
       // "All" view — same true-mix reasoning as the main Feed's
       // buildTwoPhaseMix/roundRobinMerge: `groups` is member_count-sorted
       // (see seedAndLoadGroups' own query), and the seed data is ~84%
@@ -21082,7 +21188,7 @@ async function handleFeedRequest(req, res) {
       .filter((post) => {
         if (!locationSearchWords.length) return true;
         const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.authorName || ''} ${post.location || ''} ${post.city || ''} ${post.country || ''}`.toLowerCase();
-        return locationSearchWords.every(word => text.includes(word));
+        return matchesRelatedSearch(text, searchQuery);
       });
     // Equalize the complete discovery pool first, then page through that
     // stable order. The old path sliced at page*50 and applied a two-per-
@@ -21348,11 +21454,10 @@ async function handleFeedRequest(req, res) {
     const followingIds = new Set(follows.filter(f => f.followerId === req.user.id).map(f => f.followingId));
     const followingSourceFilter = sourcesParam.length > 1 ? sourcesParam : (sourceFilter || null);
     const { posts: rawFollowing, sourceErrors } = await getFollowingFeedPosts(req.user.id, followingSourceFilter, { bust: req.query.bust === '1', surface: 'feed' });
-    const followingSearchWords = splitSearchWords(searchQuery);
-    const matchingFollowing = followingSearchWords.length
+    const matchingFollowing = searchQuery
       ? rawFollowing.filter((post) => {
           const text = `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.source || ''} ${post.topic || ''}`.toLowerCase();
-          return followingSearchWords.every(word => text.includes(word));
+          return matchesRelatedSearch(text, searchQuery);
         })
       : rawFollowing;
     // Equalized by source with a time factor (see buildEqualizedFollowingPool's
@@ -21532,7 +21637,7 @@ async function handleFeedRequest(req, res) {
         if (!matchesTopic(p)) return false;
         if (searchQuery) {
           const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.topic || ''} ${p.source || ''}`.toLowerCase();
-          if (!text.includes(searchQuery)) return false;
+          if (!matchesRelatedSearch(text, searchQuery)) return false;
         }
         return true;
       }), 'archive-memory-fallback', {
@@ -21573,14 +21678,13 @@ async function handleFeedRequest(req, res) {
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
     const searchRangeMs = feedTimeRangeMs(timeRange);
-    const searchWords = splitSearchWords(searchQuery);
     const memMatches = allCached.filter(p => {
       if (Array.isArray(searchSources) && searchSources.length && !searchSources.includes(p.source)) return false;
       if (searchSources && !Array.isArray(searchSources) && p.source !== searchSources) return false;
       if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
       if (!matchesTopic(p)) return false;
       const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
-      return searchWords.every(w => text.includes(w));
+      return matchesRelatedSearch(text, searchQuery);
     });
     let dbMatches = [];
     if (db.isConnected()) {
@@ -21613,12 +21717,35 @@ async function handleFeedRequest(req, res) {
     // headroom) so the real proportional cap below has genuine alternates
     // to pick from, rather than capping an already-narrow feedLimit+1 list
     // down to almost nothing.
-    const searchRanked = sortFeedBatch(realFeedPosts([...memMatches, ...dbMatches]), 'feed-search-response', {
+    const nativeMatches = await searchCommunityPosts({
+      viewerId: req.user.id,
+      q: searchQuery,
+      limit: searchCandidateLimit,
+    });
+    const searchRanked = sortFeedBatch(realFeedPosts([...nativeMatches, ...memMatches, ...dbMatches]).map(post => ({
+      ...post,
+      searchRelevance: relatedSearchScore(
+        `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.topic || ''} ${post.source || ''}`,
+        searchQuery
+      ),
+    })), 'feed-search-response', {
       limit: searchCandidateLimit,
       sort: sortMode,
       diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
     });
-    const searchCandidates = filterUnseen(personalizeForUser(searchRanked), seenIds);
+    const searchVisible = searchRanked
+      .filter(post => !disabledFeedSources.has(String(post?.source || '').trim().toLowerCase()))
+      .filter(matchesTopic);
+    const searchCandidates = filterUnseen(personalizeAuthenticatedFeedPosts(
+      searchVisible,
+      user,
+      prefs,
+      userAffinity,
+      { locationContext, request: req }
+    ).sort((a, b) => (
+      (b.searchRelevance || 0) - (a.searchRelevance || 0)
+      || postTimestamp(b) - postTimestamp(a)
+    )), seenIds);
     const pageWindow = searchOffset + feedLimit + 1;
     const merged = usesBlendedSources
       ? enforceFeedDiversity(searchCandidates, pageWindow, sortMode)
@@ -22410,7 +22537,7 @@ function parseVideoFilters(req) {
   const matchesSearch = p => {
     if (!searchWords.length) return true;
     const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || ''} ${p.topic || ''} ${p.sourceLabel || p.source || ''}`.toLowerCase();
-    return searchWords.every(w => text.includes(w));
+    return matchesRelatedSearch(text, searchQuery);
   };
   const matchesTopic = p => !topicsFilterLower.length || topicsFilterLower.includes((p.topic || '').toLowerCase());
   return { topicsFilter, topicsFilterLower, searchQuery, searchWords, matchesSearch, matchesTopic };
@@ -23945,7 +24072,7 @@ const AGENT_DEFS = {
   },
   autofix: {
     name: 'Autofix Agent', emoji: 'FIX', color: '#F472B6', interval: '10min',
-    description: 'Groups server errors by signature; once the same bug clears a distinct-session threshold, a narrow null-guard fix category is checked against a hard scope/denylist gate, syntax- and boot-smoke-tested, then committed via GitHub — with an automatic revert if health regresses afterward. Detection always runs; committing anything requires AUTOFIX_ENABLED=true, off by default.',
+    description: 'Rechecks shipped request contracts, then groups server errors by signature; eligible fixes pass scope, syntax, and boot-smoke gates before deploy, with automatic rollback on regression.',
   },
 };
 
@@ -24088,6 +24215,7 @@ function getRuntimeHealthForAgent(id) {
       totalAttempts: autofixState.totalAttempts,
       totalDeploys: autofixState.totalDeploys,
       totalReverts: autofixState.totalReverts,
+      requestContracts: autofixState.requestContracts,
       lastRun: autofixState.lastRun,
       lastError: autofixState.lastError,
     };
@@ -24119,7 +24247,53 @@ const autofixState = {
   totalAttempts: 0,
   totalDeploys: 0,
   totalReverts: 0,
+  requestContracts: { lastRun: null, passed: 0, total: 0, failed: [] },
 };
+const IMPLEMENTED_REQUEST_CONTRACTS = [
+  {
+    id: 'database-related-word-search',
+    check: () => {
+      const terms = databaseSearchTerms('developer jobs');
+      return Boolean(
+        terms.webQuery && terms.prefixQuery
+        && matchesRelatedSearch('A company is hiring a software engineer', 'developer jobs')
+      );
+    },
+  },
+  {
+    id: 'following-general-ufi-only',
+    check: () => (
+      isGeneralUfiFollowingPost({ source: 'uficonnect', groupId: GENERAL_UFI_GROUP_ID })
+      && !isGeneralUfiFollowingPost({ source: 'uficonnect', groupId: 'ufi-tech' })
+    ),
+  },
+];
+
+function auditImplementedRequestContracts() {
+  const failed = IMPLEMENTED_REQUEST_CONTRACTS
+    .filter(contract => {
+      try { return !contract.check(); } catch { return true; }
+    })
+    .map(contract => contract.id);
+  const previousFailures = autofixState.requestContracts.failed.join(',');
+  autofixState.requestContracts = {
+    lastRun: new Date().toISOString(),
+    passed: IMPLEMENTED_REQUEST_CONTRACTS.length - failed.length,
+    total: IMPLEMENTED_REQUEST_CONTRACTS.length,
+    failed,
+  };
+  if (failed.length || previousFailures !== failed.join(',')) {
+    logAgentAction(
+      'autofix',
+      'FIX',
+      failed.length
+        ? `Request contract audit failed: ${failed.join(', ')}`
+        : `${IMPLEMENTED_REQUEST_CONTRACTS.length} request contracts verified`,
+      failed.length ? '#F87171' : '#4ADE80'
+    );
+  }
+  return failed.length === 0;
+}
 const AUTOFIX_MIN_DISTINCT_SESSIONS = envNumber('AUTOFIX_MIN_DISTINCT_SESSIONS', 5, 2, 1000);
 const AUTOFIX_WINDOW_MS = envNumber('AUTOFIX_WINDOW_MS', 6 * 60 * 60 * 1000, 10 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
 const AUTOFIX_MAX_PER_DAY = envNumber('AUTOFIX_MAX_PER_DAY', 1, 0, 10);
@@ -24314,8 +24488,9 @@ async function recordAutofixAttempt(fields) {
 }
 
 async function runAutofixCheck() {
-  if (!db.isConnected()) return;
   autofixState.lastRun = new Date().toISOString();
+  auditImplementedRequestContracts();
+  if (!db.isConnected()) return;
   try {
     // -- Detection: group unresolved server errors by signature over the
     // rolling window, requiring real distinct-session breadth (anonymous
@@ -26351,20 +26526,25 @@ async function getSearchMembersFromDatabase({ myId, q, role }) {
   const conditions = [
     `((u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false') OR u.id = $1)`,
   ];
+  let memberOrder = 'u.created_at DESC';
   if (q) {
-    params.push(`%${q}%`, q);
-    const patternIndex = params.length - 1;
-    const exactIndex = params.length;
-    conditions.push(`(
-      LOWER(COALESCE(u.name, '')) LIKE $${patternIndex}
-      OR LOWER(COALESCE(u.title, '')) LIKE $${patternIndex}
-      OR LOWER(COALESCE(u.organization, '')) LIKE $${patternIndex}
-      OR LOWER(COALESCE(u.bio, '')) LIKE $${patternIndex}
-      OR COALESCE(u.skills::text, '') ILIKE $${patternIndex}
-      OR LOWER(COALESCE(u.role, '')) LIKE $${patternIndex}
-      OR COALESCE(array_to_string(u.interests, ' '), '') ILIKE $${patternIndex}
-      OR LOWER(COALESCE(u.email, '')) = $${exactIndex}
-    )`);
+    if (q.includes('@')) {
+      params.push(q);
+      conditions.push(`LOWER(COALESCE(u.email, '')) = $${params.length}`);
+    } else {
+      const search = databaseSearchTerms(q);
+      params.push(search.webQuery, search.prefixQuery);
+      const webQueryParam = params.length - 1;
+      const prefixQueryParam = params.length;
+      const vectorSql = `to_tsvector('english',
+        COALESCE(u.name, '') || ' ' || COALESCE(u.title, '') || ' ' ||
+        COALESCE(u.organization, '') || ' ' || COALESCE(u.bio, '') || ' ' ||
+        COALESCE(u.skills::text, '') || ' ' || COALESCE(u.role, '') || ' ' || COALESCE(u.interests::text, '')
+      )`;
+      const querySql = `(websearch_to_tsquery('english', $${webQueryParam}) || to_tsquery('english', $${prefixQueryParam}))`;
+      conditions.push(`${vectorSql} @@ ${querySql}`);
+      memberOrder = `ts_rank_cd(${vectorSql}, ${querySql}) DESC, u.created_at DESC`;
+    }
   }
   if (role) {
     params.push(`%${role}%`);
@@ -26373,7 +26553,7 @@ async function getSearchMembersFromDatabase({ myId, q, role }) {
 
   try {
     const [memberRows, totalRows, discoverableRows] = await Promise.all([
-      db.query(`SELECT u.* FROM users u WHERE ${conditions.join(' AND ')} ORDER BY u.created_at DESC LIMIT 500`, params),
+      db.query(`SELECT u.* FROM users u WHERE ${conditions.join(' AND ')} ORDER BY ${memberOrder} LIMIT 500`, params),
       db.query('SELECT COUNT(*) AS count FROM users'),
       db.query(`SELECT COUNT(*) AS count FROM users u WHERE u.profile_hidden IS NOT TRUE AND COALESCE(u.role_settings ->> 'privacy_publicProfile', 'true') <> 'false'`),
     ]);
@@ -26412,22 +26592,13 @@ app.get('/users/search', authenticate, async (req, res) => {
   let results = memberSearch.members.filter(u => u.id && u.email && (!isProfileHidden(u) || u.id === myId));
 
   if (q) {
-    results = results.filter(u =>
-      (u.name || '').toLowerCase().includes(q) ||
-      (u.title || '').toLowerCase().includes(q) ||
-      (u.organization || '').toLowerCase().includes(q) ||
-      (u.bio || '').toLowerCase().includes(q) ||
-      asArray(u.skills).some(s => typeof s === 'string' && s.toLowerCase().includes(q)) ||
-      (u.preferences?.role || '').toLowerCase().includes(q) ||
-      (u.preferences?.interests || []).some(i => i.toLowerCase().includes(q)) ||
-      // Exact match only, unlike every field above — two people who just
-      // met and don't know exactly how the other typed their display name
-      // naturally try searching by email first (confirmed live: two fresh
-      // accounts found each other fine by name, but email search returned
-      // nothing at all). Partial/substring email matching would let
-      // someone enumerate accounts by domain (e.g. searching "@gmail.com"),
-      // so this only ever returns a hit on the complete address.
-      (u.email || '').toLowerCase() === q
+    results = results.filter(u => q.includes('@')
+      ? (u.email || '').toLowerCase() === q
+      : matchesRelatedSearch([
+          u.name, u.title, u.organization, u.bio,
+          ...asArray(u.skills), u.preferences?.role,
+          ...asArray(u.preferences?.interests),
+        ].filter(Boolean).join(' '), q)
     );
   }
   if (role) {
@@ -26454,6 +26625,10 @@ app.get('/users/search', authenticate, async (req, res) => {
       // Found by exact email rather than name — this is the specific
       // person being looked for, same confidence as an exact name match.
       else if ((u.email || '').toLowerCase() === q) score += 100;
+      score += relatedSearchScore([
+        u.name, u.title, u.organization, u.bio,
+        ...asArray(u.skills), uRole, ...uInterests,
+      ].filter(Boolean).join(' '), q);
     }
 
     // Shared interests (most impactful relevance signal)
