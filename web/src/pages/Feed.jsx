@@ -2412,6 +2412,13 @@ export default function Feed({ forcedMode } = {}) {
     }
   }, [loadFeed, profile?.roleSettings, updateProfileLocally]);
 
+  const clearLocationFilters = useCallback(() => {
+    const next = { country: '', city: '' };
+    locationFiltersRef.current = next;
+    setLocationFilters(next);
+    applyLocationFilters();
+  }, [applyLocationFilters]);
+
   const selectTravelLiveLocation = useCallback(async (camera) => {
     const next = normalizeLocationFilters({ country: camera?.country, city: camera?.city });
     if (!next.country && !next.city) return;
@@ -2887,6 +2894,7 @@ export default function Feed({ forcedMode } = {}) {
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
   const showsAdvancedFilters = !usesSourceControls;
+  const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
@@ -2905,10 +2913,16 @@ export default function Feed({ forcedMode } = {}) {
         <UfiFeedContent embedded />
       ) : (
       <>
-      {/* Advanced filters remain available for specialized feeds only. */}
-      {showsAdvancedFilters && <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16, alignItems: 'center', position: 'relative', flexWrap: 'wrap' }}>
-        {/* Filter button */}
-        <div style={{ position: 'relative' }}>
+      {/* Specialized feeds keep location and filter controls together. */}
+      {showsAdvancedFilters && <section className={`feed-specialized-toolbar${isLocationFeed ? ' feed-specialized-toolbar--location' : ''}`}>
+        {isLocationFeed && (
+          <div className="feed-location-heading">
+            <strong>{viewMode === 'countries' ? 'Travel location' : 'Restaurant location'}</strong>
+            <span>{travelLocationLabel || 'Worldwide'}</span>
+          </div>
+        )}
+
+        <div className="feed-specialized-filter">
           <button
             ref={filterBtnRef}
             className="feed-toolbar-control"
@@ -2937,54 +2951,58 @@ export default function Feed({ forcedMode } = {}) {
           )}
         </div>
 
-      </div>}
-
-      {['countries', 'restaurants'].includes(viewMode) && (
-        <form onSubmit={applyLocationFilters} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <span style={{ fontSize: '.8rem', fontWeight: 700, color: 'var(--muted)' }}>
-            {viewMode === 'countries' ? 'Travel location' : 'Restaurant location'}
-          </span>
-          <input
-            className="form-input"
-            aria-label="Country filter"
-            placeholder="Country"
-            value={locationFilters.country}
-            maxLength={80}
-            onChange={(event) => {
-              const next = { ...locationFiltersRef.current, country: event.target.value };
-              locationFiltersRef.current = next;
-              setLocationFilters(next);
-            }}
-            style={{ width: 150, minWidth: 120, padding: '7px 11px', fontSize: '.8rem', borderRadius: 18 }}
-          />
-          <input
-            className="form-input"
-            aria-label="City filter"
-            placeholder="City"
-            value={locationFilters.city}
-            maxLength={80}
-            onChange={(event) => {
-              const next = { ...locationFiltersRef.current, city: event.target.value };
-              locationFiltersRef.current = next;
-              setLocationFilters(next);
-            }}
-            style={{ width: 150, minWidth: 120, padding: '7px 11px', fontSize: '.8rem', borderRadius: 18 }}
-          />
-          <button type="submit" className="btn btn-primary btn-sm" disabled={locationSaving}>
-            {locationSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Apply'}
-          </button>
-          {(locationFilters.country || locationFilters.city) && (
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => {
-              const next = { country: '', city: '' };
-              locationFiltersRef.current = next;
-              setLocationFilters(next);
-            }}>
-              Clear
-            </button>
-          )}
-          {locationMessage && <span style={{ fontSize: '.76rem', color: 'var(--muted)' }}>{locationMessage}</span>}
-        </form>
-      )}
+        {isLocationFeed && (
+          <>
+            <form className="feed-location-form" onSubmit={applyLocationFilters}>
+              <label className="feed-location-field">
+                <span>Country</span>
+                <input
+                  type="search"
+                  className="form-input"
+                  aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} country`}
+                  autoComplete="country-name"
+                  placeholder="Search country"
+                  value={locationFilters.country}
+                  maxLength={80}
+                  onChange={(event) => {
+                    const next = { ...locationFiltersRef.current, country: event.target.value };
+                    locationFiltersRef.current = next;
+                    setLocationFilters(next);
+                  }}
+                />
+              </label>
+              <label className="feed-location-field">
+                <span>City</span>
+                <input
+                  type="search"
+                  className="form-input"
+                  aria-label={`${viewMode === 'countries' ? 'Travel' : 'Restaurant'} city`}
+                  autoComplete="address-level2"
+                  placeholder="Search city"
+                  value={locationFilters.city}
+                  maxLength={80}
+                  onChange={(event) => {
+                    const next = { ...locationFiltersRef.current, city: event.target.value };
+                    locationFiltersRef.current = next;
+                    setLocationFilters(next);
+                  }}
+                />
+              </label>
+              <div className="feed-location-actions">
+                <button type="submit" className="btn btn-primary btn-sm" disabled={locationSaving}>
+                  {locationSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Search'}
+                </button>
+                {(locationFilters.country || locationFilters.city) && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={clearLocationFilters} disabled={locationSaving}>
+                    Clear
+                  </button>
+                )}
+              </div>
+            </form>
+            {locationMessage && <div className="feed-location-message" role="status">{locationMessage}</div>}
+          </>
+        )}
+      </section>}
 
       {/* Source tabs — Feed and Following each filter over their own
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
