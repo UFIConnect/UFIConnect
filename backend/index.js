@@ -29274,7 +29274,10 @@ app.get('/command-center/media-generate/:jobId/content', authenticate, async (re
 // existing attachments/ATS pipeline (see POST /profile/attachments) rather
 // than building a second resume system: /resume-builder/export renders the
 // draft to a PDF and inserts it as a normal attachment row.
-const RESUME_TEMPLATES = new Set(['modern', 'minimal', 'classic', 'executive', 'studio', 'compact']);
+const RESUME_TEMPLATES = new Set([
+  'modern', 'minimal', 'classic', 'executive', 'studio', 'compact',
+  'professional', 'technical', 'academic', 'impact',
+]);
 
 function emptyResumeDraft() {
   return {
@@ -29283,6 +29286,7 @@ function emptyResumeDraft() {
     experience: [],
     education: [],
     skills: [],
+    preparation: { watchedVideoIds: [] },
     coverLetter: { role: '', company: '', jobDescription: '', tone: 'Warm and professional', format: 'modern', body: '' },
     outreach: { recipientName: '', recipientRole: '', company: '', context: '', tone: 'Warm and professional', format: 'modern', body: '' },
   };
@@ -29321,7 +29325,7 @@ function resumeDraftToText(data) {
   return lines.join('\n');
 }
 
-// Six original layouts using PDFKit's built-in fonts only. They share the
+// Ten original layouts using PDFKit's built-in fonts only. They share the
 // same structured resume data, but their headers, typography, and section
 // treatment are intentionally distinct so the picker changes the real PDF,
 // not just its label in the editor.
@@ -29341,6 +29345,10 @@ function renderResumePDF(data, template) {
       executive: { accent: '#0F766E', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
       studio:    { accent: '#B45309', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
       compact:   { accent: '#BE123C', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      professional: { accent: '#102A6B', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      technical: { accent: '#334155', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
+      academic: { accent: '#6B1F35', bodyFont: 'Times-Roman', headingFont: 'Times-Bold' },
+      impact: { accent: '#166534', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' },
     }[template] || { accent: '#2563EB', bodyFont: 'Helvetica', headingFont: 'Helvetica-Bold' };
     const { accent, bodyFont, headingFont } = templateStyle;
 
@@ -29374,6 +29382,31 @@ function renderResumePDF(data, template) {
       doc.fontSize(10.5).font(bodyFont).fillColor(accent).text(c.title || '', 70, 81);
       doc.moveTo(70, 111).lineTo(doc.page.width - doc.page.margins.right, 111).strokeColor('#D8DEE8').lineWidth(1).stroke();
       doc.y = 130;
+    } else if (template === 'professional') {
+      doc.rect(0, 0, doc.page.width, 9).fill(accent);
+      doc.fontSize(23).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 50, 43);
+      doc.fontSize(10.5).font(bodyFont).fillColor(accent).text(c.title || '', 50, 73);
+      doc.moveTo(50, 98).lineTo(doc.page.width - doc.page.margins.right, 98).strokeColor('#B8C4D8').lineWidth(1).stroke();
+      doc.y = 113;
+    } else if (template === 'technical') {
+      doc.rect(50, 40, doc.page.width - 100, 78).fill('#EEF2F7');
+      doc.rect(50, 40, 8, 78).fill(accent);
+      doc.fontSize(22).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 72, 56);
+      doc.fontSize(10.5).font(bodyFont).fillColor(accent).text(c.title || '', 72, 84);
+      doc.y = 133;
+    } else if (template === 'academic') {
+      doc.rect(50, 47, doc.page.width - 100, 3).fill(accent);
+      doc.fontSize(24).font(headingFont).fillColor('#172033').text(c.name || 'Your Name', 50, 66, { align: 'center' });
+      doc.fontSize(10.5).font(bodyFont).fillColor(accent).text(c.title || '', { align: 'center' });
+      doc.moveTo(50, doc.y + 8).lineTo(doc.page.width - 50, doc.y + 8).strokeColor('#CFB6BE').lineWidth(1).stroke();
+      doc.moveDown(1.1);
+    } else if (template === 'impact') {
+      doc.rect(0, 0, doc.page.width, 100).fill('#172033');
+      doc.rect(doc.page.width - 18, 0, 18, 100).fill(accent);
+      doc.fillColor('#fff').fontSize(23).font(headingFont).text(c.name || 'Your Name', 50, 29);
+      doc.fontSize(10.5).font(bodyFont).fillColor('#E5F4EA').text(c.title || '', 50, 61);
+      doc.fillColor('#000');
+      doc.y = 120;
     } else {
       doc.fontSize(22).font(headingFont).fillColor('#000').text(c.name || 'Your Name');
       doc.fontSize(11).font(bodyFont).fillColor('#333').text(c.title || '');
@@ -29382,10 +29415,10 @@ function renderResumePDF(data, template) {
 
     const contactBits = [c.email, c.phone, c.location].filter(Boolean).join('   |   ');
     if (contactBits) {
-      doc.fontSize(9.5).font(bodyFont).fillColor('#555').text(contactBits, { align: template === 'classic' ? 'center' : 'left' });
+      doc.fontSize(9.5).font(bodyFont).fillColor('#555').text(contactBits, { align: ['classic', 'academic'].includes(template) ? 'center' : 'left' });
     }
     if (Array.isArray(c.links) && c.links.length) {
-      doc.fontSize(9.5).font(bodyFont).fillColor(accent).text(c.links.map(l => l.url || l.label).filter(Boolean).join('   |   '), { align: template === 'classic' ? 'center' : 'left' });
+      doc.fontSize(9.5).font(bodyFont).fillColor(accent).text(c.links.map(l => l.url || l.label).filter(Boolean).join('   |   '), { align: ['classic', 'academic'].includes(template) ? 'center' : 'left' });
     }
     doc.moveDown(1);
 
@@ -29394,14 +29427,26 @@ function renderResumePDF(data, template) {
       const isExecutive = template === 'executive';
       const isClassic = template === 'classic';
       const isCompact = template === 'compact';
+      const isAcademic = template === 'academic';
+      const isTechnical = template === 'technical';
+      const isImpact = template === 'impact';
+      if (isTechnical) {
+        const y = doc.y;
+        const left = doc.page.margins.left;
+        doc.rect(left, y, doc.page.width - left - doc.page.margins.right, 19).fill(accent);
+        doc.fontSize(10).font(headingFont).fillColor('#fff').text(label.toUpperCase(), left + 8, y + 4, { characterSpacing: 0.5 });
+        doc.y = y + 25;
+        doc.fillColor('#000');
+        return;
+      }
       doc.fontSize(isExecutive || isCompact ? 10.5 : 12)
         .font(headingFont)
-        .fillColor(isClassic || isCompact ? '#172033' : accent)
-        .text(label.toUpperCase(), { characterSpacing: isExecutive ? 1.1 : 0.5 });
+        .fillColor(isClassic || isCompact || isAcademic ? '#172033' : accent)
+        .text(label.toUpperCase(), { align: isAcademic ? 'center' : 'left', characterSpacing: isExecutive ? 1.1 : 0.5 });
       doc.moveTo(doc.x, doc.y + 2)
         .lineTo(doc.page.width - doc.page.margins.right, doc.y + 2)
-        .strokeColor(isClassic ? '#BCA99A' : isCompact ? '#D8DEE8' : accent)
-        .lineWidth(isExecutive ? 2 : 1)
+        .strokeColor(isClassic ? '#BCA99A' : isAcademic ? '#CFB6BE' : isCompact ? '#D8DEE8' : accent)
+        .lineWidth(isExecutive || isImpact ? 2 : 1)
         .stroke();
       doc.moveDown(0.4);
       doc.fillColor('#000');
@@ -29415,12 +29460,12 @@ function renderResumePDF(data, template) {
     if (Array.isArray(data.experience) && data.experience.length) {
       sectionHeading('Experience');
       for (const job of data.experience) {
-        doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#000').text(`${job.role || 'Role'} — ${job.company || 'Company'}`);
+        doc.fontSize(10.5).font(headingFont).fillColor('#000').text(`${job.role || 'Role'} — ${job.company || 'Company'}`);
         const dates = [job.startDate, job.current ? 'Present' : job.endDate].filter(Boolean).join(' – ');
         if (dates || job.location) {
-          doc.fontSize(9).font('Helvetica').fillColor('#666').text([dates, job.location].filter(Boolean).join('   ·   '));
+          doc.fontSize(9).font(bodyFont).fillColor('#666').text([dates, job.location].filter(Boolean).join('   ·   '));
         }
-        doc.fontSize(10).font('Helvetica').fillColor('#222');
+        doc.fontSize(10).font(bodyFont).fillColor('#222');
         for (const b of (job.bullets || [])) {
           if (b?.trim()) doc.text(`•  ${b.trim()}`, { indent: 10, lineGap: 1.5 });
         }
@@ -29431,16 +29476,16 @@ function renderResumePDF(data, template) {
     if (Array.isArray(data.education) && data.education.length) {
       sectionHeading('Education');
       for (const ed of data.education) {
-        doc.fontSize(10.5).font('Helvetica-Bold').fillColor('#000').text([ed.degree, ed.field].filter(Boolean).join(', ') || 'Degree');
+        doc.fontSize(10.5).font(headingFont).fillColor('#000').text([ed.degree, ed.field].filter(Boolean).join(', ') || 'Degree');
         const dates = [ed.startDate, ed.endDate].filter(Boolean).join(' – ');
-        doc.fontSize(9.5).font('Helvetica').fillColor('#444').text([ed.school, dates].filter(Boolean).join('   ·   '));
+        doc.fontSize(9.5).font(bodyFont).fillColor('#444').text([ed.school, dates].filter(Boolean).join('   ·   '));
         doc.moveDown(0.4);
       }
     }
 
     if (Array.isArray(data.skills) && data.skills.length) {
       sectionHeading('Skills');
-      doc.fontSize(10).font('Helvetica').fillColor('#222').text(data.skills.join('   ·   '), { lineGap: 2 });
+      doc.fontSize(10).font(bodyFont).fillColor('#222').text(data.skills.join('   ·   '), { lineGap: 2 });
     }
 
     doc.end();

@@ -13,6 +13,71 @@ const TEMPLATES = [
   { key: 'executive', label: 'Executive', desc: 'A decisive dark header for senior roles.', accent: '#0F766E' },
   { key: 'studio',    label: 'Studio',    desc: 'A lively accent rail with spacious detail.', accent: '#B45309' },
   { key: 'compact',   label: 'Compact',   desc: 'A focused one-page layout with a slim accent rail.', accent: '#BE123C' },
+  { key: 'professional', label: 'Professional', desc: 'A polished navy layout for broad business roles.', accent: '#102A6B' },
+  { key: 'technical', label: 'Technical', desc: 'Structured hierarchy for engineering and data work.', accent: '#334155' },
+  { key: 'academic', label: 'Academic', desc: 'A restrained serif layout for research and education.', accent: '#6B1F35' },
+  { key: 'impact', label: 'Impact', desc: 'Strong section markers for results-led career stories.', accent: '#166534' },
+];
+
+const PREPARATION_TOPICS = ['All', 'Resume', 'Interview basics', 'Behavioral', 'Technical', 'Video interviews', 'Offers'];
+
+const PREPARATION_VIDEOS = [
+  {
+    id: 'LcohcyoCXn8',
+    topic: 'Resume',
+    title: 'How to create a strong, tailored resume',
+    source: 'Indeed',
+    summary: 'Build a focused resume around the role, relevant experience, credentials, and a clean digital version.',
+    takeaways: ['Tailor the opening', 'Prioritize relevant results', 'Keep the digital copy readable'],
+  },
+  {
+    id: '70mIbOlLyEU',
+    topic: 'Interview basics',
+    title: 'Answering "Tell me about yourself"',
+    source: 'Indeed',
+    summary: 'Shape a concise professional story that connects your background to the role in front of you.',
+    takeaways: ['Lead with the present', 'Choose relevant history', 'Connect your answer to the role'],
+  },
+  {
+    id: '4tv5yV-wpBk',
+    topic: 'Interview basics',
+    title: 'Questions to ask at the end of an interview',
+    source: 'Indeed',
+    summary: 'Use the closing minutes to understand the work, team expectations, and what success looks like.',
+    takeaways: ['Ask about success', 'Explore team priorities', 'Skip questions already answered'],
+  },
+  {
+    id: 'TPilhhzHTnU',
+    topic: 'Behavioral',
+    title: 'Preparing for non-technical interview questions',
+    source: 'Life at Google',
+    summary: 'Prepare clear examples that show how you approach decisions, achievements, and ambiguous problems.',
+    takeaways: ['Use specific examples', 'Explain your reasoning', 'Support outcomes with evidence'],
+  },
+  {
+    id: 'we7ba0slWrc',
+    topic: 'Technical',
+    title: 'Preparing for technical interview questions',
+    source: 'Life at Google',
+    summary: 'Review the interview flow, coding approach, testing, data structures, recursion, and system design.',
+    takeaways: ['Clarify before coding', 'Test your solution', 'Talk through tradeoffs'],
+  },
+  {
+    id: 'xNGrePi32ho',
+    topic: 'Video interviews',
+    title: 'How to prepare for a video interview',
+    source: 'Indeed',
+    summary: 'Set up a reliable environment and communicate clearly when the interview happens on camera.',
+    takeaways: ['Test the setup', 'Control the background', 'Keep notes within sight'],
+  },
+  {
+    id: 'urpxkLZEklc',
+    topic: 'Offers',
+    title: 'How to negotiate your starting salary',
+    source: 'Harvard Business Review',
+    summary: 'Research the market, define your floor, and discuss the whole compensation package with confidence.',
+    takeaways: ['Know the market range', 'Consider total compensation', 'Prepare exact language'],
+  },
 ];
 
 function emptyDraft() {
@@ -22,6 +87,7 @@ function emptyDraft() {
     experience: [],
     education: [],
     skills: [],
+    preparation: { watchedVideoIds: [] },
     coverLetter: { role: '', company: '', jobDescription: '', tone: 'Warm and professional', format: 'modern', body: '' },
     outreach: { recipientName: '', recipientRole: '', company: '', context: '', tone: 'Warm and professional', format: 'modern', body: '' },
   };
@@ -37,6 +103,11 @@ function normalizeDraft(draft) {
     experience: Array.isArray(next.experience) ? next.experience : base.experience,
     education: Array.isArray(next.education) ? next.education : base.education,
     skills: Array.isArray(next.skills) ? next.skills : base.skills,
+    preparation: {
+      ...base.preparation,
+      ...(next.preparation || {}),
+      watchedVideoIds: Array.isArray(next.preparation?.watchedVideoIds) ? next.preparation.watchedVideoIds : [],
+    },
     coverLetter: { ...base.coverLetter, ...(next.coverLetter || {}) },
     outreach: { ...base.outreach, ...(next.outreach || {}) },
   };
@@ -54,8 +125,8 @@ function LockedState({ onUnlock, unlocking, billingReady, price }) {
     <div className="card" style={{ textAlign: 'center', padding: '52px 24px' }}>
       <h2 style={{ fontSize: '1.15rem', fontWeight: 800, margin: '0 0 8px' }}>Resume Builder</h2>
       <p style={{ color: 'var(--muted)', fontSize: '.88rem', maxWidth: 440, margin: '0 auto 22px', lineHeight: 1.6 }}>
-        Build an ATS-friendly resume from scratch with original templates, AI-assisted writing help,
-        and a one-click PDF export that's automatically scored and saved to your profile.
+        Prepare for interviews, build an ATS-friendly resume with original templates, use AI-assisted writing,
+        and export a scored PDF that is saved to your profile.
       </p>
       <div style={{ display: 'inline-flex', alignItems: 'baseline', gap: 7, marginBottom: 18, fontSize: '.86rem' }}>
         <span style={{ color: 'var(--muted)' }}>Resume Builder add-on</span>
@@ -250,6 +321,130 @@ function WritingPreviewModal({ title, body, format, onClose }) {
   );
 }
 
+function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
+  const [topic, setTopic] = useState('All');
+  const [selectedVideoId, setSelectedVideoId] = useState(PREPARATION_VIDEOS[0].id);
+  const [playingVideoId, setPlayingVideoId] = useState('');
+  const filteredVideos = topic === 'All'
+    ? PREPARATION_VIDEOS
+    : PREPARATION_VIDEOS.filter(video => video.topic === topic);
+  const activeVideo = filteredVideos.find(video => video.id === selectedVideoId) || filteredVideos[0];
+  const watched = new Set(watchedIds);
+
+  function selectTopic(nextTopic) {
+    const nextVideos = nextTopic === 'All'
+      ? PREPARATION_VIDEOS
+      : PREPARATION_VIDEOS.filter(video => video.topic === nextTopic);
+    setTopic(nextTopic);
+    setSelectedVideoId(nextVideos[0]?.id || PREPARATION_VIDEOS[0].id);
+    setPlayingVideoId('');
+  }
+
+  function playVideo(video) {
+    setSelectedVideoId(video.id);
+    setPlayingVideoId(video.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById('resume-preparation-player')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  if (!activeVideo) return null;
+
+  return (
+    <div className="resume-preparation-library">
+      <div className="resume-preparation-heading">
+        <div>
+          <h2>Interview preparation</h2>
+          <p>Practical lessons for each stage, from tailoring the resume through reviewing the offer.</p>
+        </div>
+        <div className="resume-preparation-progress" aria-label={`${watched.size} of ${PREPARATION_VIDEOS.length} videos completed`}>
+          <strong>{watched.size}/{PREPARATION_VIDEOS.length}</strong>
+          <span>completed</span>
+        </div>
+      </div>
+
+      <div className="resume-preparation-topics" role="tablist" aria-label="Preparation video topics">
+        {PREPARATION_TOPICS.map(item => (
+          <button
+            key={item}
+            type="button"
+            role="tab"
+            aria-selected={topic === item}
+            className={`resume-preparation-topic${topic === item ? ' is-selected' : ''}`}
+            onClick={() => selectTopic(item)}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+
+      <section className="resume-preparation-featured" id="resume-preparation-player" aria-labelledby="resume-preparation-title">
+        <div className="resume-preparation-player">
+          {playingVideoId === activeVideo.id ? (
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${activeVideo.id}?autoplay=1&playsinline=1&rel=0`}
+              title={activeVideo.title}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : (
+            <button type="button" className="resume-preparation-poster" onClick={() => playVideo(activeVideo)} aria-label={`Play ${activeVideo.title}`}>
+              <img
+                src={`https://i.ytimg.com/vi/${activeVideo.id}/maxresdefault.jpg`}
+                onError={event => {
+                  if (!event.currentTarget.src.endsWith('/hqdefault.jpg')) {
+                    event.currentTarget.src = `https://i.ytimg.com/vi/${activeVideo.id}/hqdefault.jpg`;
+                  }
+                }}
+                alt=""
+              />
+              <span className="resume-preparation-play">Play video</span>
+            </button>
+          )}
+        </div>
+        <div className="resume-preparation-featured-copy">
+          <span className="resume-preparation-eyebrow">{activeVideo.topic} | {activeVideo.source}</span>
+          <h3 id="resume-preparation-title">{activeVideo.title}</h3>
+          <p>{activeVideo.summary}</p>
+          <ul>
+            {activeVideo.takeaways.map(item => <li key={item}>{item}</li>)}
+          </ul>
+          <div className="resume-preparation-actions">
+            <button
+              type="button"
+              className={watched.has(activeVideo.id) ? 'btn btn-outline btn-sm' : 'btn btn-primary btn-sm'}
+              onClick={() => onToggleWatched(activeVideo.id)}
+              disabled={saving}
+            >
+              {watched.has(activeVideo.id) ? 'Mark incomplete' : 'Mark complete'}
+            </button>
+            {playingVideoId === activeVideo.id && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPlayingVideoId('')}>Close player</button>
+            )}
+            <a className="btn btn-ghost btn-sm" href={`https://www.youtube.com/watch?v=${activeVideo.id}`} target="_blank" rel="noreferrer">Open on YouTube</a>
+          </div>
+        </div>
+      </section>
+
+      <div className="resume-preparation-grid">
+        {filteredVideos.map(video => (
+          <article key={video.id} className={`resume-preparation-card${activeVideo.id === video.id ? ' is-active' : ''}`}>
+            <button type="button" className="resume-preparation-card-media" onClick={() => playVideo(video)} aria-label={`Play ${video.title}`}>
+              <img src={`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`} alt="" loading="lazy" />
+              <span>Play</span>
+            </button>
+            <div className="resume-preparation-card-copy">
+              <span>{video.topic} | {video.source}</span>
+              <strong>{video.title}</strong>
+              {watched.has(video.id) && <small>Completed</small>}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ResumeBuilder() {
   const navigate = useNavigate();
   const { profile, refreshProfile } = useAuth();
@@ -267,7 +462,7 @@ export default function ResumeBuilder() {
   const [drafting, setDrafting] = useState(null);
   const [activeBuilderTab, setActiveBuilderTab] = useState(() => {
     const requested = new URLSearchParams(window.location.search).get('tab');
-    return ['resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'resume';
+    return ['preparation', 'resume', 'cover-letter', 'outreach', 'jobs'].includes(requested) ? requested : 'preparation';
   });
   const [writingPreviewType, setWritingPreviewType] = useState(null);
   const [writingExporting, setWritingExporting] = useState(null);
@@ -385,6 +580,29 @@ export default function ResumeBuilder() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function togglePreparationWatched(videoId) {
+    if (saving) return;
+    const currentIds = Array.isArray(data.preparation?.watchedVideoIds) ? data.preparation.watchedVideoIds : [];
+    const isWatched = currentIds.includes(videoId);
+    const watchedVideoIds = isWatched
+      ? currentIds.filter(id => id !== videoId)
+      : [...new Set([...currentIds, videoId])];
+    const nextData = {
+      ...data,
+      preparation: { ...(data.preparation || {}), watchedVideoIds },
+    };
+    setData(nextData);
+    const saved = await saveDraft(nextData, isWatched ? 'Video marked incomplete.' : 'Preparation progress saved.');
+    if (!saved) setData(data);
+  }
+
+  function selectBuilderTab(tab) {
+    setActiveBuilderTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
   async function handleExport() {
@@ -622,7 +840,7 @@ export default function ResumeBuilder() {
             Resume Builder
           </h1>
           <p style={{ color: 'var(--muted)', fontSize: '.85rem', margin: '4px 0 0' }}>
-            Original templates. AI-assisted writing. Exports straight into your Attachments with an ATS score.
+            Interview preparation, original templates, AI-assisted writing, and scored exports saved to your Attachments.
           </p>
         </div>
 
@@ -634,8 +852,9 @@ export default function ResumeBuilder() {
           <div className="empty-state"><span className="spinner spinner-primary" /></div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 760 }}>
-            <div role="tablist" aria-label="Resume Builder" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div className="resume-builder-tabs" role="tablist" aria-label="Resume Builder">
               {[
+                ['preparation', 'Preparation videos'],
                 ['resume', 'Resume'],
                 ['cover-letter', 'Cover letter'],
                 ['outreach', 'Reach-out messages'],
@@ -647,14 +866,21 @@ export default function ResumeBuilder() {
                   role="tab"
                   type="button"
                   aria-selected={activeBuilderTab === key}
-                  onClick={() => setActiveBuilderTab(key)}
-                  className="btn btn-sm"
-                  style={{ border: 'none', background: activeBuilderTab === key ? 'var(--primary)' : 'var(--bg-secondary)', color: activeBuilderTab === key ? '#fff' : 'var(--text)' }}
+                  onClick={() => selectBuilderTab(key)}
+                  className={`btn btn-sm resume-builder-tab${activeBuilderTab === key ? ' is-selected' : ''}`}
                 >
                   {label}
                 </button>
               ))}
             </div>
+
+            {activeBuilderTab === 'preparation' && (
+              <PreparationLibrary
+                watchedIds={data.preparation?.watchedVideoIds || []}
+                onToggleWatched={togglePreparationWatched}
+                saving={saving}
+              />
+            )}
 
             {activeBuilderTab === 'resume' && <>
             <div className="card">
