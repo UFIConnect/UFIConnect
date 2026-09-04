@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
@@ -117,6 +117,59 @@ function priceCadence(price) {
   if (!price?.interval) return '';
   const count = Math.max(1, Number(price.intervalCount) || 1);
   return count === 1 ? ` / ${price.interval}` : ` every ${count} ${price.interval}s`;
+}
+
+function listingPlainText(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (typeof DOMParser === 'undefined') return raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const parsed = new DOMParser().parseFromString(raw, 'text/html');
+  return String(parsed.body?.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function listingSummary(job, maxLength = 360) {
+  const text = listingPlainText(job?.content || job?.jobContent);
+  if (!text) {
+    return `This source did not include a position summary. Open the ${job?.source || 'original'} listing for responsibilities, qualifications, and application details.`;
+  }
+  if (text.length <= maxLength) return text;
+  const shortened = text.slice(0, maxLength + 1);
+  const lastSpace = shortened.lastIndexOf(' ');
+  return `${shortened.slice(0, lastSpace > maxLength * 0.7 ? lastSpace : maxLength).trim()}...`;
+}
+
+function listingDateLabel(job) {
+  const value = job?.posted || job?.updatedAt || job?.trackedAt;
+  const timestamp = new Date(value || '').getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const label = job?.posted ? 'Posted' : 'Tracked';
+  return `${label} ${new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function toJobContact(listing) {
+  const content = String(listing.content || listing.jobContent || '');
+  const publicContact = listing.contactEmail || content.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
+  const job = {
+    ...listing,
+    content,
+    publicContact,
+    recipientName: listing.recruiterName || '',
+    recipientRole: listing.recruiterRole || (publicContact ? 'Recruiter' : 'Recruiting team'),
+  };
+  const displayDate = listingDateLabel(job);
+  const displayFacts = [
+    job.location,
+    job.pay,
+    job.remote ? 'Remote' : '',
+    displayDate,
+    job.source,
+    ...(job.matchReasons || []).slice(0, 2),
+  ].filter((fact, index, facts) => fact && facts.findIndex(value => String(value).toLowerCase() === String(fact).toLowerCase()) === index);
+  return {
+    ...job,
+    displaySummary: listingSummary(job),
+    displayFacts,
+  };
 }
 
 function LockedState({ onUnlock, unlocking, billingReady, price }) {
@@ -705,27 +758,17 @@ export default function ResumeBuilder() {
     setData(prev => ({ ...prev, [section]: { ...prev[section], [field]: value } }));
   }
 
-  function toJobContact(listing) {
-    const content = String(listing.content || listing.jobContent || '');
-    const publicContact = listing.contactEmail || content.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i)?.[0] || '';
-    return {
-      ...listing,
-      content,
-      publicContact,
-      recipientName: listing.recruiterName || '',
-      recipientRole: listing.recruiterRole || (publicContact ? 'Recruiter' : 'Recruiting team'),
-    };
-  }
-
-  const liveJobsById = new Map(liveJobs.filter(job => job?.id).map(job => [job.id, job]));
-  const trackedJobContacts = trackedJobs
-    .filter(job => job.status === 'saved' || job.status === 'applied')
-    .map(job => toJobContact({ ...job, ...(liveJobsById.get(job.id) || {}) }));
-  const trackedJobIds = new Set(trackedJobContacts.map(job => job.id));
-  const jobContactOptions = [
-    ...trackedJobContacts,
-    ...liveJobs.filter(job => job?.id && !trackedJobIds.has(job.id)).map(toJobContact),
-  ].slice(0, 500);
+  const jobContactOptions = useMemo(() => {
+    const liveJobsById = new Map(liveJobs.filter(job => job?.id).map(job => [job.id, job]));
+    const trackedJobContacts = trackedJobs
+      .filter(job => job.status === 'saved' || job.status === 'applied')
+      .map(job => toJobContact({ ...job, ...(liveJobsById.get(job.id) || {}) }));
+    const trackedJobIds = new Set(trackedJobContacts.map(job => job.id));
+    return [
+      ...trackedJobContacts,
+      ...liveJobs.filter(job => job?.id && !trackedJobIds.has(job.id)).map(toJobContact),
+    ].slice(0, 500);
+  }, [liveJobs, trackedJobs]);
 
   function useTrackedJobForWriting(job, destination) {
     if (destination === 'cover-letter') {
@@ -1043,9 +1086,24 @@ export default function ResumeBuilder() {
                     <div className="resume-job-contact-row" key={job.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
                       <div className="resume-job-contact-details" style={{ minWidth: 0 }}>
                         <strong style={{ display: 'block', fontSize: '.86rem' }}>{job.title || 'Tracked role'}</strong>
-                        <span style={{ display: 'block', fontSize: '.78rem', color: 'var(--muted)', marginTop: 2 }}>
-                          {[job.org || 'Hiring team', job.status === 'saved' ? 'Saved' : job.status === 'applied' ? 'Applied' : 'Live listing', job.recipientName || job.publicContact || job.recipientRole].filter(Boolean).join(' | ')}
+                        <span className="resume-job-contact-heading-meta">
+                          {[job.org || 'Hiring team', job.status === 'saved' ? 'Saved' : job.status === 'applied' ? 'Applied' : 'Live listing'].filter(Boolean).join(' | ')}
                         </span>
+                        <p className="resume-job-contact-description">{job.displaySummary}</p>
+                        <div className="resume-job-contact-facts" aria-label="Listing details">
+                          {job.displayFacts.map(fact => <span key={fact}>{fact}</span>)}
+                        </div>
+                        <div className="resume-job-contact-person">
+                          <span className="resume-job-contact-person-label">Contact</span>
+                          {(job.recipientName || job.publicContact || job.recruiterRole) ? (
+                            <span>
+                              {[job.recipientName, job.recruiterRole || job.recipientRole].filter(Boolean).join(' | ')}
+                              {job.publicContact && <>{(job.recipientName || job.recruiterRole) ? ' | ' : ''}<a href={`mailto:${job.publicContact}`}>{job.publicContact}</a></>}
+                            </span>
+                          ) : (
+                            <span>Recruiting contact not published. Use the job listing to reach the hiring team.</span>
+                          )}
+                        </div>
                       </div>
                       <div className="resume-job-contact-actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end', flexShrink: 0 }}>
                         {job.sourceUrl && <a className="btn btn-ghost btn-sm" href={job.sourceUrl} target="_blank" rel="noreferrer">Job</a>}

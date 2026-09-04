@@ -4104,6 +4104,55 @@ input, textarea, select { font-family: inherit; }
 .resume-job-contact-details {
   flex: 1 1 220px;
 }
+.resume-job-contact-heading-meta {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: .76rem;
+}
+.resume-job-contact-description {
+  display: -webkit-box;
+  max-width: 760px;
+  margin: 9px 0 8px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: .77rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.resume-job-contact-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.resume-job-contact-facts span {
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: .68rem;
+  line-height: 1.2;
+}
+.resume-job-contact-person {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--muted);
+  font-size: .72rem;
+  line-height: 1.4;
+}
+.resume-job-contact-person a {
+  color: var(--primary);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.resume-job-contact-person-label {
+  color: var(--text);
+  font-weight: 750;
+}
 .resume-job-contact-actions {
   align-items: center;
 }
@@ -4357,6 +4406,15 @@ input, textarea, select { font-family: inherit; }
   }
   .resume-job-contact-details {
     min-width: 0;
+  }
+  .resume-job-contact-description {
+    max-width: none;
+    -webkit-line-clamp: 4;
+  }
+  .resume-job-contact-person {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
   .resume-job-contact-actions {
     display: grid !important;
