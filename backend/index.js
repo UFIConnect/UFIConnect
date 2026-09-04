@@ -508,6 +508,7 @@ const asArray = (v) => Array.isArray(v) ? v : [];
 
 // --- Time helpers -------------------------------------------------------------
 const ago = (ms) => new Date(Date.now() - ms).toISOString();
+const MIN = 60 * 1000;
 const H = 3600000;
 const D = 86400000;
 const MAX_TIMER_DELAY = 2_147_483_647;
