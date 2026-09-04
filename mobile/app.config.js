@@ -1,6 +1,6 @@
 export default ({ config }) => ({
   ...config,
-  name: 'UFconnect',
+  name: 'UFIConnect',
   slug: 'pro-connect',
   version: '1.0.0',
   orientation: 'portrait',
@@ -9,7 +9,7 @@ export default ({ config }) => ({
   splash: {
     image: './assets/splash.png',
     resizeMode: 'cover',
-    backgroundColor: '#2563EB',
+    backgroundColor: '#102A6B',
   },
   updates: {
     fallbackToCacheTimeout: 0,
@@ -20,16 +20,16 @@ export default ({ config }) => ({
     bundleIdentifier: 'com.uficonnect.app',
     buildNumber: '1',
     infoPlist: {
-      NSPhotoLibraryUsageDescription: 'UFconnect uses your photo library to share images in messages.',
-      NSCameraUsageDescription: 'UFconnect uses your camera to capture photos to share.',
-      NSMicrophoneUsageDescription: 'UFconnect uses your microphone for voice messages.',
+      NSPhotoLibraryUsageDescription: 'UFIConnect uses your photo library to share images in messages.',
+      NSCameraUsageDescription: 'UFIConnect uses your camera to capture photos to share.',
+      NSMicrophoneUsageDescription: 'UFIConnect uses your microphone for voice messages.',
       ITSAppUsesNonExemptEncryption: false,
     },
   },
   android: {
     adaptiveIcon: {
       foregroundImage: './assets/adaptive-icon.png',
-      backgroundColor: '#2563EB',
+      backgroundColor: '#102A6B',
     },
     package: 'com.uficonnect.app',
     versionCode: 1,
@@ -43,8 +43,8 @@ export default ({ config }) => ({
   },
   extra: {
     // Set API_URL env var when running EAS builds for production.
-    // e.g.: eas secret:create --scope project --name API_URL --value https://uficonnect-api-708r.onrender.com
-    apiUrl: process.env.API_URL || 'https://uficonnect-api-708r.onrender.com',
+    // e.g.: eas env:create --environment production --name API_URL --value https://api.uficonnect.org
+    apiUrl: process.env.API_URL || 'https://api.uficonnect.org',
     eas: {
       projectId: 'ee9644f6-0881-49a8-93f5-aa373a67bc92',
     },
