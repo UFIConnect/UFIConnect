@@ -3464,13 +3464,13 @@ export default function Feed({ forcedMode } = {}) {
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key, { resetHome: key === 'feed' })}>{label}</button>
             ))}
             <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => switchViewMode('groups')}>Groups</button>
-            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
             ))}
+            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>

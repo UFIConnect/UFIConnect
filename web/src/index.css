@@ -1847,6 +1847,234 @@ input, textarea, select { font-family: inherit; }
 .group-footer { display: flex; align-items: center; justify-content: space-between; }
 .group-members { font-size: .78rem; color: var(--muted); }
 
+.group-directory-browser {
+  display: grid;
+  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+.group-directory-list {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.group-directory-list-heading {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: .78rem;
+}
+.group-directory-list-heading span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.group-directory-tabs {
+  max-height: min(68vh, 720px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.group-directory-tab {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 86px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  text-align: left;
+}
+.group-directory-tab::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: transparent;
+}
+.group-directory-tab:hover { background: var(--surface); }
+.group-directory-tab.active { background: var(--primary-light); }
+.group-directory-tab.active::before { background: var(--primary); }
+.group-directory-tab:focus-visible {
+  z-index: 1;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+.group-directory-tab-mark,
+.group-information-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 6px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+.group-directory-tab-mark {
+  width: 34px;
+  height: 34px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: .68rem;
+}
+.group-directory-tab-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+.group-directory-tab-copy strong {
+  overflow-wrap: anywhere;
+  font-size: .83rem;
+  line-height: 1.3;
+}
+.group-directory-tab-copy span,
+.group-directory-tab-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-information-panel {
+  position: sticky;
+  top: 16px;
+  min-width: 0;
+  padding: 20px;
+  border-radius: 8px;
+}
+.group-information-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+}
+.group-information-mark {
+  width: 48px;
+  height: 48px;
+  font-size: .78rem;
+}
+.group-information-heading h2 {
+  margin: 0 0 3px;
+  overflow-wrap: anywhere;
+  font-size: 1.08rem;
+  line-height: 1.3;
+}
+.group-information-origin {
+  font-size: .73rem;
+  font-weight: 700;
+}
+.group-information-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.group-information-badges span,
+.group-information-related span {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+}
+.group-information-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0 0;
+}
+.group-information-facts div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-left: 2px solid var(--border);
+}
+.group-information-facts dt {
+  color: var(--muted);
+  font-size: .66rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.group-information-facts dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: .78rem;
+  font-weight: 650;
+}
+.group-information-description,
+.group-information-related {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.group-information-description h3,
+.group-information-related h3 {
+  margin: 0 0 8px;
+  font-size: .8rem;
+}
+.group-information-description p {
+  margin: 0;
+  color: var(--text);
+  font-size: .85rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.group-information-related > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.group-information-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+.group-information-actions .btn { justify-content: center; }
+
+@media (max-width: 768px) {
+  .group-directory-browser { grid-template-columns: minmax(0, 1fr); }
+  .group-directory-tabs {
+    display: flex;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-gutter: auto;
+  }
+  .group-directory-tab {
+    flex: 0 0 min(78vw, 286px);
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    scroll-snap-align: start;
+  }
+  .group-directory-tab::before {
+    inset: auto 0 0;
+    width: auto;
+    height: 3px;
+  }
+  .group-information-panel {
+    position: static;
+    padding: 16px;
+  }
+  .group-information-facts { grid-template-columns: minmax(0, 1fr); }
+  .group-information-actions .btn { flex: 1 1 150px; }
+}
+
 /* ── Opportunity card ─────────────────────────────────────── */
 .opp-card { padding: 18px; }
 .jobs-personalization-status {

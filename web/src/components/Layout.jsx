@@ -50,7 +50,7 @@ const NAV = [
 const MOBILE_BOTTOM_NAV = NAV
   .filter(({ icon }) => icon !== 'search')
   .map((item) => item.icon === 'notifications'
-    ? { to: '/groups', icon: 'groups', label: 'Join a group', shortLabel: 'Join group' }
+    ? { to: '/groups', icon: 'groups', label: 'Groups', shortLabel: 'Groups' }
     : item);
 
 function initials(name = '') {
@@ -370,10 +370,6 @@ export default function Layout({ children, wide = false }) {
             <ShellIcon name="groups" size={18} />
             Groups
           </button>
-          <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-            <ShellIcon name="groups" size={18} />
-            Join a group
-          </NavLink>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
             <ShellIcon name="countries" size={18} />
             Travel

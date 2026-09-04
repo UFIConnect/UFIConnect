@@ -34,7 +34,7 @@ const PLATFORM_META = {
   hackernews:  { icon: 'HN', label: 'News',           color: '#FF6600' },
   devto:       { icon: 'DEV', label: 'DEV Community', color: '#3B49DF' },
   github:      { icon: 'GH', label: 'GitHub',         color: '#24292F' },
-  uficonnect:  { icon: 'UFI', label: 'UFIconnect',    color: '#6366F1' },
+  uficonnect:  { icon: 'UFI', label: 'UFIconnect',    color: '#102A6B' },
 };
 
 function debounce(fn, delay) {
@@ -218,6 +218,7 @@ export function GroupsContent({ embedded = false }) {
   const [refreshing,  setRefreshing]  = useState(false);
   const [showCreate,  setShowCreate]  = useState(false);
   const [joiningId,   setJoiningId]   = useState(null);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
 
   const searchRef = useRef('');
 
@@ -265,7 +266,7 @@ export function GroupsContent({ embedded = false }) {
   useScrollToRefresh(() => loadGroups(true), { enabled: !loading && !refreshing });
 
   async function handleJoin(e, groupId) {
-    e.stopPropagation();
+    e?.stopPropagation();
     if (joiningId) return;
     const isJoined = joined.has(groupId);
     setJoiningId(groupId);
@@ -306,17 +307,46 @@ export function GroupsContent({ embedded = false }) {
     navigate(`/groups/${data.group.id}`);
   }
 
-  const q = search.trim().toLowerCase();
-  const byFilter =
-    filter === 'all' ? groups : groups.filter((g) => g.category === filter);
-  const displayed = q
-    ? byFilter.filter(
-        (g) =>
-          (g.name || '').toLowerCase().includes(q) ||
-          (g.description || '').toLowerCase().includes(q) ||
-          (g.category || '').toLowerCase().includes(q)
-      )
-    : byFilter;
+  const displayed = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const byFilter = filter === 'all'
+      ? groups
+      : groups.filter((group) => group.category === filter);
+    return q
+      ? byFilter.filter((group) =>
+          (group.name || '').toLowerCase().includes(q)
+          || (group.description || '').toLowerCase().includes(q)
+          || (group.category || '').toLowerCase().includes(q)
+        )
+      : byFilter;
+  }, [filter, groups, search]);
+
+  useEffect(() => {
+    setSelectedGroupId((current) => (
+      displayed.some((group) => group.id === current)
+        ? current
+        : (displayed[0]?.id || null)
+    ));
+  }, [displayed]);
+
+  const selectedGroupIndex = Math.max(0, displayed.findIndex((group) => group.id === selectedGroupId));
+  const selectedGroup = displayed[selectedGroupIndex] || null;
+
+  function handleGroupTabKeyDown(event, index) {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? displayed.length - 1
+        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
+          ? Math.min(displayed.length - 1, index + 1)
+          : Math.max(0, index - 1);
+    const nextGroup = displayed[nextIndex];
+    if (!nextGroup) return;
+    setSelectedGroupId(nextGroup.id);
+    document.getElementById(`group-directory-tab-${nextIndex}`)?.focus();
+  }
 
   const ContentShell = embedded ? 'section' : Layout;
 
@@ -576,7 +606,7 @@ export function GroupsContent({ embedded = false }) {
         </div>
       )}
 
-      {/* Groups grid */}
+      {/* Selectable group directory */}
       {!loading && !error && displayed.length > 0 && (
         <div>
           <p
@@ -590,197 +620,34 @@ export function GroupsContent({ embedded = false }) {
             {displayed.length} public communit
             {displayed.length !== 1 ? 'ies' : 'y'}
           </p>
-          <div className="groups-grid">
-            {displayed.map((group) => {
-              const meta = CATEGORY_META[group.category] || {
-                icon: 'GR',
-                bg: '#F1F5F9',
-                text: '#64748B',
-              };
-              const isJoined = joined.has(group.id);
-              // Reddit-sourced seed groups only ever carry a `subreddit`
-              // field, never an explicit `platform: 'reddit'` — without this
-              // fallback every one of them (the large majority of seeded
-              // groups) fell through to the generic UFIconnect origin badge
-              // below instead of a Reddit one, even though the name/
-              // description made the real source obvious either way.
-              const platMeta = group.platform
-                ? PLATFORM_META[group.platform]
-                : group.subreddit
-                  ? PLATFORM_META.reddit
-                  : null;
-
-              return (
-                <div
-                  key={group.id}
-                  className="card group-card"
-                  onClick={() =>
-                    group.isExternal
-                      ? window.open(
-                          group.externalUrl,
-                          '_blank',
-                          'noopener,noreferrer'
-                        )
-                      : navigate(`/groups/${group.id}`)
-                  }
-                  style={{ cursor: 'pointer', position: 'relative' }}
-                >
-                  {/* Origin badge */}
-                  {(() => {
-                    const origin = group.isExternal
-                      ? platMeta || PLATFORM_META.uficonnect
-                      : PLATFORM_META.uficonnect;
-                    return (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: 10,
-                          right: 10,
-                          fontSize: '.65rem',
-                          fontWeight: 700,
-                          color: origin.color,
-                          background: `${origin.color}18`,
-                          padding: '2px 8px',
-                          borderRadius: 4,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 3,
-                        }}
-                      >
-                        {origin.icon} {origin.label}
-                      </div>
-                    );
-                  })()}
-
-                  {group.isPrivate && (
-                    <div style={{
-                      position: 'absolute', top: 10, left: 10,
-                      fontSize: '.65rem', fontWeight: 700,
-                      color: '#92400E', background: '#FEF3C7',
-                      padding: '2px 8px', borderRadius: 4,
-                      display: 'flex', alignItems: 'center', gap: 3,
-                    }}>
-                      Private
-                    </div>
-                  )}
-
-                  {/* Header */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 10,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: '2rem',
-                        flexShrink: 0,
-                      }}
-                    >
-                      {meta.icon}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <h3
-                        style={{
-                          fontSize: '.95rem',
-                          fontWeight: 700,
-                          margin: '0 0 4px',
-                          lineHeight: 1.3,
-                          paddingRight: group.isExternal ? 80 : 0,
-                          color: 'var(--text)',
-                        }}
-                      >
-                        {group.name}
-                      </h3>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          fontSize: '.7rem',
-                          fontWeight: 700,
-                          background: meta.bg,
-                          color: meta.text,
-                          padding: '2px 8px',
-                          borderRadius: 4,
-                        }}
-                      >
-                        {group.category}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Description */}
-                  <p
-                    style={{
-                      fontSize: '.85rem',
-                      lineHeight: 1.5,
-                      margin: '0 0 10px',
-                      color: 'var(--text)',
-                    }}
-                  >
-                    {group.description}
-                  </p>
-
-                  {/* Footer */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                      paddingTop: 10,
-                      borderTop: '1px solid var(--border)',
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: '.75rem',
-                        color: 'var(--muted)',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {group.members?.toLocaleString() || 0} members
-                    </span>
-                    {group.isExternal ? (
-                      <a
-                        href={group.externalUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="btn btn-sm btn-outline"
-                        style={{
-                          borderColor: platMeta?.color || 'var(--primary)',
-                          color: platMeta?.color || 'var(--primary)',
-                        }}
-                      >
-                        Visit →
-                      </a>
-                    ) : (
-                      <button
-                        className={`btn btn-sm${
-                          isJoined ? ' btn-ghost' : ' btn-primary'
-                        }`}
-                        onClick={(e) => handleJoin(e, group.id)}
-                        disabled={joiningId === group.id}
-                        style={{ minWidth: 64 }}
-                        aria-label={
-                          isJoined
-                            ? `Leave ${group.name} group`
-                            : `Join ${group.name} group`
-                        }
-                      >
-                        {joiningId === group.id
-                          ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} style={{ width: 14, height: 14 }} />
-                          : isJoined ? 'Joined' : 'Join'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="group-directory-browser">
+            <div className="group-directory-list">
+              <div className="group-directory-list-heading">
+                <strong>Groups</strong>
+                <span>{displayed.length.toLocaleString()}</span>
+              </div>
+              <div className="group-directory-tabs" role="tablist" aria-label="Groups">
+                {displayed.map((group, index) => (
+                  <GroupDirectoryTab
+                    key={group.id}
+                    group={group}
+                    index={index}
+                    selected={group.id === selectedGroup?.id}
+                    onSelect={() => setSelectedGroupId(group.id)}
+                    onKeyDown={(event) => handleGroupTabKeyDown(event, index)}
+                  />
+                ))}
+              </div>
+            </div>
+            <GroupInformation
+              group={selectedGroup}
+              index={selectedGroupIndex}
+              isJoined={joined.has(selectedGroup?.id)}
+              joining={joiningId === selectedGroup?.id}
+              onJoin={() => handleJoin(null, selectedGroup.id)}
+              onOpen={() => navigate(`/groups/${selectedGroup.id}`)}
+            />
           </div>
-
         </div>
       )}
 
@@ -788,5 +655,115 @@ export function GroupsContent({ embedded = false }) {
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
     </ContentShell>
+  );
+}
+
+function groupOrigin(group) {
+  const platform = group.platform
+    ? PLATFORM_META[group.platform]
+    : group.subreddit
+      ? PLATFORM_META.reddit
+      : null;
+  return group.isExternal
+    ? platform || { icon: 'WEB', label: 'Community', color: '#64748B' }
+    : PLATFORM_META.uficonnect;
+}
+
+function GroupDirectoryTab({ group, selected, index, onSelect, onKeyDown }) {
+  const meta = CATEGORY_META[group.category] || { icon: 'GR' };
+  const origin = groupOrigin(group);
+  return (
+    <button
+      id={`group-directory-tab-${index}`}
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      aria-controls="selected-group-information"
+      tabIndex={selected ? 0 : -1}
+      className={`group-directory-tab${selected ? ' active' : ''}`}
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+    >
+      <span className="group-directory-tab-mark" aria-hidden="true">{meta.icon}</span>
+      <span className="group-directory-tab-copy">
+        <strong>{group.name}</strong>
+        <span>{group.category || 'Community'}</span>
+        <small>{group.members?.toLocaleString() || 0} members - {origin.label}</small>
+      </span>
+    </button>
+  );
+}
+
+function GroupInformation({ group, index, isJoined, joining, onJoin, onOpen }) {
+  if (!group) return null;
+  const meta = CATEGORY_META[group.category] || {
+    icon: 'GR',
+    bg: '#F1F5F9',
+    text: '#64748B',
+  };
+  const origin = groupOrigin(group);
+  const externalUrl = group.externalUrl || group.platformUrl;
+
+  return (
+    <section
+      id="selected-group-information"
+      role="tabpanel"
+      aria-labelledby={`group-directory-tab-${index}`}
+      className="card group-information-panel"
+    >
+      <div className="group-information-heading">
+        <span className="group-information-mark" style={{ background: meta.bg, color: meta.text }} aria-hidden="true">
+          {meta.icon}
+        </span>
+        <div>
+          <h2>{group.name}</h2>
+          <span className="group-information-origin" style={{ color: origin.color }}>
+            {origin.icon} {origin.label}
+          </span>
+        </div>
+      </div>
+
+      <div className="group-information-badges">
+        <span style={{ background: meta.bg, color: meta.text }}>{group.category || 'Community'}</span>
+        <span>{group.isPrivate ? 'Private group' : 'Public group'}</span>
+        {!group.isExternal && <span>{isJoined ? 'Joined' : 'Available to join'}</span>}
+      </div>
+
+      <dl className="group-information-facts">
+        <div><dt>Members</dt><dd>{group.members?.toLocaleString() || 0}</dd></div>
+        <div><dt>Source</dt><dd>{origin.label}</dd></div>
+        <div><dt>Category</dt><dd>{group.category || 'Community'}</dd></div>
+        <div><dt>Access</dt><dd>{group.isPrivate ? 'Private' : 'Public'}</dd></div>
+      </dl>
+
+      <div className="group-information-description">
+        <h3>About this group</h3>
+        <p>{group.description || 'Open this group to see its conversations, members, and latest posts.'}</p>
+      </div>
+
+      {Array.isArray(group.relatedGroups) && group.relatedGroups.length > 0 && (
+        <div className="group-information-related">
+          <h3>Related communities</h3>
+          <div>{group.relatedGroups.slice(0, 8).map((related) => <span key={related}>{related}</span>)}</div>
+        </div>
+      )}
+
+      <div className="group-information-actions">
+        {group.isExternal ? (
+          <a className="btn btn-primary" href={externalUrl} target="_blank" rel="noopener noreferrer">
+            Visit on {origin.label}
+          </a>
+        ) : (
+          <>
+            <button type="button" className={`btn ${isJoined ? 'btn-ghost' : 'btn-primary'}`} onClick={onJoin} disabled={joining}>
+              {joining
+                ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} />
+                : isJoined ? 'Leave group' : 'Join group'}
+            </button>
+            <button type="button" className="btn btn-outline" onClick={onOpen}>View group posts</button>
+          </>
+        )}
+      </div>
+    </section>
   );
 }
