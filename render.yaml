@@ -386,7 +386,7 @@ services:
       - key: POST_CACHE_MAX_ENTRIES
         value: '200'
       - key: GLOBAL_FEED_CACHE_LIMIT
-        value: '20000'
+        value: '10000'
       - key: SOURCE_REFRESH_WORKER_COUNT
         value: '2'
       - key: DB_SIZE_LIMIT_MB

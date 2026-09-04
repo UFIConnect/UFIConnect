@@ -28,6 +28,7 @@ const {
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost } = require('./following-scope');
+const { canonicalizePreferenceTopics } = require('./feed-preferences');
 const {
   databaseSearchTerms,
   matchesRelatedSearch,
@@ -7571,7 +7572,7 @@ function startContinuousWorkers() {
 // --- Background feed refresh (kept for /feed/refresh endpoint and initial load) -
 // Durable history lives in Postgres and cursor pagination reads it there.
 // Keep only a bounded hot working set in this 512MB pipeline process.
-const GLOBAL_FEED_CACHE_LIMIT = envNumber('GLOBAL_FEED_CACHE_LIMIT', 20000, 5000, 100000);
+const GLOBAL_FEED_CACHE_LIMIT = envNumber('GLOBAL_FEED_CACHE_LIMIT', 10000, 5000, 100000);
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
@@ -12259,7 +12260,18 @@ function userDeclaredFeedTopics(user, prefs = user?.preferences || {}) {
     ...asArray(prefs.interests).map(interestKeyword),
     prefs.role,
     ...asArray(user?.skills),
-  ]);
+  ], FEED_TOPICS.length * 2 + 24);
+}
+
+// Relevance scoring benefits from normalized keywords, but the database
+// topic predicate needs the exact canonical label. Keeping these separate
+// prevents punctuation-bearing preferences such as "AI & Machine Learning"
+// from becoming "ai machine learning" and matching zero stored rows.
+function userDeclaredFeedTopicLabels(user, prefs = user?.preferences || {}) {
+  return canonicalizePreferenceTopics([
+    ...asArray(prefs.interests),
+    ...asArray(user?.skills),
+  ], FEED_TOPICS, normalizePersonalizationTerm);
 }
 
 function userRoleFeedTerms(user, prefs = user?.preferences || {}) {
@@ -14339,7 +14351,7 @@ setInterval(() => {
 setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 5 * 60 * 1000);
 // Distribution agent refills stale empty sources and diversifies the global
 // feed at SORT_DISTRIB_INTERVAL_MS.
-setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 5 * 60 * 1000);
+setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 5 * 60 * 1000 + 45 * 1000);
 // Topic Audit/Fix — staggered so Fix's first pass always has something
 // Audit already found waiting in topicMismatchQueue, not an empty queue on
 // its own first tick. Both cheap/in-memory (Fix's DB writes are the only
@@ -14353,7 +14365,7 @@ setInterval(runAgentActivityCheck, 2 * 60 * 1000);
 // Cache helper merges source caches every 4 minutes (was 8)
 setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 4 * 60 * 1000); }, 4 * 60 * 1000);
 // Feed Optimizer: heal degraded/paused workers every 4 minutes (was 5)
-setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 4 * 60 * 1000); }, 5 * 60 * 1000);
+setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 4 * 60 * 1000); }, 6 * 60 * 1000 + 30 * 1000);
 // Mix Optimizer: audit + rebalance the true-mix feed pools every 5 minutes
 setTimeout(() => { runMixOptimizerCheck(); setInterval(runMixOptimizerCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
 // Sort Optimizer: audit ranking quality (score spread, ranked/newest divergence) every 7 minutes
@@ -21246,6 +21258,7 @@ async function handleFeedRequest(req, res) {
   // live right before the balanced-query call) so it's available to every
   // branch that reads the shared snapshot, not just the one that builds it.
   const userTopics = userDeclaredFeedTopics(user, prefs);
+  const userTopicLabels = userDeclaredFeedTopicLabels(user, prefs);
   const hasSavedFeedScope = userTopics.length > 0;
   // Persisted source choices are member-specific. Apply them at the final
   // personalization stage so every home/following code path, including
@@ -21597,8 +21610,8 @@ async function handleFeedRequest(req, res) {
     const isUnfiltered = !sourceFilter && sourcesParam.length === 0;
     const cursorSources = sourcesParam.length > 1 ? sourcesParam : sourceFilter ? [sourceFilter] : AGGREGATE_FEED_SOURCES;
     const cursorMap = decodeFeedCursor(req.query.cursor);
-    const usesSavedTopicScope = !topicsFilter.length && userTopics.length > 0;
-    const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? userTopics : null);
+    const usesSavedTopicScope = !topicsFilter.length && userTopicLabels.length > 0;
+    const cursorTopics = topicsFilter.length ? topicsFilter : (usesSavedTopicScope ? userTopicLabels : null);
     // Was null (fully unbounded) for 'all' — getCursorFeedPage's query is a
     // PARTITION BY window function, same cost profile as getBalancedFeedPosts
     // above (see its own dbTimeRange comment), so leaving 'all' unbounded here
