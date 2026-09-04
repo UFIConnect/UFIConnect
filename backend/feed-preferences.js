@@ -23,4 +23,14 @@ function canonicalizePreferenceTopics(selectedTopics, availableTopics, normalize
   return selected;
 }
 
-module.exports = { canonicalizePreferenceTopics, normalizeTopicLabel };
+function matchesPreferenceTopic(postTopic, selectedTopics, normalize = normalizeTopicLabel) {
+  const normalizedPostTopic = normalize(postTopic);
+  if (!normalizedPostTopic) return false;
+  return (selectedTopics || []).some((topic) => {
+    const normalizedTopic = normalize(topic);
+    return normalizedTopic
+      && (normalizedPostTopic.includes(normalizedTopic) || normalizedTopic.includes(normalizedPostTopic));
+  });
+}
+
+module.exports = { canonicalizePreferenceTopics, matchesPreferenceTopic, normalizeTopicLabel };

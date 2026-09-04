@@ -28,7 +28,7 @@ const {
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost } = require('./following-scope');
-const { canonicalizePreferenceTopics } = require('./feed-preferences');
+const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const {
   databaseSearchTerms,
   matchesRelatedSearch,
@@ -12015,15 +12015,14 @@ async function getLocationLiveFeed(kind, location, viewerId = null) {
 // at all — same "never truly dead-end" rule every other filter in this
 // pipeline follows (see filterUnseen's identical fallback).
 function filterByUserTopics(posts, userTopics, { fallbackToInput = true } = {}) {
-  const topics = (userTopics || []).map(t => String(t).toLowerCase()).filter(Boolean);
+  const topics = (userTopics || []).map(normalizePersonalizationTerm).filter(Boolean);
   if (!topics.length || !posts.length) return posts;
 
   const started = Date.now();
   const kept = [];
   for (const p of posts) {
     if (JOB_LISTING_SOURCES.includes(p.source)) { kept.push(p); continue; }
-    const postTopic = (p.topic || '').toLowerCase();
-    if (postTopic && topics.some(t => postTopic.includes(t) || t.includes(postTopic))) kept.push(p);
+    if (matchesPreferenceTopic(p.topic, topics, normalizePersonalizationTerm)) kept.push(p);
   }
 
   topicFilterAgentState.totalRuns += 1;

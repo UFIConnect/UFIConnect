@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { canonicalizePreferenceTopics } = require('./feed-preferences');
+const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 
 const topics = [
   'AI & Machine Learning',
@@ -27,4 +27,10 @@ test('keeps every selected canonical topic and removes unknowns and duplicates',
     ], topics),
     ['Photography', 'AI & Machine Learning', 'Web3 / Crypto'],
   );
+});
+
+test('matches normalized member terms against punctuation-bearing post topics', () => {
+  assert.equal(matchesPreferenceTopic('AI & Machine Learning', ['ai machine learning']), true);
+  assert.equal(matchesPreferenceTopic('Web3 / Crypto', ['web3 crypto']), true);
+  assert.equal(matchesPreferenceTopic('Music Discovery', ['photography']), false);
 });
