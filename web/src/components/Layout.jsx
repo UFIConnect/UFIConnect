@@ -338,13 +338,13 @@ export default function Layout({ children, wide = false }) {
           collapse instead of filling the available viewport. */}
       {profile && mobileMenuOpen && (
         <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
-          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
-            <ShellIcon name="posts" size={18} />
-            UFI
-          </button>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'feed' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'feed'} onClick={() => selectMobileFeed('feed')}>
             <ShellIcon name="home" size={18} />
             All feed
+          </button>
+          <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
+            <ShellIcon name="posts" size={18} />
+            UFI
           </button>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'following'} onClick={() => selectMobileFeed('following')}>
             <ShellIcon name="following" size={18} />

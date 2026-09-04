@@ -3457,8 +3457,8 @@ export default function Feed({ forcedMode } = {}) {
         <aside className="home-feed-right-tabs" aria-label="Home feed controls">
           <div className="home-feed-view-tabs">
             {[
-              { key: 'ufi', label: 'UFI' },
               { key: 'feed', label: 'All feed' },
+              { key: 'ufi', label: 'UFI' },
               { key: 'following', label: 'Following' },
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key, { resetHome: key === 'feed' })}>{label}</button>
