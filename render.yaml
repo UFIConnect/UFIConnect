@@ -47,9 +47,9 @@ services:
       - key: NODE_OPTIONS
         value: --max-old-space-size=320
       - key: RSS_PRESSURE_MB
-        value: '360'
+        value: '300'
       - key: RSS_CRITICAL_MB
-        value: '430'
+        value: '360'
       - key: DB_SIZE_LIMIT_MB
         value: '5120'
       - key: RENDER_DB_PLAN
@@ -378,9 +378,17 @@ services:
       - key: NODE_OPTIONS
         value: --max-old-space-size=320
       - key: RSS_PRESSURE_MB
-        value: '360'
+        value: '300'
       - key: RSS_CRITICAL_MB
-        value: '430'
+        value: '360'
+      - key: STABILITY_CHECK_MS
+        value: '30000'
+      - key: POST_CACHE_MAX_ENTRIES
+        value: '200'
+      - key: GLOBAL_FEED_CACHE_LIMIT
+        value: '20000'
+      - key: SOURCE_REFRESH_WORKER_COUNT
+        value: '2'
       - key: DB_SIZE_LIMIT_MB
         value: '5120'
       - key: RENDER_DB_PLAN

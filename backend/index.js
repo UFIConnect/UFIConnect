@@ -2231,8 +2231,8 @@ const SKILL_TO_DEVTO_TAG = {
 
 // --- Post fetch cache ---------------------------------------------------------
 const postCache = new Map();
-const CACHE_TTL     = 30 * 60 * 1000; // default 30 min
-const POST_CACHE_MAX = 300;            // hard cap on entries — evict oldest when exceeded
+const CACHE_TTL = 30 * 60 * 1000; // default 30 min
+const POST_CACHE_MAX = envNumber('POST_CACHE_MAX_ENTRIES', 200, 50, 500);
 
 function getCached(key)           { const c = postCache.get(key); return (c && Date.now() - c.t < (c.ttl ?? CACHE_TTL)) ? c.v : null; }
 function setCached(key, val, ttl) {
@@ -3032,7 +3032,10 @@ async function fetchHNByKeyword(keyword) {
   if (cached) return cached;
   try {
     // search_by_date gives most recent stories; points filter avoids spam
-    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=1000&numericFilters=points>1`;
+    // A blended page can show at most two Hacker News items. Fetching 1,000
+    // rich objects per topic multiplied memory and JSON parsing across ten
+    // shards without improving the feed users received.
+    const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(keyword)}&tags=story&hitsPerPage=100&numericFilters=points>1`;
     const data = await fetchJSON(url);
     const posts = (data?.hits || [])
       .filter(h => h.title && (h.url || h.objectID))
@@ -7566,17 +7569,14 @@ function startContinuousWorkers() {
 }
 
 // --- Background feed refresh (kept for /feed/refresh endpoint and initial load) -
-// Was 300, deliberately tight to fit the API's old 512MB container — the
-// service has since been upgraded to 4GB, so this is no longer a real
-// practical ceiling (at a rough ~2-3KB/post object footprint, even the full
-// 100k would only be ~200-300MB), just a finite safety backstop against
-// truly unbounded growth rather than a number meant to actually be hit.
-const GLOBAL_FEED_CACHE_LIMIT = 100000;
+// Durable history lives in Postgres and cursor pagination reads it there.
+// Keep only a bounded hot working set in this 512MB pipeline process.
+const GLOBAL_FEED_CACHE_LIMIT = envNumber('GLOBAL_FEED_CACHE_LIMIT', 20000, 5000, 100000);
 const SOURCE_FEED_CACHE_LIMIT = 40;    // per-source tab view; keep low for RAM
 const DEFAULT_FEED_LIMIT = 250;
 const globalFeedCache = { posts: [], refreshedAt: 0 };
 
-// Sorting the entire 100k-post runtime cache for every small Equalizer drain
+// Sorting the entire hot runtime cache for every small Equalizer drain
 // costs far more CPU than the drain itself. New posts are visible immediately
 // at the cache head, then one short coalesced resort restores the full ranked
 // and diversified order. DB-backed feeds remain the source of truth.
@@ -8729,7 +8729,7 @@ const HEAP_CRITICAL_RATIO = envNumber('HEAP_CRITICAL_RATIO', 0.9, HEAP_PRESSURE_
 // actually made — render.yaml's `plan:` stayed on the real 512MB starter
 // tier the whole time, so on Render these defaults are always overridden by
 // RSS_PRESSURE_MB/RSS_CRITICAL_MB env vars set directly in render.yaml
-// (currently 360/430 — see the comment there for the incident this caused:
+// (currently 300/360 — see the comment there for the incident this caused:
 // the mismatch let Render's own OOM killer act before this guard ever got a
 // chance to). Only meaningful as fallbacks off of Render (e.g. local dev).
 const RSS_PRESSURE_MB = envNumber('RSS_PRESSURE_MB', 700, 128, 32768);
@@ -12695,11 +12695,10 @@ function installCrashGuard() {
 // running several concurrently doesn't add any risk to a single source's
 // own rate limit — each source's own pacing (RATE_LIMITED_MANUAL_SWEEP,
 // the 60ms normal-mode wait) is unchanged, still applied within that
-// source's own fetch sequence. 4 workers cuts the real cycle time to
-// roughly a quarter, well within what the app's continuous background
-// workers already demonstrate the (4GB) container can handle — they run
-// far more concurrent per-source shard loops than this, all the time.
-const TRANSFER_WORKER_COUNT = 4;
+// source's own fetch sequence. Two workers retain useful recovery
+// throughput without overlapping four all-topic sweeps on the real 512MB
+// starter container.
+const TRANSFER_WORKER_COUNT = envNumber('SOURCE_REFRESH_WORKER_COUNT', 2, 1, 4);
 
 const sourceRefreshQueue = {
   running: false,
@@ -13117,9 +13116,17 @@ async function runSortDistribCheck() {
     if (!cache || !Array.isArray(cache.posts) || cache.posts.length === 0) emptySources.push(id);
   }
 
-  // Trigger fetchers for any source that has come back empty
-  if (emptySources.length > 0 && refreshControl.mode === 'normal') {
-    enqueueSourceRefresh(emptySources, 'sort-distrib refill');
+  // Continuous workers already cover every source. Only enqueue a costly
+  // all-topic recovery sweep when an empty worker is genuinely stale. An
+  // empty but recently successful source may simply have no matching post.
+  const refillSources = emptySources.filter((id) => {
+    const health = workerHealth.get(id);
+    const staleAfterMs = Math.max(12 * 60 * 1000, (SOURCE_CONFIG[id]?.ttl || 0) * 1.5);
+    return health?.fetchCount > 5
+      && (!health.lastSuccess || Date.now() - health.lastSuccess > staleAfterMs);
+  });
+  if (refillSources.length > 0 && refreshControl.mode === 'normal') {
+    enqueueSourceRefresh(refillSources, 'sort-distrib stale refill');
   }
 
   // Build a diversity-interleaved head for the global feed (round-robin across sources)
@@ -13165,13 +13172,14 @@ async function runSortDistribCheck() {
 
   sortDistribState.totalRuns += 1;
   sortDistribState.lastEmptySources = emptySources;
-  sortDistribState.lastTriggered = emptySources.length;
+  sortDistribState.lastTriggered = refillSources.length;
   sortDistribState.lastDiversified = diversified;
   sortDistribState.lastRun = Date.now();
   sortDistribState.lastError = null;
 
   const parts = [];
-  if (emptySources.length > 0) parts.push(`refilled ${emptySources.length} empty source(s): ${emptySources.join(', ')}`);
+  if (refillSources.length > 0) parts.push(`refilled ${refillSources.length} stale empty source(s): ${refillSources.join(', ')}`);
+  else if (emptySources.length > 0) parts.push(`${emptySources.length} empty source(s) still inside freshness window`);
   if (diversified > 0) parts.push(`${diversified}-post diversity head from ${activeSources} sources`);
   if (parts.length === 0) parts.push(`all ${knownSources.length} sources have content — feed balanced`);
   logAgentAction('sort_distrib', '??', parts.join(' - '), '#818CF8');
@@ -14325,12 +14333,13 @@ setInterval(() => {
   const removed = pruneExpiredFeedSnapshotCaches();
   if (removed) logAgentAction('cache_helper', 'trim', `Cleared ${removed.toLocaleString()} stale feed snapshot cache entr${removed === 1 ? 'y' : 'ies'}`, '#38BDF8');
 }, FEED_SNAPSHOT_CACHE_SWEEP_MS);
-// Sort agent — re-sorts the global + per-source caches at SORT_AGENT_INTERVAL_MS
-// (was previously hardcoded to 3min and ignoring this constant — now wired in).
-setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 2 * 60 * 1000);
-// Distribution agent refills empty sources and diversifies the global feed at
-// SORT_DISTRIB_INTERVAL_MS (was previously hardcoded to 2min — now wired in).
-setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 90 * 1000);
+// Start maintenance after ingestion has settled; these full-cache passes
+// used to collide with the initial source warm-up at 90-120 seconds.
+// Sort agent re-sorts the global and per-source caches at SORT_AGENT_INTERVAL_MS.
+setTimeout(() => { runSortAgentCheck(); setInterval(runSortAgentCheck, SORT_AGENT_INTERVAL_MS); }, 5 * 60 * 1000);
+// Distribution agent refills stale empty sources and diversifies the global
+// feed at SORT_DISTRIB_INTERVAL_MS.
+setTimeout(() => { runSortDistribCheck(); setInterval(runSortDistribCheck, SORT_DISTRIB_INTERVAL_MS); }, 5 * 60 * 1000);
 // Topic Audit/Fix — staggered so Fix's first pass always has something
 // Audit already found waiting in topicMismatchQueue, not an empty queue on
 // its own first tick. Both cheap/in-memory (Fix's DB writes are the only
@@ -14344,7 +14353,7 @@ setInterval(runAgentActivityCheck, 2 * 60 * 1000);
 // Cache helper merges source caches every 4 minutes (was 8)
 setTimeout(() => { runCacheHelperCheck(); setInterval(runCacheHelperCheck, 4 * 60 * 1000); }, 4 * 60 * 1000);
 // Feed Optimizer: heal degraded/paused workers every 4 minutes (was 5)
-setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 4 * 60 * 1000); }, 90 * 1000);
+setTimeout(() => { runFeedOptimizer(); setInterval(runFeedOptimizer, 4 * 60 * 1000); }, 5 * 60 * 1000);
 // Mix Optimizer: audit + rebalance the true-mix feed pools every 5 minutes
 setTimeout(() => { runMixOptimizerCheck(); setInterval(runMixOptimizerCheck, 5 * 60 * 1000); }, 3 * 60 * 1000);
 // Sort Optimizer: audit ranking quality (score spread, ranked/newest divergence) every 7 minutes
