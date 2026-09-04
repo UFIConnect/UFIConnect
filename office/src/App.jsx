@@ -408,9 +408,9 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
 function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, triggering }) {
   const s = status?.server;
-  const f = status?.feed;
+  const f = pipelineStatus?.feed || status?.feed;
   const a = status?.agents;
-  const src = status?.sources;
+  const src = pipelineStatus?.sources || status?.sources;
   const apiWeb = status?.websiteOptimizer;
   const pipelineWeb = pipelineStatus?.websiteOptimizer;
   // Public-web checks belong to the API process, while the storage audit
