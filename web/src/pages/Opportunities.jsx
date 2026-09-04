@@ -88,7 +88,18 @@ function SourceBadge({ opp }) {
   );
 }
 
-export default function Opportunities() {
+function OpportunityFrame({ embedded, children }) {
+  return embedded
+    ? <section className="search-jobs-panel">{children}</section>
+    : <Layout>{children}</Layout>;
+}
+
+function mergeOpportunities(current, incoming) {
+  const seen = new Set(current.map((opportunity) => opportunity.id));
+  return [...current, ...incoming.filter((opportunity) => !seen.has(opportunity.id))];
+}
+
+export default function Opportunities({ embedded = false } = {}) {
   const [searchParams] = useSearchParams();
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
@@ -117,6 +128,7 @@ export default function Opportunities() {
   const silentRefreshRef = useRef(false);
   const refreshRequestRef = useRef(null);
   const loadingMoreRef = useRef(false);
+  const requestGenerationRef = useRef(0);
   const sentinelRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
@@ -165,6 +177,9 @@ export default function Opportunities() {
   // the server for more instead of just revealing more of what's already
   // in memory.
   useEffect(() => {
+    const requestGeneration = ++requestGenerationRef.current;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
     const params = { sort, limit: PAGE_SIZE, offset: 0 };
     const refreshRequest = refreshRequestRef.current;
     if (refreshRequest) {
@@ -176,6 +191,7 @@ export default function Opportunities() {
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
+    if (liveOnly) params.live = true;
     if (sourceFilter.length) params.sources = sourceFilter.join(',');
     if (bustOnNextFetchRef.current) { params.bust = '1'; bustOnNextFetchRef.current = false; }
 
@@ -184,11 +200,12 @@ export default function Opportunities() {
     // instead of flashing the loading UI over content the user is mid-read of.
     if (!silentRefreshRef.current) setLoading(true);
     silentRefreshRef.current = false;
+    if (!refreshRequest) setRefreshing(false);
     setError(false);
     client.get('/opportunities', { params })
       .then(({ data }) => {
-        let list = data.opportunities || [];
-        if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
+        if (requestGeneration !== requestGenerationRef.current) return;
+        const list = data.opportunities || [];
         setAllOpps(list);
         setTotalCount(data.totalCount || list.length);
         setHasMore(!!data.hasMore);
@@ -196,6 +213,7 @@ export default function Opportunities() {
         setAvailableSources(data.availableSources || []);
       })
       .catch(err => {
+        if (requestGeneration !== requestGenerationRef.current) return;
         console.error('Failed to load opportunities:', err);
         setError(true);
         if (!refreshRequest) {
@@ -204,6 +222,7 @@ export default function Opportunities() {
         }
       })
       .finally(() => {
+        if (requestGeneration !== requestGenerationRef.current) return;
         setLoading(false);
         if (refreshRequest) setRefreshing(false);
       });
@@ -222,22 +241,28 @@ export default function Opportunities() {
 
   const loadMore = useCallback(() => {
     if (loadingMoreRef.current || loading || !hasMore) return;
+    const requestGeneration = requestGenerationRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const params = { sort, limit: PAGE_SIZE, offset: allOpps.length };
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
     if (remote) params.remote = true;
+    if (liveOnly) params.live = true;
     if (sourceFilter.length) params.sources = sourceFilter.join(',');
     client.get('/opportunities', { params })
       .then(({ data }) => {
-        let list = data.opportunities || [];
-        if (liveOnly) list = list.filter(o => o.isLive || o.source === 'Remotive');
-        setAllOpps(prev => [...prev, ...list]);
+        if (requestGeneration !== requestGenerationRef.current) return;
+        const list = data.opportunities || [];
+        setAllOpps(prev => mergeOpportunities(prev, list));
         setTotalCount(data.totalCount || 0);
         setHasMore(!!data.hasMore);
       })
-      .catch(err => console.error('Failed to load more opportunities:', err))
+      .catch(err => {
+        if (requestGeneration === requestGenerationRef.current) {
+          console.error('Failed to load more opportunities:', err);
+        }
+      })
       .finally(() => { loadingMoreRef.current = false; setLoadingMore(false); });
   }, [loading, hasMore, allOpps.length, sort, filter, search, remote, sourceFilter, liveOnly]);
 
@@ -265,16 +290,16 @@ export default function Opportunities() {
 
   return (
     <>
-      <Helmet>
+      {!embedded && <Helmet>
         <title>Jobs, Gigs, Grants, Events & Career Opportunities | UFIconnect</title>
         <meta name="description" content="Browse all career opportunities: full-time jobs, gigs, grants, hackathons, events, open-source opportunities, and learning resources. Discover positions and opportunities for engineers, designers, founders, marketers, product managers, and creatives worldwide." />
         <meta name="keywords" content="job opportunities, career opportunities, gigs, grants, hackathons, events, open source opportunities, learning opportunities, tech jobs, startup jobs, freelance work, internships, positions, career growth, job listings, employment opportunities, career development, work opportunities" />
         <link rel="canonical" href="https://uficonnect.org/opportunities" />
-      </Helmet>
-      <Layout>
+      </Helmet>}
+      <OpportunityFrame embedded={embedded}>
         <div className="page-header opportunities-page-header">
           <h1 className="page-title">
-            All Opportunities
+            {embedded ? 'Jobs & Opportunities' : 'All Opportunities'}
             {liveCount > 0 && (
               <span style={{
                 marginLeft: 10, fontSize: '.7rem', fontWeight: 700, color: '#059669',
@@ -649,7 +674,7 @@ export default function Opportunities() {
         <style>{`
           @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         `}</style>
-      </Layout>
+      </OpportunityFrame>
     </>
   );
 }

@@ -1037,6 +1037,14 @@ input, textarea, select { font-family: inherit; }
   width: 100%;
   max-width: 760px;
 }
+.search-jobs-panel {
+  width: 100%;
+  min-width: 0;
+}
+.search-jobs-panel .opportunities-page-header {
+  margin-top: 2px;
+  margin-bottom: 14px;
+}
 .search-tab-strip {
   display: flex;
   gap: 4px;
@@ -1206,6 +1214,12 @@ input, textarea, select { font-family: inherit; }
   width: 100%;
   min-height: 42px;
   margin-top: 4px;
+}
+.search-results-sentinel {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
 }
 .search-people-controls {
   display: flex;

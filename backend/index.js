@@ -20859,6 +20859,9 @@ app.get('/groups', async (req, res) => {
       }
     }
     result = result.filter((g) => canSeeGroup(g, viewerId));
+    if (req.query.scope === 'native') {
+      result = result.filter((group) => group.isExternal !== true);
+    }
     if (!category && !searchQuery) {
       // "All" view — same true-mix reasoning as the main Feed's
       // buildTwoPhaseMix/roundRobinMerge: `groups` is member_count-sorted
@@ -20883,7 +20886,17 @@ app.get('/groups', async (req, res) => {
       }
       result = roundRobinMerge([...byPlatform.values()]);
     }
-    res.json({ groups: result });
+    const totalCount = result.length;
+    const requestedLimit = req.query.limit != null
+      ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 24))
+      : 0;
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const page = requestedLimit > 0 ? result.slice(offset, offset + requestedLimit) : result;
+    res.json({
+      groups: page,
+      totalCount,
+      hasMore: requestedLimit > 0 ? offset + page.length < totalCount : false,
+    });
   } catch (e) { console.error('GET /groups:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -26642,6 +26655,7 @@ async function getSearchMembersFromDatabase({ myId, q, role }) {
 app.get('/users/search', authenticate, async (req, res) => {
   const q    = (req.query.q    || '').toLowerCase().trim();
   const role = (req.query.role || '').toLowerCase().trim();
+  const sort = req.query.sort === 'followers' ? 'followers' : 'relevance';
   const myId = req.user.id;
 
   const myUser      = await getUser(myId);
@@ -26715,23 +26729,35 @@ app.get('/users/search', authenticate, async (req, res) => {
     return { u, score, sharedInterests: shared.slice(0, 3) };
   });
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => sort === 'followers'
+    ? (followerCount[b.u.id] || 0) - (followerCount[a.u.id] || 0) || b.score - a.score
+    : b.score - a.score);
+
+  const allResults = scored.map(({ u, sharedInterests }) => ({
+    id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
+    organization: u.organization || '', skills: asArray(u.skills),
+    role: u.preferences?.role || '',
+    interests: (u.preferences?.interests || []).slice(0, 6),
+    followersCount: followerCount[u.id] || 0,
+    isFollowing: myFollowing.has(u.id),
+    connectionStatus: u.id === myId ? 'self' : getConnectionStatus(myId, u.id),
+    sharedInterests,
+    isSelf: u.id === myId,
+  }));
+  const totalCount = allResults.length;
+  const requestedLimit = req.query.limit != null
+    ? Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 24))
+    : 0;
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const page = requestedLimit > 0 ? allResults.slice(offset, offset + requestedLimit) : allResults;
 
   res.json({
     registeredCount: memberSearch.registeredCount,
     discoverableCount: memberSearch.discoverableCount,
     countSource: memberSearch.countSource,
-    users: scored.map(({ u, sharedInterests }) => ({
-      id: u.id, name: u.name, title: u.title || '', bio: u.bio || '',
-      organization: u.organization || '', skills: asArray(u.skills),
-      role: u.preferences?.role || '',
-      interests: (u.preferences?.interests || []).slice(0, 6),
-      followersCount: followerCount[u.id] || 0,
-      isFollowing: myFollowing.has(u.id),
-      connectionStatus: u.id === myId ? 'self' : getConnectionStatus(myId, u.id),
-      sharedInterests,
-      isSelf: u.id === myId,
-    })),
+    totalCount,
+    hasMore: requestedLimit > 0 ? offset + page.length < totalCount : false,
+    users: page,
   });
 });
 
@@ -28023,7 +28049,7 @@ function reorderOpportunitiesForRefresh(results, shownIds, refreshKey) {
 app.get('/opportunities', authenticate, async (req, res) => {
   const isRefresh = req.query.bust === '1';
   if (isRefresh) requestOpportunityRefresh('opportunities refresh');
-  const { type, remote, search } = req.query;
+  const { type, remote, search, live } = req.query;
   const requestedOpportunityLimit = req.query.limit != null
     ? Math.max(0, parseInt(req.query.limit, 10) || 0)
     : 0;
@@ -28109,13 +28135,20 @@ app.get('/opportunities', authenticate, async (req, res) => {
   let results = allOps;
   if (type && type !== 'all') results = results.filter((o) => o.type === type);
   if (remote === 'true')       results = results.filter((o) => o.remote);
+  if (live === 'true')         results = results.filter((o) => o.isLive);
   if (search) {
-    const q = search.toLowerCase();
-    results = results.filter((o) =>
-      o.title.toLowerCase().includes(q) ||
-      o.org.toLowerCase().includes(q) ||
-      (o.tags || []).some((t) => t.toLowerCase().includes(q))
-    );
+    results = results
+      .map((o) => {
+        const searchable = [
+          o.title, o.org, o.content, o.location, o.source, o.type,
+          ...(o.tags || []),
+        ].filter(Boolean).join(' ');
+        return { ...o, searchRelevance: relatedSearchScore(searchable, search) };
+      })
+      .filter((o) => matchesRelatedSearch([
+        o.title, o.org, o.content, o.location, o.source, o.type,
+        ...(o.tags || []),
+      ].filter(Boolean).join(' '), search));
   }
 
   // Snapshot of what's actually pickable before narrowing by source itself —
@@ -28131,7 +28164,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   if (sourceSet) results = results.filter((o) => sourceSet.has(o.source));
 
   results = results.map((o) => {
-    let score = 0;
+    let score = o.searchRelevance || 0;
     const reasons = [];
     const oppTitleLower = (o.title || '').toLowerCase();
     const tagTokens     = (o.tags || []).map(t => (t || '').toLowerCase());
