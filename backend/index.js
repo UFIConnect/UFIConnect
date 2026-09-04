@@ -9074,8 +9074,13 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
 
   while (output.length < limit && (qi < queue.length || held.length)) {
     let picked = null;
-    if (held.length && (held[0].source || 'unknown') !== lastSource && !overShare(held[0].source || 'unknown')) {
-      picked = held.shift();
+    const heldCandidateIndex = held.findIndex((item) => {
+      const src = item?.source || 'unknown';
+      const wouldExtendCappedRun = src === lastSource && streak >= maxConsecutive;
+      return !wouldExtendCappedRun && !overShare(src);
+    });
+    if (heldCandidateIndex >= 0) {
+      picked = held.splice(heldCandidateIndex, 1)[0];
     } else if (qi < queue.length) {
       const next = queue[qi];
       const src = next?.source || 'unknown';
@@ -9098,7 +9103,13 @@ function diversifyBySource(posts = [], limit = 500, maxConsecutive = 2, maxShare
       // draining back in once alternatives run out — see the strict
       // call sites' own comments for why that mattered in practice (one
       // source reaching 83.8% of the live cache despite the cap existing).
-      picked = held.shift();
+      // Prefer any remaining source that can break a capped streak. The
+      // previous first-item-only drain could produce long runs even while
+      // another source was still waiting later in `held`.
+      const breakerIndex = streak >= maxConsecutive
+        ? held.findIndex((item) => (item?.source || 'unknown') !== lastSource)
+        : -1;
+      picked = held.splice(breakerIndex >= 0 ? breakerIndex : 0, 1)[0];
     }
     if (!picked) break;
     const src = picked.source || 'unknown';
@@ -28362,19 +28373,10 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // busier one.
   if (new Set(results.map(o => o.source)).size > 1) {
     if (sortMode === 'newest') {
-      const jobsByDay = new Map();
-      results.forEach((opportunity) => {
-        const timestamp = postedAt(opportunity);
-        const day = timestamp ? new Date(timestamp).toISOString().slice(0, 10) : 'unknown';
-        if (!jobsByDay.has(day)) jobsByDay.set(day, []);
-        jobsByDay.get(day).push(opportunity);
-      });
-      results = [...jobsByDay.values()].flatMap((dayJobs) => {
-        const personalizedDay = dayJobs.sort((a, b) => (
-          (b.matchScore || 0) - (a.matchScore || 0) || newestFirst(a, b)
-        ));
-        return diversifyBySource(personalizedDay, personalizedDay.length, 2, 0.4, false);
-      });
+      // Keep the catalog's chronological order as the baseline, then make
+      // only the smallest moves needed to avoid a source takeover. Resume
+      // score remains the tiebreaker for listings with the same timestamp.
+      results = diversifyBySource(results, results.length, 2, 0.4, false);
     } else if (['match', 'live', 'remote'].includes(sortMode)) {
       results = diversifyBySource(results, results.length, 2, 0.4, false);
     }
