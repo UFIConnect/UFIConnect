@@ -738,25 +738,6 @@ input, textarea, select { font-family: inherit; }
   margin-left: auto;
   white-space: nowrap;
 }
-.opportunities-platform-links {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.opportunities-platform-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border: 1.5px solid;
-  border-radius: var(--radius-sm);
-  font-size: .78rem;
-  font-weight: 700;
-  text-decoration: none;
-  white-space: nowrap;
-}
 .opportunities-sort-row {
   display: flex;
   align-items: center;
@@ -2483,19 +2464,6 @@ input, textarea, select { font-family: inherit; }
   .opportunities-resume-builder {
     margin-left: 0;
     align-self: start;
-  }
-  .opportunities-platform-links {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: stretch;
-    gap: 8px;
-  }
-  .opportunities-platform-link {
-    width: 100%;
-    min-height: 36px;
-    padding-inline: 8px;
-    text-align: center;
-    white-space: normal;
   }
   /* Cards full-width */
   .card { border-radius: 10px; }

@@ -18,36 +18,6 @@ const TYPE_META = {
   learning:   { label: 'Learning',    emoji: 'Learn', color: '#0284C7', bg: '#F0F9FF' },
 };
 
-// None of these five has a public jobs-listing API (see the backend's
-// getPlatformSearchUrls) — Glassdoor/Handshake/Wellfound/Google were
-// briefly tried as promoted source-tab entries instead of plain links and
-// reverted: a single static search-link card standing in for a real
-// "source" ended up being exactly the kind of listing this page exists to
-// avoid. Plain external links, personalized to the user's title/role/resume
-// (see getPlatformSearchUrls), is the honest version of this.
-// Glassdoor, Handshake, and Wellfound all gate their job search behind a
-// login wall (confirmed live — clicking through lands on a sign-in prompt,
-// not results), unlike LinkedIn/Google which show real results with no
-// account needed. loginRequired drives an honest label instead of a bare
-// "Search X ↗" that reads the same as the two that actually work without
-// signing in and then surprises whoever isn't already a member.
-// LinkedIn specifically is a plain search link only because its real Jobs
-// API sits behind LinkedIn's Talent Solutions partner program — no self-
-// serve path, unlike the OAuth app already set up for basic profile login
-// (see PLATFORMS.linkedin's own note server-side). This link itself is
-// fully functional today (real search results, no account needed), so a
-// "Coming soon" label here would be misleading — that messaging lives on
-// the Connected Accounts page instead, where it actually describes
-// something incomplete (the OAuth connection only imports a profile, not
-// posts) rather than something that already works.
-const PLATFORM_META = {
-  linkedin:  { label: 'LinkedIn',  icon: 'in', color: '#0A66C2', bg: '#E8F0FB' },
-  glassdoor: { label: 'Glassdoor', icon: 'GD', color: '#0CAA41', bg: '#E6F9EE', loginRequired: true },
-  handshake: { label: 'Handshake', icon: 'HS', color: '#F97316', bg: '#FFF3E8', loginRequired: true },
-  wellfound: { label: 'Wellfound', icon: 'WF', color: '#111827', bg: '#F3F4F6', loginRequired: true },
-  google:    { label: 'Google',    icon: 'G', color: '#EA4335', bg: '#FEE8E6' },
-};
-
 const FILTERS = [
   { value: 'all', label: 'All' },
   ...Object.entries(TYPE_META).map(([value, { label }]) => ({ value, label })),
@@ -122,7 +92,6 @@ export default function Opportunities() {
   const [searchParams] = useSearchParams();
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
-  const [platformSearchUrls, setPlatformSearchUrls] = useState(null);
   const [filter,    setFilter]    = useState('job');
   const [sort,      setSort]      = useState('match');
   const [remote,    setRemote]    = useState(false);
@@ -224,7 +193,6 @@ export default function Opportunities() {
         setTotalCount(data.totalCount || list.length);
         setHasMore(!!data.hasMore);
         setLiveCount(data.liveCount || 0);
-        setPlatformSearchUrls(data.platformSearchUrls || null);
         setAvailableSources(data.availableSources || []);
       })
       .catch(err => {
@@ -485,59 +453,6 @@ export default function Opportunities() {
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
-
-        {/* LinkedIn/Glassdoor/Handshake/Wellfound/Google don't offer a
-            public jobs API — there's no legitimate way to pull their
-            listings directly the way Remotive/The Muse/RemoteOK/USAJobs/
-            Indeed are above, and faking that would be exactly the kind of
-            low-legitimacy listing this page is trying to avoid. What's real
-            and accurate instead: a live search on each platform, pre-filled
-            with this user's actual title/role and (see the backend's
-            getPlatformSearchUrls) their selected resume's own keywords.
-            Styled to match the Source filter chips above (same pill shape/
-            size/border-radius) even though behavior is unchanged — still an
-            external link, not an in-app filter — so the ↗ and "Search"
-            label stay to keep that honest rather than implying these are
-            real aggregated listings like the tabs next to them. */}
-        {platformSearchUrls && (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: '.78rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>
-              Search more platforms
-            </div>
-            <div className="opportunities-platform-links">
-              {Object.entries(PLATFORM_META).filter(([key]) => key !== 'google').map(([key, meta]) => (
-                platformSearchUrls[key] && (
-                  <a
-                    key={key}
-                    href={platformSearchUrls[key]}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="opportunities-platform-link"
-                    title={meta.loginRequired ? `${meta.label} requires a school or employer login to search` : undefined}
-                    style={{ background: meta.bg, color: meta.color, borderColor: `${meta.color}55` }}
-                  >
-                    {meta.icon} Search {meta.label}{meta.loginRequired ? ' (login required)' : ''}
-                  </a>
-                )
-              ))}
-              {platformSearchUrls.google && (
-                <a
-                  href={platformSearchUrls.google}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="opportunities-platform-link"
-                  style={{
-                    background: PLATFORM_META.google.bg,
-                    color: PLATFORM_META.google.color,
-                    borderColor: `${PLATFORM_META.google.color}55`,
-                  }}
-                >
-                  {PLATFORM_META.google.icon} Search {PLATFORM_META.google.label}
-                </a>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Status messages */}
         {error && (
