@@ -28089,6 +28089,52 @@ function reorderOpportunitiesForRefresh(results, shownIds, refreshKey) {
   return { results: shuffled, mode: 'shuffled' };
 }
 
+function equalizeNewestOpportunitiesByDay(results, postedAt, maxConsecutive = 2) {
+  const dayBuckets = new Map();
+  for (const opportunity of results) {
+    const timestamp = postedAt(opportunity);
+    const day = timestamp ? new Date(timestamp).toISOString().slice(0, 10) : 'unknown';
+    if (!dayBuckets.has(day)) dayBuckets.set(day, []);
+    dayBuckets.get(day).push(opportunity);
+  }
+
+  const output = [];
+  let lastSource = null;
+  let streak = 0;
+
+  for (const dayJobs of dayBuckets.values()) {
+    const queues = new Map();
+    dayJobs
+      .sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0) || postedAt(b) - postedAt(a))
+      .forEach((job) => {
+        const source = job.source || 'unknown';
+        if (!queues.has(source)) queues.set(source, []);
+        queues.get(source).push(job);
+      });
+
+    while ([...queues.values()].some((queue) => queue.length)) {
+      const candidates = [...queues.entries()]
+        .filter(([, queue]) => queue.length)
+        .sort(([, left], [, right]) => (
+          right.length - left.length
+          || (right[0].matchScore || 0) - (left[0].matchScore || 0)
+          || postedAt(right[0]) - postedAt(left[0])
+        ));
+      let selected = candidates[0];
+      if (selected?.[0] === lastSource && streak >= maxConsecutive) {
+        selected = candidates.find(([source]) => source !== lastSource) || selected;
+      }
+      if (!selected) break;
+      const [source, queue] = selected;
+      output.push(queue.shift());
+      if (source === lastSource) streak += 1;
+      else { lastSource = source; streak = 1; }
+    }
+  }
+
+  return output;
+}
+
 app.get('/opportunities', authenticate, async (req, res) => {
   const isRefresh = req.query.bust === '1';
   if (isRefresh) requestOpportunityRefresh('opportunities refresh');
@@ -28373,10 +28419,9 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // busier one.
   if (new Set(results.map(o => o.source)).size > 1) {
     if (sortMode === 'newest') {
-      // Keep the catalog's chronological order as the baseline, then make
-      // only the smallest moves needed to avoid a source takeover. Resume
-      // score remains the tiebreaker for listings with the same timestamp.
-      results = diversifyBySource(results, results.length, 2, 0.4, false);
+      // Keep dates strictly newest-first, then balance sources within each
+      // date. Resume score orders each source's own queue for that date.
+      results = equalizeNewestOpportunitiesByDay(results, postedAt, 2);
     } else if (['match', 'live', 'remote'].includes(sortMode)) {
       results = diversifyBySource(results, results.length, 2, 0.4, false);
     }
