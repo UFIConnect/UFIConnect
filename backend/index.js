@@ -34,6 +34,10 @@ const {
   relatedSearchScore,
   splitSearchWords,
 } = require('./search');
+const {
+  normalizeOfficeWorkspaceKey,
+  validateOfficeWorkspacePayload,
+} = require('./office-workspace');
 
 dotenv.config();
 
@@ -297,7 +301,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : true; // allow all in dev
 app.use(cors({ origin: allowedOrigins, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '512kb' }));
 
 // Keep these lightweight probes ahead of the application's rate limits and
 // database-heavy routes, but after CORS so the web app can use them when it
@@ -17344,6 +17348,16 @@ async function migrateDB() {
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS bfa_sig_idx ON bugfix_attempts(signature, detected_at DESC)`);
 
+    // Small, token-protected Office workspaces that need to survive browser
+    // changes and deploys. The workspace key is allowlisted at the route.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS office_workspace_state (
+        workspace_key TEXT PRIMARY KEY,
+        payload JSONB NOT NULL DEFAULT '{}',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
     const { rows } = await db.query('SELECT COUNT(*) FROM users');
     console.log(`? DB migration applied - ${rows[0].count} registered user(s) in DB`);
   } catch (err) { console.warn('DB migration error:', err.message); }
@@ -19257,6 +19271,53 @@ function requireOfficeToken(req, res, next) {
   if (provided === expected) return next();
   return res.status(401).json({ error: 'Unauthorized — set the office token in the dashboard.' });
 }
+
+app.get('/office/workspaces/:key', requireOfficeToken, async (req, res) => {
+  const key = normalizeOfficeWorkspaceKey(req.params.key);
+  if (!key) return res.status(404).json({ error: 'Office workspace not found.' });
+  if (!db.isConnected()) return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
+
+  try {
+    const { rows } = await db.query(
+      'SELECT payload, updated_at FROM office_workspace_state WHERE workspace_key = $1',
+      [key],
+    );
+    const row = rows[0];
+    res.set('Cache-Control', 'no-store');
+    return res.json({
+      key,
+      payload: row?.payload || null,
+      updatedAt: row?.updated_at || null,
+    });
+  } catch (error) {
+    console.warn(`[office workspace] read failed for ${key}: ${error.message}`);
+    return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
+  }
+});
+
+app.put('/office/workspaces/:key', requireOfficeToken, async (req, res) => {
+  const key = normalizeOfficeWorkspaceKey(req.params.key);
+  if (!key) return res.status(404).json({ error: 'Office workspace not found.' });
+
+  const validation = validateOfficeWorkspacePayload(req.body?.payload);
+  if (!validation.valid) return res.status(400).json({ error: validation.error });
+  if (!db.isConnected()) return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
+
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO office_workspace_state (workspace_key, payload, updated_at)
+       VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (workspace_key) DO UPDATE
+       SET payload = EXCLUDED.payload, updated_at = NOW()
+       RETURNING updated_at`,
+      [key, JSON.stringify(req.body.payload)],
+    );
+    return res.json({ key, saved: true, bytes: validation.bytes, updatedAt: rows[0]?.updated_at || null });
+  } catch (error) {
+    console.warn(`[office workspace] write failed for ${key}: ${error.message}`);
+    return res.status(503).json({ error: 'Office workspace storage is temporarily unavailable.' });
+  }
+});
 
 // OAuth values live only in Render. This Office-only report deliberately
 // exposes presence and the exact callback URLs, never a client ID or secret,

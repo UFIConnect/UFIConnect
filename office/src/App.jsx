@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import DecisionFoundry from './DecisionFoundry';
 
 const API = import.meta.env.VITE_API_URL || '';
 // uficonnect-pipeline's own URL (see render.yaml) — the service that
@@ -2936,7 +2937,11 @@ function mergeAgentMaps(base, incoming) {
 }
 
 export default function App() {
-  const [view, setView] = useState('overview');
+  const officeViews = ['overview', 'decisions', 'sources', 'pipeline', 'topics', 'agents', 'feed', 'analytics', 'deploy', 'autofix', 'versions'];
+  const [view, setView] = useState(() => {
+    const requested = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
+    return officeViews.includes(requested) ? requested : 'overview';
+  });
   const [status, setStatus] = useState(null);
   // Source-fetcher health (workerHealth/agentSourceCache) only ever has real
   // data on the pipeline role now — SourcesView/PipelineView read this
@@ -3091,6 +3096,7 @@ export default function App() {
 
   const nav = [
     { id: 'overview', label: 'Overview' },
+    { id: 'decisions', label: 'Decision Foundry' },
     { id: 'sources',  label: 'Live Sources' },
     { id: 'pipeline', label: 'Pipeline' },
     { id: 'topics',   label: 'Topics' },
@@ -3180,7 +3186,10 @@ export default function App() {
               return (
                 <button
                   key={id}
-                  onClick={() => setView(id)}
+                  onClick={() => {
+                    setView(id);
+                    window.history.replaceState(null, '', `#${id}`);
+                  }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 8, width: isMobile ? 'auto' : '100%',
                     flex: isMobile ? '0 0 auto' : undefined,
@@ -3269,6 +3278,7 @@ export default function App() {
         {/* ── Main content ── */}
         <main style={mainStyle}>
           {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'decisions' && <DecisionFoundry apiBase={API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
           {view === 'sources'  && <SourcesView status={pipelineStatus} triggerAgent={triggerAgent} triggering={triggering} />}
