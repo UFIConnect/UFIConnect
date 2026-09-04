@@ -9367,22 +9367,30 @@ async function getJobCandidatePool() {
 // (see the /opportunities handler's resumeKeywords) — "matches your
 // resume" should mean the same thing in both places, not two independently
 // tuned heuristics.
-async function getUserResumeKeywords(userId) {
-  if (!db.isConnected()) return new Set();
+async function getUserResumeContext(userId) {
+  const empty = { keywords: new Set(), filename: null, hasResume: false };
+  if (!db.isConnected()) return empty;
   try {
     // is_primary DESC first — a user with multiple resumes can explicitly
     // pick which one this means (see /profile/attachments/:id/select);
     // falls back to most recent when nothing's ever been explicitly
     // selected, same as the old behavior this replaced.
     const { rows } = await db.query(
-      `SELECT keywords FROM attachments WHERE user_id=$1 ORDER BY is_primary DESC, created_at DESC LIMIT 1`,
+      `SELECT filename, keywords FROM attachments WHERE user_id=$1 ORDER BY is_primary DESC, created_at DESC LIMIT 1`,
       [userId]
     );
-    if (rows.length && Array.isArray(rows[0].keywords)) {
-      return new Set(rows[0].keywords.map(k => String(k).toLowerCase()));
-    }
+    if (!rows.length) return empty;
+    return {
+      keywords: new Set((Array.isArray(rows[0].keywords) ? rows[0].keywords : []).map(k => String(k).toLowerCase())),
+      filename: rows[0].filename || null,
+      hasResume: true,
+    };
   } catch (e) { /* resume matching is a bonus signal, never block the feed over it */ }
-  return new Set();
+  return empty;
+}
+
+async function getUserResumeKeywords(userId) {
+  return (await getUserResumeContext(userId)).keywords;
 }
 
 // Same word-boundary guard computeATSScore's own keyword extraction uses —
@@ -27882,14 +27890,14 @@ function isLegitimateJobListing(j) {
   return true;
 }
 
-// role/experience params kept for call-site compatibility even though
-// Remotive/Muse no longer use them to scope their own fetch (see
-// startJobBoardSweeps' comment — both now read the full pipeline-
-// accumulated pool across every category/level, same as RemoteOK/Indeed/
-// USAJobs already did) — any real per-viewer relevance still comes from
-// this function's own scoring pass further down, same as it always did for
-// those three sources.
-async function getLiveJobs(role, experience, sourceLimit = 150) {
+// Keep one short-lived catalog for every member. The catalog itself is not
+// personalized; /opportunities applies each member's selected resume (or
+// role fallback) independently after this shared read.
+const LIVE_JOB_SOURCE_LIMIT = 500;
+const LIVE_JOB_CATALOG_TTL_MS = 60_000;
+let liveJobCatalogCache = { jobs: [], expiresAt: 0, sourceLimit: 0, pending: null };
+
+async function loadLiveJobCatalog(sourceLimit = LIVE_JOB_SOURCE_LIMIT) {
   const [remotiveResults, museResults, remoteOkResults, usaJobsResults, indeedResults] = await Promise.all([
     fetchRemotiveOpportunities(sourceLimit),
     fetchMuseOpportunities(sourceLimit),
@@ -27913,6 +27921,30 @@ async function getLiveJobs(role, experience, sourceLimit = 150) {
     if (j.sourceUrl) seenUrls.add(j.sourceUrl);
     return true;
   });
+}
+
+async function getLiveJobs(sourceLimit = LIVE_JOB_SOURCE_LIMIT, forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh
+      && liveJobCatalogCache.sourceLimit >= sourceLimit
+      && liveJobCatalogCache.expiresAt > now) {
+    return liveJobCatalogCache.jobs;
+  }
+  if (liveJobCatalogCache.pending) return liveJobCatalogCache.pending;
+
+  liveJobCatalogCache.pending = loadLiveJobCatalog(sourceLimit)
+    .then((jobs) => {
+      liveJobCatalogCache = {
+        jobs,
+        expiresAt: Date.now() + LIVE_JOB_CATALOG_TTL_MS,
+        sourceLimit,
+        pending: null,
+      };
+      return jobs;
+    })
+    .finally(() => { liveJobCatalogCache.pending = null; });
+
+  return liveJobCatalogCache.pending;
 }
 
 // Role ? preferred opportunity types (all 16 roles)
@@ -28061,7 +28093,11 @@ app.get('/opportunities', authenticate, async (req, res) => {
   const sourcesParam = (req.query.sources || '').split(',').map(s => s.trim()).filter(Boolean);
   const sourceSet = sourcesParam.length ? new Set(sourcesParam) : null;
   const userCountry = getUserCountry(req);
-  const user       = await getUser(req.user.id);
+  const [user, resumeContext, userAffinity] = await Promise.all([
+    getUser(req.user.id),
+    getUserResumeContext(req.user.id),
+    getUserAffinity(req.user.id),
+  ]);
   const role       = user?.preferences?.role || '';
   const userTitle  = user?.title || '';           // e.g. "Senior Frontend Engineer"
   const experience = user?.preferences?.experience || 'mid';
@@ -28081,8 +28117,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // shared function the main feed's own resume matching already uses, so
   // "matches your resume" can't quietly drift into meaning two different
   // things in the two places it's shown.
-  const resumeKeywords = await getUserResumeKeywords(req.user.id);
-  const userAffinity = await getUserAffinity(req.user.id);
+  const resumeKeywords = resumeContext.keywords;
 
   // Build the set of goal-boosted op types from this user's goals
   const goalBoostedTypes = new Set(goals.flatMap(g => [...(GOAL_TYPE_BOOST[g] || [])]));
@@ -28101,6 +28136,20 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // still deserves a useful job list. Their own engagement topics are a
   // private fallback signal, never shared or used for anyone else's feed.
   const hasExplicitJobSignal = Boolean(role || userTitle || resumeKeywords.size || skills.size || rawInterests.length);
+  const hasResumeSignal = resumeKeywords.size > 0;
+  const hasRoleSignal = !hasResumeSignal && Boolean(userTitle || role);
+  const recommendationBasis = hasResumeSignal
+    ? 'resume'
+    : hasRoleSignal
+      ? 'role'
+      : skills.size || rawInterests.length
+        ? 'profile'
+        : 'usage';
+  const recommendationLabel = hasResumeSignal
+    ? (resumeContext.filename || 'Selected resume')
+    : hasRoleSignal
+      ? (userTitle || role)
+      : null;
   const usageTagSet = new Set(
     [...userAffinity.topic.entries()]
       .filter(([, weight]) => weight > 0)
@@ -28113,7 +28162,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   let liveJobs = [];
   try {
     liveJobs = await Promise.race([
-      getLiveJobs(role, experience, requestedOpportunityLimit >= 500 ? 250 : 150),
+      getLiveJobs(LIVE_JOB_SOURCE_LIMIT, isRefresh),
       new Promise((resolve) => setTimeout(() => resolve([]), 6000)),
     ]);
   } catch (e) { /* silently skip */ }
@@ -28184,7 +28233,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // in the title/description — highest weight; rare unless user filled
     // skills section.
     const skillMatches = [...skills].filter(s => tagTokens.includes(s) || textMentionsKeyword(bodyText, s));
-    if (skillMatches.length > 0) { score += skillMatches.length * 4; reasons.push('Matches your skills'); }
+    if (skillMatches.length > 0) { score += skillMatches.length * (hasResumeSignal ? 2 : 4); reasons.push('Matches your skills'); }
 
     // 1b. Resume keywords ? same tags-then-text fallback, weighted like
     // title/role matches (5/token), between the explicit-skills-field and
@@ -28192,24 +28241,28 @@ app.get('/opportunities', authenticate, async (req, res) => {
     // interest, but a user hand-picking their Skills field is still the
     // strongest possible signal, so this doesn't outrank it.
     const resumeMatches = [...resumeKeywords].filter(k => tagTokens.includes(k) || textMentionsKeyword(bodyText, k));
-    if (resumeMatches.length > 0) { score += resumeMatches.length * 5; reasons.push('Matches your resume'); }
+    if (resumeMatches.length > 0) { score += resumeMatches.length * 10; reasons.push('Matches your resume'); }
 
     // 2. Specific job title keywords ? opp title / tags (strong signal from onboarding)
-    const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
-    const roleMatchCount  = roleKeywords.filter(kw => oppTitleLower.includes(kw) || tagStr.includes(kw)).length;
-    if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
-    else if (roleMatchCount > 0) { score += roleMatchCount * 5; reasons.push('Matches your role'); }
+    if (!hasResumeSignal) {
+      const titleMatchCount = titleKeywords.filter(kw => oppTitleLower.includes(kw) || textMentionsKeyword(bodyText, kw) || tagStr.includes(kw)).length;
+      const roleMatchCount  = roleKeywords.filter(kw => oppTitleLower.includes(kw) || textMentionsKeyword(bodyText, kw) || tagStr.includes(kw)).length;
+      if (titleMatchCount > 0) { score += titleMatchCount * 8; reasons.push('Matches your title'); }
+      else if (roleMatchCount > 0) { score += roleMatchCount * 6; reasons.push('Matches your role'); }
+    }
 
     // 3. Interest ? expanded tags (bridges "AI & Machine Learning" ? "Python","LLMs","PyTorch"),
     // same tags-then-text fallback as skills/resume above.
-    const interestTagMatches = [...interestTagSet].filter(tag =>
-      tagTokens.some(t => t.includes(tag) || tag.includes(t)) || textMentionsKeyword(bodyText, tag)
-    ).length;
-    if (interestTagMatches > 0) { score += interestTagMatches * 3; reasons.push('Matches your interests'); }
-    // Also check raw interest names against opp title (e.g. interest "Data Science" hits "Data Scientist" title)
-    else {
-      const titleInterestMatch = [...interestNames].some(i => oppTitleLower.includes(i) || i.includes(oppTitleLower.split(' ')[0]));
-      if (titleInterestMatch) { score += 2; reasons.push('Matches your interests'); }
+    if (!hasResumeSignal && !hasRoleSignal) {
+      const interestTagMatches = [...interestTagSet].filter(tag =>
+        tagTokens.some(t => t.includes(tag) || tag.includes(t)) || textMentionsKeyword(bodyText, tag)
+      ).length;
+      if (interestTagMatches > 0) { score += interestTagMatches * 3; reasons.push('Matches your interests'); }
+      // Also check raw interest names against opp title (e.g. interest "Data Science" hits "Data Scientist" title)
+      else {
+        const titleInterestMatch = [...interestNames].some(i => oppTitleLower.includes(i) || i.includes(oppTitleLower.split(' ')[0]));
+        if (titleInterestMatch) { score += 2; reasons.push('Matches your interests'); }
+      }
     }
 
     // Usage is intentionally only a fallback. Explicit preferences and an
@@ -28263,7 +28316,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
     const timestamp = Date.parse(opportunity?.posted || '');
     return Number.isFinite(timestamp) ? timestamp : 0;
   };
-  const newestFirst = (a, b) => postedAt(b) - postedAt(a);
+  const newestFirst = (a, b) => postedAt(b) - postedAt(a) || (b.matchScore || 0) - (a.matchScore || 0);
   const textOrder = (field) => (a, b) => {
     const comparison = String(a?.[field] || '').localeCompare(String(b?.[field] || ''), undefined, { sensitivity: 'base' });
     return comparison || newestFirst(a, b);
@@ -28307,8 +28360,24 @@ app.get('/opportunities', authenticate, async (req, res) => {
   // is ever excluded, only reordered — so every source that's actually
   // selected shows up on the first page instead of being buried under a
   // busier one.
-  if (['match', 'newest', 'live', 'remote'].includes(sortMode) && new Set(results.map(o => o.source)).size > 1) {
-    results = diversifyBySource(results, results.length, 2, 0.4, false);
+  if (new Set(results.map(o => o.source)).size > 1) {
+    if (sortMode === 'newest') {
+      const jobsByDay = new Map();
+      results.forEach((opportunity) => {
+        const timestamp = postedAt(opportunity);
+        const day = timestamp ? new Date(timestamp).toISOString().slice(0, 10) : 'unknown';
+        if (!jobsByDay.has(day)) jobsByDay.set(day, []);
+        jobsByDay.get(day).push(opportunity);
+      });
+      results = [...jobsByDay.values()].flatMap((dayJobs) => {
+        const personalizedDay = dayJobs.sort((a, b) => (
+          (b.matchScore || 0) - (a.matchScore || 0) || newestFirst(a, b)
+        ));
+        return diversifyBySource(personalizedDay, personalizedDay.length, 2, 0.4, false);
+      });
+    } else if (['match', 'live', 'remote'].includes(sortMode)) {
+      results = diversifyBySource(results, results.length, 2, 0.4, false);
+    }
   }
 
   const shownIds = new Set(
@@ -28318,7 +28387,9 @@ app.get('/opportunities', authenticate, async (req, res) => {
       .filter(Boolean)
       .slice(0, 100)
   );
-  const refresh = reorderOpportunitiesForRefresh(results, shownIds, String(req.query.refresh || ''));
+  const refresh = sortMode === 'newest'
+    ? { results, mode: 'newest' }
+    : reorderOpportunitiesForRefresh(results, shownIds, String(req.query.refresh || ''));
   results = refresh.results;
 
   // Server-side page slice — added so the Opportunities page can scroll-load
@@ -28344,7 +28415,8 @@ app.get('/opportunities', authenticate, async (req, res) => {
     userTitle: userTitle || null,
     sort: sortMode,
     refreshMode: refresh.mode,
-    recommendationBasis: role || userTitle ? 'role' : resumeKeywords.size ? 'resume' : hasExplicitJobSignal ? 'profile' : usageTagSet.size ? 'usage' : 'recent listings',
+    recommendationBasis: recommendationBasis === 'usage' && !usageTagSet.size ? 'recent listings' : recommendationBasis,
+    recommendationLabel,
     platformSearchUrls: (role || userTitle) ? getPlatformSearchUrls(role, userTitle, resumeKeywords) : null,
     availableSources: [...availableSources].sort(),
   });

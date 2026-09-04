@@ -1,7 +1,6 @@
 ﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
@@ -24,8 +23,8 @@ const FILTERS = [
 ];
 
 const OPPORTUNITY_SORT_OPTIONS = [
-  { value: 'match', label: 'Best match' },
   { value: 'newest', label: 'Newest' },
+  { value: 'match', label: 'Best match' },
   { value: 'oldest', label: 'Oldest' },
   { value: 'live', label: 'Live first' },
   { value: 'remote', label: 'Remote first' },
@@ -43,10 +42,18 @@ function debounce(fn, delay) {
 }
 
 function timeAgo(iso) {
-  const d = (Date.now() - new Date(iso)) / 86400000;
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return 'recently';
+  const d = (Date.now() - timestamp) / 86400000;
   if (d < 1) return 'today';
   if (d < 2) return 'yesterday';
   return `${Math.floor(d)}d ago`;
+}
+
+function postedDate(iso) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return 'Recently listed';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function OpportunitySkeleton() {
@@ -88,6 +95,94 @@ function SourceBadge({ opp }) {
   );
 }
 
+function JobTab({ job, selected, index, onSelect, onKeyDown }) {
+  return (
+    <button
+      id={`job-tab-${index}`}
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      aria-controls="selected-job-panel"
+      tabIndex={selected ? 0 : -1}
+      className={`job-result-tab${selected ? ' active' : ''}`}
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+    >
+      <span className="job-result-tab-title">{job.title}</span>
+      <span className="job-result-tab-org">{job.org}</span>
+      <span className="job-result-tab-meta">
+        <span>{job.location || 'Location listed by source'}</span>
+        <span>{timeAgo(job.posted)}</span>
+      </span>
+      <span className="job-result-tab-source">{job.source}</span>
+    </button>
+  );
+}
+
+function JobDetail({ job, tabIndex }) {
+  if (!job) return null;
+  return (
+    <article
+      id="selected-job-panel"
+      role="tabpanel"
+      aria-labelledby={`job-tab-${tabIndex}`}
+      className="card job-detail-panel"
+    >
+      <div className="job-detail-heading">
+        {job.logo && (
+          <img
+            src={job.logo}
+            alt=""
+            className="job-detail-logo"
+            onError={(event) => { event.currentTarget.style.display = 'none'; }}
+          />
+        )}
+        <div>
+          <h2>{job.title}</h2>
+          <p>{job.org}</p>
+        </div>
+      </div>
+
+      <div className="job-detail-badges">
+        <SourceBadge opp={job} />
+        {job.isLive && <span className="job-detail-status job-detail-status--live">Live listing</span>}
+        {job.remote && <span className="job-detail-status">Remote</span>}
+        {job.matchScore > 6 && <span className="job-detail-status job-detail-status--match">Top match</span>}
+      </div>
+
+      <dl className="job-detail-facts">
+        <div><dt>Location</dt><dd>{job.location || 'See source'}</dd></div>
+        <div><dt>Posted</dt><dd>{postedDate(job.posted)}</dd></div>
+        <div><dt>Work setting</dt><dd>{job.remote ? 'Remote' : 'See source'}</dd></div>
+        <div><dt>Compensation</dt><dd>{job.pay || 'See source'}</dd></div>
+      </dl>
+
+      {job.matchReasons?.length > 0 && (
+        <div className="job-detail-match-list" aria-label="Why this job matches">
+          {job.matchReasons.slice(0, 4).map((reason) => <span key={reason}>{reason}</span>)}
+        </div>
+      )}
+
+      {(job.tags || []).length > 0 && (
+        <div className="job-detail-tags" aria-label="Position tags">
+          {job.tags.slice(0, 10).map((tag) => <span key={tag}>{tag}</span>)}
+        </div>
+      )}
+
+      <section className="job-detail-description">
+        <h3>Position information</h3>
+        <p>{job.content || `Open the listing on ${job.source} for the full position description and requirements.`}</p>
+      </section>
+
+      <div className="job-detail-actions">
+        <a className="btn btn-primary" href={job.sourceUrl} target="_blank" rel="noopener noreferrer">
+          View full position on {job.source}
+        </a>
+      </div>
+    </article>
+  );
+}
+
 function OpportunityFrame({ embedded, children }) {
   return embedded
     ? <section className="search-jobs-panel">{children}</section>
@@ -104,9 +199,9 @@ export default function Opportunities({ embedded = false } = {}) {
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('job');
-  const [sort,      setSort]      = useState('match');
+  const [sort,      setSort]      = useState('newest');
   const [remote,    setRemote]    = useState(false);
-  const [liveOnly,  setLiveOnly]  = useState(false);
+  const [liveOnly,  setLiveOnly]  = useState(embedded);
   // Multi-select, same idea as Feed's source chips — which platforms are
   // actually pickable changes with `filter` (Job's sources are Remotive/The
   // Muse/Remote OK/USAJobs; other types pull from a much longer curated
@@ -116,6 +211,9 @@ export default function Opportunities({ embedded = false } = {}) {
   // Grants).
   const [availableSources, setAvailableSources] = useState([]);
   const [sourceFilter, setSourceFilter] = useState([]);
+  const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
+  const [recommendationLabel, setRecommendationLabel] = useState('');
+  const [selectedJobId, setSelectedJobId] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [search,    setSearch]    = useState('');
   const [loading,   setLoading]   = useState(true);
@@ -130,6 +228,7 @@ export default function Opportunities({ embedded = false } = {}) {
   const loadingMoreRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const sentinelRef = useRef(null);
+  const jobTabListRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
   // "All") — the fetch effect below reads and clears it. Live sources
@@ -211,6 +310,8 @@ export default function Opportunities({ embedded = false } = {}) {
         setHasMore(!!data.hasMore);
         setLiveCount(data.liveCount || 0);
         setAvailableSources(data.availableSources || []);
+        setRecommendationBasis(data.recommendationBasis || 'recent listings');
+        setRecommendationLabel(data.recommendationLabel || '');
       })
       .catch(err => {
         if (requestGeneration !== requestGenerationRef.current) return;
@@ -272,13 +373,14 @@ export default function Opportunities({ embedded = false } = {}) {
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
+    const scrollRoot = filter === 'job' ? jobTabListRef.current : null;
     const obs = new IntersectionObserver(
       ([entry]) => { if (entry.isIntersecting) loadMore(); },
-      { rootMargin: '400px' }
+      { root: scrollRoot, rootMargin: scrollRoot ? '300px' : '400px' }
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [loadMore]);
+  }, [filter, loadMore]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page on the site.
@@ -287,6 +389,40 @@ export default function Opportunities({ embedded = false } = {}) {
   }, { enabled: !loading && !refreshing });
 
   const displayed = allOpps;
+  const selectedJobIndex = Math.max(0, displayed.findIndex((job) => job.id === selectedJobId));
+  const selectedJob = filter === 'job' ? displayed[selectedJobIndex] || null : null;
+  const personalizationText = recommendationBasis === 'resume'
+    ? `Matched to ${recommendationLabel || 'your selected resume'}`
+    : recommendationBasis === 'role'
+      ? `Matched to ${recommendationLabel || 'your selected role'}`
+      : recommendationBasis === 'profile'
+        ? 'Matched to your profile'
+        : recommendationBasis === 'usage'
+          ? 'Matched to your activity'
+          : 'Newest live listings';
+
+  useEffect(() => {
+    if (filter !== 'job') return;
+    setSelectedJobId((current) => (
+      displayed.some((job) => job.id === current) ? current : (displayed[0]?.id || null)
+    ));
+  }, [displayed, filter]);
+
+  function handleJobTabKeyDown(event, index) {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? displayed.length - 1
+        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
+          ? Math.min(displayed.length - 1, index + 1)
+          : Math.max(0, index - 1);
+    const nextJob = displayed[nextIndex];
+    if (!nextJob) return;
+    setSelectedJobId(nextJob.id);
+    document.getElementById(`job-tab-${nextIndex}`)?.focus();
+  }
 
   return (
     <>
@@ -299,7 +435,7 @@ export default function Opportunities({ embedded = false } = {}) {
       <OpportunityFrame embedded={embedded}>
         <div className="page-header opportunities-page-header">
           <h1 className="page-title">
-            {embedded ? 'Jobs & Opportunities' : 'All Opportunities'}
+            {embedded ? 'Live Jobs' : 'All Opportunities'}
             {liveCount > 0 && (
               <span style={{
                 marginLeft: 10, fontSize: '.7rem', fontWeight: 700, color: '#059669',
@@ -311,6 +447,12 @@ export default function Opportunities({ embedded = false } = {}) {
           </h1>
           <Link to="/resume-builder" className="btn btn-primary btn-sm opportunities-resume-builder">Resume Builder</Link>
         </div>
+        {embedded && (
+          <div className="jobs-personalization-status">
+            <span>{personalizationText}</span>
+            <span>Newest first</span>
+          </div>
+        )}
 
         {/* Search bar */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
@@ -349,7 +491,7 @@ export default function Opportunities({ embedded = false } = {}) {
 
         {/* Type + filters */}
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4, scrollbarWidth: 'none' }}>
-          {FILTERS.map(({ value, label }) => (
+          {!embedded && FILTERS.map(({ value, label }) => (
             <button
               key={value}
               onClick={() => {
@@ -393,7 +535,7 @@ export default function Opportunities({ embedded = false } = {}) {
           >
             Remote
           </button>
-          <button
+          {!embedded && <button
             onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
@@ -405,7 +547,7 @@ export default function Opportunities({ embedded = false } = {}) {
             }}
           >
             Live only
-          </button>
+          </button>}
         </div>
 
         {/* Source filter — multi-select, mirrors Feed's own source chips.
@@ -529,13 +671,44 @@ export default function Opportunities({ embedded = false } = {}) {
           <div>
             <div style={{ fontSize: '.8rem', color: 'var(--muted)', marginBottom: 16, fontWeight: 500 }}>
               {displayed.length >= totalCount ? (
-                `${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
+                filter === 'job'
+                  ? `${totalCount} live job${totalCount !== 1 ? 's' : ''}`
+                  : `${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
               ) : (
-                `Showing ${displayed.length} of ${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
+                filter === 'job'
+                  ? `Showing ${displayed.length} of ${totalCount} live jobs`
+                  : `Showing ${displayed.length} of ${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'}`
               )}
             </div>
 
-            {displayed.map((opp) => {
+            {filter === 'job' ? (
+              <div className="job-browser">
+                <div className="job-result-column">
+                  <div className="job-result-column-heading">
+                    <strong>Live job list</strong>
+                    <span>{totalCount.toLocaleString()}</span>
+                  </div>
+                  <div ref={jobTabListRef} className="job-result-tabs" role="tablist" aria-label="Live jobs">
+                    {displayed.map((job, index) => (
+                      <JobTab
+                        key={job.id}
+                        job={job}
+                        index={index}
+                        selected={job.id === selectedJob?.id}
+                        onSelect={() => setSelectedJobId(job.id)}
+                        onKeyDown={(event) => handleJobTabKeyDown(event, index)}
+                      />
+                    ))}
+                    {hasMore && (
+                      <div ref={sentinelRef} className="job-list-sentinel" aria-hidden="true">
+                        {loadingMore && <span className="spinner spinner-primary" />}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <JobDetail job={selectedJob} tabIndex={selectedJobIndex} />
+              </div>
+            ) : displayed.map((opp) => {
               const meta = TYPE_META[opp.type] || TYPE_META.job;
               return (
                 <div key={opp.id} className="card opp-card" style={{ marginBottom: 12 }}>
@@ -656,7 +829,7 @@ export default function Opportunities({ embedded = false } = {}) {
             {/* Infinite scroll sentinel — same IntersectionObserver pattern
                 as the main Feed page. Kept invisible when nothing more to
                 load so it never leaves stray blank space at the bottom. */}
-            {hasMore && (
+            {filter !== 'job' && hasMore && (
               <div ref={sentinelRef} style={{ textAlign: 'center', padding: '24px 0' }}>
                 {loadingMore && <span className="spinner spinner-primary" />}
               </div>
@@ -665,7 +838,9 @@ export default function Opportunities({ embedded = false } = {}) {
             {/* End message */}
             {!hasMore && displayed.length > 0 && (
               <div style={{ textAlign: 'center', color: 'var(--muted)', fontSize: '.8rem', padding: '20px 0' }}>
-                All {totalCount} opportunit{totalCount !== 1 ? 'ies' : 'y'} shown
+                {filter === 'job'
+                  ? `All ${totalCount} live job${totalCount !== 1 ? 's' : ''} shown`
+                  : `All ${totalCount} opportunit${totalCount !== 1 ? 'ies' : 'y'} shown`}
               </div>
             )}
           </div>
