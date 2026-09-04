@@ -47,7 +47,11 @@ const NAV = [
   { to: '/opportunities', icon: 'opportunities', label: 'Opportunities', shortLabel: 'Jobs' },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
-const MOBILE_BOTTOM_NAV = NAV.filter(({ icon }) => icon !== 'search');
+const MOBILE_BOTTOM_NAV = NAV
+  .filter(({ icon }) => icon !== 'search')
+  .map((item) => item.icon === 'notifications'
+    ? { to: '/groups', icon: 'groups', label: 'Join a group', shortLabel: 'Join group' }
+    : item);
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -311,12 +315,24 @@ export default function Layout({ children, wide = false }) {
           <div className="mobile-command-menu">
             <NavLink
               to="/search"
-              className={({ isActive }) => `mobile-app-header-search${isActive ? ' active' : ''}`}
+              className={({ isActive }) => `mobile-app-header-action${isActive ? ' active' : ''}`}
               aria-label="Search"
               title="Search"
               onClick={() => setMobileMenuOpen(false)}
             >
               <ShellIcon name="search" size={19} />
+            </NavLink>
+            <NavLink
+              to="/notifications"
+              className={({ isActive }) => `mobile-app-header-action${isActive ? ' active' : ''}`}
+              aria-label="Notifications"
+              title="Notifications"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <span style={{ position: 'relative', display: 'inline-flex' }}>
+                <ShellIcon name="notifications" size={19} />
+                <NavBadge count={notifBadge} />
+              </span>
             </NavLink>
             <button
               type="button"
