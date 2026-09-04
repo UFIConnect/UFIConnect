@@ -16,11 +16,14 @@ services:
       - api.uficonnect.org
     runtime: node
     autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/**
     rootDir: backend
     buildCommand: npm install
     startCommand: node --max-old-space-size=320 index.js
     plan: starter
-    healthCheckPath: /health
+    healthCheckPath: /readyz
     envVars:
       - key: NODE_ENV
         value: production
@@ -355,11 +358,14 @@ services:
     name: uficonnect-pipeline
     runtime: node
     autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/**
     rootDir: backend
     buildCommand: npm install
     startCommand: node --max-old-space-size=320 index.js
     plan: starter
-    healthCheckPath: /health
+    healthCheckPath: /readyz
     envVars:
       - key: NODE_ENV
         value: production
@@ -492,6 +498,9 @@ services:
     name: uficonnect-web
     runtime: static
     autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - web/**
     domains:
       - uficonnect.org
       - www.uficonnect.org
@@ -500,9 +509,15 @@ services:
     staticPublishPath: dist
     routes:
       - type: rewrite
+        source: /health
+        destination: /health.json
+      - type: rewrite
         source: /*
         destination: /index.html
     headers:
+      - path: /health*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       # The service worker is the version gate for installed clients. Never
       # let a CDN/browser keep an older worker after a web release.
       - path: /sw.js
@@ -564,6 +579,9 @@ services:
     name: uficonnect-office
     runtime: static
     autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - office/**
     domains:
       - office.uficonnect.org
     rootDir: office
@@ -571,9 +589,15 @@ services:
     staticPublishPath: dist
     routes:
       - type: rewrite
+        source: /health
+        destination: /health.json
+      - type: rewrite
         source: /*
         destination: /index.html
     headers:
+      - path: /health*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable

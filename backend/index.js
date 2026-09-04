@@ -156,8 +156,10 @@ function buildHealthPayload() {
   }
   try {
     payload.contentScreening = buildContentScreeningSummary();
+    payload.feedAudit = buildImportedFeedAuditSummary();
   } catch {
     payload.contentScreening = null;
+    payload.feedAudit = null;
   }
   try {
     payload.liveTravel = {
@@ -199,6 +201,41 @@ function buildHealthPayload() {
     payload.activity = null;
   }
   return payload;
+}
+
+function buildHealthProbePayload() {
+  const now = Date.now();
+  const workerSummary = buildSourceWorkerHealthSummary();
+  const latestSourceSuccessMs = workerSummary.lastSuccessAt ? Date.parse(workerSummary.lastSuccessAt) : 0;
+  const newestCacheMs = feedStorageFreshnessState?.cache?.newestFetchedAt
+    ? Date.parse(feedStorageFreshnessState.cache.newestFetchedAt)
+    : 0;
+  const lastTransferMs = stagingTransferState?.lastRun ? Date.parse(stagingTransferState.lastRun) : 0;
+  const activityAt = IS_PIPELINE_ROLE ? latestSourceSuccessMs : lastTransferMs;
+
+  return {
+    status: 'ok',
+    role: SERVICE_ROLE,
+    uptimeMs: Math.max(0, now - SERVER_START),
+    db: db.isConnected(),
+    dbBackup: db.isBackupConnected(),
+    dbReadFailoverActive: db.isReadFailoverActive(),
+    freshness: {
+      status: activityAt ? (now - activityAt <= 10 * 60 * 1000 ? 'current' : 'stale') : 'warming',
+      lastSourceSuccessAt: workerSummary.lastSuccessAt,
+      lastTransferAt: stagingTransferState?.lastRun || null,
+      newestCacheFetchAt: feedStorageFreshnessState?.cache?.newestFetchedAt || null,
+      sourceAgeMs: latestSourceSuccessMs ? Math.max(0, now - latestSourceSuccessMs) : null,
+      transferAgeMs: lastTransferMs ? Math.max(0, now - lastTransferMs) : null,
+      cacheAgeMs: newestCacheMs ? Math.max(0, now - newestCacheMs) : null,
+      stagingPending: stagingPostCount ?? null,
+    },
+    runtime: {
+      mode: refreshControl.mode,
+      rssMB: refreshControl.rssMB,
+      eventLoopLagMs: refreshControl.eventLoopLagMs,
+    },
+  };
 }
 
 // Stripe webhook — registered before express.json() below, with its own raw
@@ -306,8 +343,11 @@ app.use(express.json({ limit: '512kb' }));
 // Keep these lightweight probes ahead of the application's rate limits and
 // database-heavy routes, but after CORS so the web app can use them when it
 // selects a healthy API origin from a different hostname.
-app.get('/readyz', (_req, res) => res.status(200).type('text/plain').send('ok'));
-app.get('/health', (_req, res) => res.json(buildHealthPayload()));
+app.get('/readyz', (_req, res) => res.status(200).set('Cache-Control', 'no-store').type('text/plain').send('ok'));
+app.get('/health', (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthProbePayload()));
+// Detailed diagnostics remain available for manual operations checks, while
+// Render and the public uptime monitors stay on the constant-size probe above.
+app.get('/health/details', (_req, res) => res.status(200).set('Cache-Control', 'no-store').json(buildHealthPayload()));
 
 // The office dashboard's "Security Agent" logs a reassuring-looking
 // "Rate-limit monitor" line, but that's display-only — it reads real memory/
@@ -6692,7 +6732,7 @@ const OFFICE_AGENT_BADGES = {
   optimizer: 'OPT', linkedin: 'IN', twitter: 'X', instagram: 'IG',
   facebook: 'FB', feed: 'FEED', web_optimizer: 'WEB', web_perf: 'PERF',
   web_seo: 'SEO', web_cache: 'CACHE', web_storage: 'STORE', web_api: 'API',
-  web_office: 'OFF', web_pwa: 'PWA', security: 'SEC', perf: 'PERF',
+  web_pipeline: 'PIPE', web_office: 'OFF', web_pwa: 'PWA', security: 'SEC', perf: 'PERF',
   community: 'COM', seo: 'SEO', opps: 'JOBS', deploy: 'DEP', data: 'DATA',
   refresh_queue: 'RQ', sort_agent: 'SORT', activity: 'ACT',
   stability: 'STAB', crash_guard: 'CG', cache_helper: 'MERGE',
@@ -6791,6 +6831,29 @@ function normalizeFeedPost(p, fallback = Date.now()) {
 // and memoized: the pipeline may evaluate the same cached item many times,
 // while freshly-read DB rows are still checked before they reach a response.
 const externalFeedScreeningMemo = new WeakMap();
+const importedFeedAuditState = {
+  checked: 0,
+  approved: 0,
+  rejected: 0,
+  byReason: {},
+  lastCheckedAt: null,
+  lastRejected: null,
+};
+
+function buildImportedFeedAuditSummary() {
+  return {
+    checked: importedFeedAuditState.checked,
+    approved: importedFeedAuditState.approved,
+    rejected: importedFeedAuditState.rejected,
+    approvalPct: importedFeedAuditState.checked
+      ? Math.round((importedFeedAuditState.approved / importedFeedAuditState.checked) * 1000) / 10
+      : null,
+    byReason: { ...importedFeedAuditState.byReason },
+    lastCheckedAt: importedFeedAuditState.lastCheckedAt,
+    lastRejected: importedFeedAuditState.lastRejected,
+  };
+}
+
 function feedScreeningSnapshot(post) {
   return {
     id: post?.id,
@@ -6800,6 +6863,8 @@ function feedScreeningSnapshot(post) {
     sourceUrl: post?.sourceUrl,
     mediaUrl: post?.mediaUrl,
     mediaPoster: post?.mediaPoster,
+    createdAt: post?.createdAt,
+    isExternal: post?.isExternal,
     authorName: post?.author?.name,
     screeningStatus: post?.screeningStatus,
     dbScreeningStatus: post?.screening_status,
@@ -6814,6 +6879,8 @@ function matchesFeedScreeningSnapshot(snapshot, post) {
     && snapshot?.sourceUrl === post?.sourceUrl
     && snapshot?.mediaUrl === post?.mediaUrl
     && snapshot?.mediaPoster === post?.mediaPoster
+    && snapshot?.createdAt === post?.createdAt
+    && snapshot?.isExternal === post?.isExternal
     && snapshot?.authorName === post?.author?.name
     && snapshot?.screeningStatus === post?.screeningStatus
     && snapshot?.dbScreeningStatus === post?.screening_status;
@@ -6824,6 +6891,21 @@ function screenFeedPost(post) {
   const cached = externalFeedScreeningMemo.get(post);
   if (matchesFeedScreeningSnapshot(cached?.snapshot, post)) return cached.result;
   const result = screenImportedFeedPost(post);
+  importedFeedAuditState.checked += 1;
+  importedFeedAuditState.lastCheckedAt = new Date().toISOString();
+  if (result.allowed) {
+    importedFeedAuditState.approved += 1;
+  } else {
+    importedFeedAuditState.rejected += 1;
+    const reason = result.reason || 'unknown';
+    importedFeedAuditState.byReason[reason] = (importedFeedAuditState.byReason[reason] || 0) + 1;
+    importedFeedAuditState.lastRejected = {
+      id: post.id || null,
+      source: post.source || null,
+      reason,
+      at: importedFeedAuditState.lastCheckedAt,
+    };
+  }
   const entry = { snapshot: feedScreeningSnapshot(post), result };
   externalFeedScreeningMemo.set(post, entry);
   if (result.post && result.post !== post) {
@@ -8538,11 +8620,14 @@ function buildSourceWorkerHealthSummary() {
 
 function buildPipelineHealthSummary() {
   const sourceCaches = Array.from(agentSourceCache.values());
-  const sourceCachePosts = sourceCaches.reduce((sum, cache) => sum + realFeedPosts(cache.posts || []).length, 0);
+  // Cache contents were already screened before insertion. Re-screening the
+  // complete feed on every health request turned a constant-size probe into
+  // a multi-second hot-path scan under pipeline load.
+  const sourceCachePosts = sourceCaches.reduce((sum, cache) => sum + (cache.posts || []).length, 0);
   const latestSourceFetchMs = Math.max(0, ...sourceCaches.map(cache => Number(cache.lastFetch || 0)));
   const webStorage = websiteOptimizerState.subAgents.web_storage || {};
   return {
-    memoryFeedPosts: realFeedPosts(globalFeedCache.posts).length,
+    memoryFeedPosts: globalFeedCache.posts.length,
     memoryFeedRefreshedAt: globalFeedCache.refreshedAt ? new Date(globalFeedCache.refreshedAt).toISOString() : null,
     sourceCacheCount: agentSourceCache.size,
     sourceCachePosts,
@@ -8665,6 +8750,7 @@ const SORT_DISTRIB_INTERVAL_MS = envNumber('SORT_DISTRIB_INTERVAL_MS', 2 * 60 * 
 const WEB_OPTIMIZER_URL = process.env.WEB_OPTIMIZER_URL || 'https://uficonnect.org';
 const WEB_OPTIMIZER_OFFICE_URL = process.env.WEB_OPTIMIZER_OFFICE_URL || 'https://office.uficonnect.org';
 const WEB_OPTIMIZER_API_URL = process.env.WEB_OPTIMIZER_API_URL || 'https://api.uficonnect.org';
+const WEB_OPTIMIZER_PIPELINE_URL = process.env.WEB_OPTIMIZER_PIPELINE_URL || 'https://uficonnect-pipeline-708r.onrender.com';
 const WEB_OPTIMIZER_LATENCY_TARGET_MS = envNumber('WEB_OPTIMIZER_LATENCY_TARGET_MS', 80, 20, 1000);
 const WEB_OPTIMIZER_INTERVAL_MS = envNumber('WEB_OPTIMIZER_INTERVAL_MS', 2 * 60 * 1000, 60 * 1000, 20 * 60 * 1000);
 const WEB_STORAGE_INTERVAL_MS = envNumber('WEB_STORAGE_INTERVAL_MS', 90 * 1000, 30 * 1000, 10 * 60 * 1000);
@@ -8800,6 +8886,7 @@ const websiteOptimizerState = {
     website: WEB_OPTIMIZER_URL,
     office: WEB_OPTIMIZER_OFFICE_URL,
     api: WEB_OPTIMIZER_API_URL,
+    pipeline: WEB_OPTIMIZER_PIPELINE_URL,
   },
   totalRuns: 0,
   lastRun: null,
@@ -8818,6 +8905,7 @@ const websiteOptimizerState = {
     web_cache:   { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_storage: { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_api:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
+    web_pipeline:{ status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_office:  { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
     web_pwa:     { status: 'idle', totalRuns: 0, lastRun: null, lastError: null },
   },
@@ -13807,7 +13895,7 @@ async function runWebApiSubAgent() {
       const agentPayload = JSON.parse(agents?.body || '{}');
       const ids = Object.keys(agentPayload.agents || {});
       agentCount = ids.length;
-      hasOptimizerAgents = ['web_optimizer', 'web_api', 'web_office', 'web_pwa', 'web_storage'].every(agentId => ids.includes(agentId));
+      hasOptimizerAgents = ['web_optimizer', 'web_api', 'web_pipeline', 'web_office', 'web_pwa', 'web_storage'].every(agentId => ids.includes(agentId));
     } catch {}
     const ok = health.statusCode < 400 && parsed?.status === 'ok' && hasOptimizerAgents;
     updateWebSubAgent(id, {
@@ -13827,6 +13915,37 @@ async function runWebApiSubAgent() {
   } catch (e) {
     updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
     logAgentAction(id, '??', `API optimization audit failed: ${e.message}`, '#F87171');
+    return false;
+  }
+}
+
+async function runWebPipelineSubAgent() {
+  const id = 'web_pipeline';
+  try {
+    const health = await fetchPublicText(new URL('/health', WEB_OPTIMIZER_PIPELINE_URL).toString(), { maxBytes: 50_000 });
+    let parsed = null;
+    try { parsed = JSON.parse(health.body || '{}'); } catch {}
+    const freshness = parsed?.freshness?.status || 'unknown';
+    const ok = health.statusCode < 400
+      && parsed?.status === 'ok'
+      && parsed?.role === 'pipeline'
+      && freshness !== 'stale';
+    updateWebSubAgent(id, {
+      increment: true,
+      status: ok ? 'healthy' : 'degraded',
+      lastError: null,
+      statusCode: health.statusCode,
+      totalMs: health.totalMs,
+      freshness,
+      lastSourceSuccessAt: parsed?.freshness?.lastSourceSuccessAt || null,
+    });
+    logAgentAction(id, ok ? 'OK' : 'WARN',
+      `Pipeline optimizer audit: HTTP ${health.statusCode} - freshness ${freshness} - ${health.totalMs}ms`,
+      ok ? '#22C55E' : '#FBBF24');
+    return ok;
+  } catch (e) {
+    updateWebSubAgent(id, { increment: true, status: 'degraded', lastError: e.message });
+    logAgentAction(id, 'ERR', `Pipeline optimization audit failed: ${e.message}`, '#F87171');
     return false;
   }
 }
@@ -13936,6 +14055,7 @@ async function runWebsiteOptimizerCheck() {
       runWebCacheSubAgent(),
       runWebStorageSubAgent(),
       runWebApiSubAgent(),
+      runWebPipelineSubAgent(),
       runWebOfficeSubAgent(),
       runWebPwaSubAgent(),
     ]);
@@ -13949,7 +14069,7 @@ async function runWebsiteOptimizerCheck() {
       ? `${degradedSubAgents.length} surface check(s) need attention: ${degradedSubAgents.slice(0, 3).join(', ')}`
       : assessment.findings.length ? assessment.findings.slice(0, 2).join(' · ') : 'all public-system checks passing';
     logAgentAction('web_optimizer', '??',
-      `Full optimizer score ${assessment.score}/100 · website ${WEB_OPTIMIZER_URL} · API ${WEB_OPTIMIZER_API_URL} · office ${WEB_OPTIMIZER_OFFICE_URL} · ${summary}`,
+      `Full optimizer score ${assessment.score}/100 - website ${WEB_OPTIMIZER_URL} - API ${WEB_OPTIMIZER_API_URL} - pipeline ${WEB_OPTIMIZER_PIPELINE_URL} - office ${WEB_OPTIMIZER_OFFICE_URL} - ${summary}`,
       websiteOptimizerState.status === 'healthy' ? '#14B8A6' : '#FBBF24');
   } catch (e) {
     websiteOptimizerState.status = 'degraded';
@@ -13965,6 +14085,7 @@ async function runDeployCheck() {
 async function runDeployCheckAll() {
   const targets = [
     { name: 'API',    url: 'https://api.uficonnect.org/health' },
+    { name: 'Pipeline', url: 'https://uficonnect-pipeline-708r.onrender.com/health' },
     { name: 'Web',    url: 'https://uficonnect.org' },
     { name: 'Office', url: 'https://office.uficonnect.org' },
   ];
@@ -14056,7 +14177,7 @@ function logAgentHeartbeat(id) {
     return true;
   }
 
-  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_office', 'web_pwa'].includes(id)) {
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_pipeline', 'web_office', 'web_pwa'].includes(id)) {
     const sub = websiteOptimizerState.subAgents[id] || {};
     logAgentAction(id, def.emoji,
       `Active - ${sub.status || 'idle'} · ${(sub.totalRuns || 0).toLocaleString()} runs · parent ${websiteOptimizerState.publicUrl}`, def.color);
@@ -21277,7 +21398,7 @@ async function handleFeedRequest(req, res) {
   if (feedMode === 'countries' || feedMode === 'restaurants') {
     const localFeed = await getLocationLiveFeed(feedMode, locationContext, req.user.id);
     const locationSearchWords = splitSearchWords(searchQuery);
-    const eligiblePosts = filterPostsForMemberLanguages(localFeed.posts, user, req)
+    const eligiblePosts = filterPostsForMemberLanguages(realFeedPosts(localFeed.posts), user, req)
       .filter(matchesTopic)
       .filter((post) => {
         if (!locationSearchWords.length) return true;
@@ -24092,6 +24213,10 @@ const AGENT_DEFS = {
     name: 'API Optimizer Sub-Agent', emoji: 'API', color: '#0EA5E9', interval: '2min',
     description: 'Audits the live backend API, health endpoint, DB connectivity, and optimizer-agent exposure so the public website has a stable data layer.',
   },
+  web_pipeline: {
+    name: 'Pipeline Optimizer Sub-Agent', emoji: 'PIPE', color: '#22C55E', interval: '2min',
+    description: 'Checks pipeline reachability, source freshness, and HTTP response time independently from the public API.',
+  },
   web_office: {
     name: 'Office Optimizer Sub-Agent', emoji: 'OFF', color: '#A855F7', interval: '2min',
     description: 'Checks the public office dashboard app shell, response time, payload size, and public-domain reachability.',
@@ -24282,7 +24407,7 @@ function getRuntimeHealthForAgent(id) {
       lastError: websiteOptimizerState.lastError,
     };
   }
-  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_office', 'web_pwa'].includes(id)) {
+  if (['web_perf', 'web_seo', 'web_cache', 'web_storage', 'web_api', 'web_pipeline', 'web_office', 'web_pwa'].includes(id)) {
     return websiteOptimizerState.subAgents[id] || { status: 'idle', totalRuns: 0 };
   }
   if (id === 'activity') {
@@ -24792,12 +24917,28 @@ async function verifyAutofixDeploy(attemptId, signature, previousSha, baseline, 
 
 function getAgentPostCount(id, cache) {
   if (cache?.totalSeen != null) return cache.totalSeen;
-  return Array.isArray(cache?.posts) ? realFeedPosts(cache.posts).length : null;
+  return Array.isArray(cache?.posts) ? cache.posts.length : null;
 }
 
 // --- Office API endpoints -----------------------------------------------------
 
 app.get('/office/status', requireOfficeToken, (req, res) => {
+  // Ingestion and DB loading screen posts before they enter this cache. Build
+  // the source/topic indexes once per status request; the old implementation
+  // rescanned the entire cache once for every source plus several more times
+  // for summary cards, which made Office itself a source of pipeline load.
+  const statusGlobalPosts = globalFeedCache.posts || [];
+  const statusGlobalBySource = new Map();
+  const statusSourceCounts = {};
+  const statusTopicCounts = {};
+  for (const post of statusGlobalPosts) {
+    const source = post?.source || 'unknown';
+    const topic = post?.topic || 'unknown';
+    statusGlobalBySource.set(source, (statusGlobalBySource.get(source) || 0) + 1);
+    statusSourceCounts[source] = (statusSourceCounts[source] || 0) + 1;
+    statusTopicCounts[topic] = (statusTopicCounts[topic] || 0) + 1;
+  }
+
   // Build per-source health snapshot. The aggregate source catalog includes
   // the dedicated Remotive and Muse sweeps too; they are not topic-cycler
   // workers, but they do pull live listings into the same feed cache.
@@ -24805,9 +24946,9 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     const workerId = feedWorkerKey(id);
     const h = workerHealth.get(workerId);
     const cache = agentSourceCache.get(workerId);
-    const cachedPosts = realFeedPosts(cache?.posts || []);
-    const globalPosts = realFeedPosts(globalFeedCache.posts).filter(post => post.source === id);
-    const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPosts.length);
+    const cachedPosts = cache?.posts || [];
+    const globalPostCount = statusGlobalBySource.get(id) || 0;
+    const liveCount = cache?.totalSeen ?? (cachedPosts.length || globalPostCount);
     const status = h
       ? (h.paused ? 'paused' : h.consecutiveErrors >= 3 ? 'degraded' : 'healthy')
       : 'starting';
@@ -24885,7 +25026,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       port:        PORT,
     },
     feed: {
-      postCount:   realFeedPosts(globalFeedCache.posts).length,
+      postCount:   statusGlobalPosts.length,
       refreshedAt: globalFeedCache.refreshedAt || null,
       sseClients:  sseClients.size,
       seenIds:     seenPostIds.size,
@@ -24895,11 +25036,8 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       // handleFeedRequest) so no single platform can flood a page even if
       // its backing pool here is disproportionately large.
       composition: (() => {
-        const posts = realFeedPosts(globalFeedCache.posts);
-        const counts = {};
-        for (const p of posts) counts[p.source || 'unknown'] = (counts[p.source || 'unknown'] || 0) + 1;
-        return Object.entries(counts)
-          .map(([source, count]) => ({ source, count, pct: posts.length ? Math.round((count / posts.length) * 1000) / 10 : 0 }))
+        return Object.entries(statusSourceCounts)
+          .map(([source, count]) => ({ source, count, pct: statusGlobalPosts.length ? Math.round((count / statusGlobalPosts.length) * 1000) / 10 : 0 }))
           .sort((a, b) => b.count - a.count);
       })(),
     },
@@ -25068,6 +25206,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
         .sort((a, b) => b.input - a.input),
     },
     contentScreening: buildContentScreeningSummary(),
+    feedAudit: buildImportedFeedAuditSummary(),
     sortAgent: {
       status: sortAgentState.status,
       totalRuns: sortAgentState.totalRuns,
@@ -25136,13 +25275,10 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
     // was fully healthy. This updates continuously, in step with every
     // other stage in the Pipeline, regardless of live user traffic.
     sortRankTopicComposition: (() => {
-      const posts = realFeedPosts(globalFeedCache.posts);
-      const counts = {};
-      for (const p of posts) counts[p.topic || 'unknown'] = (counts[p.topic || 'unknown'] || 0) + 1;
-      return Object.entries(counts)
-        .map(([topic, count]) => ({ topic, count, pct: posts.length ? Math.round((count / posts.length) * 1000) / 10 : 0 }))
+      return Object.entries(statusTopicCounts)
+        .map(([topic, count]) => ({ topic, count, pct: statusGlobalPosts.length ? Math.round((count / statusGlobalPosts.length) * 1000) / 10 : 0 }))
         .sort((a, b) => b.count - a.count);
-    })(),
+      })(),
     sortDistributionAgent: {
       status: sortDistribState.lastError ? 'degraded' : 'healthy',
       totalRuns: sortDistribState.totalRuns,
@@ -25274,6 +25410,7 @@ app.post('/office/agents/:id/trigger', requireOfficeToken, (req, res) => {
     web_cache:     () => runWebCacheSubAgent(),
     web_storage:   () => runWebStorageSubAgent(),
     web_api:       () => runWebApiSubAgent(),
+    web_pipeline:  () => runWebPipelineSubAgent(),
     web_office:    () => runWebOfficeSubAgent(),
     web_pwa:       () => runWebPwaSubAgent(),
     activity:     () => runAgentActivityCheck(true),
@@ -25840,7 +25977,7 @@ app.get('/hq/status', (req, res) => {
 
   res.json({
     agentLog:     agentActionLog,
-    feedPostCount: realFeedPosts(globalFeedCache.posts).length,
+    feedPostCount: globalFeedCache.posts.length,
     feedRefreshedAt: globalFeedCache.refreshedAt || null,
     serverUptimeMs:  Date.now() - SERVER_START,
     agentsActive: Object.keys(AGENT_DEFS).length,
@@ -25867,7 +26004,7 @@ app.get('/hq/status', (req, res) => {
 app.get('/office/sources', requireOfficeToken, (_req, res) => {
   const sources = [];
   for (const [id, d] of agentSourceCache) {
-    const posts = realFeedPosts(d.posts || []);
+    const posts = d.posts || [];
     sources.push({
       id,
       postCount:  posts.length,
@@ -25877,7 +26014,7 @@ app.get('/office/sources', requireOfficeToken, (_req, res) => {
       color:      d.color,
     });
   }
-  res.json({ sources, globalCount: realFeedPosts(globalFeedCache.posts).length });
+  res.json({ sources, globalCount: globalFeedCache.posts.length });
 });
 
 // --- HQ manual agent trigger (internal use) ----------------------------------
@@ -25911,6 +26048,7 @@ app.post('/hq/trigger/:agentId', requireOfficeToken, (req, res) => {
     web_cache:     () => runWebCacheSubAgent(),
     web_storage:   () => runWebStorageSubAgent(),
     web_api:       () => runWebApiSubAgent(),
+    web_pipeline:  () => runWebPipelineSubAgent(),
     web_office:    () => runWebOfficeSubAgent(),
     web_pwa:       () => runWebPwaSubAgent(),
     activity:     () => runAgentActivityCheck(true),

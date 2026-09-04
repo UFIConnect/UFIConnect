@@ -7,11 +7,16 @@ const UNSAFE_URL_SCHEME = /^\s*(?:javascript|vbscript|data|file):/i;
 const REPEATED_CHARACTER = /(.)\1{17,}/u;
 const REPEATED_WORD = /\b([\p{L}\p{N}][\p{L}\p{N}'-]{1,})\b(?:\s+\1\b){7,}/iu;
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>]+/gi;
+const PLACEHOLDER_ONLY = /^(?:n\/?a|none|no (?:title|content)|untitled|test(?: post)?|placeholder|coming soon|click here|read more|link)(?:[.!?]+)?$/i;
+const IMPORTED_POST_FUTURE_SKEW_MS = 15 * 60 * 1000;
 
 const SCAM_PATTERNS = [
   /\b(?:guaranteed|risk[- ]?free)\b.{0,72}\b(?:profit|return|income)\b/i,
   /\b(?:send|deposit)\b.{0,72}\b(?:bitcoin|crypto|usdt|ethereum)\b/i,
   /\b(?:dm|message|contact)\s+(?:me|us)\b.{0,96}\b(?:whatsapp|telegram)\b/i,
+  /\b(?:buy|purchase|rent)\b.{0,96}\b(?:verified|aged|stealth)\b.{0,64}\baccounts?\b/i,
+  /\b(?:verified|aged|stealth)\b.{0,64}\baccounts?\b.{0,96}\b(?:for sale|seller|buy|purchase)\b/i,
+  /\b(?:buy|purchase)\b.{0,96}\b(?:bank|wise|paypal|cash\s*app|stripe|social media)\b.{0,64}\baccounts?\b/i,
   /\b(?:onlyfans|pornhub|cam\s*girl|escort)\b/i,
 ];
 
@@ -29,6 +34,23 @@ function cleanScreeningText(value, maxLength = null) {
 
 function hasUnsafeUrl(value) {
   return typeof value === 'string' && UNSAFE_URL_SCHEME.test(value);
+}
+
+function isHttpUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const parsed = new URL(value.trim());
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function importedPostTimestamp(rawPost) {
+  const value = rawPost?.createdAt ?? rawPost?.publishedAt ?? rawPost?.posted ?? rawPost?.time;
+  if (value === null || value === undefined || value === '') return null;
+  const timestamp = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(timestamp) ? timestamp : NaN;
 }
 
 function localTextScreen(text, { maxLength = null, allowEmpty = false } = {}) {
@@ -64,8 +86,37 @@ function screenImportedFeedPost(rawPost) {
   if (!title.allowed) return { allowed: false, reason: title.reason, post: rawPost };
   if (!content.allowed) return { allowed: false, reason: content.reason, post: rawPost };
   if (!title.text && !content.text) return { allowed: false, reason: 'empty_content', post: rawPost };
+  const readableText = `${title.text} ${content.text}`.trim();
+  if (PLACEHOLDER_ONLY.test(readableText)) {
+    return { allowed: false, reason: 'placeholder_content', post: rawPost };
+  }
   if ([rawPost.sourceUrl, rawPost.mediaUrl, rawPost.mediaPoster].some(hasUnsafeUrl)) {
     return { allowed: false, reason: 'unsafe_url', post: rawPost };
+  }
+
+  // Imported posts remain attributable to the publisher that supplied them.
+  // This verifies provenance, not the truth of the publisher's claims; those
+  // claims are preserved verbatim and the original link stays available.
+  const source = String(rawPost.source || '').trim().toLowerCase();
+  const isExternal = rawPost.isExternal !== false && source !== 'uficonnect';
+  if (isExternal && !isHttpUrl(rawPost.sourceUrl)) {
+    return { allowed: false, reason: rawPost.sourceUrl ? 'invalid_source_url' : 'missing_source_url', post: rawPost };
+  }
+  for (const mediaUrl of [rawPost.mediaUrl, rawPost.mediaPoster]) {
+    if (mediaUrl && !isHttpUrl(mediaUrl)) {
+      return { allowed: false, reason: 'invalid_media_url', post: rawPost };
+    }
+  }
+
+  const timestamp = importedPostTimestamp(rawPost);
+  if (Number.isNaN(timestamp)) return { allowed: false, reason: 'invalid_timestamp', post: rawPost };
+  if (timestamp && timestamp > Date.now() + IMPORTED_POST_FUTURE_SKEW_MS) {
+    return { allowed: false, reason: 'future_timestamp', post: rawPost };
+  }
+
+  const textWithoutLinks = readableText.replace(URL_PATTERN, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  if (!textWithoutLinks && !rawPost.mediaUrl) {
+    return { allowed: false, reason: 'link_only_content', post: rawPost };
   }
 
   const author = rawPost.author && typeof rawPost.author === 'object'
@@ -79,6 +130,7 @@ function screenImportedFeedPost(rawPost) {
     screeningStatus: rawPost.screeningStatus || 'approved',
     screeningMethod: rawPost.screeningMethod || 'local',
     screenedAt: rawPost.screenedAt || new Date().toISOString(),
+    sourceLinked: isExternal ? true : Boolean(rawPost.sourceUrl),
   };
   return { allowed: true, reason: null, post };
 }

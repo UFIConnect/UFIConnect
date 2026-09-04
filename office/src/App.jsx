@@ -243,7 +243,7 @@ function LogEntry({ entry }) {
 
 const SUB_AGENT_LABELS = {
   web_perf: 'Perf', web_seo: 'SEO', web_cache: 'Cache',
-  web_storage: 'Storage', web_api: 'API', web_office: 'Office', web_pwa: 'PWA',
+  web_storage: 'Storage', web_api: 'API', web_pipeline: 'Pipeline', web_office: 'Office', web_pwa: 'PWA',
 };
 
 function findingImpact(finding) {
@@ -1657,6 +1657,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
   const composition  = pipelineStatus?.feed?.composition || [];
   const equalizer    = pipelineStatus?.equalizer;
   const filterAgent  = pipelineStatus?.filterAgent;
+  const feedAudit    = pipelineStatus?.feedAudit;
   const sortAgent    = pipelineStatus?.sortAgent;
   const staging      = status?.staging;
   const dbSize       = status?.dbSize;
@@ -1958,6 +1959,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${compact ? 240 : 300}px, 1fr))`, gap: 14, marginTop: 20 }}>
         <EqualizerDetailCard equalizer={equalizer} workers={workers} />
         <FilterDetailCard filterAgent={filterAgent} />
+        <FeedAuditDetailCard audit={feedAudit} />
         <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} workers={workers} dbSize={dbSize} cacheFreshness={cacheFreshness} />
         <StagingTransferDetailCard staging={staging} />
@@ -1976,6 +1978,35 @@ function DetailStat({ label, value, color }) {
       <div style={{ fontSize: 17, fontWeight: 800, color: color || '#e2e8f0', lineHeight: 1.2 }}>{value}</div>
       <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>{label}</div>
     </div>
+  );
+}
+
+function FeedAuditDetailCard({ audit }) {
+  const reasons = Object.entries(audit?.byReason || {})
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 6);
+  return (
+    <Card>
+      <Label color="#22c55e">Feed audit</Label>
+      <div style={{ display: 'flex', gap: 24, marginTop: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+        <DetailStat label="checked" value={(audit?.checked ?? 0).toLocaleString()} />
+        <DetailStat label="approved" value={(audit?.approved ?? 0).toLocaleString()} color="#4ade80" />
+        <DetailStat label="rejected" value={(audit?.rejected ?? 0).toLocaleString()} color={audit?.rejected ? '#fbbf24' : '#64748b'} />
+        <DetailStat label="approval" value={audit?.approvalPct == null ? '—' : `${audit.approvalPct}%`} />
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {reasons.length ? reasons.map(([reason, count]) => (
+          <span key={reason} style={{ padding: '4px 7px', borderRadius: 5, background: 'rgba(251,191,36,.08)', color: '#fbbf24', fontSize: 10.5 }}>
+            {reason.replaceAll('_', ' ')} · {count.toLocaleString()}
+          </span>
+        )) : <span style={{ color: '#475569', fontSize: 11 }}>No rejected imports</span>}
+      </div>
+      {audit?.lastRejected && (
+        <div style={{ color: '#64748b', fontSize: 10.5, marginTop: 10 }}>
+          Latest: {audit.lastRejected.source || 'unknown'} · {audit.lastRejected.reason?.replaceAll('_', ' ')} · {fmtAgo(audit.lastRejected.at)}
+        </div>
+      )}
+    </Card>
   );
 }
 
