@@ -196,6 +196,7 @@ function mergeOpportunities(current, incoming) {
 
 export default function Opportunities({ embedded = false } = {}) {
   const [searchParams] = useSearchParams();
+  const initialRouteQuery = String(searchParams.get('q') || '').trim().slice(0, 200);
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('job');
@@ -214,8 +215,8 @@ export default function Opportunities({ embedded = false } = {}) {
   const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
   const [recommendationLabel, setRecommendationLabel] = useState('');
   const [selectedJobId, setSelectedJobId] = useState(null);
-  const [searchInput, setSearchInput] = useState('');
-  const [search,    setSearch]    = useState('');
+  const [searchInput, setSearchInput] = useState(initialRouteQuery);
+  const [search,    setSearch]    = useState(initialRouteQuery);
   const [loading,   setLoading]   = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error,     setError]     = useState(false);
@@ -230,6 +231,7 @@ export default function Opportunities({ embedded = false } = {}) {
   const sentinelRef = useRef(null);
   const jobTabListRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
+  const routeQueryAppliedRef = useRef(initialRouteQuery);
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
   // "All") — the fetch effect below reads and clears it. Live sources
   // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
@@ -240,7 +242,7 @@ export default function Opportunities({ embedded = false } = {}) {
   // refresh for that type, matching how tab-clicks already work in Feed.
   const bustOnNextFetchRef = useRef(false);
 
-  const searchRef = useRef('');
+  const searchRef = useRef(initialRouteQuery);
 
   // Debounced search
   const debouncedSearch = useMemo(
@@ -250,6 +252,15 @@ export default function Opportunities({ embedded = false } = {}) {
     }, 400),
     []
   );
+
+  useEffect(() => {
+    const routeQuery = String(searchParams.get('q') || '').trim().slice(0, 200);
+    if (routeQuery === routeQueryAppliedRef.current) return;
+    routeQueryAppliedRef.current = routeQuery;
+    searchRef.current = routeQuery;
+    setSearchInput(routeQuery);
+    setSearch(routeQuery);
+  }, [searchParams]);
 
   // Type filter changing invalidates whatever sources were picked (a
   // source chip is scoped to what's poll-able within the current type — see

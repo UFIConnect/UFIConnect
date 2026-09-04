@@ -29,6 +29,8 @@ function ShellIcon({ name, size = 20 }) {
     sources: <><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="m3 12 9 4.5 9-4.5" /><path d="m3 16.5 9 4.5 9-4.5" /></>,
     skills: <><path d="M12 3 14.5 8l5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9L9.5 8 12 3Z" /></>,
     files: <><path d="M6 3h8l4 4v14H6V3Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></>,
+    close: <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></>,
+    refresh: <><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.5L20 9" /><path d="m4 15 2.5 2.5A7 7 0 0 0 17.9 15" /></>,
   };
   return <svg {...common}>{paths[name] || paths.home}</svg>;
 }
@@ -55,6 +57,35 @@ const MOBILE_BOTTOM_NAV = NAV
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+function timeAgo(iso) {
+  const createdAt = new Date(iso || 0).getTime();
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return '';
+  const seconds = Math.max(0, (Date.now() - createdAt) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function notificationTarget(notification) {
+  if ((notification?.type === 'comment' || notification?.type === 'like') && notification?.targetId) {
+    return `/p/${notification.targetId}`;
+  }
+  return notification?.user?.id ? `/u/${notification.user.id}` : '/notifications';
+}
+
+function notificationText(notification) {
+  const action = {
+    connection_request: 'wants to connect with you',
+    new_follower: 'started following you',
+    comment: 'commented on your post',
+    like: 'liked your post',
+  }[notification?.type] || 'sent you an update';
+  return notification?.preview && ['comment', 'like'].includes(notification?.type)
+    ? `${action}: "${notification.preview}"`
+    : action;
 }
 
 // The Notifications bell had no unread/pending indicator anywhere — a
@@ -89,8 +120,16 @@ export default function Layout({ children, wide = false }) {
   // competing for the same small dot.
   const [notifBadge, setNotifBadge] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileHeaderPopup, setMobileHeaderPopup] = useState(null);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState('');
+  const [mobileSearchTarget, setMobileSearchTarget] = useState('posts');
+  const [mobileNotifications, setMobileNotifications] = useState([]);
+  const [mobileNotificationsLoading, setMobileNotificationsLoading] = useState(false);
+  const [mobileNotificationsError, setMobileNotificationsError] = useState('');
   const desktopHomeClickTimer = useRef(null);
   const mobileHomeTapTimer = useRef(null);
+  const notificationRequestRef = useRef(0);
+  const menuSwipeStartRef = useRef(null);
 
   // Polled from the shell itself, not the Notifications page — the whole
   // point of a nav badge is being visible from anywhere else in the app,
@@ -113,20 +152,108 @@ export default function Layout({ children, wide = false }) {
 
   useEffect(() => {
     setMobileMenuOpen(false);
-  }, [location.pathname]);
+    setMobileHeaderPopup(null);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     function closeOnEscape(event) {
-      if (event.key === 'Escape') setMobileMenuOpen(false);
+      if (event.key !== 'Escape') return;
+      setMobileMenuOpen(false);
+      setMobileHeaderPopup(null);
     }
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, []);
 
+  // A deliberate left swipe from the right edge opens the app menu. Keeping
+  // the gesture edge-bound prevents horizontal source rails and video player
+  // controls from being mistaken for menu gestures.
+  useEffect(() => {
+    function handleTouchStart(event) {
+      menuSwipeStartRef.current = null;
+      if (!profile || mobileMenuOpen || mobileHeaderPopup || window.innerWidth > 768 || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      if (touch.clientX < window.innerWidth - 72) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('input, textarea, select, button, a, iframe, video, [role="dialog"]')) return;
+      menuSwipeStartRef.current = { x: touch.clientX, y: touch.clientY, at: Date.now() };
+    }
+
+    function handleTouchEnd(event) {
+      const start = menuSwipeStartRef.current;
+      menuSwipeStartRef.current = null;
+      if (!start || event.changedTouches.length !== 1) return;
+      const touch = event.changedTouches[0];
+      const horizontalDistance = start.x - touch.clientX;
+      const verticalDistance = Math.abs(start.y - touch.clientY);
+      if (horizontalDistance < 56 || verticalDistance > 60 || Date.now() - start.at > 700) return;
+      setMobileHeaderPopup(null);
+      setMobileMenuOpen(true);
+    }
+
+    function cancelSwipe() {
+      menuSwipeStartRef.current = null;
+    }
+
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchend', handleTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', cancelSwipe, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchend', handleTouchEnd);
+      document.removeEventListener('touchcancel', cancelSwipe);
+    };
+  }, [mobileHeaderPopup, mobileMenuOpen, profile]);
+
   useEffect(() => () => {
     if (desktopHomeClickTimer.current) window.clearTimeout(desktopHomeClickTimer.current);
     if (mobileHomeTapTimer.current) window.clearTimeout(mobileHomeTapTimer.current);
   }, []);
+
+  function closeMobileOverlays() {
+    setMobileMenuOpen(false);
+    setMobileHeaderPopup(null);
+  }
+
+  function loadMobileNotifications() {
+    const requestId = ++notificationRequestRef.current;
+    setMobileNotificationsLoading(true);
+    setMobileNotificationsError('');
+    client.get('/notifications')
+      .then(({ data }) => {
+        if (notificationRequestRef.current !== requestId) return;
+        setMobileNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+        setNotifBadge(0);
+        client.post('/notifications/mark-read').catch(() => {});
+      })
+      .catch(() => {
+        if (notificationRequestRef.current !== requestId) return;
+        setMobileNotificationsError('Notifications could not be loaded.');
+      })
+      .finally(() => {
+        if (notificationRequestRef.current === requestId) setMobileNotificationsLoading(false);
+      });
+  }
+
+  function toggleMobileHeaderPopup(name) {
+    const opening = mobileHeaderPopup !== name;
+    setMobileMenuOpen(false);
+    setMobileHeaderPopup(opening ? name : null);
+    if (opening && name === 'notifications') loadMobileNotifications();
+  }
+
+  function submitMobileSearch(event) {
+    event.preventDefault();
+    const query = mobileSearchQuery.trim();
+    closeMobileOverlays();
+    if (mobileSearchTarget === 'jobs') {
+      navigate(query ? `/opportunities?q=${encodeURIComponent(query)}` : '/opportunities');
+      return;
+    }
+    const params = new URLSearchParams({ tab: mobileSearchTarget });
+    if (query) params.set('q', query);
+    navigate(`/search?${params.toString()}`);
+  }
 
   function handleLogout() {
     logout();
@@ -305,7 +432,7 @@ export default function Layout({ children, wide = false }) {
             className="mobile-app-header-brand"
             aria-label="Home"
             onClick={event => {
-              setMobileMenuOpen(false);
+              closeMobileOverlays();
               handleMobileHomeClick(event);
             }}
           >
@@ -313,27 +440,31 @@ export default function Layout({ children, wide = false }) {
           </Link>
 
           <div className="mobile-command-menu">
-            <NavLink
-              to="/search"
-              className={({ isActive }) => `mobile-app-header-action${isActive ? ' active' : ''}`}
-              aria-label="Search"
-              title="Search"
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              <ShellIcon name="search" size={19} />
-            </NavLink>
-            <NavLink
-              to="/notifications"
-              className={({ isActive }) => `mobile-app-header-action${isActive ? ' active' : ''}`}
-              aria-label="Notifications"
-              title="Notifications"
-              onClick={() => setMobileMenuOpen(false)}
+            <button
+              type="button"
+              className={`mobile-app-header-action${mobileHeaderPopup === 'notifications' ? ' active' : ''}`}
+              aria-label="Alerts"
+              aria-expanded={mobileHeaderPopup === 'notifications'}
+              aria-controls="mobile-alerts-popup"
+              title="Alerts"
+              onClick={() => toggleMobileHeaderPopup('notifications')}
             >
               <span style={{ position: 'relative', display: 'inline-flex' }}>
                 <ShellIcon name="notifications" size={19} />
                 <NavBadge count={notifBadge} />
               </span>
-            </NavLink>
+            </button>
+            <button
+              type="button"
+              className={`mobile-app-header-action${mobileHeaderPopup === 'search' ? ' active' : ''}`}
+              aria-label="Search"
+              aria-expanded={mobileHeaderPopup === 'search'}
+              aria-controls="mobile-search-popup"
+              title="Search"
+              onClick={() => toggleMobileHeaderPopup('search')}
+            >
+              <ShellIcon name="search" size={19} />
+            </button>
             <button
               type="button"
               className="mobile-command-menu-trigger"
@@ -341,12 +472,99 @@ export default function Layout({ children, wide = false }) {
               aria-expanded={mobileMenuOpen}
               aria-controls="mobile-command-menu-panel"
               title="App menu"
-              onClick={() => setMobileMenuOpen((open) => !open)}
+              onClick={() => {
+                setMobileHeaderPopup(null);
+                setMobileMenuOpen((open) => !open);
+              }}
             >
               <ShellIcon name="menu" size={19} />
             </button>
           </div>
         </header>
+      )}
+
+      {profile && mobileHeaderPopup === 'search' && (
+        <section id="mobile-search-popup" className="mobile-header-popup" role="dialog" aria-label="Search">
+          <div className="mobile-header-popup-heading">
+            <strong>Search</strong>
+            <button type="button" className="mobile-header-popup-close" aria-label="Close search" onClick={() => setMobileHeaderPopup(null)}><ShellIcon name="close" size={18} /></button>
+          </div>
+          <form className="mobile-quick-search" onSubmit={submitMobileSearch}>
+            <div className="mobile-quick-search-tabs" role="tablist" aria-label="Search in">
+              {[
+                { key: 'posts', label: 'Posts' },
+                { key: 'people', label: 'People' },
+                { key: 'groups', label: 'Groups' },
+                { key: 'jobs', label: 'Jobs' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={mobileSearchTarget === key}
+                  className={`mobile-quick-search-tab${mobileSearchTarget === key ? ' active' : ''}`}
+                  onClick={() => setMobileSearchTarget(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="mobile-quick-search-field">
+              <ShellIcon name="search" size={18} />
+              <input
+                type="search"
+                value={mobileSearchQuery}
+                aria-label={`Search ${mobileSearchTarget}`}
+                placeholder={`Search ${mobileSearchTarget}`}
+                autoFocus
+                onChange={event => setMobileSearchQuery(event.target.value)}
+              />
+              {mobileSearchQuery && (
+                <button type="button" aria-label="Clear search" onClick={() => setMobileSearchQuery('')}><ShellIcon name="close" size={16} /></button>
+              )}
+            </div>
+            <button type="submit" className="btn btn-primary mobile-quick-search-submit">Search</button>
+          </form>
+        </section>
+      )}
+
+      {profile && mobileHeaderPopup === 'notifications' && (
+        <section id="mobile-alerts-popup" className="mobile-header-popup mobile-alerts-popup" role="dialog" aria-label="Alerts">
+          <div className="mobile-header-popup-heading">
+            <strong>Alerts</strong>
+            <button type="button" className="mobile-header-popup-close" aria-label="Close alerts" onClick={() => setMobileHeaderPopup(null)}><ShellIcon name="close" size={18} /></button>
+          </div>
+          <div className="mobile-alerts-list" aria-live="polite">
+            {mobileNotificationsLoading ? (
+              <div className="mobile-header-popup-state"><span className="spinner spinner-primary" /></div>
+            ) : mobileNotificationsError ? (
+              <div className="mobile-header-popup-state">
+                <span>{mobileNotificationsError}</span>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={loadMobileNotifications}>Retry</button>
+              </div>
+            ) : mobileNotifications.length === 0 ? (
+              <div className="mobile-header-popup-state">No new alerts</div>
+            ) : mobileNotifications.slice(0, 8).map(notification => (
+              <Link
+                key={notification.id}
+                to={notificationTarget(notification)}
+                className={`mobile-alert-item${notification.read === false ? ' unread' : ''}`}
+                onClick={closeMobileOverlays}
+              >
+                <span className="avatar avatar-sm">{initials(notification.user?.name || 'UFI')}</span>
+                <span className="mobile-alert-item-copy">
+                  <strong>{notification.user?.name || 'UFIconnect'}</strong>
+                  <span>{notificationText(notification)}</span>
+                </span>
+                <time>{timeAgo(notification.createdAt)}</time>
+              </Link>
+            ))}
+          </div>
+          <div className="mobile-header-popup-footer">
+            <button type="button" className="btn btn-ghost btn-sm" onClick={loadMobileNotifications} disabled={mobileNotificationsLoading}><ShellIcon name="refresh" size={14} /> Refresh</button>
+            <Link to="/notifications" className="btn btn-primary btn-sm" onClick={closeMobileOverlays}>View all</Link>
+          </div>
+        </section>
       )}
 
       {/* Keep the sheet outside the backdrop-filtered header. Fixed descendants
@@ -398,12 +616,12 @@ export default function Layout({ children, wide = false }) {
         {children}
       </main>
 
-      {profile && mobileMenuOpen && (
+      {profile && (mobileMenuOpen || mobileHeaderPopup) && (
         <button
           type="button"
           className="mobile-command-menu-scrim"
-          aria-label="Close app menu"
-          onClick={() => setMobileMenuOpen(false)}
+          aria-label="Close open menu"
+          onClick={closeMobileOverlays}
         />
       )}
       {/* ── Mobile bottom tab bar ── */}

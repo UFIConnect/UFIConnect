@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
@@ -80,6 +80,11 @@ function mergePosts(current, incoming) {
     merged.push(post);
   }
   return merged;
+}
+
+function initialSearchQuery() {
+  if (typeof window === 'undefined') return '';
+  return String(new URLSearchParams(window.location.search).get('q') || '').trim().slice(0, 200);
 }
 
 function mergeById(current, incoming) {
@@ -206,10 +211,16 @@ function PostFilters({ sources, selectedSources, selectedTopics, onSourcesChange
 export default function SearchExperience({ initialTab = null } = {}) {
   const { profile } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState(() => (
-    SEARCH_TABS.some((tab) => tab.key === initialTab) ? initialTab : initialSearchTab()
-  ));
-  const [queries, setQueries] = useState({ posts: '', following: '', people: '', groups: '', jobs: '' });
+  const location = useLocation();
+  const [routeSeed] = useState(() => ({
+    tab: SEARCH_TABS.some((tab) => tab.key === initialTab) ? initialTab : initialSearchTab(),
+    query: initialSearchQuery(),
+  }));
+  const [activeTab, setActiveTab] = useState(routeSeed.tab);
+  const [queries, setQueries] = useState(() => ({
+    posts: '', following: '', people: '', groups: '', jobs: '',
+    [routeSeed.tab]: routeSeed.query,
+  }));
   const [roleFilter, setRoleFilter] = useState('All');
   const [sortBy, setSortBy] = useState('relevance');
   const [results, setResults] = useState([]);
@@ -242,6 +253,18 @@ export default function SearchExperience({ initialTab = null } = {}) {
   const hydratedProfileRef = useRef(null);
   const joinedGroupsLoadedRef = useRef(false);
   const query = queries[activeTab] || '';
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const requestedTab = params.get('tab');
+    const nextTab = requestedTab === 'communities' ? 'groups' : requestedTab;
+    if (SEARCH_TABS.some((tab) => tab.key === nextTab)) setActiveTab(nextTab);
+    if (params.has('q')) {
+      const nextQuery = String(params.get('q') || '').trim().slice(0, 200);
+      const targetTab = SEARCH_TABS.some((tab) => tab.key === nextTab) ? nextTab : activeTab;
+      setQueries(current => ({ ...current, [targetTab]: nextQuery }));
+    }
+  }, [activeTab, location.search]);
 
   const disabledSources = useMemo(() => new Set(
     Array.isArray(profile?.roleSettings?.disabledSources)
