@@ -2807,6 +2807,7 @@ input, textarea, select { font-family: inherit; }
 .video-feed-scroll {
   scrollbar-width: none;
   -ms-overflow-style: none;
+  touch-action: pan-y;
 }
 .video-feed-scroll::-webkit-scrollbar {
   display: none;
@@ -2821,6 +2822,17 @@ input, textarea, select { font-family: inherit; }
 }
 .video-feed-youtube-player {
   pointer-events: none;
+}
+.video-feed-slide {
+  touch-action: pan-y;
+}
+.video-feed-youtube-gesture-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
 }
 
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep

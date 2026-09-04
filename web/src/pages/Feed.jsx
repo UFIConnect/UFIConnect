@@ -789,6 +789,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // happens at most once per embedId and is never redone just because
   // visibility toggled off and back on.
   const [playerReady, setPlayerReady] = useState(false);
+  const [playerFailed, setPlayerFailed] = useState(false);
   // Always starts muted regardless of trigger (scroll-into-view or a manual
   // click on the poster) — a passive scroll shouldn't ever blast sound
   // unexpectedly, same convention every other inline-feed autoplay
@@ -800,8 +801,13 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // mutes/unmutes all the others too, live, not just future ones.
   const [muted, toggleMuted] = useGlobalMuted();
   const containerRef = useRef(null);
-  const ytMountRef = useRef(null);
+  const ytHostRef = useRef(null);
   const ytPlayerRef = useRef(null);
+  const ytLifecycleRef = useRef(0);
+  const ytInitializedRef = useRef(false);
+  const ytReadyRef = useRef(false);
+  const ytReadyTimeoutRef = useRef(null);
+  const ytShouldPlayRef = useRef(false);
   // Toggles both ways with real scroll position — was one-directional
   // (isIntersecting=true set playing, nothing ever set it back false), so a
   // video that autoplayed into view kept playing, decoding, and (if
@@ -830,6 +836,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // playing" slot hostage while paused for the lightbox.
   const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause);
   const effectivelyPlaying = isSolo && !forcePause;
+  ytShouldPlayRef.current = effectivelyPlaying;
 
   // Real IFrame Player API instead of a raw <iframe src="...?mute=1">, which
   // had no programmatic control once mounted at all — every inline video in
@@ -851,56 +858,113 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // ever went false→true once and stayed there; started happening the
   // moment scroll-based pause began actually firing repeatedly.
   useEffect(() => {
-    if (!effectivelyPlaying || ytPlayerRef.current) return;
-    let cancelled = false;
+    const host = ytHostRef.current;
+    const lifecycle = ++ytLifecycleRef.current;
+    ytInitializedRef.current = false;
+    ytReadyRef.current = false;
+    ytPlayerRef.current = null;
+    setPlayerReady(false);
+    setPlayerFailed(false);
+    try { host?.replaceChildren(); } catch {}
+
+    return () => {
+      if (ytLifecycleRef.current === lifecycle) ytLifecycleRef.current += 1;
+      const player = ytPlayerRef.current;
+      ytPlayerRef.current = null;
+      ytInitializedRef.current = false;
+      ytReadyRef.current = false;
+      clearTimeout(ytReadyTimeoutRef.current);
+      try { player?.destroy(); } catch {}
+      try { host?.replaceChildren(); } catch {}
+    };
+  }, [embedId]);
+
+  useEffect(() => {
+    if (!effectivelyPlaying || ytInitializedRef.current) return;
+    const host = ytHostRef.current;
+    if (!host) return;
+    const lifecycle = ytLifecycleRef.current;
     const startUnmuted = !muted;
+    ytInitializedRef.current = true;
+
+    host.replaceChildren();
+    const mount = document.createElement('div');
+    mount.style.width = '100%';
+    mount.style.aspectRatio = '16 / 9';
+    mount.style.maxHeight = `${maxHeight}px`;
+    mount.style.pointerEvents = 'none';
+    host.appendChild(mount);
+
+    const isCurrent = () => ytLifecycleRef.current === lifecycle;
+    clearTimeout(ytReadyTimeoutRef.current);
+    ytReadyTimeoutRef.current = setTimeout(() => {
+      if (isCurrent() && !ytReadyRef.current) {
+        setPlayerReady(false);
+        setPlayerFailed(true);
+      }
+    }, 6000);
     loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current || ytPlayerRef.current) return;
-      const player = new YT.Player(ytMountRef.current, {
+      if (!isCurrent() || !host.isConnected) return;
+      const player = new YT.Player(mount, {
         videoId: embedId,
-        // origin: without it, the IFrame Player API's postMessage bridge
-        // back to this page can silently fail ("Unable to post message to
-        // https://www.youtube.com...") — confirmed live on mobile WebKit,
-        // same fix applied to VideoFeedView/ImageLightbox's own players.
         playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
-            if (cancelled) return;
+            if (!isCurrent()) {
+              try { e.target.destroy(); } catch {}
+              return;
+            }
             ytPlayerRef.current = e.target;
-            try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
-            if (startUnmuted) e.target.unMute();
+            ytReadyRef.current = true;
+            clearTimeout(ytReadyTimeoutRef.current);
             setPlayerReady(true);
+            setPlayerFailed(false);
+            try {
+              const iframe = e.target.getIframe();
+              iframe.style.pointerEvents = 'none';
+              iframe.tabIndex = -1;
+            } catch {}
+            try {
+              if (startUnmuted) e.target.unMute(); else e.target.mute();
+              if (ytShouldPlayRef.current) e.target.playVideo(); else e.target.pauseVideo();
+            } catch {}
+          },
+          onError: () => {
+            if (!isCurrent()) return;
+            clearTimeout(ytReadyTimeoutRef.current);
+            ytReadyRef.current = false;
+            setPlayerReady(false);
+            setPlayerFailed(true);
           },
         },
       });
+      ytPlayerRef.current = player;
+    }).catch(() => {
+      if (!isCurrent()) return;
+      clearTimeout(ytReadyTimeoutRef.current);
+      ytInitializedRef.current = false;
+      ytReadyRef.current = false;
+      setPlayerReady(false);
+      setPlayerFailed(true);
     });
-    return () => { cancelled = true; };
-  }, [effectivelyPlaying, embedId]);
-
-  // The only real teardown — this exact video changing, or the card
-  // leaving the DOM entirely (e.g. scrolled out of the feed's own render
-  // window, not just out of the viewport).
-  useEffect(() => {
-    return () => {
-      try { ytPlayerRef.current?.destroy(); } catch {}
-      ytPlayerRef.current = null;
-    };
-  }, [embedId]);
+  }, [effectivelyPlaying, embedId, maxHeight]);
 
   // Every subsequent visibility change plays/pauses the already-constructed
   // player in place instead of recreating it.
   useEffect(() => {
-    if (!ytPlayerRef.current) return;
+    if (!playerReady || !ytPlayerRef.current) return;
     try {
       if (effectivelyPlaying) ytPlayerRef.current.playVideo();
       else ytPlayerRef.current.pauseVideo();
     } catch {}
-  }, [effectivelyPlaying]);
+  }, [effectivelyPlaying, playerReady]);
 
   useEffect(() => {
-    if (!ytPlayerRef.current) return;
-    if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
-  }, [muted]);
+    if (!playerReady || !ytPlayerRef.current) return;
+    try {
+      if (muted) ytPlayerRef.current.mute(); else ytPlayerRef.current.unMute();
+    } catch {}
+  }, [muted, playerReady]);
 
   const showPlayerHint = !playerReady && !effectivelyPlaying;
 
@@ -917,11 +981,13 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           the effect above), copying over whatever inline style the div
           had at that instant. If this div were still display:'none' at
           that point (true before playerReady flips), the *replacement*
-          iframe inherits display:'none' too — and since ytMountRef now
+          iframe inherits display:'none' too — and since the original mount
           points at a detached node no longer in the document, React's
           later re-render (once playerReady goes true) writes the
           'display: block' update to that orphaned div, not the live
-          iframe, permanently freezing the real player invisible. Keeping
+          iframe, permanently freezing the real player invisible. The
+          stable host below now remains React-owned while YouTube replaces
+          only an imperative child inside it. Keeping
           this constant sidesteps the trap entirely; the poster below
           covers it as a plain absolutely-positioned overlay instead,
           which — being a normal React-owned element nothing external ever
@@ -933,7 +999,18 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
           letting scroll/touch pass through to the feed underneath instead
           of the iframe's own document swallowing it — same fix
           VideoFeedView and ImageLightbox's own YouTube mounts already use. */}
-      <div ref={ytMountRef} style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none' }} />
+      <div
+        ref={ytHostRef}
+        style={{ width: '100%', aspectRatio: '16/9', display: 'block', maxHeight, pointerEvents: 'none', visibility: playerFailed ? 'hidden' : 'visible' }}
+      />
+      {playerFailed && effectivelyPlaying && (
+        <iframe
+          src={`https://www.youtube.com/embed/${embedId}?autoplay=1&mute=${userWantsSound() ? 0 : 1}&playsinline=1&controls=0&modestbranding=1&rel=0`}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none', display: 'block', pointerEvents: 'none' }}
+          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+          title={title || 'YouTube video'}
+        />
+      )}
       {showPlayerHint && (
         <div style={{
           position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',

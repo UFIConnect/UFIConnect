@@ -492,8 +492,9 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
 
   return (
     <div
+      className="video-feed-slide"
       onClick={handleSlideClick}
-      style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden' }}
+      style={{ position: 'relative', height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#000', overflow: 'hidden', touchAction: 'pan-y' }}
     >
       {/* Blurred poster backdrop — most video here is landscape (regular
           YouTube uploads, arbitrary hls/file clips), while this view's box
@@ -525,12 +526,19 @@ function VideoSlide({ post, active, muted, onToggleMute, isScrolling, onOpenComm
           transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
         }} />
       )}
+      {isYoutube && active && (
+        // The shared YouTube iframe is a sibling of the scroll list. Keep a
+        // transparent hit target inside the active slide so iOS/Android and
+        // desktop wheel gestures always begin within the real overflow
+        // container. Click still bubbles to handleSlideClick for play/pause.
+        <div className="video-feed-youtube-gesture-surface" aria-hidden="true" />
+      )}
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
       ) : src.kind === 'youtube' ? (
         active ? (
           // The actual video pixels render via VideoFeedView's own shared
-          // overlay now (see sharedYtMountRef there), positioned to match
+          // overlay now (see sharedYtHostRef there), positioned to match
           // this exact same centered/aspect-ratio box independently — this
           // slide only needs to *not* render anything competing in that
           // spot, letting the backdrop above and the parent's overlay
@@ -1119,6 +1127,10 @@ export default function VideoFeedView({ onExit }) {
   const emptyStreakRef = useRef(0);
   const EMPTY_STREAK_LIMIT = 6;
   const loadingMoreRef = useRef(false);
+  // Reset/filter/focus loads can overlap. Only the newest request may
+  // replace the queue; otherwise an identical late response is filtered by
+  // knownIds and can incorrectly turn a valid video page into an empty one.
+  const loadRequestRef = useRef(0);
   // Keep a session-wide set so pagination cannot reappend a video that was
   // already delivered while a consumed-state write is in flight.
   const knownIds = useRef(new Set());
@@ -1133,6 +1145,7 @@ export default function VideoFeedView({ onExit }) {
   }, []);
 
   const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, quiet = false } = {}) => {
+    const requestId = ++loadRequestRef.current;
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
       // streak left over from whatever was applied before it — otherwise
@@ -1174,6 +1187,7 @@ export default function VideoFeedView({ onExit }) {
         endpoint = '/office/feed/videos';
       }
       const { data } = await client.get(`${endpoint}?${params}`);
+      if (requestId !== loadRequestRef.current) return;
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(p => p && resolveVideoSource(p));
       const isExplicitSearch = Boolean(searchQueryRef.current);
       if (reset && isExplicitSearch) {
@@ -1237,12 +1251,13 @@ export default function VideoFeedView({ onExit }) {
       }
       setError(false);
     } catch {
-      if (!quiet) setError(true);
+      if (requestId === loadRequestRef.current && !quiet) setError(true);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [markKnownId]);
 
+  useEffect(() => () => { loadRequestRef.current += 1; }, []);
   useEffect(() => { loadPage({ reset: true }); }, [loadPage]);
 
   // A refresh/filter response can legitimately contain fewer items than the
@@ -1633,13 +1648,23 @@ export default function VideoFeedView({ onExit }) {
   // one iframe alive and swapping its video via loadVideoById() lets
   // engagement earned on an earlier video actually carry forward instead
   // of resetting every time.
-  const sharedYtMountRef = useRef(null);
+  const sharedYtHostRef = useRef(null);
   const sharedYtPlayerRef = useRef(null);
   const sharedYtLoadedIdRef = useRef(null);
+  const sharedYtReadyRef = useRef(false);
+  const sharedYtCreatingRef = useRef(false);
+  const sharedYtMountedRef = useRef(false);
+  const sharedYtLifecycleRef = useRef(0);
+  const sharedYtDesiredIdRef = useRef(null);
+  const sharedYtMutedRef = useRef(muted);
   const sharedYtSeekingRef = useRef(false);
   // Guards a fast-swipe race on loadVideoById — see the effect below.
   const sharedYtPendingLoadRef = useRef(null);
+  const sharedYtRetryRef = useRef(null);
+  const sharedYtReadyTimeoutRef = useRef(null);
   const [sharedYt, setSharedYt] = useState({ paused: false, duration: 0, currentTime: 0, failed: false });
+  sharedYtDesiredIdRef.current = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+  sharedYtMutedRef.current = muted;
 
   // The video box's own width/height:auto + max-width/max-height:100% +
   // aspect-ratio (the usual pure-CSS way to fit a ratio inside a box) turns
@@ -1687,169 +1712,206 @@ export default function VideoFeedView({ onExit }) {
     ));
   }, []);
 
+  const startSharedYtAutoplayRetry = useCallback((player, videoId) => {
+    clearInterval(sharedYtRetryRef.current);
+    let attempts = 0;
+    sharedYtRetryRef.current = setInterval(() => {
+      if (!sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== videoId) {
+        clearInterval(sharedYtRetryRef.current);
+        return;
+      }
+      attempts += 1;
+      try {
+        if (player.getPlayerState() === 1) {
+          clearInterval(sharedYtRetryRef.current);
+          setSharedYt(s => ({ ...s, paused: false }));
+          return;
+        }
+        if (attempts >= 3) {
+          clearInterval(sharedYtRetryRef.current);
+          setSharedYt(s => ({ ...s, paused: true }));
+          return;
+        }
+        player.playVideo();
+      } catch {
+        clearInterval(sharedYtRetryRef.current);
+      }
+    }, 500);
+  }, []);
+
   useEffect(() => {
-    if (activeSrc?.kind !== 'youtube') {
-      // Not the one on screen right now — pause it in place (don't
-      // destroy) so it isn't still decoding/audible off-screen, but stays
-      // ready to resume instantly if the user scrolls back to it.
-      try { sharedYtPlayerRef.current?.pauseVideo(); } catch {}
+    const lifecycle = ++sharedYtLifecycleRef.current;
+    sharedYtMountedRef.current = true;
+    return () => {
+      if (sharedYtLifecycleRef.current === lifecycle) sharedYtLifecycleRef.current += 1;
+      sharedYtMountedRef.current = false;
+      clearTimeout(sharedYtPendingLoadRef.current);
+      clearTimeout(sharedYtReadyTimeoutRef.current);
+      clearInterval(sharedYtRetryRef.current);
+      const player = sharedYtPlayerRef.current;
+      sharedYtPlayerRef.current = null;
+      sharedYtReadyRef.current = false;
+      sharedYtCreatingRef.current = false;
+      sharedYtLoadedIdRef.current = null;
+      try { player?.destroy(); } catch {}
+      try { sharedYtHostRef.current?.replaceChildren(); } catch {}
+    };
+  }, []);
+
+  useEffect(() => {
+    const videoId = activeSrc?.kind === 'youtube' ? activeSrc.id : null;
+    clearTimeout(sharedYtPendingLoadRef.current);
+    clearInterval(sharedYtRetryRef.current);
+
+    if (!videoId) {
+      try { if (sharedYtReadyRef.current) sharedYtPlayerRef.current?.pauseVideo(); } catch {}
       return;
     }
-    let cancelled = false;
-    let pollId, autoplayRetryId, readyTimeout;
-    const videoId = activeSrc.id;
-    const startUnmuted = !muted;
-    setSharedYt(s => ({ ...s, failed: false }));
 
-    // Retries playVideo() a few times before giving up — a single blocked/
-    // timed-out attempt isn't necessarily final (the player can still be
-    // settling internally right after onReady/loadVideoById), so hitting
-    // it again a couple of times over ~1.5s recovers autoplay in cases
-    // where one call alone wouldn't have. Only once every retry still
-    // shows it not actually playing does this surface the tap-to-play UI.
-    function startAutoplayRetry(player) {
-      let attempts = 0;
-      autoplayRetryId = setInterval(() => {
-        if (cancelled) { clearInterval(autoplayRetryId); return; }
-        attempts++;
-        try {
-          if (player.getPlayerState() === 1) { clearInterval(autoplayRetryId); return; }
-          if (attempts >= 3) {
-            clearInterval(autoplayRetryId);
-            setSharedYt(s => ({ ...s, paused: true }));
-            return;
-          }
-          player.playVideo();
-        } catch { clearInterval(autoplayRetryId); }
-      }, 500);
+    setSharedYt(s => ({ ...s, failed: false }));
+    const activatePlayer = (player, targetId) => {
+      if (!sharedYtMountedRef.current || sharedYtDesiredIdRef.current !== targetId || !sharedYtReadyRef.current) return;
+      try {
+        if (sharedYtLoadedIdRef.current !== targetId) {
+          sharedYtLoadedIdRef.current = targetId;
+          setSharedYt(s => ({ ...s, duration: 0, currentTime: 0, paused: false }));
+          player.loadVideoById(targetId);
+        }
+        if (sharedYtMutedRef.current) player.mute(); else player.unMute();
+        player.playVideo();
+        startSharedYtAutoplayRetry(player, targetId);
+      } catch {
+        setSharedYt(s => ({ ...s, paused: true }));
+      }
+    };
+
+    if (sharedYtReadyRef.current && sharedYtPlayerRef.current) {
+      if (sharedYtLoadedIdRef.current === videoId) {
+        activatePlayer(sharedYtPlayerRef.current, videoId);
+      } else {
+        sharedYtPendingLoadRef.current = setTimeout(() => {
+          activatePlayer(sharedYtPlayerRef.current, videoId);
+        }, 180);
+      }
+      return () => {
+        clearTimeout(sharedYtPendingLoadRef.current);
+        clearInterval(sharedYtRetryRef.current);
+      };
     }
 
-    if (sharedYtPlayerRef.current) {
-      // Player already exists (from an earlier slide) — reuse the same
-      // iframe instead of destroying and rebuilding it, whether this is a
-      // genuinely new video or scrolling back to one already loaded.
-      const player = sharedYtPlayerRef.current;
-      try {
-        if (sharedYtLoadedIdRef.current !== videoId) {
-          // Debounced — loadVideoById() has no completion callback, so
-          // firing it on every single index change let a fast multi-slide
-          // swipe queue up several overlapping loads on the one shared
-          // iframe with no reliable way to know which actually "won".
-          // Confirmed live as the bug where a swiped-past video's audio
-          // kept playing behind the newly-shown slide's thumbnail/UI after
-          // scrolling quickly. Waiting for the index to actually settle
-          // before loading avoids the race outright rather than resolving
-          // it after the fact.
-          clearTimeout(sharedYtPendingLoadRef.current);
-          sharedYtPendingLoadRef.current = setTimeout(() => {
-            if (cancelled) return;
-            sharedYtLoadedIdRef.current = videoId;
-            // Duration/currentTime otherwise keep showing the PREVIOUS
-            // video's values until the next onStateChange event happens to
-            // fire — confirmed live as the scrub bar/time readout briefly
-            // (sometimes for a couple seconds) reporting the wrong length
-            // right after scrolling to a new YouTube video. Zeroing here
-            // hides the scrub bar/time text for that split second instead
-            // (see effectiveDuration > 0 guards below) rather than show a
-            // number that's flat wrong; the poll below repopulates the real
-            // value continuously once it's available, not just on the next
-            // state-change event.
-            setSharedYt(s => ({ ...s, duration: 0, currentTime: 0 }));
-            player.loadVideoById(videoId);
-            if (startUnmuted) player.unMute(); else player.mute();
-            player.playVideo();
-            startAutoplayRetry(player);
-          }, 180);
-        } else {
-          player.playVideo();
-          startAutoplayRetry(player);
+    if (!sharedYtCreatingRef.current) {
+      const host = sharedYtHostRef.current;
+      if (!host) return;
+      const lifecycle = sharedYtLifecycleRef.current;
+      const isCurrent = () => sharedYtMountedRef.current && sharedYtLifecycleRef.current === lifecycle;
+      sharedYtCreatingRef.current = true;
+      host.replaceChildren();
+      const mount = document.createElement('div');
+      mount.style.width = '100%';
+      mount.style.height = '100%';
+      mount.style.pointerEvents = 'none';
+      host.appendChild(mount);
+
+      clearTimeout(sharedYtReadyTimeoutRef.current);
+      sharedYtReadyTimeoutRef.current = setTimeout(() => {
+        if (isCurrent() && !sharedYtReadyRef.current && sharedYtDesiredIdRef.current) {
+          setSharedYt(s => ({ ...s, failed: true, paused: true }));
         }
-      } catch {}
-    } else {
-      // First time this session actually needing a YouTube player.
-      readyTimeout = setTimeout(() => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); }, 6000);
+      }, 6000);
+
       loadYouTubeIframeApi().then((YT) => {
-        if (cancelled || !sharedYtMountRef.current) return;
-        new YT.Player(sharedYtMountRef.current, {
-          videoId,
+        if (!isCurrent() || !host.isConnected || !mount.isConnected) return;
+        const initialId = sharedYtDesiredIdRef.current || videoId;
+        const player = new YT.Player(mount, {
+          videoId: initialId,
           playerVars: {
             autoplay: 1, mute: 1, playsinline: 1, loop: 1,
-            controls: 0, modestbranding: 1, rel: 0, playlist: videoId,
+            controls: 0, modestbranding: 1, rel: 0, playlist: initialId,
             origin: window.location.origin,
           },
           events: {
             onReady: (e) => {
-              if (cancelled) return;
-              clearTimeout(readyTimeout);
+              if (!isCurrent()) {
+                try { e.target.destroy(); } catch {}
+                return;
+              }
+              clearTimeout(sharedYtReadyTimeoutRef.current);
               sharedYtPlayerRef.current = e.target;
-              sharedYtLoadedIdRef.current = videoId;
-              // YT.Player replaces sharedYtMountRef's placeholder div with
-              // its own real <iframe> — none of that placeholder's inline
-              // styles carry over onto the new iframe, so the click-through
-              // rule is reapplied directly here. A cross-origin iframe with
-              // normal pointer events captures a swipe or wheel before the
-              // feed can see it, which makes mobile behave differently from
-              // the desktop list. Keeping it click-through gives every
-              // viewport the same native feed scroll path; the slide below
-              // owns tap-to-play/pause and the action controls.
+              sharedYtReadyRef.current = true;
+              sharedYtCreatingRef.current = false;
+              setSharedYt(s => ({ ...s, failed: false }));
               try {
                 const iframe = e.target.getIframe();
                 iframe.style.pointerEvents = 'none';
                 iframe.style.touchAction = 'none';
                 iframe.tabIndex = -1;
               } catch {}
-              const duration = e.target.getDuration() || 0;
-              setSharedYt(s => ({ ...s, duration }));
-              classifyShortFromDuration(videoId, duration);
-              if (startUnmuted) e.target.unMute();
-              e.target.playVideo();
-              startAutoplayRetry(e.target);
+
+              const desiredId = sharedYtDesiredIdRef.current;
+              if (!desiredId) {
+                try { e.target.pauseVideo(); } catch {}
+                return;
+              }
+              if (desiredId !== initialId) {
+                try { e.target.loadVideoById(desiredId); } catch {}
+              }
+              sharedYtLoadedIdRef.current = desiredId;
+              try {
+                if (sharedYtMutedRef.current) e.target.mute(); else e.target.unMute();
+                e.target.playVideo();
+              } catch {}
+              try {
+                const duration = e.target.getDuration() || 0;
+                setSharedYt(s => ({ ...s, duration, currentTime: 0, paused: false }));
+                classifyShortFromDuration(desiredId, duration);
+              } catch {}
+              startSharedYtAutoplayRetry(e.target, desiredId);
             },
             onStateChange: (e) => {
-              if (cancelled) return;
+              if (!isCurrent()) return;
               setSharedYt(s => ({ ...s, paused: e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED }));
-              const d = e.target.getDuration();
-              if (d) {
-                setSharedYt(s => ({ ...s, duration: d }));
-                classifyShortFromDuration(sharedYtLoadedIdRef.current || videoId, d);
-              }
+              try {
+                const duration = e.target.getDuration() || 0;
+                if (duration) {
+                  setSharedYt(s => ({ ...s, duration }));
+                  classifyShortFromDuration(sharedYtLoadedIdRef.current, duration);
+                }
+              } catch {}
             },
-            onError: () => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); },
+            onError: () => {
+              sharedYtCreatingRef.current = false;
+              if (isCurrent()) setSharedYt(s => ({ ...s, failed: true, paused: true }));
+            },
           },
         });
-      }).catch(() => { if (!cancelled) setSharedYt(s => ({ ...s, failed: true })); });
+        sharedYtPlayerRef.current = player;
+      }).catch(() => {
+        sharedYtCreatingRef.current = false;
+        if (isCurrent()) setSharedYt(s => ({ ...s, failed: true, paused: true }));
+      });
     }
 
-    pollId = setInterval(() => {
-      if (sharedYtPlayerRef.current && !sharedYtSeekingRef.current) {
-        try {
-          const p = sharedYtPlayerRef.current;
-          const ct = p.getCurrentTime() || 0;
-          // Polled alongside currentTime, not just read once in onReady/
-          // onStateChange — getDuration() can lag right after
-          // loadVideoById() (metadata not parsed yet) or that event can be
-          // slow/skipped in edge cases, and unlike currentTime it had no
-          // other path back to a correct value. Polling makes it self-
-          // correcting on the same cadence currentTime already relies on.
-          const d = p.getDuration() || 0;
-          setSharedYt(s => (s.currentTime === ct && s.duration === d) ? s : { ...s, currentTime: ct, duration: d });
-          classifyShortFromDuration(videoId, d);
-        } catch {}
-      }
-    }, 250);
-
     return () => {
-      cancelled = true;
-      clearTimeout(readyTimeout);
-      clearInterval(pollId);
-      clearInterval(autoplayRetryId);
-      // Deliberately NOT destroying sharedYtPlayerRef.current — see this
-      // effect's own top comment. Pausing (the early-return branch above)
-      // is the only thing that actually stops it; staying alive across
-      // switches is the entire point.
+      clearTimeout(sharedYtPendingLoadRef.current);
+      clearInterval(sharedYtRetryRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeIndex, activeSrc?.kind, activeSrc?.id, classifyShortFromDuration]);
+  }, [activeIndex, activeSrc?.kind, activeSrc?.id, classifyShortFromDuration, startSharedYtAutoplayRetry]);
+
+  useEffect(() => {
+    const pollId = setInterval(() => {
+      if (!sharedYtReadyRef.current || !sharedYtDesiredIdRef.current || sharedYtSeekingRef.current) return;
+      try {
+        const player = sharedYtPlayerRef.current;
+        const currentTime = player?.getCurrentTime() || 0;
+        const duration = player?.getDuration() || 0;
+        setSharedYt(s => (s.currentTime === currentTime && s.duration === duration)
+          ? s
+          : { ...s, currentTime, duration });
+        classifyShortFromDuration(sharedYtLoadedIdRef.current, duration);
+      } catch {}
+    }, 250);
+    return () => clearInterval(pollId);
+  }, [classifyShortFromDuration]);
 
   // Keep the shared player's mute state in sync with the top-bar toggle —
   // file/hls slides each do their own equivalent sync locally.
@@ -2471,7 +2533,7 @@ export default function VideoFeedView({ onExit }) {
               position: 'relative', pointerEvents: 'none',
             }}
           >
-            <div ref={sharedYtMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
+            <div ref={sharedYtHostRef} style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: sharedYt.failed ? 'hidden' : 'visible' }} />
             {sharedYt.failed && activeSrc?.kind === 'youtube' && (
               // Same reasoning as the old per-slide fallback: the IFrame
               // Player API script never went ready (blocked, offline,

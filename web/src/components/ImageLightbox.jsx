@@ -112,8 +112,13 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   const [ytFailed, setYtFailed] = useState(false);
   const fileVideoRef = useRef(null);
   const hlsVideoRef = useRef(null);
-  const ytMountRef = useRef(null);
+  // React owns this host; YouTube may replace only the imperative child we
+  // insert into it. Giving YT.Player a React-rendered node directly lets the
+  // API swap that node for an iframe behind React's back, which can crash
+  // mixed photo/video navigation when React later removes the old node.
+  const ytHostRef = useRef(null);
   const ytPlayerRef = useRef(null);
+  const ytLifecycleRef = useRef(0);
   // Scrub tracker state — same shape as VideoFeedView's swipe feed.
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
@@ -240,7 +245,10 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // source's article can embed a real YouTube video too, in which case
   // mediaUrl itself is the watch URL.
   const youtubeId = isVideo
-    ? (post.source === 'youtube' ? (post.embedId || extractYouTubeId(post.sourceUrl)) : extractYouTubeId(post.mediaUrl))
+    ? (post.embedId
+      || extractYouTubeId(post.mediaUrl)
+      || extractYouTubeId(post.sourceUrl)
+      || extractYouTubeId(item?.url))
     : null;
   const playlistUrl = isVideo && !youtubeId && post.source === 'bluesky' ? deriveBlueskyPlaylistUrl(item.url) : null;
   const directVideoUrl = isVideo && !youtubeId && !playlistUrl && item?.url && isDirectVideoUrl(item.url) ? item.url : null;
@@ -304,14 +312,28 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
   // autoplay-with-sound more leniently.
   useEffect(() => {
     if (!youtubeId) return;
+    const host = ytHostRef.current;
+    if (!host) return;
+    const lifecycle = ++ytLifecycleRef.current;
     let cancelled = false;
     let pollId;
+    let player = null;
     const startUnmuted = !muted;
     setYtFailed(false);
-    const readyTimeout = setTimeout(() => { if (!cancelled) setYtFailed(true); }, 6000);
+    ytPlayerRef.current = null;
+
+    host.replaceChildren();
+    const mount = document.createElement('div');
+    mount.style.width = '100%';
+    mount.style.height = '100%';
+    mount.style.pointerEvents = 'none';
+    host.appendChild(mount);
+
+    const isCurrent = () => !cancelled && ytLifecycleRef.current === lifecycle;
+    const readyTimeout = setTimeout(() => { if (isCurrent()) setYtFailed(true); }, 6000);
     loadYouTubeIframeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current) return;
-      const player = new YT.Player(ytMountRef.current, {
+      if (!isCurrent() || !mount.isConnected) return;
+      player = new YT.Player(mount, {
         videoId: youtubeId,
         // origin: without it, the IFrame Player API's postMessage bridge
         // back to this page can silently fail ("Unable to post message to
@@ -320,9 +342,13 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
         playerVars: { autoplay: 1, mute: 1, playsinline: 1, controls: 0, modestbranding: 1, rel: 0, origin: window.location.origin },
         events: {
           onReady: (e) => {
-            if (cancelled) return;
+            if (!isCurrent()) {
+              try { e.target.destroy(); } catch {}
+              return;
+            }
             clearTimeout(readyTimeout);
             ytPlayerRef.current = e.target;
+            setYtFailed(false);
             try { e.target.getIframe().style.pointerEvents = 'none'; } catch {}
             try { setDuration(e.target.getDuration() || 0); } catch {}
             try { if (startUnmuted) e.target.unMute(); } catch {}
@@ -334,16 +360,17 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             try { e.target.playVideo(); } catch { setYtFailed(true); }
           },
           onStateChange: (e) => {
-            if (cancelled) return;
+            if (!isCurrent()) return;
             setPaused(e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.ENDED);
             try {
               const d = e.target.getDuration();
               if (d) setDuration(d);
             } catch {}
           },
-          onError: () => { if (!cancelled) setYtFailed(true); },
+          onError: () => { if (isCurrent()) setYtFailed(true); },
         },
       });
+      ytPlayerRef.current = player;
       // The IFrame Player API has no time-update event — onStateChange only
       // fires on play/pause/seek/end, not continuously — so the scrub bar's
       // moving playhead needs its own poll, same as VideoFeedView's.
@@ -352,15 +379,15 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
           try { setCurrentTime(ytPlayerRef.current.getCurrentTime() || 0); } catch {}
         }
       }, 250);
-    }).catch(() => { if (!cancelled) setYtFailed(true); });
+    }).catch(() => { if (isCurrent()) setYtFailed(true); });
     return () => {
       cancelled = true;
+      if (ytLifecycleRef.current === lifecycle) ytLifecycleRef.current += 1;
       clearTimeout(readyTimeout);
       clearInterval(pollId);
-      try { ytPlayerRef.current?.destroy(); } catch {}
-      ytPlayerRef.current = null;
-      setCurrentTime(0);
-      setDuration(0);
+      try { player?.destroy(); } catch {}
+      if (ytPlayerRef.current === player) ytPlayerRef.current = null;
+      try { host.replaceChildren(); } catch {}
     };
   }, [youtubeId]);
 
@@ -591,7 +618,11 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
             </div>
           ) : youtubeId ? (
             <div className="media-lightbox-youtube" style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', background: '#000' }}>
-              {ytFailed ? (
+              <div
+                ref={ytHostRef}
+                style={{ width: '100%', height: '100%', pointerEvents: 'none', visibility: ytFailed ? 'hidden' : 'visible' }}
+              />
+              {ytFailed && (
                 // See VideoFeedView's identical fallback — a plain embed
                 // iframe doesn't depend on the IFrame Player API script at
                 // all and still autoplays muted on its own, so real
@@ -602,16 +633,20 @@ export default function ImageLightbox({ items = [], startIndex = 0, onClose, onN
                   allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
                   title={post.title}
                 />
-              ) : (
+              )}
+              {!ytFailed && (
                 <>
                   {/* Cross-origin iframe — the parent page can't see clicks
                       that land inside it, so pointer-events are disabled on
                       the mount itself and this wrapper's onClick drives
                       play/pause instead (same technique VideoFeedView's
                       YouTube slide uses). */}
-                  <div onClick={e => { e.stopPropagation(); togglePlay(); }} style={{ position: 'absolute', inset: 0 }}>
-                    <div key={youtubeId} ref={ytMountRef} style={{ width: '100%', height: '100%', pointerEvents: 'none' }} />
-                  </div>
+                  <div
+                    onClick={e => { e.stopPropagation(); togglePlay(); }}
+                    style={{ position: 'absolute', inset: 0 }}
+                    role="button"
+                    aria-label="Play or pause video"
+                  />
                   {paused && (
                     <button onClick={e => { e.stopPropagation(); togglePlay(); }} aria-label="Play" style={{
                       position: 'absolute', inset: 0, margin: 'auto', width: 60, height: 60,
