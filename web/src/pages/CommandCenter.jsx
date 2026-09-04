@@ -1738,26 +1738,11 @@ function AutomationSection({ onSelectSection }) {
 
       <div className="command-center-tools-grid">
         <AutomationToolCard
-          title="Your Feed"
-          description="Open the live equalizer feed of posts from your connected accounts."
-          status={feedStatus}
-          actionLabel="Open Your Feed"
-          to="/you"
-          primary
-        />
-        <AutomationToolCard
           title="Following Feed"
           description="Review the live following pool grouped by source and refresh status."
           status={feedStatus}
           actionLabel="Open Following Feed"
           onClick={() => onSelectSection('feed')}
-        />
-        <AutomationToolCard
-          title="Your Content"
-          description="Review and download your own connected-platform posts where the API supports it."
-          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
-          actionLabel="Open Your Feed"
-          onClick={() => onSelectSection('yourfeed')}
         />
         <AutomationToolCard
           title="AI Drafts"
@@ -1800,6 +1785,21 @@ function AutomationSection({ onSelectSection }) {
           status="Coming soon"
           actionLabel="Open Resume Builder"
           to="/resume-builder"
+        />
+        <AutomationToolCard
+          title="Your Feed"
+          description="Open the live equalizer feed of posts from your connected accounts."
+          status={feedStatus}
+          actionLabel="Open Your Feed"
+          to="/you"
+          primary
+        />
+        <AutomationToolCard
+          title="Your Content"
+          description="Review and download your own connected-platform posts where the API supports it."
+          status={`${metricValue(snapshot.connectedPlatforms)} connected`}
+          actionLabel="Open Your Feed"
+          onClick={() => onSelectSection('yourfeed')}
         />
       </div>
     </div>
