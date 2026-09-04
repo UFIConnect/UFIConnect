@@ -7351,6 +7351,12 @@ function makeTopicCycler(agentId, emoji, color, fetchFn, keyMapper) {
           topicFetchedAt.set(mappedKey, Date.now());
           health.lastSuccess = Date.now();
           health.lastError = null;
+          // A completed provider request is a successful health check even
+          // when this particular topic has no matching posts. Empty cycles
+          // have their own circuit-breaker counters below; retaining an old
+          // error streak here falsely marks an otherwise-live source as
+          // degraded after another shard has already recovered.
+          health.consecutiveErrors = 0;
           const fresh = realFeedPosts(posts).map(p => trimPostContent(normalizeFeedPost(p)));
           if (fresh.length) {
             indexPostUrls(fresh);
