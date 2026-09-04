@@ -21957,10 +21957,12 @@ async function handleFeedRequest(req, res) {
       prefs,
       userAffinity,
       { locationContext, request: req }
-    ).sort((a, b) => (
-      (b.searchRelevance || 0) - (a.searchRelevance || 0)
-      || postTimestamp(b) - postTimestamp(a)
-    )), seenIds);
+    ).sort((a, b) => requestedSortMode === 'newest'
+      ? postTimestamp(b) - postTimestamp(a)
+        || (b.searchRelevance || 0) - (a.searchRelevance || 0)
+      : (b.searchRelevance || 0) - (a.searchRelevance || 0)
+        || postTimestamp(b) - postTimestamp(a)
+    ), seenIds);
     const pageWindow = searchOffset + feedLimit + 1;
     const merged = usesBlendedSources
       ? enforceFeedDiversity(searchCandidates, pageWindow, sortMode)
