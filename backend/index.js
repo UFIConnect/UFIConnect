@@ -9248,7 +9248,10 @@ function enforceFeedDiversity(posts, feedLimit, _sortMode) {
   // (confirmed live: a "capped" archive page still came back 68% one
   // source). Returning a shorter page when the input genuinely lacks
   // variety is the honest tradeoff — pagination covers the rest.
-  return diversifyBySource(cappedPosts, feedLimit, 1);
+  // Keep the caller's final order intact. An additional round-robin here
+  // moved older posts ahead of newer ones merely to alternate sources,
+  // even though the strict two-per-source cap already prevents a takeover.
+  return cappedPosts.slice(0, feedLimit);
 }
 
 // "Reconstruct true mix so all sources are actually visible, no time
