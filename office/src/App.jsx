@@ -406,12 +406,26 @@ function WebOptimizerPanel({ web, triggerAgent, triggering }) {
 
 // ─── Overview view ────────────────────────────────────────────────────────────
 
-function OverviewView({ status, log, agents, triggerAgent, triggering }) {
+function OverviewView({ status, pipelineStatus, log, agents, triggerAgent, triggering }) {
   const s = status?.server;
   const f = status?.feed;
   const a = status?.agents;
   const src = status?.sources;
-  const web = status?.websiteOptimizer;
+  const apiWeb = status?.websiteOptimizer;
+  const pipelineWeb = pipelineStatus?.websiteOptimizer;
+  // Public-web checks belong to the API process, while the storage audit
+  // intentionally runs only beside the source workers on pipeline. Present
+  // both in one Overview card so "Storage" cannot look idle when its real
+  // pipeline-owned audit is healthy.
+  const web = apiWeb ? {
+    ...apiWeb,
+    subAgents: {
+      ...(apiWeb.subAgents || {}),
+      ...(pipelineWeb?.subAgents?.web_storage
+        ? { web_storage: pipelineWeb.subAgents.web_storage }
+        : {}),
+    },
+  } : pipelineWeb;
   const pausedWorkers = src?.workers?.filter(w => w.paused) || [];
 
   return (
@@ -3308,7 +3322,7 @@ export default function App() {
 
         {/* ── Main content ── */}
         <main style={mainStyle}>
-          {view === 'overview' && <OverviewView status={status} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
+          {view === 'overview' && <OverviewView status={status} pipelineStatus={pipelineStatus} log={log} agents={agents} triggerAgent={triggerAgent} triggering={triggering} />}
           {view === 'decisions' && <DecisionFoundry apiBase={API} request={officeFetch} />}
           {/* Source health (workerHealth/agentSourceCache) only has real
               data on the pipeline role now — see pipelineStatus above. */}
