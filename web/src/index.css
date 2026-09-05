@@ -1312,6 +1312,98 @@ input, textarea, select { font-family: inherit; }
   overflow-y: auto;
   padding-right: 2px;
 }
+.jobs-sidebar-controls {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 14px;
+}
+.jobs-sidebar-section {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.jobs-sidebar-section h2 {
+  margin: 0 0 7px;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.jobs-sidebar-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+.jobs-sidebar-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 650;
+  text-align: left;
+  transition: background .15s, color .15s;
+}
+.jobs-sidebar-option > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobs-sidebar-option:hover,
+.jobs-sidebar-option:focus-visible {
+  background: var(--primary-light);
+  color: var(--primary);
+  outline: none;
+}
+.jobs-sidebar-option.active {
+  background: var(--primary);
+  color: #fff;
+}
+.jobs-sidebar-source-icon,
+.jobs-sidebar-source-all {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--primary);
+}
+.jobs-sidebar-source-all,
+.jobs-sidebar-source-fallback {
+  font-size: .55rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.jobs-page-role-links,
+.jobs-page-rail-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.jobs-page-role-links {
+  flex: 0 0 auto;
+  padding-top: 2px;
+}
+.jobs-page-rail-bottom {
+  margin-top: auto;
+  padding-top: 18px;
+}
 .jobs-page-tool {
   display: flex;
   flex-direction: column;
@@ -1374,10 +1466,7 @@ input, textarea, select { font-family: inherit; }
   width: 100%;
 }
 .jobs-page-right-tabs .profile-panel-trigger { min-height: 40px; }
-.jobs-page-resume-builder {
-  flex: 0 0 auto;
-  margin-top: auto;
-}
+.jobs-page-resume-builder { flex: 0 0 auto; }
 .jobs-career-filter-row { align-items: center; }
 .jobs-career-source-picker { min-width: 0; }
 .jobs-career-source-mark {
@@ -2777,6 +2866,26 @@ input, textarea, select { font-family: inherit; }
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+.job-result-section + .job-result-section {
+  border-top: 8px solid var(--surface);
+}
+.job-result-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: .75rem;
+}
+.job-result-section-heading strong { font-weight: 750; }
+.job-result-section-heading span {
+  color: var(--muted);
+  font-size: .68rem;
+  font-variant-numeric: tabular-nums;
+}
 .job-result-tab {
   position: relative;
   display: flex;
@@ -3943,6 +4052,32 @@ input, textarea, select { font-family: inherit; }
     gap: 6px;
     margin-top: auto;
     padding-top: 18px;
+  }
+  .mobile-feed-drawer-content--jobs .jobs-sidebar-controls {
+    gap: 12px;
+  }
+  .mobile-feed-drawer-content--jobs .jobs-sidebar-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .mobile-feed-drawer-content--jobs .jobs-sidebar-section {
+    padding: 2px 2px 12px;
+  }
+  .mobile-feed-drawer-content--jobs .jobs-sidebar-option {
+    min-height: 42px;
+    padding: 8px;
+  }
+  .mobile-jobs-role-links {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 10px;
+  }
+  .mobile-jobs-role-links .mobile-command-menu-item {
+    width: 100%;
+  }
+  .mobile-jobs-drawer-bottom {
+    border-top: 1px solid var(--border);
   }
   .mobile-feed-drawer .home-feed-side-tools {
     gap: 6px;

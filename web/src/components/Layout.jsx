@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import client from '../api/client';
 import HomeFeedTools from './HomeFeedTools';
+import JobsSidebarControls from './JobsSidebarControls';
 import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS } from './sourceMeta';
 
 function ShellIcon({ name, size = 20 }) {
@@ -317,6 +318,7 @@ export default function Layout({ children, wide = false }) {
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
   const isHomeFeedRoute = location.pathname === '/';
+  const isJobsRoute = location.pathname === '/opportunities' || location.pathname.startsWith('/opportunities/');
   const mobileSourceIds = mobileFeedMode === 'following'
     ? FOLLOWING_FEED_SOURCE_IDS
     : HOME_FEED_SOURCE_IDS;
@@ -546,7 +548,7 @@ export default function Layout({ children, wide = false }) {
           className={`mobile-feed-drawer${mobileMenuOpen ? ' open' : ''}`}
           role="dialog"
           aria-modal="true"
-          aria-label="Feeds and account tools"
+          aria-label={isJobsRoute ? 'Jobs tools' : 'Feeds and account tools'}
           aria-hidden={!mobileMenuOpen}
         >
           <div className="mobile-feed-drawer-header">
@@ -554,8 +556,48 @@ export default function Layout({ children, wide = false }) {
               <ShellIcon name="close" size={19} />
             </button>
           </div>
-          <div className="mobile-feed-drawer-content">
-            <div className="mobile-feed-drawer-feeds">
+          <div className={`mobile-feed-drawer-content${isJobsRoute ? ' mobile-feed-drawer-content--jobs' : ''}`}>
+            {isJobsRoute ? (
+              <>
+                <JobsSidebarControls onNavigate={() => setMobileMenuOpen(false)} />
+                <div className="mobile-jobs-role-links">
+                  <NavLink to="/settings?tab=preferences" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="profile" size={18} />
+                    Roles
+                  </NavLink>
+                  <NavLink to="/profile?tab=saved" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="saved" size={18} />
+                    Saved
+                  </NavLink>
+                </div>
+                <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
+                  <NavLink to="/?feed=groups&groupScope=public" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="groups" size={18} />
+                    Discover groups
+                  </NavLink>
+                  <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="messages" size={18} />
+                    Messages
+                  </NavLink>
+                  <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="files" size={18} />
+                    Resume Builder
+                  </NavLink>
+                  <div className="mobile-account-actions">
+                    <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                      <ShellIcon name="settings" size={18} />
+                      Settings
+                    </NavLink>
+                    <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
+                      <ShellIcon name="logout" size={18} />
+                      Log out
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mobile-feed-drawer-feeds">
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
                 <ShellIcon name="posts" size={18} />
                 UFI
@@ -580,8 +622,8 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="restaurants" size={18} />
                 Restaurants
               </button>
-            </div>
-            <div className="mobile-feed-drawer-bottom">
+                </div>
+                <div className="mobile-feed-drawer-bottom">
               <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="messages" size={18} />
                 Messages
@@ -618,7 +660,9 @@ export default function Layout({ children, wide = false }) {
                   Log out
                 </button>
               </div>
-            </div>
+                </div>
+              </>
+            )}
           </div>
         </aside>
       )}

@@ -29539,6 +29539,7 @@ app.get('/opportunities', authenticate, async (req, res) => {
   let results = allOps;
   if (type && type !== 'all') results = results.filter((o) => o.type === type);
   if (remote === 'true')       results = results.filter((o) => o.remote);
+  if (remote === 'false')      results = results.filter((o) => !o.remote);
   if (live === 'true')         results = results.filter((o) => o.isLive);
   if (search) {
     results = results

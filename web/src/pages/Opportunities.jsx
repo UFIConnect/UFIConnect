@@ -3,9 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
-import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import HomeFeedTools from '../components/HomeFeedTools';
-import { HOME_FEED_SOURCE_IDS, SOURCE_META } from '../components/sourceMeta';
+import JobsSidebarControls, { JOB_CAREER_SITES, JOB_SORT_OPTIONS } from '../components/JobsSidebarControls';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { SaveJobButton } from '../components/SaveButtons';
@@ -21,110 +19,6 @@ const TYPE_META = {
   opensource: { label: 'Open Source', emoji: 'OSS', color: '#EA580C', bg: '#FFF7ED' },
   learning:   { label: 'Learning',    emoji: 'Learn', color: '#0284C7', bg: '#F0F9FF' },
 };
-
-const OPPORTUNITY_SORT_OPTIONS = [
-  { value: 'newest', label: 'Newest' },
-  { value: 'match', label: 'Best match' },
-  { value: 'oldest', label: 'Oldest' },
-  { value: 'live', label: 'Live first' },
-  { value: 'remote', label: 'Remote first' },
-  { value: 'employer', label: 'Employer A-Z' },
-  { value: 'title', label: 'Title A-Z' },
-  { value: 'source', label: 'Source A-Z' },
-];
-
-const CAREER_SOURCE_FAVORITE_LIMIT = 4;
-const CAREER_SOURCE_DEFINITIONS = [
-  { key: 'indeed', label: 'Indeed' },
-  { key: 'remoteok', label: 'Remote OK' },
-  { key: 'remotive', label: 'Remotive' },
-  { key: 'muse', label: 'The Muse' },
-  { key: 'usajobs', label: 'USAJobs' },
-];
-
-function careerSourceDefinition(source) {
-  const label = String(source || '').trim();
-  const normalized = label.toLowerCase().replace(/[^a-z0-9]/g, '');
-  return CAREER_SOURCE_DEFINITIONS.find(({ key, label: knownLabel }) => (
-    key === normalized || knownLabel.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized
-  )) || { key: normalized || 'career', label: label || 'Career site' };
-}
-
-function normalizeCareerFavorites(value, tabs) {
-  const allowed = new Set(tabs.map(({ key }) => key));
-  const normalized = [];
-  const add = (key) => {
-    if (!allowed.has(key) || normalized.includes(key) || normalized.length >= CAREER_SOURCE_FAVORITE_LIMIT) return;
-    normalized.push(key);
-  };
-  if (Array.isArray(value)) value.forEach(add);
-  CAREER_SOURCE_DEFINITIONS.forEach(({ key }) => add(key));
-  tabs.forEach(({ key }) => add(key));
-  return normalized.slice(0, Math.min(CAREER_SOURCE_FAVORITE_LIMIT, tabs.length));
-}
-
-function MenuIcon({ size = 18 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
-      <path d="M4 6h16" />
-      <path d="M4 12h16" />
-      <path d="M4 18h16" />
-    </svg>
-  );
-}
-
-function CareerSourceMark({ tab, active = false }) {
-  const meta = SOURCE_META[tab.key] || {};
-  if (hasBrandIcon(tab.key)) {
-    return (
-      <span className="jobs-career-source-mark">
-        <BrandIcon platform={tab.key} size={13} />
-      </span>
-    );
-  }
-  return (
-    <span className={`jobs-career-source-mark jobs-career-source-mark--text${active ? ' active' : ''}`}>
-      {String(meta.icon || tab.label).slice(0, 2).toUpperCase()}
-    </span>
-  );
-}
-
-function CareerSourceOption({ tab, active, compact = false, favorite = false, phoneExtra = false, onSelect }) {
-  const color = tab.key === 'all' ? 'var(--primary)' : (SOURCE_META[tab.key]?.color || 'var(--primary)');
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      aria-label={compact ? tab.label : undefined}
-      title={compact ? tab.label : undefined}
-      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}${phoneExtra ? ' phone-extra' : ''}`}
-      style={{ '--feed-source-color': color }}
-      onClick={onSelect}
-    >
-      {tab.key !== 'all' && <CareerSourceMark tab={tab} active={active} />}
-      <span className="feed-source-option-label">{tab.label}</span>
-      {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
-    </button>
-  );
-}
-
-function CareerFavoriteButton({ tab, favorite, disabled, onToggle }) {
-  const action = favorite ? 'Remove from favorites' : 'Add to favorites';
-  return (
-    <button
-      type="button"
-      className={`feed-source-favorite-button${favorite ? ' active' : ''}`}
-      aria-label={`${action}: ${tab.label}`}
-      aria-pressed={favorite}
-      title={disabled ? 'Remove a favorite before adding another' : `${action}: ${tab.label}`}
-      disabled={disabled}
-      onClick={() => onToggle(tab.key)}
-    >
-      <span aria-hidden="true">{favorite ? '★' : '☆'}</span>
-    </button>
-  );
-}
 
 function timeAgo(iso) {
   const timestamp = new Date(iso).getTime();
@@ -282,8 +176,25 @@ function mergeOpportunities(current, incoming) {
   return [...current, ...incoming.filter((opportunity) => !seen.has(opportunity.id))];
 }
 
+const JOB_SORT_VALUES = new Set(JOB_SORT_OPTIONS.map(({ value }) => value));
+
+function requestedWorkSetting(searchParams) {
+  const work = searchParams.get('work');
+  if (work === 'remote' || work === 'other') return work;
+  return searchParams.get('remote') === '1' ? 'remote' : 'all';
+}
+
+function isRemoteJob(job) {
+  if (job?.remote) return true;
+  return /\bremote\b/i.test([
+    job?.location,
+    job?.title,
+    ...(Array.isArray(job?.tags) ? job.tags : []),
+  ].filter(Boolean).join(' '));
+}
+
 export default function Opportunities({ embedded = false, searchQuery = null } = {}) {
-  const { profile, updateProfileLocally } = useAuth();
+  const { profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialRouteQuery = embedded
@@ -292,18 +203,14 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const filter = 'job';
-  const [sort,      setSort]      = useState('newest');
-  const [remote,    setRemote]    = useState(false);
-  const [liveOnly,  setLiveOnly]  = useState(embedded);
+  const initialSort = JOB_SORT_VALUES.has(searchParams.get('sort')) ? searchParams.get('sort') : 'newest';
+  const [sort, setSort] = useState(embedded ? 'newest' : initialSort);
+  const [workSetting, setWorkSetting] = useState(embedded ? 'all' : requestedWorkSetting(searchParams));
+  const [liveOnly, setLiveOnly] = useState(embedded || searchParams.get('live') === '1');
   // Search can combine career sites; the standalone Jobs stream deliberately
   // keeps one active site at a time, matching Home's source controls.
   const [availableSources, setAvailableSources] = useState([]);
   const [sourceFilter, setSourceFilter] = useState([]);
-  const [careerSourceMenuOpen, setCareerSourceMenuOpen] = useState(false);
-  const [careerSourceFavorites, setCareerSourceFavorites] = useState([]);
-  const [careerSourceFavoriteDraft, setCareerSourceFavoriteDraft] = useState([]);
-  const [careerSourceFavoriteSaving, setCareerSourceFavoriteSaving] = useState(false);
-  const [careerSourceFavoriteError, setCareerSourceFavoriteError] = useState('');
   const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
   const [recommendationLabel, setRecommendationLabel] = useState('');
   const [search,    setSearch]    = useState(initialRouteQuery);
@@ -319,7 +226,6 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const loadingMoreRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const sentinelRef = useRef(null);
-  const careerSourcePickerRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
   // Source and quick-filter changes bypass a stale cached listing cohort;
   // ordinary infinite-scroll requests remain cacheable.
@@ -333,50 +239,33 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     return () => window.clearTimeout(timer);
   }, [embedded, searchParams, searchQuery]);
 
-  const sourceLabels = availableSources.length
-    ? availableSources
-    : CAREER_SOURCE_DEFINITIONS.map(({ label }) => label);
-  const careerSourceTabs = [];
-  const seenCareerSourceKeys = new Set();
-  sourceLabels.forEach((source) => {
-    const tab = careerSourceDefinition(source);
-    if (!seenCareerSourceKeys.has(tab.key)) {
-      seenCareerSourceKeys.add(tab.key);
-      careerSourceTabs.push(tab);
-    }
-  });
-  const careerSourceKey = careerSourceTabs.map(({ key }) => key).join(',');
-  const savedCareerFavoritesKey = JSON.stringify(profile?.roleSettings?.careerSourceFavorites || null);
-  const favoriteRequiredCount = Math.min(CAREER_SOURCE_FAVORITE_LIMIT, careerSourceTabs.length);
-  const compactCareerSourceTabs = normalizeCareerFavorites(careerSourceFavorites, careerSourceTabs)
-    .map((key) => careerSourceTabs.find((tab) => tab.key === key))
-    .filter(Boolean);
-
+  const routeControlKey = searchParams.toString();
   useEffect(() => {
-    const normalized = normalizeCareerFavorites(profile?.roleSettings?.careerSourceFavorites, careerSourceTabs);
-    setCareerSourceFavorites(normalized);
-    setCareerSourceFavoriteDraft(normalized);
-  }, [careerSourceKey, savedCareerFavoritesKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!careerSourceMenuOpen) return undefined;
-    const handlePointerDown = (event) => {
-      if (!careerSourcePickerRef.current?.contains(event.target)) setCareerSourceMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [careerSourceMenuOpen]);
+    if (embedded) return;
+    const requestedSort = searchParams.get('sort');
+    setSort(JOB_SORT_VALUES.has(requestedSort) ? requestedSort : 'newest');
+    setWorkSetting(requestedWorkSetting(searchParams));
+    setLiveOnly(searchParams.get('live') === '1');
+  }, [embedded, routeControlKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Career-site cards link here with a source selection. Apply it once after
   // the API confirms which live job sources are available, then leave normal
   // chip controls entirely in the member's hands.
   const requestedSources = searchParams.get('sources') || '';
   useEffect(() => {
-    if (!requestedSources || !availableSources.length || routeSourcesAppliedRef.current === requestedSources) return;
+    if (!requestedSources) {
+      if (routeSourcesAppliedRef.current) setSourceFilter([]);
+      routeSourcesAppliedRef.current = '';
+      return;
+    }
+    if ((embedded && !availableSources.length) || routeSourcesAppliedRef.current === requestedSources) return;
     const requested = requestedSources.split(',').map(value => value.trim()).filter(Boolean);
-    const matched = requested.filter(source => availableSources.includes(source));
+    const allowedSources = embedded
+      ? new Set(availableSources)
+      : new Set([...availableSources, ...JOB_CAREER_SITES.map(({ label }) => label)]);
+    const matched = requested.filter(source => allowedSources.has(source));
     routeSourcesAppliedRef.current = requestedSources;
-    if (matched.length) setSourceFilter(embedded ? matched : matched.slice(0, 1));
+    setSourceFilter(matched.length ? (embedded ? matched : matched.slice(0, 1)) : []);
   }, [availableSources, embedded, requestedSources]);
 
   // Fetch the first page whenever a real filter/search/sort change happens
@@ -399,7 +288,8 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     }
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
-    if (remote) params.remote = true;
+    if (workSetting === 'remote') params.remote = true;
+    if (workSetting === 'other') params.remote = false;
     if (liveOnly) params.live = true;
     if (sourceFilter.length) params.sources = sourceFilter.join(',');
     if (bustOnNextFetchRef.current) { params.bust = '1'; bustOnNextFetchRef.current = false; }
@@ -437,7 +327,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         setLoading(false);
         if (refreshRequest) setRefreshing(false);
       });
-  }, [filter, sort, remote, liveOnly, search, sourceFilter, refreshTick]);
+  }, [filter, sort, workSetting, liveOnly, search, sourceFilter, refreshTick]);
 
   const requestRefresh = useCallback(() => {
     if (refreshing) return;
@@ -458,7 +348,8 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     const params = { sort, limit: PAGE_SIZE, offset: allOpps.length };
     if (filter !== 'all') params.type = filter;
     if (search) params.search = search;
-    if (remote) params.remote = true;
+    if (workSetting === 'remote') params.remote = true;
+    if (workSetting === 'other') params.remote = false;
     if (liveOnly) params.live = true;
     if (sourceFilter.length) params.sources = sourceFilter.join(',');
     client.get('/opportunities', { params })
@@ -475,7 +366,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         }
       })
       .finally(() => { loadingMoreRef.current = false; setLoadingMore(false); });
-  }, [loading, hasMore, allOpps.length, sort, filter, search, remote, sourceFilter, liveOnly]);
+  }, [loading, hasMore, allOpps.length, sort, filter, search, workSetting, sourceFilter, liveOnly]);
 
   // Same sentinel + IntersectionObserver pattern as the main Feed page
   // (400px rootMargin fires the fetch just before the sentinel is actually
@@ -497,7 +388,19 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     requestRefresh();
   }, { enabled: !loading && !refreshing });
 
-  const displayed = allOpps;
+  // Keep work-setting views accurate during a rolling frontend/API deploy too.
+  // The API performs the full filter; this local guard catches stale responses
+  // from an older instance and listings whose source only says "Remote" in text.
+  const displayed = workSetting === 'other'
+    ? allOpps.filter((job) => !isRemoteJob(job))
+    : workSetting === 'remote'
+      ? allOpps.filter(isRemoteJob)
+      : allOpps;
+  const jobSections = [
+    { key: 'remote', label: 'Remote', jobs: displayed.filter(isRemoteJob) },
+    { key: 'other', label: 'Other listings', jobs: displayed.filter((job) => !isRemoteJob(job)) },
+  ].filter((section) => section.jobs.length > 0);
+  const activeSortLabel = JOB_SORT_OPTIONS.find(({ value }) => value === sort)?.label || 'Newest';
   const personalizationText = recommendationBasis === 'resume'
     ? `Matched to ${recommendationLabel || 'your selected resume'}`
     : recommendationBasis === 'role'
@@ -507,51 +410,6 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         : recommendationBasis === 'usage'
           ? 'Matched to your activity'
           : 'Newest live listings';
-
-  function selectCareerSource(tab) {
-    bustOnNextFetchRef.current = true;
-    if (tab.key === 'all') {
-      setSourceFilter([]);
-    } else {
-      setSourceFilter((current) => current.length === 1 && current[0] === tab.label ? [] : [tab.label]);
-    }
-  }
-
-  function toggleCareerFavorite(key) {
-    setCareerSourceFavoriteDraft((current) => {
-      if (current.includes(key)) return current.filter((source) => source !== key);
-      if (current.length >= CAREER_SOURCE_FAVORITE_LIMIT) return current;
-      return [...current, key];
-    });
-  }
-
-  async function saveCareerFavorites() {
-    if (!profile?.id || careerSourceFavoriteDraft.length !== favoriteRequiredCount) return;
-    const nextFavorites = [...careerSourceFavoriteDraft];
-    setCareerSourceFavoriteSaving(true);
-    setCareerSourceFavoriteError('');
-    try {
-      const { data } = await client.patch('/profile', {
-        roleSettings: {
-          ...(profile.roleSettings || {}),
-          careerSourceFavorites: nextFavorites,
-        },
-      });
-      const persisted = data.profile || data;
-      const savedFavorites = normalizeCareerFavorites(
-        persisted?.roleSettings?.careerSourceFavorites || nextFavorites,
-        careerSourceTabs
-      );
-      setCareerSourceFavorites(savedFavorites);
-      setCareerSourceFavoriteDraft(savedFavorites);
-      updateProfileLocally(persisted);
-      setCareerSourceMenuOpen(false);
-    } catch {
-      setCareerSourceFavoriteError('Favorites could not be saved. Please try again.');
-    } finally {
-      setCareerSourceFavoriteSaving(false);
-    }
-  }
 
   return (
     <>
@@ -579,116 +437,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         </div>
         <div className="jobs-personalization-status">
           <span>{personalizationText}</span>
-          <span>Newest first</span>
+          <span>{activeSortLabel}</span>
         </div>
 
-        {!embedded ? (
-          <div className="feed-source-filter-row feed-unified-control-bar jobs-career-filter-row">
-            <div ref={careerSourcePickerRef} className="feed-source-picker jobs-career-source-picker">
-              <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label="Career sites">
-                {compactCareerSourceTabs.map((tab, index) => (
-                  <CareerSourceOption
-                    key={tab.key}
-                    tab={tab}
-                    active={sourceFilter.length === 1 && sourceFilter[0] === tab.label}
-                    compact
-                    favorite
-                    phoneExtra={index >= 2}
-                    onSelect={() => selectCareerSource(tab)}
-                  />
-                ))}
-              </div>
-              <button
-                type="button"
-                className={`feed-source-menu-button${careerSourceMenuOpen ? ' active' : ''}`}
-                aria-label="View all career sites"
-                aria-expanded={careerSourceMenuOpen}
-                aria-controls="career-source-menu"
-                onClick={() => {
-                  setCareerSourceMenuOpen((open) => {
-                    const nextOpen = !open;
-                    if (nextOpen) {
-                      setCareerSourceFavoriteDraft([...careerSourceFavorites]);
-                      setCareerSourceFavoriteError('');
-                    }
-                    return nextOpen;
-                  });
-                }}
-              >
-                <MenuIcon />
-              </button>
-              {careerSourceMenuOpen && (
-                <div id="career-source-menu" className="feed-source-menu" role="group" aria-label="Career sites and favorites">
-                  <div className="feed-source-menu-header">
-                    <strong>Career sites</strong>
-                    <span>{careerSourceFavoriteDraft.length} / {favoriteRequiredCount} favorites</span>
-                  </div>
-                  <div className="feed-source-menu-item aggregate">
-                    <CareerSourceOption
-                      tab={{ key: 'all', label: 'All career sites' }}
-                      active={sourceFilter.length === 0}
-                      onSelect={() => {
-                        selectCareerSource({ key: 'all', label: 'All career sites' });
-                        setCareerSourceMenuOpen(false);
-                      }}
-                    />
-                  </div>
-                  {careerSourceTabs.map((tab) => {
-                    const favorite = careerSourceFavoriteDraft.includes(tab.key);
-                    return (
-                      <div key={tab.key} className="feed-source-menu-item">
-                        <CareerSourceOption
-                          tab={tab}
-                          active={sourceFilter.length === 1 && sourceFilter[0] === tab.label}
-                          onSelect={() => {
-                            selectCareerSource(tab);
-                            setCareerSourceMenuOpen(false);
-                          }}
-                        />
-                        <CareerFavoriteButton
-                          tab={tab}
-                          favorite={favorite}
-                          disabled={careerSourceFavoriteSaving || (!favorite && careerSourceFavoriteDraft.length >= CAREER_SOURCE_FAVORITE_LIMIT)}
-                          onToggle={toggleCareerFavorite}
-                        />
-                      </div>
-                    );
-                  })}
-                  <div className="feed-source-menu-footer">
-                    {careerSourceFavoriteError && <span role="alert">{careerSourceFavoriteError}</span>}
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      disabled={careerSourceFavoriteSaving || careerSourceFavoriteDraft.length !== favoriteRequiredCount || !profile?.id}
-                      onClick={saveCareerFavorites}
-                    >
-                      {careerSourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              className={`jobs-filter-toggle${remote ? ' active' : ''}`}
-              aria-pressed={remote}
-              onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}
-            >
-              Remote
-            </button>
-            <button
-              type="button"
-              className={`jobs-filter-toggle${liveOnly ? ' active' : ''}`}
-              aria-pressed={liveOnly}
-              onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
-            >
-              Live
-            </button>
-          </div>
-        ) : (
+        {embedded && (
           <>
             <div className="jobs-embedded-filter-row">
-              <button type="button" className={`jobs-filter-toggle${remote ? ' active' : ''}`} aria-pressed={remote} onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}>Remote</button>
+              <button type="button" className={`jobs-filter-toggle${workSetting === 'remote' ? ' active' : ''}`} aria-pressed={workSetting === 'remote'} onClick={() => { bustOnNextFetchRef.current = true; setWorkSetting((current) => current === 'remote' ? 'all' : 'remote'); }}>Remote</button>
               <button type="button" className={`jobs-filter-toggle${liveOnly ? ' active' : ''}`} aria-pressed={liveOnly} onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}>Live only</button>
             </div>
             {availableSources.length > 1 && (
@@ -711,26 +466,24 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
                 })}
               </div>
             )}
+            <div className="opportunities-sort-row">
+              <label htmlFor="opp-sort" style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>
+                Sort by
+              </label>
+              <select
+                id="opp-sort"
+                value={sort}
+                onChange={e => setSort(e.target.value)}
+                className="form-input"
+                style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
+              >
+                {JOB_SORT_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
           </>
         )}
-
-        {/* Sort */}
-        <div className="opportunities-sort-row">
-          <label htmlFor="opp-sort" style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)' }}>
-            Sort by
-          </label>
-          <select
-            id="opp-sort"
-            value={sort}
-            onChange={e => setSort(e.target.value)}
-            className="form-input"
-            style={{ width: 'auto', padding: '6px 10px', fontSize: '.8rem' }}
-          >
-            {OPPORTUNITY_SORT_OPTIONS.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </div>
 
         {/* Status messages */}
         {error && (
@@ -764,7 +517,9 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
               {search ? 'No jobs found' : 'No matching jobs'}
             </div>
             <div className="empty-desc">
-              Adjust the career-site filters above, or search for a specific job from Search.
+              {embedded
+                ? 'Adjust the job filters, or try a broader search.'
+                : 'Choose another job view or career site from the Jobs sidebar.'}
             </div>
           </div>
         )}
@@ -792,16 +547,24 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
                     <span>{totalCount.toLocaleString()}</span>
                   </div>
                   <div className="job-result-tabs" role="list" aria-label="Live jobs">
-                    {displayed.map((job, index) => (
-                      <JobTab
-                        key={job.id}
-                        job={job}
-                        index={index}
-                        onSelect={() => {
-                          try { sessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
-                          navigate(`/opportunities/${encodeURIComponent(job.id)}`, { state: { job } });
-                        }}
-                      />
+                    {jobSections.map((section) => (
+                      <div key={section.key} className="job-result-section" role="group" aria-labelledby={`job-section-${section.key}`}>
+                        <div id={`job-section-${section.key}`} className="job-result-section-heading">
+                          <strong>{section.label}</strong>
+                          <span>{section.jobs.length} loaded</span>
+                        </div>
+                        {section.jobs.map((job, index) => (
+                          <JobTab
+                            key={job.id}
+                            job={job}
+                            index={`${section.key}-${index}`}
+                            onSelect={() => {
+                              try { sessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
+                              navigate(`/opportunities/${encodeURIComponent(job.id)}`, { state: { job } });
+                            }}
+                          />
+                        ))}
+                      </div>
                     ))}
                     {hasMore && (
                       <div ref={sentinelRef} className="job-list-sentinel" aria-hidden="true">
@@ -952,7 +715,8 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         </div>
         {!embedded && (
           <aside className="jobs-page-right-tabs" aria-label="Job tools">
-            <div className="jobs-page-tool-pair">
+            <JobsSidebarControls />
+            <div className="jobs-page-role-links">
               <Link to="/settings?tab=preferences" className="jobs-page-tool jobs-page-tool--compact" title={profile?.preferences?.role || 'Choose your target role'}>
                 <strong>Roles</strong>
               </Link>
@@ -960,21 +724,18 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
                 <strong>Saved</strong>
               </Link>
             </div>
-            <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
-              <strong>Discover groups</strong>
-            </Link>
-            <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
-              <strong>Messages</strong>
-            </Link>
-            <HomeFeedTools
-              showSources
-              showAccounts={false}
-              sourceIds={HOME_FEED_SOURCE_IDS}
-            />
-            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
-              <strong>Resume Builder</strong>
-              <span>Build, preview, and export</span>
-            </Link>
+            <div className="jobs-page-rail-bottom">
+              <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
+                <strong>Discover groups</strong>
+              </Link>
+              <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
+                <strong>Messages</strong>
+              </Link>
+              <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
+                <strong>Resume Builder</strong>
+                <span>Build, preview, and export</span>
+              </Link>
+            </div>
           </aside>
         )}
         </div>
