@@ -36,9 +36,15 @@ export function UfiFeedContent({ embedded = false }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const textareaRef = useRef(null);
+  const topicButtonRef = useRef(null);
+  const topicPanelRef = useRef(null);
 
   const [groups,   setGroups]   = useState([]);
   const [groupId,  setGroupId]  = useState('ufi-general');
+  const [selectedTopicIds, setSelectedTopicIds] = useState([]);
+  const [draftTopicIds, setDraftTopicIds] = useState([]);
+  const [topicFilterOpen, setTopicFilterOpen] = useState(false);
+  const [topicSearch, setTopicSearch] = useState('');
   const [content,  setContent]  = useState('');
   const [composing, setComposing] = useState(false);
   const [loading,  setLoading]  = useState(false);
@@ -75,10 +81,35 @@ export function UfiFeedContent({ embedded = false }) {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (!topicFilterOpen) return undefined;
+    setDraftTopicIds(selectedTopicIds);
+    setTopicSearch('');
+
+    function closeTopics(event) {
+      if (topicButtonRef.current?.contains(event.target) || topicPanelRef.current?.contains(event.target)) return;
+      setTopicFilterOpen(false);
+    }
+
+    function closeTopicsOnEscape(event) {
+      if (event.key === 'Escape') setTopicFilterOpen(false);
+    }
+
+    document.addEventListener('pointerdown', closeTopics);
+    document.addEventListener('keydown', closeTopicsOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeTopics);
+      document.removeEventListener('keydown', closeTopicsOnEscape);
+    };
+  }, [topicFilterOpen, selectedTopicIds]);
+
+  const selectedTopicKey = selectedTopicIds.join(',');
   const loadRecentFeed = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setFeedLoading(true);
     try {
-      const { data } = await client.get('/posts', { params: { limit: FEED_PAGE_SIZE } });
+      const params = { limit: FEED_PAGE_SIZE };
+      if (selectedTopicKey) params.groupIds = selectedTopicKey;
+      const { data } = await client.get('/posts', { params });
       setFeed(orderNewestFeedCohorts(data.posts || []));
       setFeedHasMore(!!data.hasMore);
     } catch {
@@ -86,7 +117,7 @@ export function UfiFeedContent({ embedded = false }) {
     } finally {
       setFeedLoading(false);
     }
-  }, []);
+  }, [selectedTopicKey]);
 
   useEffect(() => {
     loadRecentFeed();
@@ -113,7 +144,9 @@ export function UfiFeedContent({ embedded = false }) {
     if (feedLoadingMore || !feedHasMore) return;
     setFeedLoadingMore(true);
     try {
-      const { data } = await client.get('/posts', { params: { limit: FEED_PAGE_SIZE, offset: feed.length } });
+      const params = { limit: FEED_PAGE_SIZE, offset: feed.length };
+      if (selectedTopicKey) params.groupIds = selectedTopicKey;
+      const { data } = await client.get('/posts', { params });
       const incoming = data.posts || [];
       setFeed(prev => {
         const knownIds = new Set(prev.map(p => p.id));
@@ -126,7 +159,19 @@ export function UfiFeedContent({ embedded = false }) {
 
   function openCompose() {
     setComposing(true);
+    setTopicFilterOpen(false);
     setTimeout(() => textareaRef.current?.focus(), 50);
+  }
+
+  function toggleDraftTopic(topicId) {
+    setDraftTopicIds(current => current.includes(topicId)
+      ? current.filter(id => id !== topicId)
+      : [...current, topicId]);
+  }
+
+  function applyTopicFilter() {
+    setSelectedTopicIds(draftTopicIds);
+    setTopicFilterOpen(false);
   }
 
   // Local preview URLs are only ever released explicitly (resetMedia) or on
@@ -202,37 +247,87 @@ export function UfiFeedContent({ embedded = false }) {
   }
 
   const ContentShell = embedded ? 'section' : Layout;
+  const normalizedTopicSearch = topicSearch.trim().toLowerCase();
+  const visibleTopicGroups = normalizedTopicSearch
+    ? groups.filter(group => `${group.name} ${group.category || ''}`.toLowerCase().includes(normalizedTopicSearch))
+    : groups;
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
-      {/* ── Compose card ── */}
-      <div className="card" style={{ maxWidth: embedded ? 'none' : 640, marginBottom: 16 }}>
-        {!composing ? (
-          /* Collapsed — click to open */
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'text' }}
-            onClick={openCompose}
+      <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
+        <div className="feed-topic-filter ufi-topic-filter">
+          <button
+            ref={topicButtonRef}
+            type="button"
+            className={`feed-toolbar-control feed-topic-filter-trigger${topicFilterOpen || selectedTopicIds.length ? ' active' : ''}`}
+            aria-label="Filter UFI posts by topic"
+            aria-expanded={topicFilterOpen}
+            aria-controls="ufi-topic-filter-panel"
+            onClick={() => setTopicFilterOpen(open => !open)}
           >
-            <div className="avatar avatar-md" style={{ flexShrink: 0 }}>
-              {initials(profile?.name)}
+            Topics{selectedTopicIds.length ? ` (${selectedTopicIds.length})` : ''}
+          </button>
+          {topicFilterOpen && (
+            <div ref={topicPanelRef} id="ufi-topic-filter-panel" className="feed-topic-filter-popover">
+              <div className="feed-topic-filter-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  disabled={draftTopicIds.length === 0}
+                  onClick={() => setDraftTopicIds([])}
+                >
+                  Clear
+                </button>
+                <button type="button" className="btn btn-primary btn-sm" onClick={applyTopicFilter}>
+                  Apply topics
+                </button>
+              </div>
+              <label className="feed-topic-filter-search">
+                <input
+                  type="search"
+                  className="form-input"
+                  aria-label="Search UFI topics"
+                  value={topicSearch}
+                  placeholder="Search topics"
+                  autoFocus
+                  onChange={event => setTopicSearch(event.target.value)}
+                />
+              </label>
+              <div className="feed-topic-filter-count" aria-live="polite">
+                {draftTopicIds.length ? `${draftTopicIds.length} selected` : 'All topics'}
+              </div>
+              {visibleTopicGroups.length > 0 ? (
+                <div className="feed-topic-filter-options" role="group" aria-label="UFI topics">
+                  {visibleTopicGroups.map(group => {
+                    const active = draftTopicIds.includes(group.id);
+                    return (
+                      <button
+                        key={group.id}
+                        type="button"
+                        className={`feed-topic-filter-option${active ? ' active' : ''}`}
+                        aria-pressed={active}
+                        onClick={() => toggleDraftTopic(group.id)}
+                      >
+                        {group.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="feed-topic-filter-empty">No matching topics</div>
+              )}
             </div>
-            <div
-              style={{
-                flex: 1, padding: '10px 16px', borderRadius: 22,
-                border: '1.5px solid var(--border)', background: 'var(--surface)',
-                color: 'var(--muted)', fontSize: '.9rem',
-              }}
-            >
-              {placeholder}
-            </div>
-            <button className="btn btn-primary btn-sm" style={{ minWidth: 80 }}>
-              Post
-            </button>
-          </div>
-        ) : (
-          /* Expanded compose form */
+          )}
+        </div>
+        <button type="button" className="btn btn-primary btn-sm ufi-compose-button" onClick={openCompose}>
+          Post
+        </button>
+      </div>
+
+      {composing && (
+        <div className="card ufi-compose-card" style={{ maxWidth: embedded ? 'none' : 640 }}>
           <form onSubmit={handleSubmit}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 12 }}>
               <div className="avatar avatar-md" style={{ flexShrink: 0, marginTop: 4 }}>
@@ -337,8 +432,8 @@ export function UfiFeedContent({ embedded = false }) {
             </div>
             {error && <div className="auth-error" style={{ marginTop: 8 }}>{error}</div>}
           </form>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* ── Community feed ── */}
       <div style={{ maxWidth: embedded ? 'none' : 640 }}>

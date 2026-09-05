@@ -26701,7 +26701,20 @@ app.get('/posts', authenticate, async (req, res) => {
   try {
     const limit = boundedLimit(req.query.limit, 50, 100);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
-    const { posts: communityPosts, hasMore } = await getCommunityPosts({ viewerId: req.user.id, limit, offset });
+    const hasGroupFilter = typeof req.query.groupIds === 'string';
+    const requestedGroupIds = hasGroupFilter
+      ? [...new Set(req.query.groupIds.split(',').map(id => id.trim()).filter(Boolean))]
+      : null;
+    const visibleGroupIds = requestedGroupIds?.filter(id => {
+      const group = groups.find(candidate => candidate.id === id);
+      return Boolean(group && !group.isExternal && canSeeGroup(group, req.user.id));
+    }) || null;
+    const { posts: communityPosts, hasMore } = await getCommunityPosts({
+      viewerId: req.user.id,
+      groupIds: hasGroupFilter ? visibleGroupIds : null,
+      limit,
+      offset,
+    });
     res.json({ posts: communityPosts, hasMore });
   } catch (e) { console.error('GET /posts:', e); res.status(500).json({ error: 'Internal server error' }); }
 });

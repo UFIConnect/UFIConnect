@@ -550,6 +550,22 @@ input, textarea, select { font-family: inherit; }
   position: static;
 }
 .home-embedded-feed { min-width: 0; }
+.ufi-feed-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ufi-topic-filter .feed-topic-filter-popover {
+  right: auto;
+  left: 0;
+}
+.ufi-compose-button {
+  min-width: 82px;
+  min-height: 40px;
+}
+.ufi-compose-card { margin-bottom: 16px; }
 .home-feed-right-tabs .profile-panel,
 .home-feed-right-tabs .profile-panel-trigger,
 .home-feed-right-tabs .profile-panel-content {

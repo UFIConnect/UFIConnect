@@ -3229,7 +3229,7 @@ export default function Feed({ forcedMode } = {}) {
         )}
 
         <div className="feed-specialized-actions">
-          <div className="feed-specialized-filter">
+          {!isLocationFeed && <div className="feed-specialized-filter">
             <button
               ref={filterBtnRef}
               className="feed-toolbar-control"
@@ -3260,7 +3260,7 @@ export default function Feed({ forcedMode } = {}) {
                 includeTopics={!isLocationFeed}
               />
             )}
-          </div>
+          </div>}
           {isLocationFeed && (
             <TopicFilterControl
               topics={filters.topics}
