@@ -74,6 +74,34 @@ function SourceMark({ source, label, size = 15, active = false }) {
   );
 }
 
+function MenuIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h16" />
+    </svg>
+  );
+}
+
+function FeedSourceOption({ tab, active, onSelect, compact = false }) {
+  const meta = SOURCE_META[tab.key];
+  const color = tab.key === 'all' ? 'var(--primary)' : (meta?.color || 'var(--primary)');
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}`}
+      style={{ '--feed-source-color': color }}
+      onClick={onSelect}
+    >
+      {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
+      <span>{tab.label}</span>
+    </button>
+  );
+}
+
 function LocationMatchBadge({ post }) {
   if (!post?.matchedByLocation) return null;
   return (
@@ -2181,6 +2209,7 @@ export default function Feed({ forcedMode } = {}) {
   const [search,        setSearch]       = useState(_saved?.search || '');
   const [filterOpen,    setFilterOpen]   = useState(false);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const [mediaLightboxPostId, setMediaLightboxPostId] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
   const [activeTabs,    setActiveTabs]    = useState(_saved?.activeTabs || []); // [] = All
@@ -2202,6 +2231,8 @@ export default function Feed({ forcedMode } = {}) {
   const panelRef      = useRef(null);
   const topicFilterBtnRef = useRef(null);
   const topicPanelRef = useRef(null);
+  const sourceMenuBtnRef = useRef(null);
+  const sourceMenuPanelRef = useRef(null);
   const knownIds      = useRef(new Set((_cache?.posts || []).map(p => p.id).filter(Boolean)));
   const markKnownId = useCallback((id) => {
     if (!id || knownIds.current.has(id)) return;
@@ -2521,6 +2552,7 @@ export default function Feed({ forcedMode } = {}) {
     setFilters(nextFilters);
     setFilterOpen(false);
     setTopicFilterOpen(false);
+    setSourceMenuOpen(false);
     setRemotePage(2);
     setRemoteHasMore(true);
     if (nextMode !== 'countries') setTravelLiveFeeds([]);
@@ -2546,6 +2578,15 @@ export default function Feed({ forcedMode } = {}) {
       bust: false,
     });
   }, [loadFeed]);
+
+  const activateHomeView = useCallback((mode) => {
+    if (viewModeRef.current === mode) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
+      return;
+    }
+    switchViewMode(mode);
+  }, [switchViewMode]);
 
   const setHomeToolPanel = useCallback((panel) => {
     const params = new URLSearchParams(routeLocation.search);
@@ -2600,6 +2641,13 @@ export default function Feed({ forcedMode } = {}) {
       topics: Array.isArray(topics) ? topics : [],
     });
   }, [applyFilters]);
+
+  const openUfiShop = useCallback(() => {
+    setFilterOpen(false);
+    setTopicFilterOpen(false);
+    setSourceMenuOpen(false);
+    navigate('/?feed=ufi&channel=shop');
+  }, [navigate]);
 
 
   const clearFeedControls = useCallback(() => {
@@ -3078,7 +3126,7 @@ export default function Feed({ forcedMode } = {}) {
     return () => obs.disconnect();
   }, [loadMoreRemote, loading, processed.length]);
 
-  // Close either feed-filter popover on an outside click.
+  // Close any feed-filter popover on an outside click.
   useEffect(() => {
     function handleClick(e) {
       if (
@@ -3091,10 +3139,15 @@ export default function Feed({ forcedMode } = {}) {
         topicPanelRef.current && !topicPanelRef.current.contains(e.target) &&
         topicFilterBtnRef.current && !topicFilterBtnRef.current.contains(e.target)
       ) setTopicFilterOpen(false);
+      if (
+        sourceMenuOpen &&
+        sourceMenuPanelRef.current && !sourceMenuPanelRef.current.contains(e.target) &&
+        sourceMenuBtnRef.current && !sourceMenuBtnRef.current.contains(e.target)
+      ) setSourceMenuOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [filterOpen, topicFilterOpen]);
+  }, [filterOpen, sourceMenuOpen, topicFilterOpen]);
 
   // Compute active source list from actual posts
   const activeSources = useMemo(
@@ -3195,7 +3248,7 @@ export default function Feed({ forcedMode } = {}) {
 
   const hasCommandCenterMembership = ['pro', 'business'].includes(profile?.plan);
   const usesSourceControls = ['feed', 'following'].includes(viewMode);
-  const showsAdvancedFilters = !usesSourceControls;
+  const showsAdvancedFilters = !usesSourceControls && viewMode !== 'groups';
   const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
@@ -3204,6 +3257,18 @@ export default function Feed({ forcedMode } = {}) {
     + (filters.timeRange !== 'all' ? 1 : 0)
     + (isLocationFeed ? 0 : filters.topics.length);
   const selectedSourceLabel = activeTabs.map(k => SOURCE_META[k]?.label || k).join(', ');
+  const currentSourceTabs = viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
+  const selectedSourceKey = activeTabs[0] || filters.sources[0] || null;
+  const compactSourceTabs = [
+    currentSourceTabs.find(tab => tab.key === selectedSourceKey),
+    ...currentSourceTabs.filter(tab => tab.key !== selectedSourceKey),
+  ].filter(Boolean).slice(0, 2);
+  const fullSourceTabs = viewMode === 'following'
+    ? currentSourceTabs
+    : [{ key: 'all', label: 'All sources', icon: '' }, ...currentSourceTabs];
+  const isSourceActive = (key) => key === 'all'
+    ? !selectedSourceKey
+    : selectedSourceKey === key;
 
   return (
     <Layout wide={!forcedMode}>
@@ -3216,7 +3281,7 @@ export default function Feed({ forcedMode } = {}) {
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
       <div className="home-feed-content">
       {viewMode === 'ufi' ? (
-        <UfiFeedContent embedded />
+        <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
       ) : (
       <>
       {/* Specialized feeds keep location and filter controls together. */}
@@ -3334,33 +3399,48 @@ export default function Feed({ forcedMode } = {}) {
           list of sources can appear in the other view. */}
       {usesSourceControls && (
         <div className="feed-source-filter-row">
-          <div className="feed-source-tabs" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
-            {(viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS).map(tab => {
-              const meta  = SOURCE_META[tab.key];
-              const color = meta?.color || 'var(--primary)';
-              const active = tab.key === 'all' ? activeTabs.length === 0 : activeTabs.includes(tab.key);
-              const activeColor = tab.key === 'all' ? 'var(--primary)' : color;
-              return (
-                <button
+          <div className="feed-source-picker">
+            <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
+              {compactSourceTabs.map(tab => (
+                <FeedSourceOption
                   key={tab.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => toggleTab(tab.key)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
-                    padding: '6px 13px', borderRadius: 20, whiteSpace: 'nowrap',
-                    border: `1.5px solid ${active ? activeColor : 'var(--border)'}`,
-                    background: active ? activeColor : 'var(--surface)',
-                    color: active ? '#fff' : 'var(--text)',
-                    fontWeight: active ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-                  }}
-                >
-                  {tab.key !== 'all' && <SourceMark source={tab.key} label={tab.icon} size={13} active={active} />}
-                  {tab.label}
-                </button>
-              );
-            })}
+                  tab={tab}
+                  active={isSourceActive(tab.key)}
+                  compact
+                  onSelect={() => toggleTab(tab.key)}
+                />
+              ))}
+            </div>
+            <button
+              ref={sourceMenuBtnRef}
+              type="button"
+              className={`feed-source-menu-button${sourceMenuOpen ? ' active' : ''}`}
+              aria-label="View all feed sources"
+              aria-expanded={sourceMenuOpen}
+              aria-controls="feed-source-menu"
+              onClick={() => {
+                setTopicFilterOpen(false);
+                setFilterOpen(false);
+                setSourceMenuOpen(open => !open);
+              }}
+            >
+              <MenuIcon />
+            </button>
+            {sourceMenuOpen && (
+              <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="radiogroup" aria-label="All feed sources">
+                {fullSourceTabs.map(tab => (
+                  <FeedSourceOption
+                    key={tab.key}
+                    tab={tab}
+                    active={isSourceActive(tab.key)}
+                    onSelect={() => {
+                      toggleTab(tab.key);
+                      setSourceMenuOpen(false);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
           <TopicFilterControl
             topics={filters.topics}
@@ -3373,6 +3453,28 @@ export default function Feed({ forcedMode } = {}) {
             buttonRef={topicFilterBtnRef}
             panelRef={topicPanelRef}
           />
+          <button type="button" className="feed-toolbar-control feed-topic-filter-trigger home-shop-button" onClick={openUfiShop}>
+            Shop
+          </button>
+        </div>
+      )}
+
+      {viewMode === 'groups' && (
+        <div className="feed-source-filter-row feed-group-filter-row">
+          <TopicFilterControl
+            topics={filters.topics}
+            onChange={applyTopicFilters}
+            open={topicFilterOpen}
+            onToggle={(open) => {
+              setFilterOpen(false);
+              setTopicFilterOpen(open);
+            }}
+            buttonRef={topicFilterBtnRef}
+            panelRef={topicPanelRef}
+          />
+          <Link to="/groups?create=1" className="feed-toolbar-control feed-topic-filter-trigger group-create-button">
+            Create a group
+          </Link>
         </div>
       )}
 
@@ -3700,36 +3802,38 @@ export default function Feed({ forcedMode } = {}) {
               { key: 'ufi', label: 'UFI' },
               { key: 'following', label: 'Following' },
             ].map(({ key, label }) => (
-              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
-            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => switchViewMode('groups')}>Groups</button>
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => activateHomeView('groups')}>Groups</button>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
             ].map(({ key, label }) => (
-              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
             <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
+          </div>
+          <div className="home-feed-rail-bottom">
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-          </div>
-          <HomeFeedTools
-            showSources
-            sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
-            activePanel={requestedHomeToolPanel}
-            onActivePanelChange={setHomeToolPanel}
-          />
-          <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
-            <span>
-              <span className="home-feed-command-center-title">Command Center</span>
-              <span className="home-feed-command-center-summary">
-                {hasCommandCenterMembership
-                  ? 'Tools and automation'
-                  : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
+            <HomeFeedTools
+              showSources
+              sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
+              activePanel={requestedHomeToolPanel}
+              onActivePanelChange={setHomeToolPanel}
+            />
+            <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
+              <span>
+                <span className="home-feed-command-center-title">Command Center</span>
+                <span className="home-feed-command-center-summary">
+                  {hasCommandCenterMembership
+                    ? 'Tools and automation'
+                    : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
+                </span>
               </span>
-            </span>
-          </Link>
+            </Link>
+          </div>
         </aside>
       )}
       </div>

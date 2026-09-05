@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -207,6 +207,7 @@ export default function Groups() {
 
 export function GroupsContent({ embedded = false }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [groups,      setGroups]      = useState([]);
   const [joined,      setJoined]      = useState(new Set());
   const [categories,  setCategories]  = useState([]);
@@ -216,7 +217,7 @@ export function GroupsContent({ embedded = false }) {
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
-  const [showCreate,  setShowCreate]  = useState(false);
+  const [showCreate,  setShowCreate]  = useState(() => new URLSearchParams(location.search).get('create') === '1');
   const [joiningId,   setJoiningId]   = useState(null);
   const [selectedGroupId, setSelectedGroupId] = useState(null);
 
@@ -259,6 +260,10 @@ export function GroupsContent({ embedded = false }) {
   useEffect(() => {
     loadGroups();
   }, []);
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('create') === '1') setShowCreate(true);
+  }, [location.search]);
 
   // Scrolling back up to the top acts as pull-to-refresh, same as every
   // other list page — reuses the same bust path the manual Refresh button

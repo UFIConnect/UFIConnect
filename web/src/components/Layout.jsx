@@ -26,9 +26,9 @@ function ShellIcon({ name, size = 20 }) {
     countries: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a14 14 0 0 1 0 18" /><path d="M12 3a14 14 0 0 0 0 18" /></>,
     restaurants: <><path d="M7 3v8" /><path d="M4 3v5a3 3 0 0 0 6 0V3" /><path d="M7 11v10" /><path d="M17 3v18" /><path d="M17 3c3 1.5 3 7.5 0 9" /></>,
     sources: <><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="m3 12 9 4.5 9-4.5" /><path d="m3 16.5 9 4.5 9-4.5" /></>,
+    menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
     skills: <><path d="M12 3 14.5 8l5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9L9.5 8 12 3Z" /></>,
     files: <><path d="M6 3h8l4 4v14H6V3Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></>,
-    drawer: <path d="m15 18-6-6 6-6" />,
     close: <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></>,
     refresh: <><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.5L20 9" /><path d="m4 15 2.5 2.5A7 7 0 0 0 17.9 15" /></>,
   };
@@ -292,6 +292,13 @@ export default function Layout({ children, wide = false }) {
 
   function selectMobileFeed(feed) {
     saveMobileFeed(feed);
+    const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
+    if (isHomeFeedRoute && mobileFeedMode === next) {
+      setMobileMenuOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
+      return;
+    }
     navigateToMobileFeed(feed);
   }
 
@@ -417,22 +424,22 @@ export default function Layout({ children, wide = false }) {
             >
               <ShellIcon name="search" size={19} />
             </button>
+            <button
+              type="button"
+              className={`mobile-app-header-action${mobileMenuOpen ? ' active' : ''}`}
+              aria-label="Open menu"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-feed-drawer"
+              title="Menu"
+              onClick={() => {
+                setMobileHeaderPopup(null);
+                setMobileMenuOpen(open => !open);
+              }}
+            >
+              <ShellIcon name="menu" size={21} />
+            </button>
           </div>
         </header>
-      )}
-
-      {profile && !mobileMenuOpen && !mobileHeaderPopup && (
-        <button
-          type="button"
-          className="mobile-feed-drawer-edge"
-          aria-label="Open feed sidebar"
-          aria-expanded="false"
-          aria-controls="mobile-feed-drawer"
-          title="Open feed sidebar"
-          onClick={() => setMobileMenuOpen(true)}
-        >
-          <ShellIcon name="drawer" size={18} />
-        </button>
       )}
 
       {profile && mobileHeaderPopup === 'search' && (
@@ -536,38 +543,42 @@ export default function Layout({ children, wide = false }) {
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
-              <ShellIcon name="posts" size={18} />
-              UFI
-            </button>
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'following'} onClick={() => selectMobileFeed('following')}>
-              <ShellIcon name="following" size={18} />
-              Following
-            </button>
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
-              <ShellIcon name="groups" size={18} />
-              Groups
-            </button>
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
-              <ShellIcon name="countries" size={18} />
-              Travel
-            </button>
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'restaurants'} onClick={() => selectMobileFeed('restaurants')}>
-              <ShellIcon name="restaurants" size={18} />
-              Restaurants
-            </button>
-            <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
-              <ShellIcon name="messages" size={18} />
-              Messages
-            </NavLink>
-            <HomeFeedTools
-              showSources
-              sourceIds={mobileSourceIds}
-            />
-            <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
-              <ShellIcon name="command" size={18} />
-              Command Center
-            </NavLink>
+            <div className="mobile-feed-drawer-feeds">
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
+                <ShellIcon name="posts" size={18} />
+                UFI
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'following' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'following'} onClick={() => selectMobileFeed('following')}>
+                <ShellIcon name="following" size={18} />
+                Following
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
+                <ShellIcon name="groups" size={18} />
+                Groups
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
+                <ShellIcon name="countries" size={18} />
+                Travel
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'restaurants' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'restaurants'} onClick={() => selectMobileFeed('restaurants')}>
+                <ShellIcon name="restaurants" size={18} />
+                Restaurants
+              </button>
+            </div>
+            <div className="mobile-feed-drawer-bottom">
+              <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="messages" size={18} />
+                Messages
+              </NavLink>
+              <HomeFeedTools
+                showSources
+                sourceIds={mobileSourceIds}
+              />
+              <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="command" size={18} />
+                Command Center
+              </NavLink>
+            </div>
           </div>
         </aside>
       )}

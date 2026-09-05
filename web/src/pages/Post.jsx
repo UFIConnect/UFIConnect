@@ -33,7 +33,7 @@ const COMMUNITY_ICONS = {
   'ufi-shop':     'SHOP',
 };
 
-export function UfiFeedContent({ embedded = false }) {
+export function UfiFeedContent({ embedded = false, initialShop = false }) {
   const { profile } = useAuth();
   const { showToast } = useToast();
   const textareaRef = useRef(null);
@@ -41,8 +41,8 @@ export function UfiFeedContent({ embedded = false }) {
   const topicPanelRef = useRef(null);
 
   const [groups,   setGroups]   = useState([]);
-  const [groupId,  setGroupId]  = useState('ufi-general');
-  const [selectedTopicIds, setSelectedTopicIds] = useState([]);
+  const [groupId,  setGroupId]  = useState(initialShop ? 'ufi-shop' : 'ufi-general');
+  const [selectedTopicIds, setSelectedTopicIds] = useState(initialShop ? ['ufi-shop'] : []);
   const [draftTopicIds, setDraftTopicIds] = useState([]);
   const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [topicSearch, setTopicSearch] = useState('');
@@ -74,13 +74,31 @@ export function UfiFeedContent({ embedded = false }) {
       .then(({ data }) => {
         const internal = data.groups || [];
         setGroups(internal);
-        if (internal.length > 0) {
+        if (initialShop && internal.some(group => group.id === 'ufi-shop')) {
+          setGroupId('ufi-shop');
+        } else if (internal.length > 0) {
           const gen = internal.find(g => g.id === 'ufi-general');
           setGroupId(gen ? gen.id : internal[0].id);
         }
       })
       .catch(() => {});
-  }, []);
+  }, [initialShop]);
+
+  useEffect(() => {
+    if (initialShop) {
+      setSelectedTopicIds(['ufi-shop']);
+      setGroupId('ufi-shop');
+      return;
+    }
+    setSelectedTopicIds(current => (
+      current.length === 1 && current[0] === 'ufi-shop' ? [] : current
+    ));
+    setGroupId(current => (
+      current === 'ufi-shop'
+        ? (groups.find(group => group.id === 'ufi-general')?.id || groups[0]?.id || 'ufi-general')
+        : current
+    ));
+  }, [groups, initialShop]);
 
   useEffect(() => {
     if (!topicFilterOpen) return undefined;
@@ -173,17 +191,6 @@ export function UfiFeedContent({ embedded = false }) {
   function applyTopicFilter() {
     setSelectedTopicIds(draftTopicIds.filter(id => id !== 'ufi-shop'));
     setTopicFilterOpen(false);
-  }
-
-  function toggleShop() {
-    setTopicFilterOpen(false);
-    if (selectedTopicIds.length === 1 && selectedTopicIds[0] === 'ufi-shop') {
-      setSelectedTopicIds([]);
-      setGroupId(groups.find(group => group.id === 'ufi-general')?.id || groups[0]?.id || 'ufi-general');
-      return;
-    }
-    setSelectedTopicIds(['ufi-shop']);
-    setGroupId('ufi-shop');
   }
 
   // Local preview URLs are only ever released explicitly (resetMedia) or on
@@ -336,15 +343,6 @@ export function UfiFeedContent({ embedded = false }) {
             </div>
           )}
         </div>
-        <button
-          type="button"
-          className={`feed-toolbar-control feed-topic-filter-trigger ufi-shop-button${shopActive ? ' active' : ''}`}
-          aria-label="Show UFI Shop posts"
-          aria-pressed={shopActive}
-          onClick={toggleShop}
-        >
-          Shop
-        </button>
         <button type="button" className="btn btn-primary btn-sm ufi-compose-button" onClick={openCompose}>
           Post
         </button>
