@@ -287,9 +287,32 @@ input, textarea, select { font-family: inherit; }
 .feed-unified-control-bar .feed-topic-filter { margin-left: auto; }
 .feed-unified-control-bar .home-shop-button { flex: 0 0 auto; }
 .feed-group-filter-row { justify-content: flex-end; }
+.feed-toolbar-primary-action {
+  height: 40px;
+  min-height: 40px;
+  padding: 7px 14px;
+  border-radius: 20px;
+  font-size: .8rem;
+  font-weight: 650;
+}
 .group-create-button {
   min-width: 116px;
   text-decoration: none;
+}
+.groups-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+}
+.groups-page-heading { flex: 1 1 170px; min-width: 0; }
+.groups-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
 }
 .feed-source-tabs {
   display: flex;

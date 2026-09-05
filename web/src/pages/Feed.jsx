@@ -14,6 +14,7 @@ import {
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
+import TopicFilterControl from '../components/TopicFilterControl';
 import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -636,106 +637,6 @@ function PostCardSkeleton() {
   );
 }
 
-
-function TopicChoices({ selectedTopics = [], onToggle, search = '' }) {
-  const normalizedSearch = search.trim().toLowerCase();
-  const visibleTopics = normalizedSearch
-    ? ALL_INTERESTS.filter(topic => topic.toLowerCase().includes(normalizedSearch))
-    : ALL_INTERESTS;
-
-  if (visibleTopics.length === 0) {
-    return <div className="feed-topic-filter-empty">No matching topics</div>;
-  }
-
-  return (
-    <div className="feed-topic-filter-options" role="group" aria-label="Topics">
-      {visibleTopics.map(topic => {
-        const active = selectedTopics.includes(topic);
-        return (
-          <button
-            key={topic}
-            type="button"
-            className={`feed-topic-filter-option${active ? ' active' : ''}`}
-            aria-pressed={active}
-            onClick={() => onToggle(topic)}
-          >
-            {topic}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function TopicFilterControl({ topics = [], onChange, open, onToggle, buttonRef, panelRef }) {
-  const activeTopics = Array.isArray(topics) ? topics : [];
-  const [draftTopics, setDraftTopics] = useState(activeTopics);
-  const [topicSearch, setTopicSearch] = useState('');
-
-  useEffect(() => {
-    if (!open) return;
-    setDraftTopics(Array.isArray(topics) ? topics : []);
-    setTopicSearch('');
-  }, [open, topics]);
-
-  function toggleTopic(topic) {
-    setDraftTopics(current => current.includes(topic)
-      ? current.filter(item => item !== topic)
-      : [...current, topic]);
-  }
-
-  function applyTopics() {
-    onChange(draftTopics);
-    onToggle(false);
-  }
-
-  return (
-    <div className="feed-topic-filter">
-      <button
-        ref={buttonRef}
-        type="button"
-        className={`feed-toolbar-control feed-topic-filter-trigger${open || activeTopics.length ? ' active' : ''}`}
-        aria-label="Filter feed by topic"
-        aria-expanded={open}
-        onClick={() => onToggle(!open)}
-      >
-        Topics{activeTopics.length ? ` (${activeTopics.length})` : ''}
-      </button>
-      {open && (
-        <div ref={panelRef} className="feed-topic-filter-popover">
-          <div className="feed-topic-filter-actions">
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm"
-              disabled={draftTopics.length === 0}
-              onClick={() => setDraftTopics([])}
-            >
-              Clear
-            </button>
-            <button type="button" className="btn btn-primary btn-sm" onClick={applyTopics}>
-              Apply topics
-            </button>
-          </div>
-          <label className="feed-topic-filter-search">
-            <input
-              type="search"
-              className="form-input"
-              aria-label="Search topics"
-              value={topicSearch}
-              placeholder="Search topics"
-              autoFocus
-              onChange={event => setTopicSearch(event.target.value)}
-            />
-          </label>
-          <div className="feed-topic-filter-count" aria-live="polite">
-            {draftTopics.length ? `${draftTopics.length} selected` : 'All topics'}
-          </div>
-          <TopicChoices selectedTopics={draftTopics} onToggle={toggleTopic} search={topicSearch} />
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** Filter panel dropdown */
 function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTopics = true }) {
@@ -3448,6 +3349,7 @@ export default function Feed({ forcedMode } = {}) {
           {isLocationFeed && (
             <TopicFilterControl
               topics={filters.topics}
+              options={ALL_INTERESTS}
               onChange={applyTopicFilters}
               open={topicFilterOpen}
               onToggle={(open) => {
@@ -3603,6 +3505,7 @@ export default function Feed({ forcedMode } = {}) {
           </button>
           <TopicFilterControl
             topics={filters.topics}
+            options={ALL_INTERESTS}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
             onToggle={(open) => {
@@ -3617,11 +3520,12 @@ export default function Feed({ forcedMode } = {}) {
 
       {viewMode === 'groups' && (
         <div className="feed-source-filter-row feed-group-filter-row">
-          <Link to="/groups?create=1" className="feed-toolbar-control feed-topic-filter-trigger group-create-button">
+          <Link to="/groups?create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
           <TopicFilterControl
             topics={filters.topics}
+            options={ALL_INTERESTS}
             onChange={applyTopicFilters}
             open={topicFilterOpen}
             onToggle={(open) => {

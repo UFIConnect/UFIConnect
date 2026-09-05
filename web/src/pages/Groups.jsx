@@ -1,7 +1,8 @@
-﻿import { useState, useEffect } from 'react';
+﻿import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
+import TopicFilterControl from '../components/TopicFilterControl';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
@@ -200,8 +201,12 @@ export default function Groups() {
 export function GroupsContent({ embedded = false }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const topicButtonRef = useRef(null);
+  const topicPanelRef = useRef(null);
   const [groups,      setGroups]      = useState([]);
   const [categories,  setCategories]  = useState([]);
+  const [selectedTopics, setSelectedTopics] = useState([]);
+  const [topicFilterOpen, setTopicFilterOpen] = useState(false);
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
@@ -248,6 +253,26 @@ export function GroupsContent({ embedded = false }) {
     if (new URLSearchParams(location.search).get('create') === '1') setShowCreate(true);
   }, [location.search]);
 
+  useEffect(() => {
+    if (!topicFilterOpen) return undefined;
+
+    function closeTopics(event) {
+      if (topicButtonRef.current?.contains(event.target) || topicPanelRef.current?.contains(event.target)) return;
+      setTopicFilterOpen(false);
+    }
+
+    function closeTopicsOnEscape(event) {
+      if (event.key === 'Escape') setTopicFilterOpen(false);
+    }
+
+    document.addEventListener('pointerdown', closeTopics);
+    document.addEventListener('keydown', closeTopicsOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeTopics);
+      document.removeEventListener('keydown', closeTopicsOnEscape);
+    };
+  }, [topicFilterOpen]);
+
   // Scrolling back up to the top refreshes this live directory.
   useScrollToRefresh(() => loadGroups(true), { enabled: !loading && !refreshing });
 
@@ -259,28 +284,53 @@ export function GroupsContent({ embedded = false }) {
   }
 
   const ContentShell = embedded ? 'section' : Layout;
+  const groupTopics = [...new Set([
+    ...categories,
+    ...groups.map((group) => group.category),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const visibleGroups = selectedTopics.length === 0
+    ? groups
+    : groups.filter((group) => {
+      const searchable = `${group.category || ''} ${group.name || ''} ${group.description || ''}`.toLowerCase();
+      return selectedTopics.some((topic) => {
+        const normalizedTopic = topic.toLowerCase();
+        if (searchable.includes(normalizedTopic)) return true;
+        return normalizedTopic
+          .split(/[^a-z0-9]+/)
+          .filter((term) => term.length > 2)
+          .some((term) => searchable.includes(term));
+      });
+    });
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
-      <div
-        className="page-header"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-        }}
-      >
-        <div style={{ flex: 1 }}>
+      <div className="page-header groups-page-header">
+        <div className="groups-page-heading">
           <h1 className="page-title">Discover Groups</h1>
         </div>
-        <button
-          className="btn btn-primary btn-sm"
-          onClick={() => setShowCreate(true)}
-          style={{ marginTop: 0, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
-        >
-          + Create Group
-        </button>
+        <div className="groups-page-actions">
+          <button
+            type="button"
+            className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button"
+            onClick={() => {
+              setTopicFilterOpen(false);
+              setShowCreate(true);
+            }}
+          >
+            Create a group
+          </button>
+          <TopicFilterControl
+            topics={selectedTopics}
+            options={groupTopics}
+            onChange={setSelectedTopics}
+            open={topicFilterOpen}
+            onToggle={setTopicFilterOpen}
+            buttonRef={topicButtonRef}
+            panelRef={topicPanelRef}
+            ariaLabel="Filter discover groups by topic"
+            panelId="discover-groups-topic-filter"
+          />
+        </div>
       </div>
 
       {showCreate && (
@@ -354,8 +404,19 @@ export function GroupsContent({ embedded = false }) {
         </div>
       )}
 
-      {/* Live group directory. Search and filtering live in Search. */}
-      {!loading && !error && groups.length > 0 && (
+      {!loading && !error && groups.length > 0 && visibleGroups.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-icon">Topics</div>
+          <div className="empty-title">No groups match these topics</div>
+          <div className="empty-desc">Clear the topic selection to see every live group.</div>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => setSelectedTopics([])}>
+            Show all groups
+          </button>
+        </div>
+      )}
+
+      {/* Live group directory. The topic control narrows this same live list. */}
+      {!loading && !error && visibleGroups.length > 0 && (
         <div>
           <p
             style={{
@@ -365,16 +426,16 @@ export function GroupsContent({ embedded = false }) {
               fontWeight: 500,
             }}
           >
-            {groups.length} live public communit
-            {groups.length !== 1 ? 'ies' : 'y'}
+            {selectedTopics.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public communit
+            {visibleGroups.length !== 1 ? 'ies' : 'y'}
           </p>
           <div className="group-directory-list group-live-list">
               <div className="group-directory-list-heading">
                 <strong>Live groups</strong>
-                <span>{groups.length.toLocaleString()}</span>
+                <span>{visibleGroups.length.toLocaleString()}</span>
               </div>
               <div className="group-directory-tabs" role="list" aria-label="Live groups">
-                {groups.map((group, index) => (
+                {visibleGroups.map((group, index) => (
                   <GroupDirectoryTab
                     key={group.id}
                     group={group}
