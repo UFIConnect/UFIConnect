@@ -17819,6 +17819,7 @@ const cacheMaintenanceState = {
   lastOfficeRemovedCount: 0,
   totalOfficeRemovedCount: 0,
   lastOfficeRun: null,
+  lastOfficeHitBatchLimit: false,
   nextRunAt: null,
   nextOfficeRunAt: null,
   lastBreakdown: { runtime: {}, office: {} },
@@ -17826,12 +17827,14 @@ const cacheMaintenanceState = {
     runtimeIntervalSec: Math.round(CACHE_MAINTENANCE_INTERVAL_MS / 1000),
     officeRetentionDays: Math.round(OFFICE_CACHE_RETENTION_MS / (24 * 60 * 60 * 1000)),
     officeIntervalSec: Math.round(OFFICE_CACHE_CLEANUP_INTERVAL_MS / 1000),
+    officeCatchUpIntervalSec: Math.round(CACHE_MAINTENANCE_INTERVAL_MS / 1000),
     officeMaxRowsPerTable: OFFICE_CACHE_MAX_ROWS_PER_TABLE,
     officePruneBatchSize: OFFICE_CACHE_PRUNE_BATCH_SIZE,
   },
 };
 let cacheMaintenanceInFlight = false;
 let lastOfficeCacheCleanupAt = 0;
+let nextOfficeCacheCleanupAt = 0;
 
 function pruneCacheEntries(cache, shouldRemove) {
   let removed = 0;
@@ -17941,6 +17944,7 @@ async function pruneOfficeCacheHistory() {
   return {
     breakdown,
     removed: Object.values(breakdown).reduce((sum, count) => sum + Number(count || 0), 0),
+    hitBatchLimit: Object.values(breakdown).some(count => Number(count || 0) >= OFFICE_CACHE_PRUNE_BATCH_SIZE),
   };
 }
 
@@ -17962,14 +17966,16 @@ async function runCacheMaintenance({ reason = 'scheduled', forceOffice = false }
   try {
     const runtime = pruneExpiredRuntimeCaches(started);
     let office = { breakdown: {}, removed: 0, skipped: IS_PIPELINE_ROLE ? 'api-role-only' : 'not-due' };
-    const officeDue = !IS_PIPELINE_ROLE && (
-      forceOffice || !lastOfficeCacheCleanupAt || started - lastOfficeCacheCleanupAt >= OFFICE_CACHE_CLEANUP_INTERVAL_MS
-    );
+    const officeDue = !IS_PIPELINE_ROLE && (forceOffice || !nextOfficeCacheCleanupAt || started >= nextOfficeCacheCleanupAt);
     if (officeDue && db.isConnected()) {
       office = await pruneOfficeCacheHistory();
       lastOfficeCacheCleanupAt = Date.now();
+      const nextOfficeDelayMs = office.hitBatchLimit
+        ? CACHE_MAINTENANCE_INTERVAL_MS
+        : OFFICE_CACHE_CLEANUP_INTERVAL_MS;
+      nextOfficeCacheCleanupAt = lastOfficeCacheCleanupAt + nextOfficeDelayMs;
       cacheMaintenanceState.lastOfficeRun = new Date(lastOfficeCacheCleanupAt).toISOString();
-      cacheMaintenanceState.nextOfficeRunAt = new Date(lastOfficeCacheCleanupAt + OFFICE_CACHE_CLEANUP_INTERVAL_MS).toISOString();
+      cacheMaintenanceState.nextOfficeRunAt = new Date(nextOfficeCacheCleanupAt).toISOString();
     } else if (officeDue) {
       office = { breakdown: {}, removed: 0, skipped: 'database-unavailable' };
     }
@@ -17979,6 +17985,7 @@ async function runCacheMaintenance({ reason = 'scheduled', forceOffice = false }
     if (!office.skipped) {
       cacheMaintenanceState.lastOfficeRemovedCount = office.removed;
       cacheMaintenanceState.totalOfficeRemovedCount += office.removed;
+      cacheMaintenanceState.lastOfficeHitBatchLimit = office.hitBatchLimit;
     }
     cacheMaintenanceState.lastBreakdown = {
       runtime: runtime.breakdown,
