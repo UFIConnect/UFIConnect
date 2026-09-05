@@ -669,7 +669,7 @@ function groupOrigin(group) {
     : PLATFORM_META.uficonnect;
 }
 
-function GroupDirectoryTab({ group, selected, index, onSelect, onKeyDown }) {
+export function GroupDirectoryTab({ group, selected, index, onSelect, onKeyDown }) {
   const meta = CATEGORY_META[group.category] || { icon: 'GR' };
   const origin = groupOrigin(group);
   return (
@@ -694,7 +694,7 @@ function GroupDirectoryTab({ group, selected, index, onSelect, onKeyDown }) {
   );
 }
 
-function GroupInformation({ group, index, isJoined, joining, onJoin, onOpen }) {
+export function GroupInformation({ group, index, isJoined, joining, onJoin, onOpen }) {
   if (!group) return null;
   const meta = CATEGORY_META[group.category] || {
     icon: 'GR',
@@ -736,8 +736,16 @@ function GroupInformation({ group, index, isJoined, joining, onJoin, onOpen }) {
         <div><dt>Access</dt><dd>{group.isPrivate ? 'Private' : 'Public'}</dd></div>
       </dl>
 
+      <div className="group-information-about">
+        <h3>About</h3>
+        <p>
+          {group.name} is a {group.isPrivate ? 'private' : 'public'} {group.category || 'community'} group
+          {origin.label ? ` on ${origin.label}` : ''} with {(group.members || 0).toLocaleString()} member{group.members === 1 ? '' : 's'}.
+        </p>
+      </div>
+
       <div className="group-information-description">
-        <h3>About this group</h3>
+        <h3>Description</h3>
         <p>{group.description || 'Open this group to see its conversations, members, and latest posts.'}</p>
       </div>
 

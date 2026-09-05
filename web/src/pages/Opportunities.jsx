@@ -121,6 +121,9 @@ function JobTab({ job, selected, index, onSelect, onKeyDown }) {
 
 function JobDetail({ job, tabIndex }) {
   if (!job) return null;
+  const about = job.about || `${job.org} is hiring for ${job.title}${job.location ? ` in ${job.location}` : ''}. This is a current listing from ${job.source}.`;
+  const description = job.description || job.content
+    || `Open the listing on ${job.source} for the full position description and requirements.`;
   return (
     <article
       id="selected-job-panel"
@@ -169,9 +172,14 @@ function JobDetail({ job, tabIndex }) {
         </div>
       )}
 
+      <section className="job-detail-about">
+        <h3>About</h3>
+        <p>{about}</p>
+      </section>
+
       <section className="job-detail-description">
-        <h3>Position information</h3>
-        <p>{job.content || `Open the listing on ${job.source} for the full position description and requirements.`}</p>
+        <h3>Description</h3>
+        <p>{description}</p>
       </section>
 
       <div className="job-detail-actions">

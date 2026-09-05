@@ -13,6 +13,7 @@ import client from '../api/client';
 import { ALL_INTERESTS } from './Onboarding';
 import { PostCard } from './Feed';
 import Opportunities from './Opportunities';
+import { GroupDirectoryTab, GroupInformation } from './Groups';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const SEARCH_TABS = [
@@ -119,15 +120,6 @@ const ROLE_FILTERS = [
   'Content Creator', 'Student / Learner', 'Investor / VC',
   'Operations / Finance', 'Community Manager', 'Researcher / Academic',
 ];
-
-const CATEGORY_ICONS = {
-  'AI & Machine Learning': 'AI', 'Web Development': 'WD', 'Mobile Dev': 'MD',
-  'DevOps & Cloud': 'DC', 'Cybersecurity': 'CY', 'Open Source': 'OS',
-  'Data Science': 'DS', 'Product & Design': 'PD', 'Startup & Founders': 'SF',
-  'Finance & Investing': 'FI', 'Marketing & Growth': 'MG', 'Career & Jobs': 'CJ',
-  'Community': 'CM', 'Science & Research': 'SR', 'Gaming': 'GM',
-  'Blockchain & Web3': 'W3', 'Healthcare': 'HC', 'Education': 'ED',
-};
 
 function SourceChip({ source, active, onClick }) {
   const meta = SOURCE_META[source] || { label: source, color: 'var(--primary)', icon: 'SRC' };
@@ -239,6 +231,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
   const [groupsError, setGroupsError] = useState('');
   const [joinedGroups, setJoinedGroups] = useState(new Set());
   const [joining, setJoining] = useState(null);
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
   const [postStates, setPostStates] = useState({ posts: emptyPostState(), following: emptyPostState() });
   const [postSources, setPostSources] = useState({ posts: [], following: [] });
   const [postTopics, setPostTopics] = useState({ posts: [], following: [] });
@@ -503,12 +496,27 @@ export default function SearchExperience({ initialTab = null } = {}) {
   }
 
   async function toggleJoin(groupId, event) {
-    event.stopPropagation();
+    event?.stopPropagation();
+    if (joining) return;
+    const isJoined = joinedGroups.has(groupId);
     setJoining(groupId);
     try {
-      if (!joinedGroups.has(groupId)) {
+      if (isJoined) {
+        await client.delete(`/groups/${groupId}/join`);
+        setJoinedGroups((current) => {
+          const next = new Set(current);
+          next.delete(groupId);
+          return next;
+        });
+        setAllGroups((current) => current.map((group) => group.id === groupId
+          ? { ...group, members: Math.max(0, (group.members || 0) - 1) }
+          : group));
+      } else {
         await client.post(`/groups/${groupId}/join`);
         setJoinedGroups((current) => new Set([...current, groupId]));
+        setAllGroups((current) => current.map((group) => group.id === groupId
+          ? { ...group, members: (group.members || 0) + 1 }
+          : group));
       }
     } catch {}
     finally { setJoining(null); }
@@ -518,6 +526,8 @@ export default function SearchExperience({ initialTab = null } = {}) {
     sortBy === 'followers' ? (b.followersCount || 0) - (a.followersCount || 0) : 0
   )), [results, sortBy]);
   const filteredGroups = allGroups;
+  const selectedGroupIndex = Math.max(0, filteredGroups.findIndex((group) => group.id === selectedGroupId));
+  const selectedGroup = filteredGroups[selectedGroupIndex] || null;
   const activePostState = POST_TABS.has(activeTab) ? postStates[activeTab] : null;
   const activeLoading = activePostState?.loading || (activeTab === 'people' && loading) || (activeTab === 'groups' && groupsLoading);
   const activeLoadingMore = activePostState?.loadingMore
@@ -529,6 +539,29 @@ export default function SearchExperience({ initialTab = null } = {}) {
       ? peopleHasMore
       : activeTab === 'groups' && groupsHasMore;
   const hasQuery = query.trim().length > 0;
+
+  useEffect(() => {
+    if (activeTab !== 'groups') return;
+    setSelectedGroupId((current) => (
+      filteredGroups.some((group) => group.id === current) ? current : (filteredGroups[0]?.id || null)
+    ));
+  }, [activeTab, filteredGroups]);
+
+  function handleGroupTabKeyDown(event, index) {
+    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? filteredGroups.length - 1
+        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
+          ? Math.min(filteredGroups.length - 1, index + 1)
+          : Math.max(0, index - 1);
+    const nextGroup = filteredGroups[nextIndex];
+    if (!nextGroup) return;
+    setSelectedGroupId(nextGroup.id);
+    document.getElementById(`group-directory-tab-${nextIndex}`)?.focus();
+  }
 
   const loadMoreSearchResults = useCallback(() => {
     if (activeLoading || activeLoadingMore || !activeHasMore) return;
@@ -822,33 +855,47 @@ export default function SearchExperience({ initialTab = null } = {}) {
             {!groupsLoading && !groupsError && filteredGroups.length === 0 && (
               <div className="card search-empty-state"><strong>No groups found</strong><p>Try a different keyword or browse without a filter.</p></div>
             )}
-            <div className="search-group-results">
-              {filteredGroups.map((group) => {
-                const icon = CATEGORY_ICONS[group.category] || 'GR';
-                const isJoined = joinedGroups.has(group.id);
-                return (
-                  <article key={group.id} className="card search-group-card" onClick={() => navigate(`/groups/${group.id}`)}>
-                    <span className="search-group-mark">{icon}</span>
-                    <div className="search-group-body">
-                      <strong>{group.name}</strong>
-                      <span>{[group.category, typeof group.members === 'number' ? `${group.members.toLocaleString()} members` : ''].filter(Boolean).join(' | ')}</span>
-                      {group.description && <p>{group.description}</p>}
-                    </div>
-                    {isJoined ? <span className="search-joined-label">Joined</span> : (
-                      <button className="btn btn-primary btn-sm" disabled={joining === group.id} onClick={(event) => toggleJoin(group.id, event)}>
-                        {joining === group.id ? 'Joining...' : 'Join'}
-                      </button>
+            {filteredGroups.length > 0 && (
+              <div className="group-directory-browser search-group-browser">
+                <div className="group-directory-list">
+                  <div className="group-directory-list-heading">
+                    <strong>Live group list</strong>
+                    <span>{groupsTotal.toLocaleString()}</span>
+                  </div>
+                  <div className="group-directory-tabs" role="tablist" aria-label="Live groups">
+                    {filteredGroups.map((group, index) => (
+                      <GroupDirectoryTab
+                        key={group.id}
+                        group={group}
+                        index={index}
+                        selected={group.id === selectedGroup?.id}
+                        onSelect={() => setSelectedGroupId(group.id)}
+                        onKeyDown={(event) => handleGroupTabKeyDown(event, index)}
+                      />
+                    ))}
+                    {groupsHasMore && (
+                      <div ref={searchSentinelRef} className="search-results-sentinel" aria-hidden="true">
+                        {groupsLoadingMore && <span className="spinner spinner-primary" />}
+                      </div>
                     )}
-                  </article>
-                );
-              })}
-            </div>
+                  </div>
+                </div>
+                <GroupInformation
+                  group={selectedGroup}
+                  index={selectedGroupIndex}
+                  isJoined={joinedGroups.has(selectedGroup?.id)}
+                  joining={joining === selectedGroup?.id}
+                  onJoin={() => toggleJoin(selectedGroup.id)}
+                  onOpen={() => navigate(`/groups/${selectedGroup.id}`)}
+                />
+              </div>
+            )}
           </>
         )}
 
         {activeTab === 'jobs' && <Opportunities embedded />}
 
-        {activeTab !== 'jobs' && activeHasMore && (
+        {activeTab !== 'jobs' && activeTab !== 'groups' && activeHasMore && (
           <div ref={searchSentinelRef} className="search-results-sentinel" aria-hidden="true">
             {activeLoadingMore && <span className="spinner spinner-primary" />}
           </div>

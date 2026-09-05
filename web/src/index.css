@@ -2139,17 +2139,20 @@ input, textarea, select { font-family: inherit; }
   font-size: .78rem;
   font-weight: 650;
 }
+.group-information-about,
 .group-information-description,
 .group-information-related {
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+.group-information-about h3,
 .group-information-description h3,
 .group-information-related h3 {
   margin: 0 0 8px;
   font-size: .8rem;
 }
+.group-information-about p,
 .group-information-description p {
   margin: 0;
   color: var(--text);
@@ -2402,15 +2405,18 @@ input, textarea, select { font-family: inherit; }
   background: var(--primary-light);
   color: var(--primary);
 }
+.job-detail-about,
 .job-detail-description {
   margin-top: 18px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
+.job-detail-about h3,
 .job-detail-description h3 {
   margin: 0 0 8px;
   font-size: .86rem;
 }
+.job-detail-about p,
 .job-detail-description p {
   margin: 0;
   color: var(--text);
