@@ -1,9 +1,9 @@
 {
   "owner": "UFIConnect",
   "studio": "UFI Career Studio",
-  "generatedAt": "2026-09-05T02:05:58.733Z",
+  "generatedAt": "2026-09-05T02:10:52.946Z",
   "generator": "web/scripts/generate-preparation-videos.mjs",
-  "format": "960x540 H.264 MP4, silent, burned-in instructional text",
+  "format": "960x540 H.264 MP4 with PNG posters, silent, burned-in instructional text",
   "provenance": "Original scripts and code-rendered visual design. No third-party footage, audio, logos, or thumbnails.",
   "videos": [
     {
@@ -13,6 +13,9 @@
       "file": "tailored-resume.mp4",
       "bytes": 258845,
       "sha256": "8a8fa4d3fc824729c4106de6cbd00314e9c083b66ee922fc3e6eade661cc1cf9",
+      "poster": "tailored-resume.png",
+      "posterBytes": 31557,
+      "posterSha256": "35e3d153018a4782d0bbdc3408947627bb6baf2602072375f07aa08fdaed23da",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -24,6 +27,9 @@
       "file": "professional-introduction.mp4",
       "bytes": 257596,
       "sha256": "6e9e005fd7a2849f52c7c54acdc27e85894326a5b494d8d871b6f80853a1c9b1",
+      "poster": "professional-introduction.png",
+      "posterBytes": 35490,
+      "posterSha256": "eb484ced55ad6ccb6e7307a25387f5b4b14c3fa83d37823f9b0fc2050ee8bdfc",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -35,6 +41,9 @@
       "file": "closing-questions.mp4",
       "bytes": 270943,
       "sha256": "c87b4a8ad92c68965d13c93204217612940963dde29292b460bfb5dd43cd1032",
+      "poster": "closing-questions.png",
+      "posterBytes": 35862,
+      "posterSha256": "3bd56019928d8ce23798994b1c271db2f3d6323f44ff35c675e834ed4dc69157",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -46,6 +55,9 @@
       "file": "behavioral-stories.mp4",
       "bytes": 267670,
       "sha256": "697b6a5058fc38438c74a3ebd056ae013bace003001a029a9ea6a3b10e107843",
+      "poster": "behavioral-stories.png",
+      "posterBytes": 34922,
+      "posterSha256": "52fc44ee5e3ca951ae0566a0c717072d1b264c4df3a8f8601b5db339080051c4",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -57,6 +69,9 @@
       "file": "technical-interview.mp4",
       "bytes": 264274,
       "sha256": "b6625e703f781e871276c00ce563833484bb621a457fcaa9855d734cdee1ae58",
+      "poster": "technical-interview.png",
+      "posterBytes": 35611,
+      "posterSha256": "ce5b37a5f8efcb9bae9b1a204a2c73fee5f87136cd908f877ce0051062fadc1b",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -68,6 +83,9 @@
       "file": "video-interview-setup.mp4",
       "bytes": 272175,
       "sha256": "0efb0bf6ec1735a530817dc5cef026194a333267d2ff2d7a35a6a2aefffdfe43",
+      "poster": "video-interview-setup.png",
+      "posterBytes": 36096,
+      "posterSha256": "56f23ecf8be574bddd7db87024b5ca52d5e0a68dac125bbbd79cdf00e60aec49",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false
@@ -79,6 +97,9 @@
       "file": "offer-conversation.mp4",
       "bytes": 266483,
       "sha256": "9ba1ce1276afc863e5058006cff195176187df8c84578056d4fde5f32544b853",
+      "poster": "offer-conversation.png",
+      "posterBytes": 33581,
+      "posterSha256": "0e4c325b71ad73d4ee5d52b9908effc9cbd02c70a3516a672758b12779dfccaa",
       "hasExternalFootage": false,
       "hasExternalAudio": false,
       "hasExternalBrandAssets": false

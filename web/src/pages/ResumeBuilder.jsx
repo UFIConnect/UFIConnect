@@ -384,7 +384,7 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
             <video
               key={activeVideo.id}
               src={mediaUrl(activeVideo, 'mp4')}
-              poster={mediaUrl(activeVideo, 'svg')}
+              poster={mediaUrl(activeVideo, 'png')}
               title={activeVideo.title}
               aria-label={activeVideo.title}
               controls
@@ -392,13 +392,12 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
               playsInline
               preload="metadata"
             >
-              <track kind="captions" src={mediaUrl(activeVideo, 'vtt')} srcLang="en" label="English" />
               Your browser cannot play this video.
             </video>
           ) : (
             <button type="button" className="resume-preparation-poster" onClick={() => playVideo(activeVideo)} aria-label={`Play ${activeVideo.title}`}>
               <img
-                src={mediaUrl(activeVideo, 'svg')}
+                src={mediaUrl(activeVideo, 'png')}
                 alt=""
               />
               <span className="resume-preparation-play">Play video</span>
@@ -432,7 +431,7 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
         {filteredVideos.map(video => (
           <article key={video.id} className={`resume-preparation-card${activeVideo.id === video.id ? ' is-active' : ''}`}>
             <button type="button" className="resume-preparation-card-media" onClick={() => playVideo(video)} aria-label={`Play ${video.title}`}>
-              <img src={mediaUrl(video, 'svg')} alt="" loading="lazy" />
+              <img src={mediaUrl(video, 'png')} alt="" loading="lazy" />
               <span>{video.duration}</span>
             </button>
             <div className="resume-preparation-card-copy">

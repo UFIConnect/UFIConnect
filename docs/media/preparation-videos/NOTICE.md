@@ -1,4 +1,4 @@
-UFI CAREER STUDIO MEDIA PROVENANCE
+# UFI Career Studio Media Provenance
 
 These preparation lessons were produced in-house from the original scripts and
 code-rendered visual system in web/scripts/generate-preparation-videos.mjs.

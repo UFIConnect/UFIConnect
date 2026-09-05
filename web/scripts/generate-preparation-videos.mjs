@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -18,6 +19,7 @@ import { PREPARATION_VIDEOS } from '../src/data/preparationVideos.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputDir = path.resolve(__dirname, '../public/media/preparation');
+const provenanceDir = path.resolve(__dirname, '../../docs/media/preparation-videos');
 const width = 960;
 const height = 540;
 const frameRate = 24;
@@ -194,27 +196,6 @@ function lessonFrame(video, slide, slideIndex) {
   ].join('\n'));
 }
 
-function timestamp(seconds) {
-  const milliseconds = Math.max(0, Math.round(seconds * 1000));
-  const hours = Math.floor(milliseconds / 3600000);
-  const minutes = Math.floor((milliseconds % 3600000) / 60000);
-  const secs = Math.floor((milliseconds % 60000) / 1000);
-  const millis = milliseconds % 1000;
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(millis).padStart(3, '0')}`;
-}
-
-function writeCaptions(video, frameCopy) {
-  const captions = ['WEBVTT', ''];
-  frameCopy.forEach((copy, index) => {
-    const start = index * (slideSeconds - transitionSeconds);
-    const end = start + slideSeconds - transitionSeconds;
-    captions.push(`${timestamp(start)} --> ${timestamp(end)}`);
-    captions.push(copy.replace(/\s+/g, ' ').trim());
-    captions.push('');
-  });
-  writeFileSync(path.join(outputDir, `${video.slug}.vtt`), captions.join('\n'), 'utf8');
-}
-
 function sha256(filename) {
   return createHash('sha256').update(readFileSync(filename)).digest('hex');
 }
@@ -279,6 +260,7 @@ function encodeVideo(ffmpeg, video, frames) {
 }
 
 mkdirSync(outputDir, { recursive: true });
+mkdirSync(provenanceDir, { recursive: true });
 const ffmpeg = resolveExecutable('ffmpeg');
 const workingDir = mkdtempSync(path.join(tmpdir(), 'ufi-preparation-'));
 const manifest = [];
@@ -294,10 +276,12 @@ try {
     const titlePng = path.join(videoDir, '00-title.png');
     writeFileSync(titleSvg, poster, 'utf8');
     await rasterizeSvg(page, titleSvg, titlePng);
-    writeFileSync(path.join(outputDir, `${video.slug}.svg`), poster, 'utf8');
+    const posterFile = path.join(outputDir, `${video.slug}.png`);
+    copyFileSync(titlePng, posterFile);
+    rmSync(path.join(outputDir, `${video.slug}.svg`), { force: true });
+    rmSync(path.join(outputDir, `${video.slug}.vtt`), { force: true });
 
     const frames = [titlePng];
-    const frameCopy = [`${video.title}. ${video.summary}`];
     for (const [index, slide] of video.slides.entries()) {
       const baseName = `${String(index + 1).padStart(2, '0')}-${video.slug}`;
       const svgFilename = path.join(videoDir, `${baseName}.svg`);
@@ -305,11 +289,9 @@ try {
       writeFileSync(svgFilename, lessonFrame(video, slide, index), 'utf8');
       await rasterizeSvg(page, svgFilename, pngFilename);
       frames.push(pngFilename);
-      frameCopy.push(`${slide.label}. ${slide.title}. ${slide.body}`);
     }
 
     const videoFile = encodeVideo(ffmpeg, video, frames);
-    writeCaptions(video, frameCopy);
     manifest.push({
       id: video.id,
       title: video.title,
@@ -317,6 +299,9 @@ try {
       file: path.basename(videoFile),
       bytes: statSync(videoFile).size,
       sha256: sha256(videoFile),
+      poster: path.basename(posterFile),
+      posterBytes: statSync(posterFile).size,
+      posterSha256: sha256(posterFile),
       hasExternalFootage: false,
       hasExternalAudio: false,
       hasExternalBrandAssets: false,
@@ -324,18 +309,20 @@ try {
     process.stdout.write(`Generated ${path.basename(videoFile)}\n`);
   }
 
-  writeFileSync(path.join(outputDir, 'manifest.json'), `${JSON.stringify({
+  rmSync(path.join(outputDir, 'manifest.json'), { force: true });
+  rmSync(path.join(outputDir, 'NOTICE.txt'), { force: true });
+  writeFileSync(path.join(provenanceDir, 'manifest.json'), `${JSON.stringify({
     owner: 'UFIConnect',
     studio: 'UFI Career Studio',
     generatedAt: new Date().toISOString(),
     generator: 'web/scripts/generate-preparation-videos.mjs',
-    format: `${width}x${height} H.264 MP4, silent, burned-in instructional text`,
+    format: `${width}x${height} H.264 MP4 with PNG posters, silent, burned-in instructional text`,
     provenance: 'Original scripts and code-rendered visual design. No third-party footage, audio, logos, or thumbnails.',
     videos: manifest,
   }, null, 2)}\n`, 'utf8');
 
-  writeFileSync(path.join(outputDir, 'NOTICE.txt'), [
-    'UFI CAREER STUDIO MEDIA PROVENANCE',
+  writeFileSync(path.join(provenanceDir, 'NOTICE.md'), [
+    '# UFI Career Studio Media Provenance',
     '',
     'These preparation lessons were produced in-house from the original scripts and',
     'code-rendered visual system in web/scripts/generate-preparation-videos.mjs.',

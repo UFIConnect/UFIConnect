@@ -1,4 +1,4 @@
-export const PREPARATION_ASSET_VERSION = '2026-09-04-2';
+export const PREPARATION_ASSET_VERSION = '2026-09-04-3';
 
 export const PREPARATION_TOPICS = [
   'All',
