@@ -14880,7 +14880,6 @@ const AGGREGATE_FEED_SOURCES = [...new Set([
   .filter(source => !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
 const AGGREGATE_FEED_SOURCE_SET = new Set(AGGREGATE_FEED_SOURCES);
 const isAggregateFeedSource = (source) => AGGREGATE_FEED_SOURCE_SET.has(canonicalFeedSourceId(source));
-const FAVORITE_FEED_SOURCE_LIMIT = 4;
 const FOLLOWING_FAVORITE_FEED_SOURCE_SET = new Set([
   'uficonnect',
   ...[...CONNECTED_SOCIAL_PLATFORMS].filter(source => !['instagram', 'tiktok'].includes(source)),
@@ -14892,7 +14891,7 @@ function normalizeFeedSourceFavorites(value) {
     const normalized = [];
     asArray(items).forEach((item) => {
       const source = canonicalFeedSourceId(item);
-      if (!source || !allowed(source) || normalized.includes(source) || normalized.length >= FAVORITE_FEED_SOURCE_LIMIT) return;
+      if (!source || !allowed(source) || normalized.includes(source)) return;
       normalized.push(source);
     });
     return normalized;

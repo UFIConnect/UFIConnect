@@ -588,6 +588,14 @@ input, textarea, select { font-family: inherit; }
   flex: 0 0 auto;
   min-width: 118px;
 }
+@media (min-width: 1101px) {
+  .feed-source-tabs--compact {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .feed-source-menu {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
 .feed-topic-filter {
   position: relative;
   flex: 0 0 auto;

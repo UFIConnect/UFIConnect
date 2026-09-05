@@ -116,7 +116,7 @@ function SourceFavoriteButton({ tab, favorite, disabled, onToggle }) {
       className={`feed-source-favorite-button${favorite ? ' active' : ''}`}
       aria-label={`${action}: ${tab.label}`}
       aria-pressed={favorite}
-      title={disabled ? 'Remove a favorite before adding another' : `${action}: ${tab.label}`}
+      title={`${action}: ${tab.label}`}
       disabled={disabled}
       onClick={() => onToggle(tab.key)}
     >
@@ -434,12 +434,12 @@ const FOLLOWING_SOURCE_TABS = [
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
-const SOURCE_FAVORITE_LIMIT = 4;
+const SOURCE_QUICK_ACCESS_COUNT = 4;
 const DEFAULT_SOURCE_FAVORITES = Object.freeze({
-  feed: SOURCE_TABS.slice(0, SOURCE_FAVORITE_LIMIT).map(tab => tab.key),
+  feed: SOURCE_TABS.slice(0, SOURCE_QUICK_ACCESS_COUNT).map(tab => tab.key),
   following: FOLLOWING_SOURCE_TABS
     .filter(tab => tab.key !== 'all')
-    .slice(0, SOURCE_FAVORITE_LIMIT)
+    .slice(0, SOURCE_QUICK_ACCESS_COUNT)
     .map(tab => tab.key),
 });
 
@@ -447,13 +447,11 @@ function normalizeSourceFavoriteList(value, tabs, fallback) {
   const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
   const normalized = [];
   const add = (key) => {
-    if (!allowed.has(key) || normalized.includes(key) || normalized.length >= SOURCE_FAVORITE_LIMIT) return;
+    if (!allowed.has(key) || normalized.includes(key)) return;
     normalized.push(key);
   };
-  if (Array.isArray(value)) value.forEach(add);
-  fallback.forEach(add);
-  tabs.forEach(tab => add(tab.key));
-  return normalized.slice(0, SOURCE_FAVORITE_LIMIT);
+  (Array.isArray(value) ? value : fallback).forEach(add);
+  return normalized;
 }
 
 function normalizeSourceFavorites(value) {
@@ -2768,7 +2766,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     setSourceFavoriteError('');
     setSourceFavoriteDraft(current => {
       if (current.includes(key)) return current.filter(source => source !== key);
-      if (current.length >= SOURCE_FAVORITE_LIMIT) return current;
       return [...current, key];
     });
   }, []);
@@ -2778,7 +2775,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     const tabs = mode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS;
     const allowed = new Set(tabs.filter(tab => tab.key !== 'all').map(tab => tab.key));
     const draft = [...new Set(sourceFavoriteDraft.filter(source => allowed.has(source)))];
-    if (draft.length !== SOURCE_FAVORITE_LIMIT || !profile?.id) return;
+    if (!profile?.id) return;
 
     const nextFavorites = { ...sourceFavorites, [mode]: draft };
     setSourceFavoriteSaving(true);
@@ -3308,13 +3305,28 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const compactSourceTabs = currentSourceFavoriteKeys
     .map(key => currentSourceTabs.find(tab => tab.key === key))
     .filter(Boolean)
-    .slice(0, SOURCE_FAVORITE_LIMIT);
-  const fullSourceTabs = viewMode === 'following'
-    ? currentSourceTabs
-    : [{ key: 'all', label: 'All sources', icon: '' }, ...currentSourceTabs];
+    .slice(0, SOURCE_QUICK_ACCESS_COUNT);
+  const aggregateSourceTab = currentSourceTabs.find(tab => tab.key === 'all')
+    || { key: 'all', label: 'All sources', icon: '' };
+  const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
+  const fullSourceTabs = [
+    aggregateSourceTab,
+    ...currentSourceTabs
+      .filter(tab => tab.key !== 'all')
+      .map((tab, index) => ({ tab, index }))
+      .sort((a, b) => {
+        const aFavorite = favoriteSourceOrder.has(a.tab.key);
+        const bFavorite = favoriteSourceOrder.has(b.tab.key);
+        if (aFavorite && bFavorite) {
+          return favoriteSourceOrder.get(a.tab.key) - favoriteSourceOrder.get(b.tab.key);
+        }
+        if (aFavorite !== bFavorite) return aFavorite ? -1 : 1;
+        return a.index - b.index;
+      })
+      .map(({ tab }) => tab),
+  ];
   const sourceFavoriteDraftChanged = sourceFavoriteDraft.join('|') !== currentSourceFavoriteKeys.join('|');
-  const canSaveSourceFavorites = sourceFavoriteDraft.length === SOURCE_FAVORITE_LIMIT
-    && sourceFavoriteDraftChanged
+  const canSaveSourceFavorites = sourceFavoriteDraftChanged
     && !sourceFavoriteSaving;
   const isSourceActive = (key) => key === 'all'
     ? !selectedSourceKey
@@ -3500,7 +3512,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <div ref={sourceMenuPanelRef} id="feed-source-menu" className="feed-source-menu" role="group" aria-label="Feed sources and favorites">
                 <div className="feed-source-menu-header">
                   <strong>Favorites</strong>
-                  <span>{sourceFavoriteDraft.length} / {SOURCE_FAVORITE_LIMIT}</span>
+                  <span>{sourceFavoriteDraft.length} selected</span>
                 </div>
                 {fullSourceTabs.map(tab => {
                   const favorite = sourceFavoriteDraft.includes(tab.key);
@@ -3519,7 +3531,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                         <SourceFavoriteButton
                           tab={tab}
                           favorite={favorite}
-                          disabled={sourceFavoriteSaving || (!favorite && sourceFavoriteDraft.length >= SOURCE_FAVORITE_LIMIT)}
+                          disabled={sourceFavoriteSaving}
                           onToggle={toggleSourceFavorite}
                         />
                       )}
