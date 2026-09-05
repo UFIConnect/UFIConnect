@@ -10,6 +10,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import { useSavedItems } from '../contexts/SavedItemsContext';
+import GeneratedContentHistory from '../components/GeneratedContentHistory';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -352,14 +353,16 @@ function ContentDraftResults({ drafts, hashtagGroups, onCopy }) {
 // own app. There's no real publish-on-their-behalf API this app can reach
 // for TikTok or Instagram (business/creator app review neither has been
 // through), so this deliberately doesn't pretend to auto-post.
-function ContentHubSection() {
+function ContentHubSection({ readOnly = false }) {
   const { showToast } = useToast();
   const [platform, setPlatform] = useState('tiktok');
   const [topic, setTopic] = useState('');
   const [tone, setTone] = useState('');
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState(null);
-  const [notConfigured, setNotConfigured] = useState(false);
+  const [draftError, setDraftError] = useState('');
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const formTop = useRef(null);
   const [hashtagPlatform, setHashtagPlatform] = useState('tiktok');
   const [hashtagTopic, setHashtagTopic] = useState('');
   const [hashtagAudience, setHashtagAudience] = useState('');
@@ -372,14 +375,15 @@ function ContentHubSection() {
     if (!topic.trim() || drafting) return;
     setDrafting(true);
     setDrafts(null);
-    setNotConfigured(false);
+    setDraftError('');
     try {
-      const { data } = await client.post('/command-center/content-draft', { platform, topic, tone });
+      const { data } = await client.post('/command-center/content-draft', { platform, topic, tone }, { timeout: 90000 });
       setDrafts(data.drafts || []);
       setHashtagTopic(current => current.trim() ? current : topic.trim());
+      setHistoryRevision(value => value + 1);
     } catch (err) {
-      if (err?.response?.status === 503) setNotConfigured(true);
-      else showToast(err?.response?.data?.message || 'Could not generate drafts. Please try again.', 'error');
+      if (err?.response?.data?.drafts) setDrafts(err.response.data.drafts);
+      setDraftError(err?.response?.data?.message || 'Could not generate drafts. Please try again.');
     } finally {
       setDrafting(false);
     }
@@ -401,30 +405,28 @@ function ContentHubSection() {
     if (draftingHashtags) return;
     setDraftingHashtags(true);
     setHashtagGroups(null);
-    setNotConfigured(false);
+    setDraftError('');
     try {
       const { data } = await client.post('/command-center/hashtag-draft', {
         platform: hashtagPlatform,
         topic: topicForHashtags,
         audience: hashtagAudience,
         location: hashtagLocation,
-      });
+      }, { timeout: 90000 });
       setHashtagGroups(data.groups || []);
+      setHistoryRevision(value => value + 1);
     } catch (err) {
-      if (err?.response?.status === 503) setNotConfigured(true);
-      else showToast(err?.response?.data?.message || 'Could not generate hashtags. Please try again.', 'error');
+      if (err?.response?.data?.groups) setHashtagGroups(err.response.data.groups);
+      setDraftError(err?.response?.data?.message || 'Could not generate hashtags. Please try again.');
     } finally {
       setDraftingHashtags(false);
     }
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {notConfigured && (
-        <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--muted)', fontSize: '.85rem' }}>
-          AI content drafting isn't configured yet — check back soon.
-        </div>
-      )}
+    <div ref={formTop} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {draftError && <div role="alert"><SectionError message={draftError} /></div>}
+      {!readOnly && <>
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Draft new content</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0 }}>
@@ -514,7 +516,18 @@ function ContentHubSection() {
         </form>
       </div>
       <ContentDraftResults hashtagGroups={hashtagGroups} onCopy={copyDraft} />
-
+      </>}
+      <GeneratedContentHistory section="content" revision={historyRevision} onReuse={readOnly || drafting || draftingHashtags ? undefined : item => {
+        if (item.kind === 'hashtags') {
+          setHashtagTopic(item.prompt); setHashtagPlatform(item.input.platform || 'general');
+          setHashtagAudience(item.input.audience || ''); setHashtagLocation(item.input.location || '');
+          setHashtagGroups(item.output.groups || null);
+        } else {
+          setTopic(item.prompt); setPlatform(item.input.platform || 'general'); setTone(item.input.tone || '');
+          setDrafts(item.output.drafts || null);
+        }
+        formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }} />
     </div>
   );
 }
@@ -533,7 +546,7 @@ function dataUrlToFile(dataUrl, name) {
   return new File([bytes], name, { type: mime });
 }
 
-function MediaStudioSection({ onOpenCrossPost }) {
+function MediaStudioSection({ onOpenCrossPost, readOnly = false }) {
   const [type, setType] = useState('image');
   const [prompt, setPrompt] = useState('');
   const [videoSeconds, setVideoSeconds] = useState(12);
@@ -543,6 +556,8 @@ function MediaStudioSection({ onOpenCrossPost }) {
   const [error, setError] = useState('');
   const [generationStatus, setGenerationStatus] = useState('');
   const generationRequest = useRef(0);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const formTop = useRef(null);
 
   useEffect(() => () => {
     generationRequest.current += 1;
@@ -553,11 +568,16 @@ function MediaStudioSection({ onOpenCrossPost }) {
       if (requestId !== generationRequest.current) return null;
       const { data } = await client.get(`/command-center/media-generate/${encodeURIComponent(job.id)}`, {
         params: { ticket: job.ticket },
+        timeout: 180000,
       });
       if (requestId !== generationRequest.current) return null;
       const latest = data.job || {};
       if (latest.status === 'failed') throw new Error(latest.error || 'Video generation failed.');
       if (latest.status === 'completed') {
+        if (data.mediaUrl) {
+          setHistoryRevision(value => value + 1);
+          return { url: data.mediaUrl, type: 'video' };
+        }
         if (!data.downloadPath) throw new Error('The finished video is not available yet. Please try again.');
         setGenerationStatus('Saving your finished video...');
         setUploading(true);
@@ -592,7 +612,9 @@ function MediaStudioSection({ onOpenCrossPost }) {
         type,
         prompt: prompt.trim(),
         ...(type === 'video' ? { durationSeconds: Math.min(videoSeconds, 12) } : {}),
-      });
+      }, { timeout: 240000 });
+      if (requestId !== generationRequest.current) return;
+      setHistoryRevision(value => value + 1);
       if (data.job?.id && data.job?.ticket) {
         const video = await waitForOpenAIVideo(data.job, requestId);
         if (video && requestId === generationRequest.current) setAsset(video);
@@ -618,14 +640,15 @@ function MediaStudioSection({ onOpenCrossPost }) {
     }
   }
 
-  function sendToCrossPost() {
-    if (!asset?.url) return;
-    try { sessionStorage.setItem('ufi_crosspost_media', JSON.stringify(asset)); } catch {}
+  function sendToCrossPost(selected = asset) {
+    if (!selected?.url) return;
+    try { sessionStorage.setItem('ufi_crosspost_media', JSON.stringify(selected)); } catch {}
     onOpenCrossPost();
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div ref={formTop} style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {!readOnly && <>
       <div className="card">
         <h3 style={{ margin: '0 0 4px', fontSize: '.95rem' }}>Create media</h3>
         <p style={{ color: 'var(--muted)', fontSize: '.8rem', margin: 0, lineHeight: 1.55 }}>
@@ -681,12 +704,20 @@ function MediaStudioSection({ onOpenCrossPost }) {
             ? <video src={asset.url} controls playsInline style={{ width: '100%', maxHeight: 420, borderRadius: 8, background: '#111' }} />
             : <img src={asset.url} alt="Generated for your post" style={{ width: '100%', maxHeight: 520, objectFit: 'contain', borderRadius: 8, background: 'var(--bg-secondary)' }} />}
           {(asset.type === 'image' || asset.type === 'video') && (
-            <button type="button" className="btn btn-primary btn-sm" onClick={sendToCrossPost} style={{ alignSelf: 'flex-start' }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => sendToCrossPost()} style={{ alignSelf: 'flex-start' }}>
               Use in Cross-Post
             </button>
           )}
         </div>
       )}
+      </>}
+      <GeneratedContentHistory section="media" revision={historyRevision}
+        onUseMedia={readOnly ? undefined : sendToCrossPost}
+        onReuse={readOnly || generating ? undefined : item => {
+          setType(item.kind); setPrompt(item.prompt); setVideoSeconds(item.input.durationSeconds || 12);
+          setAsset(item.output.mediaUrl ? { url: item.output.mediaUrl, type: item.kind } : null);
+          setError(''); formTop.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }} />
     </div>
   );
 }
@@ -1856,7 +1887,7 @@ export default function CommandCenter() {
 
   // Connections themselves are available to every signed-in member. The
   // remaining Command Center tools keep their paid-plan gate below.
-  const locked = profile.plan === 'free' && section !== 'accounts';
+  const locked = profile.plan === 'free' && !['accounts', 'content', 'media'].includes(section);
 
   return (
     <Layout>
@@ -1873,7 +1904,13 @@ export default function CommandCenter() {
       </div>
 
       {locked ? (
-        <LockedState onUpgrade={() => setPricingOpen(true)} />
+        <>
+          <LockedState onUpgrade={() => setPricingOpen(true)} />
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
+            <Link className="btn btn-ghost btn-sm" to="/command-center?tab=content">Previous AI content</Link>
+            <Link className="btn btn-ghost btn-sm" to="/command-center?tab=media">Previous Studio media</Link>
+          </div>
+        </>
       ) : (
         <>
           <div className="command-center-tabs" role="tablist" aria-label="Command Center tools">
@@ -1902,8 +1939,9 @@ export default function CommandCenter() {
             className="command-center-panel"
           >
             {section === 'feed' && <ConnectedFeedSection />}
-            {section === 'content' && <ContentHubSection />}
-            {section === 'media' && <MediaStudioSection onOpenCrossPost={() => selectSection('crosspost')} />}
+            {profile.plan === 'free' && ['content', 'media'].includes(section) && <button type="button" className="btn btn-primary btn-sm" onClick={() => setPricingOpen(true)}>Upgrade to create new content</button>}
+            {section === 'content' && <ContentHubSection key={profile.id} readOnly={profile.plan === 'free'} />}
+            {section === 'media' && <MediaStudioSection key={profile.id} readOnly={profile.plan === 'free'} onOpenCrossPost={() => selectSection('crosspost')} />}
             {section === 'yourfeed' && <YourFeedSection />}
             {section === 'accounts' && <MemberAccountsSection />}
             {section === 'automation' && <AutomationSection onSelectSection={selectSection} />}

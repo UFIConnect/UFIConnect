@@ -27,6 +27,7 @@ jobs:
       - run: npm run build --prefix office
       - run: npx playwright install --with-deps chromium
       - run: node scripts/audit-ui.mjs
+      - run: node scripts/audit-content-history.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
