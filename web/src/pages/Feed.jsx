@@ -2105,7 +2105,8 @@ function writeFeedCache(userId, posts) {
 
 // forcedMode locks a dedicated route onto one mode while preserving this
 // shared feed engine's cursor pagination, equalizer, seen-state, and media
-// behavior. /groups additionally requests the public community scope.
+// behavior. Groups now lives inside Home and requests the public community
+// scope there; group detail pages remain separate destinations.
 export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const routeLocation = useLocation();
@@ -2121,7 +2122,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
-  const publicGroupsFeed = groupScope === 'public';
+  const publicGroupsFeed = groupScope === 'public' || !forcedMode;
   const _cache = forcedMode ? null : readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
@@ -3296,11 +3297,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   return (
     <Layout wide={!forcedMode}>
       <Helmet>
-        <title>{publicGroupsFeed ? 'Popular Public Groups | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
+        <title>{viewMode === 'groups' && publicGroupsFeed ? 'Popular Public Groups | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
         <meta name="description" content="Your personalized UFIconnect social feed brings posts, people, communities, videos, and job discovery into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
-        {publicGroupsFeed
-          ? <link rel="canonical" href="https://uficonnect.org/groups" />
+        {viewMode === 'groups' && publicGroupsFeed
+          ? <link rel="canonical" href="https://uficonnect.org/?feed=groups" />
           : !forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
@@ -3880,7 +3881,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
-            <Link to="/groups" className="home-feed-rail-tab">Groups</Link>
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => activateHomeView('groups')}>Groups</button>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },

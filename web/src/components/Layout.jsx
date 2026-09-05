@@ -51,7 +51,7 @@ const NAV = [
 const MOBILE_BOTTOM_NAV = NAV
   .filter(({ icon }) => icon !== 'search')
   .map((item) => item.icon === 'notifications'
-    ? { to: '/groups', icon: 'groups', label: 'Groups', shortLabel: 'Groups' }
+    ? { to: '/?feed=groups', feed: 'groups', icon: 'groups', label: 'Groups', shortLabel: 'Groups' }
     : item);
 
 function initials(name = '') {
@@ -548,10 +548,10 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="following" size={18} />
                 Following
               </button>
-              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
                 <ShellIcon name="groups" size={18} />
                 Groups
-              </NavLink>
+              </button>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
                 <ShellIcon name="countries" size={18} />
                 Travel
@@ -598,13 +598,24 @@ export default function Layout({ children, wide = false }) {
       )}
       {/* ── Mobile bottom tab bar ── */}
       <nav className="bottom-nav">
-        {MOBILE_BOTTOM_NAV.map(({ to, icon, label, shortLabel }) => (
+        {MOBILE_BOTTOM_NAV.map(({ to, feed, icon, label, shortLabel }) => (
           <NavLink
             key={to}
             to={to}
             end={icon === 'home'}
-            onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
-            className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
+            onClick={icon === 'home'
+              ? handleAllFeedHomeClick
+              : feed
+                ? (event) => { event.preventDefault(); selectMobileFeed(feed); }
+                : undefined}
+            className={({ isActive }) => {
+              const active = icon === 'home'
+                ? isHomeFeedRoute && mobileFeedMode === 'feed'
+                : feed
+                  ? isHomeFeedRoute && mobileFeedMode === feed
+                  : isActive;
+              return `bottom-nav-item${active ? ' active' : ''}`;
+            }}
           >
             <span className="nav-icon" style={{ position: 'relative' }}>
               <ShellIcon name={icon} size={19} />

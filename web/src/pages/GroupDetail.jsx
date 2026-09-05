@@ -123,7 +123,7 @@ export default function GroupDetail() {
     setDeleteError('');
     try {
       await client.delete(`/groups/${id}`);
-      navigate('/groups');
+      navigate('/?feed=groups');
     } catch (err) {
       setDeleteError(err.response?.data?.message || 'Failed to delete group. Please try again.');
       setDeleting(false);
@@ -204,7 +204,7 @@ export default function GroupDetail() {
   return (
     <Layout>
       {/* Back */}
-      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate('/groups')}>
+      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate('/?feed=groups')}>
         <span className="btn-back-icon">‹</span> Back to Groups
       </button>
 

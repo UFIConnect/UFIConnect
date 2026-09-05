@@ -138,7 +138,7 @@ export default function App() {
         <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups" element={
-        <RequireAuth><RequireOnboarding><Feed forcedMode="groups" groupScope="public" /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><Navigate to="/?feed=groups" replace /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups/:id" element={
         <RequireAuth><RequireOnboarding><GroupDetail /></RequireOnboarding></RequireAuth>
