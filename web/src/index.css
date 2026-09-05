@@ -2770,7 +2770,9 @@ input, textarea, select { font-family: inherit; }
 }
 .mobile-app-header,
 .mobile-command-menu,
-.mobile-command-menu-scrim {
+.mobile-command-menu-scrim,
+.mobile-feed-drawer,
+.mobile-feed-drawer-edge {
   display: none;
 }
 
@@ -3030,31 +3032,30 @@ input, textarea, select { font-family: inherit; }
     outline: 2px solid var(--primary);
     outline-offset: 2px;
   }
-  .mobile-command-menu-trigger {
+  .mobile-feed-drawer-edge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 42px;
-    min-width: 42px;
-    height: 40px;
+    position: fixed;
+    top: 42%;
+    right: 0;
+    z-index: 218;
+    width: 26px;
+    min-width: 26px;
+    height: 58px;
     padding: 0;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    color: #64748B;
-    box-shadow: none;
+    border-right: 0;
+    border-radius: 8px 0 0 8px;
+    background: rgba(255, 255, 255, .96);
+    color: var(--primary);
+    box-shadow: -2px 2px 10px rgba(15, 23, 42, .08);
     cursor: pointer;
-    font-size: .78rem;
-    font-weight: 750;
+    touch-action: pan-y;
   }
-  .mobile-command-menu-trigger[aria-expanded="true"] {
-    background: #F1F5F9;
-    border-color: #CBD5E1;
-    color: #475569;
-  }
-  .mobile-command-menu-trigger:focus-visible {
+  .mobile-feed-drawer-edge:focus-visible {
     outline: 2px solid var(--primary);
-    outline-offset: 2px;
+    outline-offset: -3px;
   }
   .mobile-header-popup {
     position: fixed;
@@ -3239,40 +3240,83 @@ input, textarea, select { font-family: inherit; }
     min-width: 0;
     text-decoration: none;
   }
-  .mobile-command-menu-panel {
+  .mobile-feed-drawer {
+    display: flex;
+    flex-direction: column;
     position: fixed;
-    top: calc(env(safe-area-inset-top, 0px) + 66px);
-    right: 12px;
-    bottom: auto;
-    left: 12px;
-    z-index: 222;
-    width: auto;
-    max-height: calc(100dvh - 134px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 224;
+    width: min(86vw, 340px);
+    max-width: 100%;
+    height: 100dvh;
+    visibility: hidden;
+    transform: translateX(100%);
+    transition: transform .24s ease, visibility 0s linear .24s;
+    border-left: 1px solid var(--border);
+    background: var(--card);
+    box-shadow: -12px 0 30px rgba(15, 23, 42, .14);
+    pointer-events: none;
+  }
+  .mobile-feed-drawer.open {
+    visibility: visible;
+    transform: translateX(0);
+    transition: transform .24s ease;
+    pointer-events: auto;
+  }
+  .mobile-feed-drawer-header {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+    min-height: calc(54px + env(safe-area-inset-top, 0px));
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .mobile-feed-drawer-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .mobile-feed-drawer-close:active,
+  .mobile-feed-drawer-close:focus-visible {
+    background: var(--primary-light);
+    color: var(--primary);
+    outline: none;
+  }
+  .mobile-feed-drawer-content {
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
-    padding: 6px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--card);
-    box-shadow: var(--shadow-md);
+    padding: 8px 8px calc(20px + env(safe-area-inset-bottom, 0px));
+    touch-action: pan-y;
   }
-  .mobile-command-menu-panel .home-feed-side-tools {
+  .mobile-feed-drawer .home-feed-side-tools {
     gap: 6px;
   }
-  .mobile-command-menu-panel .profile-panel,
-  .mobile-command-menu-panel .profile-panel-trigger,
-  .mobile-command-menu-panel .profile-panel-content {
+  .mobile-feed-drawer .profile-panel,
+  .mobile-feed-drawer .profile-panel-trigger,
+  .mobile-feed-drawer .profile-panel-content {
     box-sizing: border-box;
     width: 100%;
   }
-  .mobile-command-menu-panel .profile-panel-trigger {
+  .mobile-feed-drawer .profile-panel-trigger {
     min-height: 42px;
     padding: 8px 10px;
   }
-  .mobile-command-menu-panel .profile-panel-summary { display: none; }
-  .mobile-command-menu-panel .profile-panel-content { padding: 0 10px 10px; }
-  .mobile-command-menu-panel .home-feed-source-panel .profile-panel-content { padding: 10px; }
+  .mobile-feed-drawer .profile-panel-summary { display: none; }
+  .mobile-feed-drawer .profile-panel-content { padding: 0 10px 10px; }
+  .mobile-feed-drawer .home-feed-source-panel .profile-panel-content { padding: 10px; }
   .mobile-command-menu-item {
     display: flex;
     align-items: center;
