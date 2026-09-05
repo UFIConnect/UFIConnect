@@ -3526,11 +3526,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
       {viewMode === 'groups' && (
         <div className="feed-source-filter-row feed-group-filter-row">
-          {publicGroupsFeed && (
-            <Link to="/search?tab=groups" className="btn btn-ghost btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
-              Browse groups
-            </Link>
-          )}
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
@@ -3725,7 +3720,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     : 'Join a UFIconnect group or connect a social account to build this feed.'}
                 </p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Link to="/search?tab=groups" className="btn btn-primary btn-sm">Browse groups</Link>
                   {publicGroupsFeed
                     ? <Link to="/search?tab=groups&create=1" className="btn btn-ghost btn-sm">Create a group</Link>
                     : <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>}
