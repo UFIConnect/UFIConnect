@@ -71,6 +71,13 @@ function previousFeedSignals(userId, mode) {
   };
 }
 
+function searchPostTimestamp(post) {
+  const value = post?.createdAt || post?.time || post?.posted;
+  if (typeof value === 'number') return value < 10_000_000_000 ? value * 1000 : value;
+  const parsed = Date.parse(value || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function mergePosts(current, incoming) {
   const merged = [];
   const seen = new Set();
@@ -80,7 +87,10 @@ function mergePosts(current, incoming) {
     seen.add(key);
     merged.push(post);
   }
-  return merged;
+  return merged.sort((a, b) => {
+    return searchPostTimestamp(b) - searchPostTimestamp(a)
+      || String(b?.id || '').localeCompare(String(a?.id || ''));
+  });
 }
 
 function initialSearchQuery() {
@@ -94,7 +104,10 @@ function mergeById(current, incoming) {
 }
 
 function emptyPostState() {
-  return { items: [], loading: false, loadingMore: false, error: '', page: 1, hasMore: false, total: null };
+  return {
+    items: [], loading: false, loadingMore: false, error: '',
+    page: 1, cursor: '', hasMore: false, total: null,
+  };
 }
 
 const ROLE_META = {
@@ -340,7 +353,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
     }
   }, []);
 
-  const loadPostResults = useCallback(async ({ tab, value, sources, topics, page = 1, append = false }) => {
+  const loadPostResults = useCallback(async ({ tab, value, sources, topics, page = 1, cursor = '', append = false }) => {
     const requestId = ++postRequestRef.current[tab];
     setPostStates((current) => ({
       ...current,
@@ -351,9 +364,10 @@ export default function SearchExperience({ initialTab = null } = {}) {
         mode: tab === 'following' ? 'following' : 'feed',
         limit: String(POST_PAGE_SIZE),
         page: String(page),
-        sort: 'ranked',
+        sort: 'newest',
         passive: '1',
       });
+      if (append && cursor) params.set('cursor', cursor);
       if (value.trim()) params.set('q', value.trim());
       if (topics.length) params.set('topics', topics.join(','));
       if (sources.length === 1) params.set('source', sources[0]);
@@ -362,8 +376,10 @@ export default function SearchExperience({ initialTab = null } = {}) {
       if (requestId !== postRequestRef.current[tab]) return;
       const incoming = Array.isArray(data.posts) ? data.posts : [];
       setPostStates((current) => {
-        const items = append ? mergePosts(current[tab].items, incoming) : incoming;
+        const items = mergePosts(append ? current[tab].items : [], incoming);
         const added = append ? items.length - current[tab].items.length : items.length;
+        const nextCursor = typeof data.cursor === 'string' ? data.cursor : '';
+        const cursorAdvanced = Boolean(nextCursor && nextCursor !== cursor);
         return {
           ...current,
           [tab]: {
@@ -372,7 +388,9 @@ export default function SearchExperience({ initialTab = null } = {}) {
             loadingMore: false,
             error: '',
             page,
-            hasMore: data.hasMore !== false && incoming.length > 0 && (!append || added > 0),
+            cursor: nextCursor,
+            hasMore: data.hasMore === true
+              && (incoming.length > 0 ? (!append || added > 0 || cursorAdvanced) : cursorAdvanced),
             total: data.totalAvailable != null && Number.isFinite(Number(data.totalAvailable))
               ? Number(data.totalAvailable)
               : null,
@@ -538,6 +556,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
         sources: postSources[activeTab],
         topics: postTopics[activeTab],
         page: postStates[activeTab].page + 1,
+        cursor: postStates[activeTab].cursor,
         append: true,
       });
       return;

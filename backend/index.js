@@ -16475,13 +16475,25 @@ async function getCommunityPosts({
   };
 }
 
-async function searchCommunityPosts({ viewerId, q, limit = 300 } = {}) {
+async function searchCommunityPosts({ viewerId, q, limit = 300, before = null, beforeId = null } = {}) {
   const search = databaseSearchTerms(q);
   if (!search.webQuery || !search.prefixQuery) return [];
 
+  const beforeMs = parseTimestampMs(before);
+  const isBeforeCursor = (post) => {
+    if (!beforeMs) return true;
+    const timestamp = postTimestamp(post);
+    if (timestamp !== beforeMs) return timestamp < beforeMs;
+    return String(post?.id || '').localeCompare(String(beforeId || '')) < 0;
+  };
+
   let matches = posts.filter(post => (
     (post.source || 'uficonnect') === 'uficonnect'
-    && matchesRelatedSearch(`${post.title || ''} ${post.content || ''}`, q)
+    && isBeforeCursor(post)
+    && matchesRelatedSearch(
+      `${post.title || ''} ${post.content || ''} ${post.author?.name || post.authorName || ''} ${post.sourceLabel || ''}`,
+      q
+    )
   ));
 
   if (db.isConnected()) {
@@ -16491,14 +16503,22 @@ async function searchCommunityPosts({ viewerId, q, limit = 300 } = {}) {
         COALESCE(author_name, '') || ' ' || COALESCE(source_label, '')
       )`;
       const querySql = `(websearch_to_tsquery('english', $1) || to_tsquery('english', $2))`;
+      const params = [search.webQuery, search.prefixQuery];
+      let cursorSql = '';
+      if (beforeMs) {
+        params.push(new Date(beforeMs).toISOString(), String(beforeId || ''));
+        cursorSql = `AND (created_at < $3 OR (created_at = $3 AND id < $4))`;
+      }
+      params.push(Math.min(Math.max(limit, 50), 1000));
       const { rows } = await db.query(
         `SELECT *, ts_rank_cd(${vectorSql}, ${querySql}) AS search_rank
          FROM community_posts
          WHERE COALESCE(source, 'uficonnect') = 'uficonnect'
            AND ${vectorSql} @@ ${querySql}
-         ORDER BY search_rank DESC, created_at DESC
-         LIMIT $3`,
-        [search.webQuery, search.prefixQuery, Math.min(Math.max(limit * 2, 50), 1000)]
+           ${cursorSql}
+         ORDER BY created_at DESC, id DESC
+         LIMIT $${params.length}`,
+        params
       );
       matches = [...matches, ...rows.map(dbCommunityPostToMemPost)];
     } catch (error) {
@@ -16512,13 +16532,14 @@ async function searchCommunityPosts({ viewerId, q, limit = 300 } = {}) {
       if (!post?.id || seen.has(post.id)) return false;
       seen.add(post.id);
       const group = post.groupId ? groups.find(candidate => candidate.id === post.groupId) : null;
-      return Boolean(group && canSeeGroup(group, viewerId));
+      return !post.groupId || Boolean(group && canSeeGroup(group, viewerId));
     })
     .map(post => ({
       post,
       score: relatedSearchScore(`${post.title || ''} ${post.content || ''}`, q),
     }))
-    .sort((a, b) => b.score - a.score || new Date(b.post.createdAt || 0) - new Date(a.post.createdAt || 0))
+    .sort((a, b) => postTimestamp(b.post) - postTimestamp(a.post)
+      || String(b.post.id || '').localeCompare(String(a.post.id || '')))
     .slice(0, limit)
     .map(({ post, score }) => ({ ...serializeCommunityPost(post, viewerId), searchRelevance: score }));
 }
@@ -18993,7 +19014,7 @@ function dbFeedOrder(sortMode = 'ranked') {
     // fallback), and wrapping it in COALESCE hides it from the planner,
     // which can otherwise use fpc_time_idx to satisfy this ORDER BY
     // directly instead of sorting the whole matched set from scratch.
-    return 'post_created_at DESC, fetched_at DESC';
+    return 'post_created_at DESC, id DESC';
   }
   if (sortMode === 'popular') {
     return '(GREATEST(likes_count,0) + GREATEST(comments_count,0) * 2) DESC, COALESCE(post_created_at, fetched_at) DESC';
@@ -19075,7 +19096,9 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
         const prefixQueryParam = params.length;
         const querySql = `(websearch_to_tsquery('english', $${webQueryParam}) || to_tsquery('english', $${prefixQueryParam}))`;
         clauses.push(`${FEED_SEARCH_VECTOR_SQL} @@ ${querySql}`);
-        searchOrder = `ts_rank_cd(${FEED_SEARCH_VECTOR_SQL}, ${querySql}) DESC, `;
+        if (sortMode !== 'newest') {
+          searchOrder = `ts_rank_cd(${FEED_SEARCH_VECTOR_SQL}, ${querySql}) DESC, `;
+        }
       } else {
         clauses.push('FALSE');
       }
@@ -19102,7 +19125,13 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     // still applies.
     if (options.before) {
       params.push(new Date(options.before).toISOString());
-      clauses.push(`post_created_at < $${params.length}`);
+      const beforeParam = params.length;
+      if (options.beforeId !== undefined && options.beforeId !== null) {
+        params.push(String(options.beforeId));
+        clauses.push(`(post_created_at < $${beforeParam} OR (post_created_at = $${beforeParam} AND id < $${params.length}))`);
+      } else {
+        clauses.push(`post_created_at < $${beforeParam}`);
+      }
     }
     params.push(limit);
     const limitParam = params.length;
@@ -21689,7 +21718,7 @@ async function handleFeedRequest(req, res) {
   // Search deliberately permits a previously consumed post; all normal
   // feeds and filters remain unseen-only for this individual member.
   const trackPostsSeen = (items) => {
-    if (!passivePreview) markPostsSeen(req.user.id, items);
+    if (!passivePreview && !hasExplicitSearch) markPostsSeen(req.user.id, items);
   };
   // Behavioral affinity (real watch/comment/link time — see
   // recordEngagementSignal) — same "applied fresh per request" treatment as
@@ -22340,101 +22369,135 @@ async function handleFeedRequest(req, res) {
 
   // -- Full-text search across all sources ----------------------------------
   if (searchQuery) {
-    const searchSources = sourcesParam.length ? sourcesParam : (sourceFilter || AGGREGATE_FEED_SOURCES);
-    const searchOffset = (reqPage - 1) * feedLimit;
-    const searchCandidateLimit = Math.min(1000, searchOffset + (feedLimit * 3));
-    const allCached = sortFeedBatch(realFeedPosts([
+    // Search is a database lookup, not another personalized-feed ranking.
+    // Keep every matching source (plus visible native UFI posts) in one
+    // deterministic newest-first stream. A timestamp+id cursor means a new
+    // post arriving during an active search cannot shift page boundaries,
+    // duplicate an earlier page, or make an older match unreachable.
+    const rawRequestedSearchSources = req.query.sources
+      ? req.query.sources.split(',').map(canonicalFeedSourceId).filter(Boolean)
+      : (req.query.source ? [canonicalFeedSourceId(req.query.source)] : []);
+    const requestedSearchSources = [...new Set(rawRequestedSearchSources)]
+      .filter(source => source === 'uficonnect' || isAggregateFeedSource(source))
+      .filter(source => !disabledFeedSources.has(source));
+    const searchesEverySource = rawRequestedSearchSources.length === 0;
+    const includeNativePosts = searchesEverySource || requestedSearchSources.includes('uficonnect');
+    const externalSearchSources = searchesEverySource
+      ? AGGREGATE_FEED_SOURCES.filter(source => !disabledFeedSources.has(source))
+      : requestedSearchSources.filter(isAggregateFeedSource);
+    const searchCursor = decodeFeedCursor(req.query.cursor).__search || {};
+    const searchBeforeMs = parseTimestampMs(searchCursor.ts);
+    const searchBeforeId = String(searchCursor.id || '');
+    const searchBatchLimit = Math.min(900, Math.max(feedLimit * 4, 120));
+    const searchFetchLimit = searchBatchLimit + 1;
+    const newestSearchOrder = (a, b) => postTimestamp(b) - postTimestamp(a)
+      || String(b?.id || '').localeCompare(String(a?.id || ''));
+    const isBeforeSearchCursor = (post) => {
+      if (!searchBeforeMs) return true;
+      const timestamp = postTimestamp(post);
+      if (timestamp !== searchBeforeMs) return timestamp < searchBeforeMs;
+      return String(post?.id || '').localeCompare(searchBeforeId) < 0;
+    };
+    const isRequestedSearchSource = (post) => {
+      const source = canonicalFeedSourceId(post?.source || 'uficonnect');
+      if (source === 'uficonnect') return includeNativePosts;
+      return externalSearchSources.includes(source);
+    };
+    const searchText = (post) => (
+      `${post?.title || ''} ${post?.content || ''} ${post?.author?.name || post?.author || ''} `
+      + `${post?.topic || ''} ${post?.sourceLabel || ''} ${post?.source || ''}`
+    );
+    const searchRangeMs = feedTimeRangeMs(timeRange);
+    const isWithinSearchRange = (post) => (
+      !searchRangeMs || postTimestamp(post) >= Date.now() - searchRangeMs
+    );
+    const cachedMatches = realFeedPosts([
       ...globalFeedCache.posts,
       ...[...agentSourceCache.values()].flatMap(c => c.posts || []),
-    ]), 'feed-search-memory', {
-      limit: Math.max(searchCandidateLimit, feedLimit + 1),
-      sort: sortMode,
-      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
-    const searchRangeMs = feedTimeRangeMs(timeRange);
-    const memMatches = allCached.filter(p => {
-      if (Array.isArray(searchSources) && searchSources.length && !searchSources.includes(p.source)) return false;
-      if (searchSources && !Array.isArray(searchSources) && p.source !== searchSources) return false;
-      if (searchRangeMs && postTimestamp(p) < Date.now() - searchRangeMs) return false;
-      if (!matchesTopic(p)) return false;
-      const text = `${p.title || ''} ${p.content || ''} ${p.author?.name || p.author || ''} ${p.source || ''}`.toLowerCase();
-      return matchesRelatedSearch(text, searchQuery);
-    });
-    let dbMatches = [];
-    if (db.isConnected()) {
-      try {
-        const rows = await getPostsFromDB([], searchCandidateLimit, 0, searchSources, {
+    ])
+      .filter(isRequestedSearchSource)
+      .filter(isBeforeSearchCursor)
+      .filter(isWithinSearchRange)
+      .filter(matchesTopic)
+      .filter(post => matchesRelatedSearch(searchText(post), searchQuery))
+      .sort(newestSearchOrder);
+    const memMatches = cachedMatches.slice(0, searchFetchLimit);
+    const [nativeMatches, dbMatches] = await Promise.all([
+      includeNativePosts
+        ? searchCommunityPosts({
+            viewerId: req.user.id,
+            q: searchQuery,
+            limit: searchFetchLimit,
+            before: searchBeforeMs,
+            beforeId: searchBeforeId,
+          })
+        : Promise.resolve([]),
+      externalSearchSources.length && db.isConnected()
+        ? getPostsFromDB([], searchFetchLimit, 0, externalSearchSources, {
           q: searchQuery,
-          sort: sortMode,
+          sort: 'newest',
           timeRange,
-        });
-        dbMatches = rows.map(p => ({
-          ...p,
+          before: searchBeforeMs,
+          beforeId: searchBeforeId,
+        }).then(rows => rows.map(post => ({
+          ...post,
           forYou: true,
           relevance: 1,
-        })).filter(p => !isFallbackFeedPost(p)).filter(matchesTopic);
-      } catch {}
-    }
-    // enforceFeedDiversity's own header calls it "the single place that
-    // enforces true mix... for EVERY surface a user can reach" — archive
-    // mode and page 2+ infinite scroll were both fixed to route through it,
-    // but search never was. sortFeedBatch's diversify:true alone only gives
-    // a streak cap (maxSharePct defaults to null — see diversifyBySource's
-    // own comment: that knob is deliberately reserved for a small explicit
-    // source selection like the Jobs filter, not search, which can match
-    // any of the 36 sources), so a query where one source just happens to
-    // have far more matches could legally return that source almost
-    // exclusively — spread out so no run is longer than 2, but no better
-    // than that overall (the exact "42/18 RemoteOK/Indeed... badly lopsided
-    // overall" case enforceFeedDiversity's own comment documents). Ranking
-    // widely first (matching the main snapshot's own feedLimit*4-ish
-    // headroom) so the real proportional cap below has genuine alternates
-    // to pick from, rather than capping an already-narrow feedLimit+1 list
-    // down to almost nothing.
-    const nativeMatches = await searchCommunityPosts({
-      viewerId: req.user.id,
-      q: searchQuery,
-      limit: searchCandidateLimit,
-    });
-    const searchRanked = sortFeedBatch(realFeedPosts([...nativeMatches, ...memMatches, ...dbMatches]).map(post => ({
+        }))).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    const rawMatches = uniqueEqualizerPosts([
+      ...nativeMatches,
+      ...memMatches,
+      ...dbMatches,
+    ].map(post => ({
       ...post,
-      searchRelevance: relatedSearchScore(
-        `${post.title || ''} ${post.content || ''} ${post.author?.name || post.author || ''} ${post.topic || ''} ${post.source || ''}`,
-        searchQuery
-      ),
-    })), 'feed-search-response', {
-      limit: searchCandidateLimit,
-      sort: sortMode,
-      diversify: true, // basic anti-clustering now applies regardless of sort mode — see sortFeedBatch
-    });
-    const searchVisible = searchRanked
-      .filter(post => !disabledFeedSources.has(String(post?.source || '').trim().toLowerCase()))
-      .filter(matchesTopic);
-    const searchCandidates = filterUnseen(personalizeAuthenticatedFeedPosts(
-      searchVisible,
-      user,
-      prefs,
-      userAffinity,
-      { locationContext, request: req }
-    ).sort((a, b) => requestedSortMode === 'newest'
-      ? postTimestamp(b) - postTimestamp(a)
-        || (b.searchRelevance || 0) - (a.searchRelevance || 0)
-      : (b.searchRelevance || 0) - (a.searchRelevance || 0)
-        || postTimestamp(b) - postTimestamp(a)
-    ), seenIds);
-    const pageWindow = searchOffset + feedLimit + 1;
-    const merged = usesBlendedSources
-      ? enforceFeedDiversity(searchCandidates, pageWindow, sortMode)
-      : searchCandidates.slice(0, pageWindow);
-    const searchPageRows = merged.slice(searchOffset, searchOffset + feedLimit);
+      searchRelevance: post.searchRelevance ?? relatedSearchScore(searchText(post), searchQuery),
+    }))).filter(isWithinSearchRange).sort(newestSearchOrder);
+    const searchVisible = filterPostsForMemberLanguages(rawMatches, user, req)
+      .filter(post => !disabledFeedSources.has(canonicalFeedSourceId(post?.source || 'uficonnect')))
+      .filter(isRequestedSearchSource)
+      .filter(matchesTopic)
+      .filter(post => matchesRelatedSearch(searchText(post), searchQuery))
+      .sort(newestSearchOrder);
+    const searchPageRows = searchVisible.slice(0, feedLimit).map(post => (
+      post.isExternal === false ? post : {
+          ...post,
+          forYou: true,
+          relevance: 1,
+        }
+    ));
+    const streamsHaveMore = cachedMatches.length > searchBatchLimit
+      || nativeMatches.length > searchBatchLimit
+      || dbMatches.length > searchBatchLimit;
+    const hasMore = searchVisible.length > feedLimit || streamsHaveMore;
+    const streamBoundaries = [
+      cachedMatches.length > searchBatchLimit ? memMatches[searchBatchLimit - 1] : null,
+      nativeMatches.length > searchBatchLimit ? nativeMatches[searchBatchLimit - 1] : null,
+      dbMatches.length > searchBatchLimit ? dbMatches[searchBatchLimit - 1] : null,
+    ].filter(Boolean).sort(newestSearchOrder);
+    // If language or topic screening leaves a short page, advance only to
+    // the newest truncated stream boundary. Advancing to the oldest row we
+    // happened to scan could jump over unscanned matches in another stream.
+    const cursorAnchor = searchPageRows.length >= feedLimit
+      ? searchPageRows[searchPageRows.length - 1]
+      : streamBoundaries[0] || null;
+    const nextCursor = cursorAnchor && hasMore
+      ? encodeFeedCursor({
+          __search: {
+            ts: new Date(postTimestamp(cursorAnchor)).toISOString(),
+            id: String(cursorAnchor.id || ''),
+          },
+        })
+      : '';
     trackPostsSeen(searchPageRows);
     return res.json({
       posts: searchPageRows,
       page: reqPage,
-      hasMore: merged.length > searchOffset + feedLimit,
-      totalAvailable: searchCandidates.length,
+      cursor: nextCursor,
+      hasMore,
       search: searchQuery,
-      sort: sortMode,
+      sort: 'newest',
     });
   }
 
