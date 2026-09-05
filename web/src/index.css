@@ -450,7 +450,7 @@ input, textarea, select { font-family: inherit; }
   position: absolute;
   top: 2px;
   right: 4px;
-  color: #F59E0B;
+  color: var(--primary);
   font-size: .55rem;
   line-height: 1;
   pointer-events: none;
@@ -544,14 +544,14 @@ input, textarea, select { font-family: inherit; }
 }
 .feed-source-favorite-button:hover,
 .feed-source-favorite-button:focus-visible {
-  border-color: #F59E0B;
-  color: #B45309;
+  border-color: var(--primary);
+  color: var(--primary);
   outline: none;
 }
 .feed-source-favorite-button.active {
-  border-color: #F59E0B;
-  background: #FFFBEB;
-  color: #B45309;
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
 }
 .feed-source-favorite-button:disabled {
   cursor: not-allowed;

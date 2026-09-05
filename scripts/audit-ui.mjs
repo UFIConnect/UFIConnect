@@ -24,7 +24,9 @@ let checks = 0;
 try {
   await server.listen();
   const base = server.resolvedUrls.local[0];
+  console.log(`UI audit server ready: ${base}`);
   browser = await chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+  console.log('UI audit browser ready');
   const sources = ['bluesky', 'mastodon', 'devto', 'github', 'hackernews', 'reddit'];
   let feed = Array.from({ length: 30 }, (_, i) => ({
     id: `audit-post-${i}`, source: sources[i % sources.length],
@@ -118,12 +120,37 @@ try {
     }
     checks += 3;
 
+    async function checkFavoriteColors(feedName) {
+      const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
+      await sourceMenu.click();
+      const favorite = page.locator('.feed-source-favorite-button:not(.active)').first();
+      const label = await favorite.getAttribute('aria-label');
+      await favorite.hover();
+      assert.equal(await favorite.evaluate(el => getComputedStyle(el).color), 'rgb(16, 42, 107)');
+      await favorite.focus();
+      assert.equal(await favorite.evaluate(el => getComputedStyle(el).borderTopColor), 'rgb(16, 42, 107)');
+      await favorite.click();
+      const selected = page.getByRole('button', { name: label.replace('Add to', 'Remove from'), exact: true });
+      assert.equal(await selected.getAttribute('aria-pressed'), 'true');
+      assert.deepEqual(await selected.evaluate(el => {
+        const style = getComputedStyle(el);
+        return [style.color, style.backgroundColor, style.borderTopColor];
+      }), ['rgb(16, 42, 107)', 'rgb(232, 238, 249)', 'rgb(16, 42, 107)']);
+      await page.screenshot({ path: path.join(output, `favorites-${feedName}-${viewport.width}.png`) });
+      await selected.click();
+      assert.equal(await page.getByRole('button', { name: label, exact: true }).getAttribute('aria-pressed'), 'false');
+      await sourceMenu.click();
+      checks += 5;
+    }
+    await checkFavoriteColors('home');
+
     const menu = page.getByRole('button', { name: 'Open menu', exact: true });
     if (await menu.isVisible()) await menu.click();
     await page.getByRole('button', { name: 'Following', exact: true }).filter({ visible: true }).first().click();
     await page.locator('.feed-source-tabs--compact').waitFor();
     assert.equal(await buttons.count(), 6);
     checks++;
+    await checkFavoriteColors('following');
     await page.goto(base + 'videos');
     const videoScroll = page.locator('.video-feed-scroll');
     await page.locator('[data-post-id="audit-video-0"]').waitFor();
