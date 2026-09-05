@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540">
+<style>text { font-family: Segoe UI, Arial, sans-serif; letter-spacing: 0; }</style>
+<rect width="960" height="540" fill="#102A6B"/>
+<rect x="700" width="260" height="540" fill="#0A1633"/>
+<rect x="700" width="14" height="350" fill="#63C7E8"/>
+<rect x="700" y="350" width="14" height="190" fill="#55C78A"/>
+<rect x="48" y="38" width="54" height="54" rx="10" fill="#FFFFFF"/>
+<text x="75" y="73" fill="#102A6B" font-size="20" font-weight="700" text-anchor="middle">UFI</text>
+<text x="118" y="73" fill="#FFFFFF" font-size="20" font-weight="700">Career Studio</text>
+<text x="48" y="160" fill="#63C7E8" font-size="18" font-weight="700">OFFERS</text>
+<text x="48" y="218" fill="#FFFFFF" font-size="49" font-weight="700"><tspan x="48" dy="0">Handle an offer</tspan><tspan x="48" dy="58">conversation</tspan></text>
+<text x="48" y="395" fill="#D9E4FA" font-size="22" font-weight="400"><tspan x="48" dy="0">Review the full package, prepare a specific request, and</tspan><tspan x="48" dy="31">give yourself time to make a clear decision.</tspan></text>
+<text x="752" y="87" fill="#FFFFFF" font-size="15" font-weight="700">ORIGINAL LESSON</text>
+<text x="752" y="118" fill="#AFC2E8" font-size="15">5 practical steps</text>
+<text x="752" y="143" fill="#AFC2E8" font-size="15">0:29</text>
+<circle cx="830" cy="302" r="45" fill="#FFFFFF" fill-opacity="0.12"/>
+<path d="M818 279 L818 325 L852 302 Z" fill="#FFFFFF"/>
+</svg>
