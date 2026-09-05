@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const COLORS = {
   panel: '#0d0d1a',
@@ -64,7 +64,13 @@ function formatTimestamp(value) {
   });
 }
 
-function ActionButton({ children, onClick, tone = 'primary', disabled = false, style }) {
+function frontendTargetLabel(target) {
+  if (target === 'mobile') return 'App';
+  if (target === 'office') return 'Office';
+  return 'Web';
+}
+
+function ActionButton({ children, onClick, tone = 'primary', disabled = false, style, title }) {
   const tones = {
     primary: { background: COLORS.blueStrong, color: '#fff', borderColor: COLORS.blueStrong },
     neutral: { background: 'rgba(255,255,255,.04)', color: COLORS.subtle, borderColor: COLORS.border },
@@ -73,8 +79,10 @@ function ActionButton({ children, onClick, tone = 'primary', disabled = false, s
   return (
     <button
       type="button"
+      className="controls-action"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       style={{
         minHeight: 36,
         padding: '8px 13px',
@@ -126,6 +134,8 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(null);
   const [runningId, setRunningId] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const commandListRef = useRef(null);
   const [compact, setCompact] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 980px)').matches : false
   ));
@@ -172,6 +182,12 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
     ['All controls', ...new Set(controls.map((control) => control.category))]
   ), [controls]);
 
+  const categoryCounts = useMemo(() => {
+    const counts = new Map([['All controls', controls.length]]);
+    for (const control of controls) counts.set(control.category, (counts.get(control.category) || 0) + 1);
+    return counts;
+  }, [controls]);
+
   const filtered = useMemo(() => {
     const search = query.trim().toLowerCase();
     return controls.filter((control) => {
@@ -180,6 +196,22 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
       return categoryMatch && (!search || haystack.includes(search));
     });
   }, [category, controls, query]);
+
+  const groupedControls = useMemo(() => {
+    const groups = new Map();
+    for (const control of filtered) {
+      if (!groups.has(control.category)) groups.set(control.category, []);
+      groups.get(control.category).push(control);
+    }
+    return [...groups.entries()];
+  }, [filtered]);
+
+  const chooseCategory = useCallback((nextCategory) => {
+    setCategory(nextCategory);
+    window.requestAnimationFrame(() => {
+      commandListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }, []);
 
   const openEditor = async (control) => {
     if (control.available === false) {
@@ -204,7 +236,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
     try {
       const payload = await responsePayload(await request(`${apiBase}/office/frontend-files?target=${encodeURIComponent(target)}`));
       setEditor((current) => ({ ...current, files: payload.files || [], loading: false }));
-      setNotice({ tone: 'info', text: `Choose an existing ${target} frontend file, review it, then commit the change.` });
+      setNotice({ tone: 'info', text: `Choose an existing ${frontendTargetLabel(target)} frontend file, review it, then commit the change.` });
     } catch (loadError) {
       setEditor((current) => ({ ...current, loading: false, error: loadError.message }));
     }
@@ -312,7 +344,65 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
   const sourceCount = controls.filter((control) => control.category === 'Individual sources').length;
 
   return (
-    <div style={{ maxWidth: 1500, margin: '0 auto' }}>
+    <div className="controls-page" style={{ maxWidth: 1500, margin: '0 auto' }}>
+      <style>{`
+        @keyframes controlsEnter {
+          from { opacity: 0; transform: translateY(7px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes controlsProgress {
+          from { transform: translateX(-100%); }
+          to { transform: translateX(320%); }
+        }
+        .controls-page { scroll-behavior: smooth; }
+        .controls-summary,
+        .controls-panel { animation: controlsEnter .24s ease-out both; }
+        .controls-action { transition: transform .14s ease, filter .14s ease, border-color .14s ease; }
+        .controls-action:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.12); }
+        .controls-action:active:not(:disabled) { transform: translateY(0); }
+        .controls-category-button {
+          width: 100%; min-height: 34px; display: flex; align-items: center; justify-content: space-between;
+          gap: 10px; padding: 8px 10px; border: 1px solid transparent; border-radius: 7px;
+          background: transparent; color: #64748b; cursor: pointer; font: inherit; font-size: 11px;
+          text-align: left; transition: background .14s ease, border-color .14s ease, color .14s ease, transform .14s ease;
+        }
+        .controls-category-button:hover { background: rgba(255,255,255,.04); color: #cbd5e1; transform: translateX(2px); }
+        .controls-category-button[data-active="true"] {
+          background: rgba(29,78,216,.16); border-color: rgba(96,165,250,.28); color: #93c5fd;
+        }
+        .controls-category-count {
+          min-width: 24px; padding: 2px 6px; border-radius: 999px; background: rgba(255,255,255,.05);
+          color: #94a3b8; text-align: center; font-size: 9.5px; font-variant-numeric: tabular-nums;
+        }
+        .controls-command-list { scroll-behavior: smooth; scrollbar-gutter: stable; }
+        .controls-command-group { animation: controlsEnter .2s ease-out both; }
+        .controls-command-row {
+          transition: background .14s ease, padding-left .14s ease, border-color .14s ease;
+          animation: controlsEnter .2s ease-out both;
+        }
+        .controls-command-row:hover { background: rgba(255,255,255,.025); padding-left: 8px !important; }
+        .controls-running-track { height: 2px; overflow: hidden; background: rgba(96,165,250,.12); border-radius: 999px; }
+        .controls-running-track::after {
+          content: ''; display: block; width: 32%; height: 100%; background: #60a5fa;
+          animation: controlsProgress 1s ease-in-out infinite;
+        }
+        @media (max-width: 980px) {
+          .controls-browser { grid-template-columns: 1fr !important; }
+          .controls-category-nav {
+            display: flex !important; overflow-x: auto; gap: 7px; padding: 1px 0 8px;
+            position: sticky; top: 0; z-index: 4; background: #0d0d1a; scrollbar-width: thin;
+          }
+          .controls-category-button { width: auto; flex: 0 0 auto; white-space: nowrap; }
+          .controls-category-button:hover { transform: translateY(-1px); }
+          .controls-command-list { max-height: 68vh !important; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .controls-page, .controls-command-list { scroll-behavior: auto; }
+          .controls-summary, .controls-panel, .controls-command-group, .controls-command-row,
+          .controls-running-track::after { animation: none !important; }
+          .controls-action, .controls-category-button, .controls-command-row { transition: none !important; }
+        }
+      `}</style>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 22 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#f1f5f9', letterSpacing: 0 }}>Controls</h1>
@@ -323,7 +413,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
         <ActionButton tone="neutral" onClick={refresh}>Refresh controls</ActionButton>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10, marginBottom: 18 }}>
+      <div className="controls-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10, marginBottom: 18 }}>
         {[
           ['Available', controls.length - unavailableCount, COLORS.green],
           ['Needs setup', unavailableCount, unavailableCount ? COLORS.amber : COLORS.green],
@@ -337,7 +427,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
         ))}
       </div>
 
-      <section style={sectionStyle}>
+      <section className="controls-panel" style={sectionStyle}>
         <SectionHeader
           title="Public control plane"
           description={`${status}. Confirmed actions and their results are stored in the Office audit history.`}
@@ -359,52 +449,99 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
             {notice.result && <pre style={{ margin: '7px 0 0', maxHeight: 150, overflow: 'auto', whiteSpace: 'pre-wrap', color: COLORS.subtle, fontSize: 10.5, fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>{resultSummary(notice.result)}</pre>}
           </div>
         )}
+        {runningId && <div className="controls-running-track" aria-hidden="true" style={{ margin: '-5px 0 12px' }} />}
 
-        <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(240px, 1fr) 230px', gap: 9, marginBottom: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : 'minmax(220px, 1fr) auto', gap: 9, marginBottom: 12 }}>
           <input aria-label="Search controls" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search actions, services, or sources" style={inputStyle} />
-          <select aria-label="Filter controls by category" value={category} onChange={(event) => setCategory(event.target.value)} style={inputStyle}>
-            {categories.map((entry) => <option key={entry}>{entry}</option>)}
-          </select>
+          <ActionButton
+            tone="neutral"
+            onClick={() => { setQuery(''); chooseCategory('All controls'); }}
+            disabled={!query && category === 'All controls'}
+            style={{ width: compact ? '100%' : undefined }}
+          >
+            Clear filters
+          </ActionButton>
         </div>
 
-        <div style={{ maxHeight: 520, overflowY: 'auto', borderTop: `1px solid ${COLORS.border}` }}>
-          {filtered.map((control) => {
-            const running = runningId === control.id;
-            const unavailable = control.available === false;
-            return (
-              <div key={control.id} style={{
-                display: 'grid',
-                gridTemplateColumns: compact ? 'minmax(0, 1fr) auto' : 'minmax(260px, 1fr) 150px 90px 120px',
-                gap: 10,
-                alignItems: 'center',
-                padding: '11px 3px',
-                borderBottom: `1px solid ${COLORS.border}`,
-              }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ color: COLORS.text, fontSize: 12.5, fontWeight: 800 }}>{control.label}</div>
-                  <div style={{ color: unavailable ? COLORS.red : COLORS.muted, fontSize: 10.5, lineHeight: 1.45, marginTop: 3 }}>{unavailable ? control.unavailableReason : control.description}</div>
-                  {compact && <div style={{ color: COLORS.subtle, fontSize: 10, marginTop: 5 }}>{control.category} | {control.target} | {control.impact}</div>}
-                </div>
-                {!compact && <div style={{ color: COLORS.subtle, fontSize: 10.5 }}>{control.category}</div>}
-                {!compact && <div style={{ color: control.impact === 'critical' ? COLORS.red : control.impact === 'high' ? COLORS.amber : COLORS.subtle, fontSize: 10.5, textTransform: 'capitalize' }}>{control.target} | {control.impact}</div>}
-                <ActionButton
-                  tone={control.id.startsWith('deploy.') ? 'success' : control.input === 'frontend-file' ? 'primary' : 'neutral'}
-                  onClick={() => execute(control)}
-                  disabled={running || unavailable}
-                  style={{ width: compact ? 112 : '100%' }}
-                >
-                  {running ? 'Running...' : controlActionLabel(control)}
-                </ActionButton>
-              </div>
-            );
-          })}
-          {!filtered.length && <div style={{ padding: 14, color: COLORS.muted, fontSize: 12 }}>No controls match this filter.</div>}
+        <div className="controls-browser" style={{ display: 'grid', gridTemplateColumns: '205px minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+          <nav className="controls-category-nav" aria-label="Control categories" style={{ display: 'grid', gap: 3, position: 'sticky', top: 0 }}>
+            {categories.map((entry) => (
+              <button
+                key={entry}
+                type="button"
+                className="controls-category-button"
+                data-active={category === entry}
+                aria-pressed={category === entry}
+                onClick={() => chooseCategory(entry)}
+              >
+                <span>{entry}</span>
+                <span className="controls-category-count">{categoryCounts.get(entry) || 0}</span>
+              </button>
+            ))}
+          </nav>
+
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, margin: '0 2px 8px' }}>
+              <span style={{ color: COLORS.subtle, fontSize: 10.5, fontWeight: 700 }}>
+                {filtered.length} {filtered.length === 1 ? 'command' : 'commands'}
+              </span>
+              <span style={{ color: COLORS.muted, fontSize: 10 }}>Select a category or search by service</span>
+            </div>
+            <div ref={commandListRef} className="controls-command-list" style={{ maxHeight: 620, overflowY: 'auto', borderTop: `1px solid ${COLORS.border}`, borderBottom: `1px solid ${COLORS.border}` }}>
+              {groupedControls.map(([groupName, groupControls], groupIndex) => (
+                <section key={groupName} className="controls-command-group" style={{ animationDelay: `${Math.min(groupIndex * 24, 160)}ms` }}>
+                  <div style={{
+                    position: 'sticky', top: 0, zIndex: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                    padding: '8px 6px', background: COLORS.panel, borderBottom: `1px solid ${COLORS.border}`,
+                  }}>
+                    <h3 style={{ margin: 0, color: COLORS.blue, fontSize: 10.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0 }}>{groupName}</h3>
+                    <span style={{ color: COLORS.muted, fontSize: 9.5 }}>{groupControls.length}</span>
+                  </div>
+                  {groupControls.map((control, controlIndex) => {
+                    const running = runningId === control.id;
+                    const unavailable = control.available === false;
+                    return (
+                      <div key={control.id} className="controls-command-row" style={{
+                        display: 'grid',
+                        gridTemplateColumns: compact ? 'minmax(0, 1fr) auto' : 'minmax(260px, 1fr) 100px 120px',
+                        gap: 10,
+                        alignItems: 'center',
+                        padding: '11px 3px',
+                        borderBottom: `1px solid ${COLORS.border}`,
+                        animationDelay: `${Math.min((groupIndex * 3 + controlIndex) * 18, 220)}ms`,
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                            <span style={{ color: COLORS.text, fontSize: 12.5, fontWeight: 800 }}>{control.label}</span>
+                            {running && <span style={{ color: COLORS.blue, fontSize: 9.5, fontWeight: 800 }}>RUNNING</span>}
+                          </div>
+                          <div style={{ color: unavailable ? COLORS.red : COLORS.muted, fontSize: 10.5, lineHeight: 1.45, marginTop: 3 }}>{unavailable ? control.unavailableReason : control.description}</div>
+                          {compact && <div style={{ color: COLORS.subtle, fontSize: 10, marginTop: 5 }}>{control.target} | {control.impact}</div>}
+                        </div>
+                        {!compact && <div style={{ color: control.impact === 'critical' ? COLORS.red : control.impact === 'high' ? COLORS.amber : COLORS.subtle, fontSize: 10.5, textTransform: 'capitalize' }}>{control.target} | {control.impact}</div>}
+                        <ActionButton
+                          tone={control.id.startsWith('deploy.') ? 'success' : control.input === 'frontend-file' ? 'primary' : 'neutral'}
+                          onClick={() => execute(control)}
+                          disabled={Boolean(runningId) || unavailable}
+                          title={unavailable ? control.unavailableReason : control.description}
+                          style={{ width: compact ? 108 : '100%' }}
+                        >
+                          {running ? 'Running...' : controlActionLabel(control)}
+                        </ActionButton>
+                      </div>
+                    );
+                  })}
+                </section>
+              ))}
+              {!filtered.length && <div style={{ padding: 18, color: COLORS.muted, fontSize: 12 }}>No controls match this filter.</div>}
+            </div>
+          </div>
         </div>
 
         {editor.open && (
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
             <SectionHeader
-              title={`${editor.target === 'web' ? 'Web' : 'App'} frontend change`}
+              title={`${frontendTargetLabel(editor.target)} frontend change`}
               description="Only existing frontend text files are editable. GitHub rejects stale or conflicting commits."
               action={<ActionButton tone="neutral" onClick={() => setEditor((current) => ({ ...current, open: false }))}>Close editor</ActionButton>}
             />
@@ -444,8 +581,12 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
         )}
 
         <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${COLORS.border}` }}>
-          <SectionHeader title="Execution history" description="Latest durable control runs across the API and pipeline." />
-          <div style={{ display: 'grid', maxHeight: 300, overflowY: 'auto' }}>
+          <SectionHeader
+            title="Execution history"
+            description="Latest durable control runs across the API and pipeline."
+            action={<ActionButton tone="neutral" onClick={() => setHistoryOpen((open) => !open)}>{historyOpen ? 'Hide history' : `Show history (${history.length})`}</ActionButton>}
+          />
+          {historyOpen && <div className="controls-command-group" style={{ display: 'grid', maxHeight: 300, overflowY: 'auto' }}>
             {history.slice(0, 50).map((run) => (
               <div key={run.id} style={{ display: 'grid', gridTemplateColumns: compact ? '1fr auto' : 'minmax(220px, 1fr) 100px 160px 95px', gap: 10, padding: '9px 2px', borderTop: `1px solid ${COLORS.border}`, alignItems: 'center' }}>
                 <div style={{ minWidth: 0 }}>
@@ -460,7 +601,7 @@ export default function Controls({ apiBase = '', pipelineBase = '', request = fe
               </div>
             ))}
             {!history.length && <div style={{ color: COLORS.muted, fontSize: 12, padding: '10px 0' }}>No control runs have been recorded yet.</div>}
-          </div>
+          </div>}
         </div>
       </section>
     </div>

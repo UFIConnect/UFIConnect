@@ -25,10 +25,19 @@ test('frontend commits stay inside existing frontend source roots', () => {
   assert.equal(normalizeOfficeFrontendPath('web', 'web/src/App.jsx'), 'web/src/App.jsx');
   assert.equal(normalizeOfficeFrontendPath('web', './web/public/robots.txt'), 'web/public/robots.txt');
   assert.equal(normalizeOfficeFrontendPath('mobile', 'mobile/screens/HomeScreen.js'), 'mobile/screens/HomeScreen.js');
+  assert.equal(normalizeOfficeFrontendPath('office', 'office/src/Controls.jsx'), 'office/src/Controls.jsx');
+  assert.equal(normalizeOfficeFrontendPath('office', 'office/index.html'), 'office/index.html');
   assert.equal(normalizeOfficeFrontendPath('web', 'backend/index.js'), null);
+  assert.equal(normalizeOfficeFrontendPath('office', 'backend/index.js'), null);
   assert.equal(normalizeOfficeFrontendPath('mobile', 'mobile/app.json'), null);
   assert.equal(normalizeOfficeFrontendPath('web', 'web/src/../../backend/index.js'), null);
   assert.equal(normalizeOfficeFrontendPath('web', 'web/src/logo.png'), null);
+});
+
+test('Office and public web frontend controls are both allowlisted', () => {
+  assert.equal(findOfficeControl('commit.web-frontend')?.frontendTarget, 'web');
+  assert.equal(findOfficeControl('commit.office-frontend')?.frontendTarget, 'office');
+  assert.equal(findOfficeControl('deploy.frontends')?.requiresConfirmation, true);
 });
 
 test('high-impact controls require explicit confirmation', () => {

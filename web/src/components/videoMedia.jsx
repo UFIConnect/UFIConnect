@@ -53,6 +53,49 @@ export function useGlobalMuted() {
   return [muted, toggleMuted];
 }
 
+// A mouse has a precise playback target that touch screens do not. Desktop
+// feeds therefore play the video currently under the pointer (or containing
+// keyboard focus), while phones and tablets keep their viewport-driven
+// autoplay behavior. Keeping this as one shared hook prevents YouTube,
+// Vimeo, HLS, and direct-file cards from interpreting pointer input
+// differently.
+export function usePointerPlaybackGate() {
+  const [requiresPointer, setRequiresPointer] = useState(() => (
+    typeof window !== 'undefined'
+      && window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
+  ));
+  const [pointed, setPointed] = useState(false);
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(hover: hover) and (pointer: fine)');
+    if (!media) return undefined;
+    const update = () => {
+      setRequiresPointer(media.matches);
+      if (!media.matches) setPointed(false);
+    };
+    update();
+    media.addEventListener?.('change', update);
+    return () => media.removeEventListener?.('change', update);
+  }, []);
+
+  return {
+    playbackAllowed: !requiresPointer || pointed || focused,
+    pointerHandlers: {
+      onPointerEnter: (event) => {
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') setPointed(true);
+      },
+      onPointerLeave: (event) => {
+        if (event.pointerType === 'mouse' || event.pointerType === 'pen') setPointed(false);
+      },
+      onFocusCapture: () => setFocused(true),
+      onBlurCapture: (event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      },
+    },
+  };
+}
+
 export function SoundIcon({ muted, size = 16 }) {
   return muted ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -336,10 +379,15 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
   const containerRef = useRef(null);
   const fileRef = useRef(null);
   const [inView, setInView] = useState(false);
+  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    if (!('IntersectionObserver' in window)) {
+      setInView(true);
+      return;
+    }
     // Was 0.4 — on a small mobile viewport a video box scrolling in doesn't
     // linger at high visibility for long before either settling fully into
     // view or continuing past, so a lower bar means autoplay actually
@@ -363,7 +411,7 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
   // right now" stay independent, composable signals. Also gated through the
   // shared solo-playback arbiter (see useSoloVideoPlayback) so only the
   // most-recently-scrolled-to video across the whole Feed plays at once.
-  const isSolo = useSoloVideoPlayback(videoKey || src, inView && !forcePause);
+  const isSolo = useSoloVideoPlayback(videoKey || src, inView && playbackAllowed && !forcePause);
   const shouldPlay = isSolo && !forcePause;
 
   // Direct-file case drives its own <video> element here; the HLS case
@@ -386,7 +434,7 @@ export function InlineAutoplayVideo({ kind, src, videoKey, poster, style, forceP
   }, [shouldPlay, kind]);
 
   return (
-    <div ref={containerRef}>
+    <div ref={containerRef} {...pointerHandlers}>
       {kind === 'hls' ? (
         shouldPlay ? (
           <HlsVideoPlayer src={src} poster={null} autoPlay muted loop style={style} />

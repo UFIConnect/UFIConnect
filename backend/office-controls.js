@@ -91,6 +91,49 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     impact: 'low',
   },
   {
+    id: 'feed.inspect-delivery',
+    category: 'Public feed',
+    label: 'Inspect feed delivery',
+    description: 'Read the live cache, source-worker, equalizer, staging, and transfer state on both backend services.',
+    target: 'both',
+    impact: 'low',
+  },
+  {
+    id: 'feed.clear-delivery-caches',
+    category: 'Public feed',
+    label: 'Clear feed delivery caches',
+    description: 'Expire temporary feed snapshots and guest cursor pages without deleting durable posts or viewed history.',
+    target: 'both',
+    impact: 'high',
+    requiresConfirmation: true,
+  },
+  {
+    id: 'feed.expire-following-cache',
+    category: 'Public feed',
+    label: 'Expire connected-feed cache',
+    description: 'Discard temporary connected-account feed pages so each member receives a fresh pull on their next visit.',
+    target: 'api',
+    impact: 'high',
+    requiresConfirmation: true,
+  },
+  {
+    id: 'feed.audit-videos',
+    category: 'Public feed',
+    label: 'Audit video source mix',
+    description: 'Sample the live video pool and expire its source catalog when the mix is thin or concentrated.',
+    target: 'pipeline',
+    impact: 'low',
+  },
+  {
+    id: 'feed.reconcile-deleted',
+    category: 'Public feed',
+    label: 'Check source-deleted posts',
+    description: 'Start a paced verification pass for posts removed at their original source after import.',
+    target: 'api',
+    impact: 'medium',
+    requiresConfirmation: true,
+  },
+  {
     id: 'location.refresh',
     category: 'Travel and restaurants',
     label: 'Refresh location feeds',
@@ -115,6 +158,14 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     target: 'pipeline',
     impact: 'medium',
     requiresConfirmation: true,
+  },
+  {
+    id: 'jobs.audit',
+    category: 'Jobs',
+    label: 'Audit job delivery',
+    description: 'Refresh Office job-source counts, feed coverage, and relevance diagnostics.',
+    target: 'pipeline',
+    impact: 'low',
   },
   {
     id: 'health.website',
@@ -189,6 +240,38 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     impact: 'low',
   },
   {
+    id: 'health.security',
+    category: 'Public health',
+    label: 'Run security health scan',
+    description: 'Refresh authentication, rate-limit, runtime, and feed-integrity diagnostics in Office.',
+    target: 'api',
+    impact: 'low',
+  },
+  {
+    id: 'health.data',
+    category: 'Public health',
+    label: 'Refresh data diagnostics',
+    description: 'Refresh user, feed, conversation, database, and live-connection counts in Office.',
+    target: 'api',
+    impact: 'low',
+  },
+  {
+    id: 'health.deployments',
+    category: 'Public health',
+    label: 'Check every deployment',
+    description: 'Probe the public web, API, pipeline, and Office deployments and record their response times.',
+    target: 'api',
+    impact: 'low',
+  },
+  {
+    id: 'health.database-size',
+    category: 'Public health',
+    label: 'Check database capacity',
+    description: 'Read primary database usage and run the configured capacity guard.',
+    target: 'api',
+    impact: 'low',
+  },
+  {
     id: 'runtime.stability',
     category: 'Runtime',
     label: 'Run stability guards',
@@ -204,6 +287,14 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     target: 'both',
     impact: 'high',
     requiresConfirmation: true,
+  },
+  {
+    id: 'runtime.inspect-queues',
+    category: 'Runtime',
+    label: 'Inspect live queues',
+    description: 'Read source-refresh, equalizer, staging-transfer, SSE, and runtime-pressure state on both services.',
+    target: 'both',
+    impact: 'low',
   },
   {
     id: 'storage.run-retention',
@@ -261,6 +352,26 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     requiresConfirmation: true,
     input: 'frontend-file',
     frontendTarget: 'mobile',
+  },
+  {
+    id: 'commit.office-frontend',
+    category: 'Frontend changes',
+    label: 'Commit an Office frontend file',
+    description: 'Review and commit one approved text file under the Office frontend to the main branch.',
+    target: 'api',
+    impact: 'critical',
+    requiresConfirmation: true,
+    input: 'frontend-file',
+    frontendTarget: 'office',
+  },
+  {
+    id: 'deploy.frontends',
+    category: 'Deployments',
+    label: 'Deploy web and Office',
+    description: 'Start the public web and Office frontend deployments together from the current main branch.',
+    target: 'api',
+    impact: 'critical',
+    requiresConfirmation: true,
   },
   ...['web', 'api', 'pipeline', 'office', 'mobile'].map((service) => ({
     id: `deploy.${service}`,
@@ -330,7 +441,9 @@ function normalizeOfficeFrontendPath(target, value) {
     ? /^(?:web\/(?:src|public)\/[^/].*|web\/index\.html)$/
     : target === 'mobile'
       ? /^mobile\/(?:App\.js|theme\.js|platforms\.js|(?:components|context|screens)\/[^/].*)$/
-      : null;
+      : target === 'office'
+        ? /^(?:office\/(?:src|public)\/[^/].*|office\/index\.html)$/
+        : null;
   if (!allowed?.test(candidate) || !OFFICE_FRONTEND_EXTENSIONS.has(path.extname(candidate).toLowerCase())) return null;
   return candidate;
 }

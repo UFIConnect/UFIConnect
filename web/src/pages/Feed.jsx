@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import client from '../api/client';
 import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
-import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
+import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import {
   SOURCE_META,
   CONNECTED_SOCIAL_PLATFORMS,
@@ -29,6 +29,8 @@ import { UfiFeedContent } from './Post';
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 const EMBEDDED_HOME_MODES = new Set(['ufi']);
+const CONTINUOUS_FEED_MODES = new Set(['feed', 'following', 'groups', 'countries', 'restaurants']);
+const FEED_POSITION_PREFETCH_POSTS = 8;
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -878,6 +880,7 @@ function MaximizeButton({ onClick }) {
 
 function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, autoPlayOnVisible = true, forcePause = false }) {
   const [inView, setInView] = useState(false);
+  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
   // Whether the real YT.Player has actually been constructed yet — separate
   // from `playing`/`effectivelyPlaying` (see below) because construction
   // happens at most once per embedId and is never redone just because
@@ -911,6 +914,10 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
     if (!autoPlayOnVisible) return;
     const el = containerRef.current;
     if (!el) return;
+    if (!('IntersectionObserver' in window)) {
+      setInView(true);
+      return;
+    }
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
       { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
@@ -928,7 +935,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   // doubled if the user has sound on. Excluded from the solo-playback
   // arbiter too (not just gated after it wins) so it can't hold the "now
   // playing" slot hostage while paused for the lightbox.
-  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause);
+  const isSolo = useSoloVideoPlayback(videoKey || embedId, inView && playbackAllowed && !forcePause);
   const effectivelyPlaying = isSolo && !forcePause;
   ytShouldPlayRef.current = effectivelyPlaying;
 
@@ -1065,6 +1072,7 @@ function YouTubeEmbedBlock({ embedId, videoKey, poster, title, maxHeight = 280, 
   return (
     <div
       ref={containerRef}
+      {...pointerHandlers}
       style={{ position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000', cursor: showPlayerHint ? 'pointer' : 'default' }}
       onClick={showPlayerHint ? () => setInView(true) : undefined}
     >
@@ -1334,10 +1342,15 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
 function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false }) {
   const [inView, setInView] = useState(false);
   const containerRef = useRef(null);
+  const { playbackAllowed, pointerHandlers } = usePointerPlaybackGate();
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    if (!('IntersectionObserver' in window)) {
+      setInView(true);
+      return;
+    }
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
       { threshold: 0.25 } // was 0.4 — lower bar so autoplay triggers during the scroll transition on small mobile viewports, not just once scrolling has essentially stopped
@@ -1348,10 +1361,10 @@ function VimeoEmbedBlock({ embedId, videoKey, poster, title, forcePause = false 
 
   // See useSoloVideoPlayback — only the most-recently-scrolled-to video
   // across the whole Feed (any embed type) actually plays at once.
-  const playing = useSoloVideoPlayback(videoKey || embedId, inView && !forcePause) && !forcePause;
+  const playing = useSoloVideoPlayback(videoKey || embedId, inView && playbackAllowed && !forcePause) && !forcePause;
 
   return (
-    <div ref={containerRef} style={{
+    <div ref={containerRef} {...pointerHandlers} style={{
       position: 'relative', borderRadius: 14, overflow: 'hidden', background: '#000',
       aspectRatio: '16/9', margin: '0 auto',
     }}>
@@ -2138,7 +2151,13 @@ export default function Feed({ forcedMode } = {}) {
   const [refreshing,    setRefreshing]   = useState(false);
   const [loadingMore,   setLoadingMore]  = useState(false);
   const [remotePage,    setRemotePage]   = useState(2);
-  const [remoteHasMore, setRemoteHasMore]= useState(true);
+  const [remoteHasMore, setRemoteHasMoreState] = useState(true);
+  const remoteHasMoreRef = useRef(true);
+  const setRemoteHasMore = useCallback((value) => {
+    const next = typeof value === 'function' ? value(remoteHasMoreRef.current) : value;
+    remoteHasMoreRef.current = Boolean(next);
+    setRemoteHasMoreState(Boolean(next));
+  }, []);
   // A direct Home action must not restore the last saved mode or source
   // filters. It opens the member's full personalized Home mix instead.
   const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
@@ -2180,6 +2199,7 @@ export default function Feed({ forcedMode } = {}) {
     knownIds.current.add(id);
   }, []);
   const sentinelRef   = useRef(null);
+  const prefetchAnchorRef = useRef(null);
   // Synchronous guard for loadMoreRemote — see its own comment. The
   // loadingMore *state* the UI spinner reads isn't visible synchronously
   // (React batches/defers the re-render), so a fast scroll firing the
@@ -2358,7 +2378,7 @@ export default function Feed({ forcedMode } = {}) {
         setRemotePage(2);
         remoteCursorRef.current = data.cursor || null;
       }
-      setRemoteHasMore(data.hasMore !== false);
+      setRemoteHasMore(CONTINUOUS_FEED_MODES.has(activeMode) || data.hasMore !== false);
       setSourceErrors(data.sourceErrors || {});
       if (['countries', 'restaurants'].includes(activeMode)) {
         setLocationMessage(data.locationRequired || data.providerError || '');
@@ -2689,7 +2709,7 @@ export default function Feed({ forcedMode } = {}) {
     // re-triggered the observer again before the flood had a chance to
     // subside. loadingMoreRef is checked and set synchronously, in the same
     // tick, so only the very first call in a burst ever gets past this line.
-    if (loadingMoreRef.current || !remoteHasMore) return;
+    if (loadingMoreRef.current || !remoteHasMoreRef.current) return;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const requestIdAtStart = feedRequestIdRef.current;
@@ -2768,10 +2788,12 @@ export default function Feed({ forcedMode } = {}) {
       }
       if (useCursor) remoteCursorRef.current = data.cursor || remoteCursorRef.current;
       else setRemotePage(p => p + 1);
-      setRemoteHasMore(data.hasMore !== false);
-    } catch {}
+      setRemoteHasMore(CONTINUOUS_FEED_MODES.has(viewModeRef.current) || data.hasMore !== false);
+    } catch (error) {
+      console.error('[feed] position cursor request failed', error);
+    }
     finally { loadingMoreRef.current = false; setLoadingMore(false); }
-  }, [profile, remoteHasMore, remotePage]);
+  }, [profile, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
@@ -3058,6 +3080,62 @@ export default function Feed({ forcedMode } = {}) {
     () => viewMode === 'countries' ? displayed.filter(post => !post?.isLiveCamera) : displayed,
     [displayed, viewMode]
   );
+  const requestNextPageAtPosition = useCallback((index) => {
+    if (index >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS)) loadMoreRemote();
+  }, [contentPosts.length, loadMoreRemote]);
+
+  const handleFeedPointerPosition = useCallback((event) => {
+    const positionedPost = event.target.closest?.('[data-feed-position]');
+    if (!positionedPost) return;
+    const index = Number(positionedPost.dataset.feedPosition);
+    if (Number.isInteger(index)) requestNextPageAtPosition(index);
+  }, [requestNextPageAtPosition]);
+
+  // Start the next opaque-cursor request from the reader's actual position,
+  // not only after they hit the final pixel of the current page. The bottom
+  // sentinel remains as a fallback for keyboard jumps and unusual layouts.
+  useEffect(() => {
+    const anchor = prefetchAnchorRef.current;
+    if (!anchor || !remoteHasMore) return undefined;
+    let scrollRoot = anchor.parentElement;
+    while (scrollRoot && scrollRoot !== document.body) {
+      const overflowY = window.getComputedStyle(scrollRoot).overflowY;
+      if (/(auto|scroll)/.test(overflowY) && scrollRoot.scrollHeight > scrollRoot.clientHeight) break;
+      scrollRoot = scrollRoot.parentElement;
+    }
+    const scrollTarget = scrollRoot && scrollRoot !== document.body ? scrollRoot : window;
+    let frame = 0;
+    const requestIfNear = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const rect = anchor.getBoundingClientRect();
+        const viewport = scrollTarget === window
+          ? { top: 0, bottom: window.innerHeight }
+          : scrollTarget.getBoundingClientRect();
+        if (rect.top <= viewport.bottom + 700 && rect.bottom >= viewport.top - 700) loadMoreRemote();
+      });
+    };
+    if (!('IntersectionObserver' in window)) {
+      requestIfNear();
+      scrollTarget.addEventListener('scroll', requestIfNear, { passive: true });
+      return () => {
+        window.cancelAnimationFrame(frame);
+        scrollTarget.removeEventListener('scroll', requestIfNear);
+      };
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMoreRemote(); },
+      { root: scrollTarget === window ? null : scrollTarget, rootMargin: '700px 0px' },
+    );
+    observer.observe(anchor);
+    requestIfNear();
+    scrollTarget.addEventListener('scroll', requestIfNear, { passive: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      scrollTarget.removeEventListener('scroll', requestIfNear);
+      observer.disconnect();
+    };
+  }, [contentPosts.length, loadMoreRemote, remoteHasMore]);
   const hasTravelLiveFeeds = viewMode === 'countries' && travelLiveFeeds.length > 0;
   const hasMore   = remoteHasMore;
 
@@ -3538,16 +3616,34 @@ export default function Feed({ forcedMode } = {}) {
 
           {contentPosts.length > 0 && (
             <FeedErrorBoundary>
-            <div>
-              {contentPosts.map((post, idx) => (
-                <PostCard
-                  key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
-                  post={post}
-                  onMediaOpen={p => setMediaLightboxPostId(p.id)}
-                  onPostUpdated={updateFeedPost}
-                  isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
-                />
-              ))}
+            <div
+              data-feed-has-more={remoteHasMore ? 'true' : 'false'}
+              data-feed-ref-has-more={remoteHasMoreRef.current ? 'true' : 'false'}
+              data-feed-loading-more={loadingMore ? 'true' : 'false'}
+              data-feed-cursor-ready={remoteCursorRef.current ? 'true' : 'false'}
+              onPointerMove={handleFeedPointerPosition}
+              onMouseOver={handleFeedPointerPosition}
+            >
+              {contentPosts.map((post, idx) => {
+                const isPrefetchAnchor = idx === Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS);
+                const isInPrefetchRange = idx >= Math.max(0, contentPosts.length - FEED_POSITION_PREFETCH_POSTS);
+                return (
+                  <div
+                    key={`${post.id || `temp-${post.createdAt}`}-${idx}`}
+                    ref={isPrefetchAnchor ? prefetchAnchorRef : null}
+                    data-feed-position={idx}
+                    onPointerEnter={isInPrefetchRange ? loadMoreRemote : undefined}
+                    onFocusCapture={isInPrefetchRange ? loadMoreRemote : undefined}
+                  >
+                    <PostCard
+                      post={post}
+                      onMediaOpen={p => setMediaLightboxPostId(p.id)}
+                      onPostUpdated={updateFeedPost}
+                      isMediaOpen={post.id != null && post.id === mediaLightboxPostId}
+                    />
+                  </div>
+                );
+              })}
             </div>
             </FeedErrorBoundary>
           )}

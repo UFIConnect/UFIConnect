@@ -25970,13 +25970,16 @@ function officeControlCatalog() {
   const githubConfigured = Boolean(officeGithubToken());
   return buildOfficeControlCatalog(officeControlSourceList()).map((control) => {
     const needsGithub = control.input === 'frontend-file' || control.id === 'deploy.mobile';
-    const renderService = control.id.startsWith('deploy.') && control.id !== 'deploy.mobile'
-      ? control.id.slice('deploy.'.length)
-      : null;
-    const renderConfigured = !renderService || Boolean(
-      process.env[`RENDER_HOOK_${renderService.toUpperCase()}`]
-      || (process.env.RENDER_API_KEY && process.env[`RENDER_SERVICE_${renderService.toUpperCase()}_ID`])
-    );
+    const renderServices = control.id === 'deploy.frontends'
+      ? ['web', 'office']
+      : control.id.startsWith('deploy.') && control.id !== 'deploy.mobile'
+        ? [control.id.slice('deploy.'.length)]
+        : [];
+    const missingRenderServices = renderServices.filter((service) => !(
+      process.env[`RENDER_HOOK_${service.toUpperCase()}`]
+      || (process.env.RENDER_API_KEY && process.env[`RENDER_SERVICE_${service.toUpperCase()}_ID`])
+    ));
+    const renderConfigured = missingRenderServices.length === 0;
     const available = (!needsGithub || githubConfigured) && renderConfigured;
     return {
       ...control,
@@ -25984,18 +25987,21 @@ function officeControlCatalog() {
       unavailableReason: needsGithub && !githubConfigured
         ? 'Set OFFICE_GITHUB_TOKEN in Render with repository Contents and Actions write access.'
         : !renderConfigured
-          ? `Set RENDER_HOOK_${renderService.toUpperCase()} or the Render API key and service ID.`
+          ? `Set deployment configuration for ${missingRenderServices.join(', ')}.`
           : null,
     };
   });
 }
 
 function frontendTargetForControl(control) {
-  return control?.id === 'commit.web-frontend'
-    ? 'web'
-    : control?.id === 'commit.mobile-frontend'
-      ? 'mobile'
-      : null;
+  return ['web', 'mobile', 'office'].includes(control?.frontendTarget)
+    ? control.frontendTarget
+    : null;
+}
+
+function normalizeOfficeFrontendTarget(value) {
+  const target = String(value || '').trim().toLowerCase();
+  return ['web', 'mobile', 'office'].includes(target) ? target : null;
 }
 
 async function createOfficeControlRun(control, execution, id, startedAt) {
@@ -26115,6 +26121,47 @@ async function executeOfficeControl(control, body) {
     case 'feed.audit-sorting':
       runSortOptimizerCheck();
       return { sampleSize: sortOptimizerState.lastSampleSize, variance: sortOptimizerState.lastVariance };
+    case 'feed.inspect-delivery':
+      return {
+        role: SERVICE_ROLE,
+        hotPosts: globalFeedCache.posts.length,
+        sourceWorkers: buildSourceWorkerHealthSummary(),
+        pipeline: buildPipelineHealthSummary(),
+        staging: {
+          pending: stagingPostCount,
+          inFlight: transferInFlight,
+          lastRun: stagingTransferState.lastRun,
+          lastSavedCount: stagingTransferState.lastSavedCount,
+          lastError: stagingTransferState.lastError,
+        },
+      };
+    case 'feed.clear-delivery-caches': {
+      const before = {
+        aggregateCandidates: aggregateFeedCandidateCache.size,
+        guestPages: guestFeedPageCache.size,
+        memberSnapshots: mainFeedSnapshots.size,
+        filteredSnapshots: filteredFeedSnapshots.size,
+      };
+      clearAggregateFeedCandidateCache();
+      clearGuestFeedPageCache();
+      mainFeedSnapshots.clear();
+      filteredFeedSnapshots.clear();
+      return { before, durablePostsDeleted: false, viewedHistoryDeleted: false };
+    }
+    case 'feed.expire-following-cache': {
+      const expiredEntries = followingSourceCache.size;
+      followingSourceCache.clear();
+      return { expiredEntries, durablePostsDeleted: false };
+    }
+    case 'feed.audit-videos':
+      return (await auditVideoFeedMix()) || {
+        status: db.isConnected() ? 'unavailable-on-this-role' : 'database-unavailable',
+        role: SERVICE_ROLE,
+      };
+    case 'feed.reconcile-deleted': {
+      const started = runSourceDeletionReconciliation({ reason: 'office-controls', force: true });
+      return { started, state: { ...feedRetentionState.sourceDeletion } };
+    }
     case 'location.refresh': {
       const cleared = locationLiveFeedCache.size;
       locationLiveFeedCache.clear();
@@ -26133,6 +26180,18 @@ async function executeOfficeControl(control, body) {
       enqueueSourceRefresh(ids, 'office-controls career refresh');
       return { queuedSources: ids, pending: sourceRefreshQueue.pendingIds.size };
     }
+    case 'jobs.audit': {
+      runOppsCheck();
+      const sourceCounts = {};
+      for (const source of JOB_LISTING_SOURCES) {
+        sourceCounts[source] = globalFeedCache.posts.filter((post) => post?.source === source).length;
+      }
+      return {
+        jobPosts: Object.values(sourceCounts).reduce((sum, count) => sum + count, 0),
+        sourceCounts,
+        configuredSources: JOB_LISTING_SOURCES,
+      };
+    }
     case 'health.website':
       await runWebsiteOptimizerCheck();
       return { status: websiteOptimizerState.status, score: websiteOptimizerState.score, http: websiteOptimizerState.lastStatus, findings: websiteOptimizerState.findings };
@@ -26144,6 +26203,31 @@ async function executeOfficeControl(control, body) {
     case 'health.office': await runWebOfficeSubAgent(); return websiteOptimizerState.subAgents.web_office;
     case 'health.pwa': await runWebPwaSubAgent(); return websiteOptimizerState.subAgents.web_pwa;
     case 'health.storage': await runWebStorageSubAgent(); return websiteOptimizerState.subAgents.web_storage;
+    case 'health.security':
+      runSecurityScan();
+      return {
+        crashEvents: refreshControl.crashEvents,
+        unhandledRejections: refreshControl.unhandledRejections,
+        skippedFetches: refreshControl.skippedFetches,
+        eventLoopLagMs: refreshControl.eventLoopLagMs,
+        heapRatio: refreshControl.heapRatio,
+      };
+    case 'health.data':
+      await runDataCheck();
+      return {
+        users: users.length,
+        feedPosts: globalFeedCache.posts.length,
+        conversations: conversations.length,
+        groups: groups.length,
+        sseClients: sseClients.size,
+        officeClients: officeClients.size,
+      };
+    case 'health.deployments':
+      await runDeployCheckAll();
+      return { checked: ['web', 'api', 'pipeline', 'office'] };
+    case 'health.database-size':
+      await checkDatabaseSize();
+      return { ...dbSizeState, plan: DB_RENDER_PLAN, limitMb: DB_SIZE_LIMIT_MB };
     case 'runtime.stability':
       runStabilityGuard();
       await waitMs(150);
@@ -26153,6 +26237,41 @@ async function executeOfficeControl(control, body) {
       trimRuntimeCaches('pressure');
       return { hotPostsBefore: before, hotPostsAfter: globalFeedCache.posts.length, durableHistoryChanged: false };
     }
+    case 'runtime.inspect-queues':
+      return {
+        role: SERVICE_ROLE,
+        sourceRefresh: {
+          running: sourceRefreshQueue.running,
+          pending: sourceRefreshQueue.pendingIds.size,
+          currentIds: sourceRefreshQueue.currentIds,
+          batchDone: sourceRefreshQueue.batchDone,
+          batchTotal: sourceRefreshQueue.batchTotal,
+          totalRuns: sourceRefreshQueue.totalRuns,
+          lastStarted: sourceRefreshQueue.lastStarted,
+          lastFinished: sourceRefreshQueue.lastFinished,
+          lastError: sourceRefreshQueue.lastError,
+        },
+        equalizer: {
+          pending: equalizerPendingTotal(),
+          totalBuffered: equalizerState.totalBuffered,
+          totalDrained: equalizerState.totalDrained,
+          totalAccepted: equalizerState.totalAccepted,
+          lastRun: equalizerState.lastRun,
+        },
+        staging: {
+          pending: stagingPostCount,
+          inFlight: transferInFlight,
+          lastRun: stagingTransferState.lastRun,
+          lastError: stagingTransferState.lastError,
+        },
+        clients: { sse: sseClients.size, office: officeClients.size },
+        pressure: {
+          mode: refreshControl.mode,
+          rssMB: refreshControl.rssMB,
+          heapUsedMB: refreshControl.heapUsedMB,
+          eventLoopLagMs: refreshControl.eventLoopLagMs,
+        },
+      };
     case 'storage.run-retention':
       return { started: runFeedRetentionPass({ reason: 'office-controls', steps: FEED_RETENTION_ALL_STEPS }) };
     case 'automation.audit':
@@ -26166,6 +26285,24 @@ async function executeOfficeControl(control, body) {
       return { enabled: false };
     case 'deploy.mobile':
       return executeMobileBuild();
+    case 'deploy.frontends': {
+      const deployments = [];
+      for (const service of ['web', 'office']) {
+        const hook = process.env[`RENDER_HOOK_${service.toUpperCase()}`];
+        const deployment = await triggerRenderServiceDeploy(service, hook);
+        if (!deployment) throw new Error(`No Render deployment configuration is set for ${service}.`);
+        if (deployment.statusCode < 200 || deployment.statusCode >= 300) {
+          throw new Error(`Render rejected the ${service} deployment with HTTP ${deployment.statusCode}.`);
+        }
+        deployments.push({
+          service,
+          method: deployment.method,
+          statusCode: deployment.statusCode,
+          deployId: deployment.data?.id || deployment.data?.deploy?.id || null,
+        });
+      }
+      return { deployments };
+    }
     case 'deploy.web':
     case 'deploy.api':
     case 'deploy.pipeline':
@@ -26222,8 +26359,8 @@ app.get('/office/controls', requireOfficeToken, async (_req, res) => {
 });
 
 app.get('/office/frontend-files', requireOfficeToken, async (req, res) => {
-  const target = req.query.target === 'mobile' ? 'mobile' : req.query.target === 'web' ? 'web' : null;
-  if (!target) return res.status(400).json({ error: 'Target must be web or mobile.' });
+  const target = normalizeOfficeFrontendTarget(req.query.target);
+  if (!target) return res.status(400).json({ error: 'Target must be web, mobile, or office.' });
   const token = officeGithubToken();
   if (!token) return res.status(503).json({ error: 'OFFICE_GITHUB_TOKEN is not configured.' });
   try {
@@ -26247,7 +26384,7 @@ app.get('/office/frontend-files', requireOfficeToken, async (req, res) => {
 });
 
 app.get('/office/frontend-file', requireOfficeToken, async (req, res) => {
-  const target = req.query.target === 'mobile' ? 'mobile' : req.query.target === 'web' ? 'web' : null;
+  const target = normalizeOfficeFrontendTarget(req.query.target);
   const filePath = normalizeOfficeFrontendPath(target, req.query.path);
   if (!target || !filePath) return res.status(400).json({ error: 'Choose a valid frontend file.' });
   const token = officeGithubToken();
