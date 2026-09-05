@@ -6,6 +6,7 @@ const {
   VIDEO_FEED_MAX_DURATION_SECONDS,
   isVideoSurfacePost,
   isRegularFeedSurfacePost,
+  continuousVideoPageMeta,
 } = require('./video-placement');
 
 function youtubePost(overrides = {}) {
@@ -44,4 +45,22 @@ test('keeps non-video posts in regular feeds only', () => {
   const article = { id: 'article-1', source: 'medium', mediaType: 'image', mediaUrl: 'https://example.com/photo.jpg' };
   assert.equal(isVideoSurfacePost(article), false);
   assert.equal(isRegularFeedSurfacePost(article), true);
+});
+
+test('keeps an unsearched Videos tail open after retained history is exhausted', () => {
+  assert.deepEqual(continuousVideoPageMeta({}, false), {
+    hasMore: true,
+    waitingForNew: true,
+  });
+  assert.deepEqual(continuousVideoPageMeta({ source: 'reddit' }, true), {
+    hasMore: true,
+    waitingForNew: false,
+  });
+});
+
+test('lets explicit video searches end normally', () => {
+  assert.deepEqual(continuousVideoPageMeta({ q: 'design systems' }, false), {
+    hasMore: false,
+    waitingForNew: false,
+  });
 });

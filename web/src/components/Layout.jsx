@@ -306,7 +306,7 @@ export default function Layout({ children, wide = false }) {
     : HOME_FEED_SOURCE_IDS;
 
   return (
-    <div className="shell">
+    <div className={`shell${wide ? ' shell-wide' : ''}`}>
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
         <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>

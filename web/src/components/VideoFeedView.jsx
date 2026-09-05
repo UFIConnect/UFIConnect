@@ -16,6 +16,7 @@ import { ALL_INTERESTS } from '../pages/Onboarding';
 // full-length watch doesn't need to finish for it to register.
 const VIDEO_ENGAGED_SECONDS = 3;
 const VIDEO_ENGAGED_FRACTION = 0.5;
+const VIDEO_FEED_TAIL_POLL_MS = 30 * 1000;
 
 // Platforms genuinely excluded from the shared Feed-mode video pool.
 // uficonnect is native/Following-only by design (a user's own network, not
@@ -1091,6 +1092,7 @@ export default function VideoFeedView({ onExit }) {
   // at all this browser, slides start already unmuted instead.
   const [muted, toggleMuted] = useGlobalMuted();
   const [hasMore, setHasMore] = useState(true);
+  const [tailWaiting, setTailWaiting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -1171,7 +1173,7 @@ export default function VideoFeedView({ onExit }) {
     knownIds.current.add(id);
   }, []);
 
-  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false } = {}) => {
+  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false, continuationDepth = 0 } = {}) => {
     const requestId = ++loadRequestRef.current;
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
@@ -1179,7 +1181,10 @@ export default function VideoFeedView({ onExit }) {
       // a brand new filter's own first (possibly also thin) page could
       // get immediately blocked from auto-continuing by a limit already
       // used up by the previous one.
-      if (reset) emptyStreakRef.current = 0;
+      if (reset) {
+        emptyStreakRef.current = 0;
+        if (continuationDepth === 0) setTailWaiting(false);
+      }
       const mode = viewModeRef.current;
       const src = sourceFilterRef.current;
       let params = `limit=10&sort=newest`;
@@ -1217,6 +1222,7 @@ export default function VideoFeedView({ onExit }) {
       if (requestId !== loadRequestRef.current) return;
       const incoming = (Array.isArray(data.posts) ? data.posts : []).filter(p => p && resolveVideoSource(p));
       const isExplicitSearch = Boolean(searchQueryRef.current);
+      const sourceExhausted = data.waitingForNew === true || data.hasMore === false;
       if (reset && isExplicitSearch) {
         // Search is the explicit exception to the no-repeat rule.
         knownIds.current = new Set();
@@ -1260,7 +1266,10 @@ export default function VideoFeedView({ onExit }) {
         // same swipe jump backward when pagination lands.
         return [...prev, ...fresh];
       });
-      if (mode === 'following') {
+      if (sourceExhausted && !isExplicitSearch) {
+        cursorRef.current = null;
+        if (mode === 'following') followingPageRef.current = 1;
+      } else if (mode === 'following') {
         followingPageRef.current += 1;
         if (data.cursor) cursorRef.current = data.cursor;
       } else if (data.cursor) cursorRef.current = data.cursor;
@@ -1278,11 +1287,28 @@ export default function VideoFeedView({ onExit }) {
       // emptyStreakRef (below) is what keeps this from turning into an
       // unbounded background hammering loop for a term with genuinely no
       // matches anywhere.
-      if (!preserveOnEmpty || incoming.length > 0) {
+      if (!isExplicitSearch) {
+        setHasMore(true);
+        emptyStreakRef.current = 0;
+        setTailWaiting(sourceExhausted);
+      } else if (!preserveOnEmpty || incoming.length > 0) {
         setHasMore(data.hasMore !== false);
         emptyStreakRef.current = incoming.length > 0 ? 0 : emptyStreakRef.current + 1;
       }
       setError(false);
+
+      // A balanced cursor page can contain only videos already mounted in
+      // this session. Keep scanning a bounded number of pages immediately
+      // instead of waiting for a state change that never arrives. At true
+      // exhaustion the cursor is reset above and the quiet tail poll takes
+      // over, so watched videos are never recycled just to look endless.
+      if (!isExplicitSearch && fresh.length === 0 && !sourceExhausted && continuationDepth < EMPTY_STREAK_LIMIT) {
+        return loadPage({
+          preserveOnEmpty: true,
+          quiet: true,
+          continuationDepth: continuationDepth + 1,
+        });
+      }
     } catch {
       if (requestId === loadRequestRef.current && !quiet) setError(true);
     } finally {
@@ -1635,7 +1661,7 @@ export default function VideoFeedView({ onExit }) {
   // in a loop that never shows anything on screen.
   useEffect(() => {
     if (!hasMore || loadingMoreRef.current || loading) return;
-    if (emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
+    if (searchQueryRef.current && emptyStreakRef.current >= EMPTY_STREAK_LIMIT) return;
     if (activeIndex >= videoPosts.length - 3) {
       loadingMoreRef.current = true;
       // A later page may time out on a mobile connection. The videos already
@@ -1644,6 +1670,24 @@ export default function VideoFeedView({ onExit }) {
       loadPage({ quiet: true }).finally(() => { loadingMoreRef.current = false; });
     }
   }, [activeIndex, videoPosts.length, hasMore, loading, loadPage]);
+
+  // "Endless" here means the tail stays live for newly transferred unseen
+  // videos. It deliberately does not wrap back to watched slides. Once the
+  // retained cursor is exhausted, restart from newest on a quiet cadence;
+  // knownIds and the backend's seen set discard anything already delivered.
+  useEffect(() => {
+    if (!tailWaiting || searchQuery) return undefined;
+    const pollForNewVideos = () => {
+      const state = videoLiveStateRef.current;
+      if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current) return;
+      if (state.activeIndex < Math.max(videoPosts.length - 3, 0)) return;
+      loadingMoreRef.current = true;
+      loadPage({ preserveOnEmpty: true, quiet: true })
+        .finally(() => { loadingMoreRef.current = false; });
+    };
+    const interval = window.setInterval(pollForNewVideos, VIDEO_FEED_TAIL_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [tailWaiting, searchQuery, videoPosts.length, loadPage]);
 
   // 73% of everything that ever shows up in this feed (checked live
   // against the DB: 160 of 219 cached video posts) resolves to the

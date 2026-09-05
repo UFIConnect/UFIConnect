@@ -35,10 +35,20 @@ function isRegularFeedSurfacePost(post) {
   return !/youtube(?:-nocookie)?\.com\/shorts\//i.test(post.sourceUrl || '');
 }
 
+function continuousVideoPageMeta(query = {}, upstreamHasMore) {
+  const isSearch = Boolean(String(query.q || '').trim());
+  const sourceHasMore = upstreamHasMore !== false;
+  return {
+    hasMore: isSearch ? sourceHasMore : true,
+    waitingForNew: !isSearch && !sourceHasMore,
+  };
+}
+
 module.exports = {
   VIDEO_FEED_MAX_DURATION_SECONDS,
   normalizeVideoDurationSeconds,
   isPlayableVideoPost,
   isVideoSurfacePost,
   isRegularFeedSurfacePost,
+  continuousVideoPageMeta,
 };

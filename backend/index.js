@@ -36,6 +36,7 @@ const {
   isPlayableVideoPost,
   isVideoSurfacePost,
   isRegularFeedSurfacePost,
+  continuousVideoPageMeta,
 } = require('./video-placement');
 const {
   databaseSearchTerms,
@@ -23284,7 +23285,7 @@ function parseVideoFilters(req) {
 // tracking) and send a consistently-shaped response.
 function sendVideoPage(req, res, posts, meta) {
   markPostsSeen(req.user.id, posts, 'videos');
-  res.json({ posts, ...meta });
+  res.json({ posts, ...meta, ...continuousVideoPageMeta(req.query, meta?.hasMore) });
 }
 
 async function fetchPlayableVideoPage(params, attempts = 8) {
