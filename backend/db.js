@@ -161,6 +161,7 @@ async function initBackupDB() {
         media_url       TEXT,
         media_type      TEXT,
         media_poster    TEXT,
+        video_duration_seconds INTEGER,
         topic           TEXT,
         likes_count     INTEGER DEFAULT 0,
         comments_count  INTEGER DEFAULT 0,
@@ -171,6 +172,7 @@ async function initBackupDB() {
     `);
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     // Same compound indexes migrateDB() gives the primary for this exact
     // query shape — without these the backup just reproduces the seq-scan-
     // and-external-sort cost failover exists to avoid, the moment any real
@@ -194,7 +196,7 @@ async function initBackupDB() {
 
 const BACKUP_SYNC_COLUMNS = [
   'id', 'source', 'title', 'content', 'author_name', 'source_url', 'media_url',
-  'media_type', 'media_poster', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
+  'media_type', 'media_poster', 'video_duration_seconds', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
 ];
 
 async function pruneBackupFeedCache() {

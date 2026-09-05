@@ -30,6 +30,13 @@ const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pag
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const {
+  VIDEO_FEED_MAX_DURATION_SECONDS,
+  normalizeVideoDurationSeconds,
+  isPlayableVideoPost,
+  isVideoSurfacePost,
+  isRegularFeedSurfacePost,
+} = require('./video-placement');
+const {
   databaseSearchTerms,
   matchesRelatedSearch,
   relatedSearchScore,
@@ -3983,7 +3990,7 @@ function parseYouTubeChannelRSS(xml, keyword, channelName) {
   return posts;
 }
 
-function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false) {
+function mapYouTubePost(videoId, title, description, channelTitle, channelId, publishedAt, thumbnailUrl, keyword, isShort = false, durationSeconds = null) {
   return {
     id:          `youtube_${videoId}`,
     authorId:    `youtube_${channelId || 'unknown'}`,
@@ -4006,6 +4013,7 @@ function mapYouTubePost(videoId, title, description, channelTitle, channelId, pu
     isExternal:  true,
     mediaType:   'video',
     mediaUrl:    thumbnailUrl || null,
+    videoDurationSeconds: normalizeVideoDurationSeconds(durationSeconds),
     group:       { id: 'ext_youtube', name: 'YouTube', category: 'Engineering', externalUrl: 'https://youtube.com' },
   };
 }
@@ -4020,6 +4028,7 @@ function parseISO8601DurationSeconds(iso) {
   const [, h, min, s] = m;
   return (parseInt(h || '0', 10) * 3600) + (parseInt(min || '0', 10) * 60) + parseInt(s || '0', 10);
 }
+
 // YouTube's own current Shorts ceiling (raised from the original 60s in
 // their 2024 policy update) — used as the duration cutoff below rather than
 // the older, now-inaccurate 60s figure.
@@ -4071,7 +4080,8 @@ async function fetchYouTubeShortsByKeyword(keyword, apiKey) {
       .map(v => mapYouTubePost(
         v.id.videoId, v.snippet.title, v.snippet.description,
         v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-        v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, true
+        v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, true,
+        durationById.get(v.id.videoId)
       ));
   } catch {
     return []; // best-effort supplement to the main fetch below — never worth failing that over
@@ -4102,6 +4112,19 @@ async function fetchYouTubeByKeyword(keyword) {
           fetchJSON(url),
           fetchYouTubeShortsByKeyword(keyword, apiKey),
         ]);
+        const mainCandidates = (data?.items || []).filter(v => v.id?.videoId && v.snippet?.title);
+        const mainDurationById = new Map();
+        if (mainCandidates.length) {
+          try {
+            const ids = mainCandidates.map(v => v.id.videoId).join(',');
+            const details = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${ids}&key=${encodeURIComponent(apiKey)}`);
+            for (const video of details?.items || []) {
+              mainDurationById.set(video.id, parseISO8601DurationSeconds(video.contentDetails?.duration));
+            }
+          } catch (error) {
+            console.warn(`[YouTube] duration lookup failed for "${keyword}": ${error.message}`);
+          }
+        }
         const seenIds = new Set();
         // shortsPosts first — the dedup below keeps whichever copy of a
         // video it sees first when the same id appears in both result
@@ -4116,12 +4139,12 @@ async function fetchYouTubeByKeyword(keyword) {
         // even after the classification itself was added.
         const posts = [
           ...shortsPosts,
-          ...(data?.items || [])
-            .filter(v => v.id?.videoId && v.snippet?.title)
+          ...mainCandidates
             .map(v => mapYouTubePost(
               v.id.videoId, v.snippet.title, v.snippet.description,
               v.snippet.channelTitle, v.snippet.channelId, v.snippet.publishedAt,
-              v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword
+              v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url, keyword, false,
+              mainDurationById.get(v.id.videoId)
             )),
         ].filter(p => { if (seenIds.has(p.id)) return false; seenIds.add(p.id); return true; });
         if (posts.length) { setCached(cacheKey, posts); return posts; }
@@ -4193,7 +4216,7 @@ async function fetchYouTubeByKeyword(keyword) {
           return mapYouTubePost(
             v.videoId, v.title, v.description, v.author, v.authorId,
             v.published,
-            thumb?.url, keyword
+            thumb?.url, keyword, false, v.lengthSeconds
           );
         });
         if (posts.length) {
@@ -6453,17 +6476,21 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     // pattern as the rest of this fetcher) gets real statistics for every
     // video in this page at once. Best-effort: a failure here still leaves
     // the videos themselves fully playable, just without real counts.
-    const statsById = new Map();
+    const detailsById = new Map();
     try {
       const ids = rawVideos.map(({ item }) => item.snippet.resourceId.videoId);
       for (let i = 0; i < ids.length; i += 50) {
         const batch = ids.slice(i, i + 50);
         const stats = await fetchJSON(
-          `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${batch.join(',')}`,
+          `https://www.googleapis.com/youtube/v3/videos?part=statistics,contentDetails&id=${batch.join(',')}`,
           auth
         );
         for (const v of stats?.items || []) {
-          statsById.set(v.id, { likeCount: parseInt(v.statistics?.likeCount, 10) || 0, commentCount: parseInt(v.statistics?.commentCount, 10) || 0 });
+          detailsById.set(v.id, {
+            likeCount: parseInt(v.statistics?.likeCount, 10) || 0,
+            commentCount: parseInt(v.statistics?.commentCount, 10) || 0,
+            durationSeconds: parseISO8601DurationSeconds(v.contentDetails?.duration),
+          });
         }
       }
     } catch (e) {
@@ -6474,7 +6501,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
     const posts = rawVideos
       .map(({ item, channelTitle }) => {
         const videoId = item.snippet.resourceId.videoId;
-        const stats = statsById.get(videoId);
+        const stats = detailsById.get(videoId);
         return {
           id:          `youtube_sub_${videoId}`,
           authorId:    `youtube_channel_${item.snippet.channelId || channelTitle}`,
@@ -6495,6 +6522,7 @@ async function fetchYouTubeSubscriptionFeed(token, { bust = false, userId = null
           isExternal:  true,
           mediaType:   'video',
           mediaUrl:    item.snippet.thumbnails?.high?.url || item.snippet.thumbnails?.default?.url || null,
+          videoDurationSeconds: stats?.durationSeconds || null,
           group:       { id: 'ext_youtube', name: 'YouTube', category: 'Video' },
         };
       })
@@ -6866,6 +6894,9 @@ function normalizeFeedPost(p, fallback = Date.now()) {
     createdAt:     normalizeTimestamp(p.createdAt || p.time || p.posted, fallback),
     likesCount:    normalizeCount(p.likesCount ?? p.likes),
     commentsCount: normalizeCount(p.commentsCount ?? p.comments),
+    videoDurationSeconds: normalizeVideoDurationSeconds(
+      p.videoDurationSeconds ?? p.video_duration_seconds ?? p.durationSeconds ?? p.duration,
+    ),
   };
 }
 
@@ -15919,23 +15950,9 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
   facebook:  fetchFacebook,
 };
 
-// Following mode's video-bearing posts (a followed member's own video post,
-// a YouTube subscription-feed upload) used to show up
-// verbatim in both the Following tab (as a normal card, via getFollowingFeedPosts
-// straight) AND the Following section of the Videos swipe feed (the exact
-// same posts, just re-filtered to isPlayableVideoPost) — since for a
-// pure-video source like YouTube, ~100% of its Following content is a video,
-// the two surfaces were showing an almost-identical pool, confirmed as
-// "scroll Following, then scroll Videos, see the same posts again." Every
-// video post is deterministically assigned to exactly one surface (a stable
-// hash of its own id, so the same post always lands in the same surface
-// across requests/pages rather than flip-flopping) — non-video posts are
-// unaffected and still show in Following regardless.
-function followingVideoSurfaceBucket(postId) {
-  const h = crypto.createHash('md5').update(String(postId)).digest('hex');
-  return (parseInt(h.slice(0, 8), 16) % 2 === 0) ? 'feed' : 'videos';
-}
-
+// Following uses the same duration placement as Home: short-form clips go
+// to Videos, long-form video stays among regular posts. Legacy rows without
+// duration remain reachable until the pipeline metadata backfill catches up.
 // sourceFilter (a single source id or array — 'uficonnect' for native
 // follow-graph posts, plus whatever's in CONNECTED_SOCIAL_SEARCH_FETCHERS/
 // FOLLOWING_SOURCE_FETCHERS) scopes both which pools get computed at all
@@ -15943,10 +15960,8 @@ function followingVideoSurfaceBucket(postId) {
 // discarding its results after) and which internal posts pass through —
 // this is what the Following tab's own filter chips call into, mirroring
 // the aggregate Feed's source tabs but over this narrower, per-user pool.
-// surface ('feed' | 'videos' | null) splits video posts between the two
-// Following surfaces per followingVideoSurfaceBucket above — null (the
-// default) skips the split entirely, for any future caller that wants the
-// whole unsplit pool.
+// surface ('feed' | 'videos' | null) applies that placement after all native
+// and connected-account posts have been merged.
 async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
   const wantsSource = (src) => !wanted || wanted.has(src);
@@ -16060,9 +16075,8 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   }
 
   let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
-  if (surface) {
-    merged = merged.filter(p => !isPlayableVideoPost(p) || followingVideoSurfaceBucket(p.id) === surface);
-  }
+  if (surface === 'videos') merged = merged.filter(isVideoSurfacePost);
+  if (surface === 'feed') merged = merged.filter(isRegularFeedSurfacePost);
   return { posts: merged, sourceErrors };
 }
 
@@ -17224,6 +17238,7 @@ async function migrateDB() {
         source_url      TEXT,
         media_url       TEXT,
         media_type      TEXT,
+        video_duration_seconds INTEGER,
         topic           TEXT,
         likes_count     INTEGER DEFAULT 0,
         comments_count  INTEGER DEFAULT 0,
@@ -17238,6 +17253,7 @@ async function migrateDB() {
     // non-YouTube/Vimeo/Bluesky video rendered as a blank tile until
     // playback actually started (see resolveVideoSource client-side).
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
@@ -17305,6 +17321,7 @@ async function migrateDB() {
         source_url      TEXT,
         media_url       TEXT,
         media_type      TEXT,
+        video_duration_seconds INTEGER,
         topic           TEXT,
         likes_count     INTEGER DEFAULT 0,
         comments_count  INTEGER DEFAULT 0,
@@ -17316,6 +17333,7 @@ async function migrateDB() {
     `);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
@@ -17368,6 +17386,7 @@ async function migrateDB() {
         source_url      TEXT,
         media_url       TEXT,
         media_type      TEXT,
+        video_duration_seconds INTEGER,
         topic           TEXT,
         likes_count     INTEGER DEFAULT 0,
         comments_count  INTEGER DEFAULT 0,
@@ -17381,6 +17400,7 @@ async function migrateDB() {
     `);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
@@ -17647,7 +17667,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // (one round trip, no risk of a row falling through a gap between two
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
-const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
 const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
@@ -18471,8 +18491,8 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+           (id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          ON CONFLICT (id) DO UPDATE SET
            title          = EXCLUDED.title,
            content        = EXCLUDED.content,
@@ -18480,6 +18500,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            source_url     = EXCLUDED.source_url,
            media_url      = EXCLUDED.media_url,
            media_type     = EXCLUDED.media_type,
+           video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, ${targetTable}.video_duration_seconds),
            topic          = EXCLUDED.topic,
            likes_count    = EXCLUDED.likes_count,
            comments_count = EXCLUDED.comments_count,
@@ -18495,6 +18516,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
           p.sourceUrl || null,
           p.mediaUrl || null,
           p.mediaType || null,
+          p.videoDurationSeconds,
           p.topic || null,
           p.likesCount || 0,
           p.commentsCount || 0,
@@ -18537,6 +18559,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
       source_url: p.sourceUrl ? clean(p.sourceUrl) : null,
       media_url: p.mediaUrl ? clean(p.mediaUrl) : null,
       media_type: p.mediaType ? clean(p.mediaType) : null,
+      video_duration_seconds: p.videoDurationSeconds,
       topic: p.topic ? clean(p.topic) : null,
       likes_count: p.likesCount || 0,
       comments_count: p.commentsCount || 0,
@@ -18558,6 +18581,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
          source_url TEXT,
          media_url TEXT,
          media_type TEXT,
+         video_duration_seconds INTEGER,
          topic TEXT,
          likes_count INTEGER,
          comments_count INTEGER,
@@ -18567,8 +18591,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster)
-     SELECT id, source, title, content, author_name, source_url, media_url, media_type, topic, likes_count, comments_count, post_created_at, location, media_poster
+       (id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
+     SELECT id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
        title          = EXCLUDED.title,
@@ -18577,6 +18601,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        source_url     = EXCLUDED.source_url,
        media_url      = EXCLUDED.media_url,
        media_type     = EXCLUDED.media_type,
+       video_duration_seconds = COALESCE(EXCLUDED.video_duration_seconds, existing.video_duration_seconds),
        topic          = EXCLUDED.topic,
        likes_count    = EXCLUDED.likes_count,
        comments_count = EXCLUDED.comments_count,
@@ -18590,6 +18615,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
         OR existing.source_url IS DISTINCT FROM EXCLUDED.source_url
         OR existing.media_url IS DISTINCT FROM EXCLUDED.media_url
         OR existing.media_type IS DISTINCT FROM EXCLUDED.media_type
+        OR (EXCLUDED.video_duration_seconds IS NOT NULL AND existing.video_duration_seconds IS DISTINCT FROM EXCLUDED.video_duration_seconds)
         OR existing.topic IS DISTINCT FROM EXCLUDED.topic
         OR existing.likes_count IS DISTINCT FROM EXCLUDED.likes_count
         OR existing.comments_count IS DISTINCT FROM EXCLUDED.comments_count
@@ -18676,6 +18702,7 @@ function dbRowToFeedPost(r) {
     sourceUrl:   r.source_url ? decodeHTMLEntities(r.source_url) : r.source_url,
     mediaUrl:    r.media_url ? decodeHTMLEntities(r.media_url) : r.media_url,
     mediaType:   r.media_type,
+    videoDurationSeconds: normalizeVideoDurationSeconds(r.video_duration_seconds),
     mediaPoster: r.media_poster ? decodeHTMLEntities(r.media_poster) : r.media_poster,
     location:    r.location,
     topic:       r.topic,
@@ -18828,7 +18855,7 @@ function cursorTsOf(cur) {
 // per-source cursor bookkeeping as everything else, rather than being
 // glued on before/after as a separate step (which would double-trim and
 // desync the cursor from what was actually shown).
-async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
+async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit = 20, mediaType = null, videoDurationMaxSeconds = null, excludeVideoDurationAtOrBelow = null, topics = null, topicBypassSources = [], timeRange = null, extraLists = {}, seenIds = null, freshOnly = false, maxPostsPerSource = null, _emptySkips = 0 }) {
   // Was a flat Math.max(limit, 20) per source regardless of how many
   // sources were asked for — harmless for a 1-3 source filter (each one
   // genuinely needs to supply most of the page), but the unfiltered case
@@ -18925,6 +18952,14 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
       if (mediaType) {
         params.push(mediaType);
         clauses.push(`fp.media_type = $${params.length}`);
+      }
+      if (Number.isFinite(videoDurationMaxSeconds)) {
+        params.push(Math.floor(videoDurationMaxSeconds));
+        clauses.push(`(fp.video_duration_seconds IS NULL OR fp.video_duration_seconds <= $${params.length})`);
+      }
+      if (Number.isFinite(excludeVideoDurationAtOrBelow)) {
+        params.push(Math.floor(excludeVideoDurationAtOrBelow));
+        clauses.push(`(fp.media_type IS DISTINCT FROM 'video' OR fp.video_duration_seconds IS NULL OR fp.video_duration_seconds > $${params.length})`);
       }
       if (topics && topics.length) {
         // ANY($N::text[]), not a plain = — multi-select (any post matching
@@ -19138,7 +19173,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
 
   if (!page.length && merged.length && !isLiveMode && _emptySkips < 12) {
     return getCursorFeedPage({
-      userId, sources, cursorMap: nextCursor, limit, mediaType, topics,
+      userId, sources, cursorMap: nextCursor, limit, mediaType, videoDurationMaxSeconds, excludeVideoDurationAtOrBelow, topics,
       topicBypassSources, timeRange, extraLists, seenIds, freshOnly, maxPostsPerSource,
       _emptySkips: _emptySkips + 1,
     });
@@ -19165,7 +19200,7 @@ async function getCursorFeedPage({ userId = null, sources, cursorMap = {}, limit
 // — there's no skewed pool to correct because it was never built. Uses one
 // query with ROW_NUMBER() OVER (PARTITION BY source ...) rather than N
 // separate per-source queries, so it's still a single DB round-trip.
-async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null, equalize = true } = {}) {
+async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', page = 1, perSourcePageSize = 4, source = null, mediaType = null, videoDurationMaxSeconds = null, equalize = true } = {}) {
   if (!db.isConnected()) return { posts: [], perSourceCount: 0 };
   try {
     const clauses = [
@@ -19198,6 +19233,10 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
     if (mediaType) {
       params.push(mediaType);
       clauses.push(`media_type = $${params.length}`);
+    }
+    if (Number.isFinite(videoDurationMaxSeconds)) {
+      params.push(Math.floor(videoDurationMaxSeconds));
+      clauses.push(`(video_duration_seconds IS NULL OR video_duration_seconds <= $${params.length})`);
     }
     // Tighter default than the flat query's 2d (24h, not 2d) — ranking
     // within PARTITION BY still has to sort every matching row per source
@@ -19239,6 +19278,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
       sourceUrl:   r.source_url,
       mediaUrl:    r.media_url,
       mediaType:   r.media_type,
+      videoDurationSeconds: normalizeVideoDurationSeconds(r.video_duration_seconds),
       mediaPoster: r.media_poster,
       location:    r.location,
       topic:       r.topic,
@@ -21281,6 +21321,7 @@ async function handleFeedRequest(req, res) {
       .filter(Boolean)
   );
   const isFollowingRequest = req.query.mode === 'following';
+  const usesRegularFeedVideoPlacement = !req.query.mode || ['feed', 'following'].includes(req.query.mode);
   // Posts this user has already been served, anywhere — filtered out of
   // every external candidate pool below (see filterUnseen), never baked into
   // a shared snapshot for the same reason userTopics isn't.
@@ -21313,7 +21354,8 @@ async function handleFeedRequest(req, res) {
         .filter((item) => {
           const source = String(item?.source || '').trim().toLowerCase();
           return !disabledFeedSources.has(source)
-            && (isFollowingRequest || !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source));
+            && (isFollowingRequest || !MEMBER_ONLY_CONNECTED_FEED_SOURCES.has(source))
+            && (!usesRegularFeedVideoPlacement || isRegularFeedSurfacePost(item));
         })
         .filter(matchesTopic)
       : [];
@@ -21659,6 +21701,7 @@ async function handleFeedRequest(req, res) {
       seenIds,
       freshOnly: req.query.bust === '1',
       maxPostsPerSource: usesBlendedSources ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : null,
+      excludeVideoDurationAtOrBelow: VIDEO_FEED_MAX_DURATION_SECONDS,
     };
     let { posts: cursorPosts, nextCursor, hasMore: cursorHasMore } = await getCursorFeedPage(cursorOptions);
     // A quiet first-page window must not look like the feed is empty while
@@ -22699,7 +22742,7 @@ app.get('/feed/guest', async (req, res) => {
       limit: feedLimit,
     });
     const locationContext = getFeedLocationContext(req);
-    const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts), locationContext);
+    const locationRanked = rankFeedPostsForLocation(realFeedPosts(posts).filter(isRegularFeedSurfacePost), locationContext);
     res.json({ posts: orderNewestFeedCohorts(locationRanked), cursor: nextCursor, hasMore, guest: true });
   } catch (e) {
     console.error('[/feed/guest] error:', e.message);
@@ -22734,23 +22777,76 @@ app.get('/feed/guest', async (req, res) => {
 // the feature. Filtering server-side means a source-classification bug can
 // never surface as a dead slide again, regardless of how a bad row ended
 // up in the cache.
-const PLAYABLE_YOUTUBE_URL = /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*?&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)[\w-]{11}/i;
+let youtubeDurationBackfillInFlight = false;
+async function backfillYouTubeVideoDurations() {
+  if (!IS_PIPELINE_ROLE || youtubeDurationBackfillInFlight || !db.isConnected() || !process.env.YOUTUBE_API_KEY) return 0;
+  youtubeDurationBackfillInFlight = true;
+  try {
+    const candidates = [];
+    for (const table of ['feed_posts_cache', 'feed_posts_staging']) {
+      if (candidates.length >= 50) break;
+      const { rows } = await db.query(
+        `SELECT id, source_url, media_url
+         FROM ${table}
+         WHERE media_type = 'video'
+           AND video_duration_seconds IS NULL
+           AND (source = 'youtube' OR source_url ~* '(youtube\\.com|youtu\\.be)' OR media_url ~* '(youtube\\.com|youtu\\.be)')
+         ORDER BY post_created_at DESC NULLS LAST
+         LIMIT $1`,
+        [50 - candidates.length],
+      );
+      candidates.push(...rows.map(row => ({ ...row, table })));
+    }
+    const byVideoId = new Map();
+    for (const row of candidates) {
+      const videoId = liveCameraYouTubeId(row.source_url) || liveCameraYouTubeId(row.media_url);
+      if (!videoId || !/^[\w-]{11}$/.test(videoId)) continue;
+      if (!byVideoId.has(videoId)) byVideoId.set(videoId, []);
+      byVideoId.get(videoId).push(row);
+    }
+    const ids = [...byVideoId.keys()].slice(0, 50);
+    if (!ids.length) return 0;
 
-function isPlayableVideoPost(p) {
-  if (!p || p.mediaType !== 'video') return false;
-  if (p.source === 'bluesky') return !!(p.mediaUrl && /\.m3u8(\?|$)/i.test(p.mediaUrl));
-  const videoUrls = [p.mediaUrl, p.sourceUrl].filter(Boolean);
-  if (p.source === 'youtube') {
-    return !!(p.embedId || videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url)));
+    await waitForYouTubeDataApiSlot();
+    const params = new URLSearchParams({
+      part: 'contentDetails',
+      id: ids.join(','),
+      key: process.env.YOUTUBE_API_KEY,
+    });
+    const data = await fetchJSON(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`);
+    const durations = new Map((data?.items || []).map(item => [
+      item.id,
+      parseISO8601DurationSeconds(item.contentDetails?.duration) || 0,
+    ]));
+    const updatesByTable = new Map();
+    for (const videoId of ids) {
+      const duration = durations.get(videoId) || 0;
+      for (const row of byVideoId.get(videoId) || []) {
+        if (!updatesByTable.has(row.table)) updatesByTable.set(row.table, []);
+        updatesByTable.get(row.table).push({ id: row.id, duration });
+      }
+    }
+    let updated = 0;
+    for (const [table, updates] of updatesByTable) {
+      const result = await db.query(
+        `WITH durations AS (
+           SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(id TEXT, duration INTEGER)
+         )
+         UPDATE ${table} AS posts
+         SET video_duration_seconds = durations.duration
+         FROM durations
+         WHERE posts.id = durations.id`,
+        [JSON.stringify(updates)],
+      );
+      updated += result.rowCount || 0;
+    }
+    return updated;
+  } catch (error) {
+    console.warn('[youtube-duration-backfill]', error.message);
+    return 0;
+  } finally {
+    youtubeDurationBackfillInFlight = false;
   }
-  // Every aggregate source can contribute a YouTube/Vimeo/direct-file post.
-  // Check both persisted URL fields so an article's own source URL and its
-  // embedded-video URL are treated consistently with the client resolver.
-  if (videoUrls.some(url => PLAYABLE_YOUTUBE_URL.test(url))) return true;
-  if (videoUrls.some(url => /vimeo\.com\/(?:video\/)?\d+/.test(url))) return true;
-  if (videoUrls.some(url => /\.m3u8(\?|$)/i.test(url))) return true;
-  if (videoUrls.some(url => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url))) return true;
-  return false;
 }
 
 // getCursorFeedPage's own media_type='video' filter is looser than what's
@@ -22825,9 +22921,14 @@ async function fetchPlayableVideoPage(params, attempts = 8) {
   let activeSources = requestedSources;
   for (let i = 0; i < attempts; i++) {
     if (!activeSources.length) break;
-    result = await getCursorFeedPage({ ...params, sources: activeSources, cursorMap });
+    result = await getCursorFeedPage({
+      ...params,
+      sources: activeSources,
+      cursorMap,
+      videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS,
+    });
     for (const post of result.posts) {
-      if (!isPlayableVideoPost(post) || !post?.id || emitted.has(post.id)) continue;
+      if (!isVideoSurfacePost(post) || !post?.id || emitted.has(post.id)) continue;
       const source = canonicalFeedSourceId(post.source) || 'unknown';
       if (sourceCap && (sourceCounts.get(source) || 0) >= sourceCap) continue;
       emitted.add(post.id);
@@ -22983,7 +23084,7 @@ async function handleVideoFeedRequest(req, res) {
         sort: 'newest',
         diversify: true,
       });
-      const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isPlayableVideoPost), seenIds).filter(matchesTopic));
+      const playable = applyPersonalTopicFilter(filterUnseen(ranked.filter(isVideoSurfacePost), seenIds).filter(matchesTopic));
       const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
       const pageRows = usesBlendedVideoSources
         ? enforceFeedDiversity(videoCandidates, feedLimit, 'balanced')
@@ -23009,10 +23110,10 @@ async function handleVideoFeedRequest(req, res) {
       const balancedSource = sourcesParam.length > 1 ? sourcesParam : sourceFilter || AGGREGATE_FEED_SOURCES;
       const perSourcePageSize = Math.max(2, Math.ceil(feedLimit / 8));
       const { posts: balancedRaw } = await getBalancedFeedPosts({
-        sortMode: 'balanced', mediaType: 'video', source: balancedSource,
+        sortMode: 'balanced', mediaType: 'video', videoDurationMaxSeconds: VIDEO_FEED_MAX_DURATION_SECONDS, source: balancedSource,
         timeRange: scopedVideoTimeRange || 'all', page: reqPage, perSourcePageSize,
       });
-      const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isPlayableVideoPost), seenIds)
+      const playable = applyPersonalTopicFilter(filterUnseen(balancedRaw.filter(isVideoSurfacePost), seenIds)
         .filter(matchesTopic).filter(matchesSearch));
       const videoCandidates = personalizeVideosForUser(equalizeVideosForUser(playable));
       const pageRows = usesBlendedVideoSources
@@ -23132,7 +23233,7 @@ async function handleFollowingVideoFeedRequest(req, res) {
     const prefs = user?.preferences || {};
     const userTopics = userDeclaredFeedTopics(user, prefs);
     const hasSavedVideoScope = userTopics.length > 0;
-    const videos = all.filter(isPlayableVideoPost).filter(matchesSearch).filter(matchesTopic);
+    const videos = all.filter(isVideoSurfacePost).filter(matchesSearch).filter(matchesTopic);
     const scopedVideos = topicsFilter.length
       ? videos
       : hasSavedVideoScope
@@ -25814,6 +25915,11 @@ setInterval(() => {
   refreshDbFeedPostCount();
   refreshStagingPostCount();
 }, AUTO_TRANSFER_INTERVAL_MS);
+if (IS_PIPELINE_ROLE) {
+  setInterval(() => {
+    backfillYouTubeVideoDurations().catch(() => {});
+  }, 60 * 1000);
+}
 if (!IS_PIPELINE_ROLE) {
   refreshDbFeedPostCount();
   refreshStagingPostCount();
@@ -31691,6 +31797,7 @@ db.initDB().then(async () => {
   console.log('[startup] Beginning background data initialization...');
   try {
     await migrateDB();
+    if (IS_PIPELINE_ROLE) await backfillYouTubeVideoDurations();
     await refreshSharedUserActivity();
     await Promise.all([refreshDbFeedPostCount(), refreshStagingPostCount()]);
     // Do not leave a just-restarted API waiting for the first one-minute

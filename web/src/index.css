@@ -3650,15 +3650,6 @@ input, textarea, select { font-family: inherit; }
 .video-feed-slide {
   touch-action: pan-y;
 }
-.video-feed-youtube-gesture-surface {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  pointer-events: auto;
-  touch-action: pan-y;
-  overscroll-behavior-y: contain;
-}
-
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep
    all six destinations reachable and stable on narrow screens without
    squeezing labels or turning the page itself into a horizontal scroller. */

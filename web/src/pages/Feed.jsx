@@ -3191,6 +3191,7 @@ export default function Feed({ forcedMode } = {}) {
   const isLocationFeed = ['countries', 'restaurants'].includes(viewMode);
   const travelLocationLabel = locationScopeLabel(locationFilters);
   const activeFilterCount = (usesSourceControls ? filters.sources.length : 0) + (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
+  const visibleFilterCount = (filters.timeRange !== 'all' ? 1 : 0) + filters.topics.length;
   const advancedFilterCount = (usesSourceControls ? filters.sources.length : 0)
     + (filters.timeRange !== 'all' ? 1 : 0)
     + (isLocationFeed ? 0 : filters.topics.length);
@@ -3367,30 +3368,8 @@ export default function Feed({ forcedMode } = {}) {
         </div>
       )}
 
-      {((usesSourceControls && activeTabs.length > 0) || activeFilterCount > 0) && (
+      {visibleFilterCount > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 12, fontSize: '.78rem' }}>
-          {usesSourceControls && (activeTabs.length > 0 ? activeTabs.map(key => {
-            const meta = SOURCE_META[key] || {};
-            const color = meta.color || 'var(--primary)';
-            return (
-              <span key={key} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '3px 9px', borderRadius: 12,
-                background: `${color}18`, color, fontWeight: 600,
-                border: `1px solid ${color}44`,
-              }}>
-                <SourceMark source={key} label={meta.icon} size={12} />
-                {meta.label || key}
-                <button type="button" aria-label={`Clear ${meta.label || key} source`} onClick={() => toggleTab('all')} style={{
-                  marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
-                  color, fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
-                }}>×</button>
-              </span>
-            );
-          }) : (
-            <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>All sources</span>
-          ))}
-
           {filters.timeRange !== 'all' && (
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -3420,24 +3399,6 @@ export default function Feed({ forcedMode } = {}) {
               }}>×</button>
             </span>
           ))}
-
-          {usesSourceControls && filters.sources.length > 0 && filters.sources.map(key => {
-            const meta = SOURCE_META[key] || {};
-            return (
-              <span key={key} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '3px 9px', borderRadius: 12,
-                background: 'var(--card)', color: 'var(--text)', fontWeight: 600,
-                border: '1px solid var(--border)',
-              }}>
-                {meta.label || key}
-                <button onClick={() => applyFilters({ ...filtersRef.current, sources: filtersRef.current.sources.filter(s => s !== key) })} style={{
-                  marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--muted)', fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
-                }}>×</button>
-              </span>
-            );
-          })}
 
           <button
             onClick={clearFeedControls}

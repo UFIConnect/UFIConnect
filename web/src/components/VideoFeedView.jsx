@@ -538,13 +538,6 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
           transform: 'scale(1.15)', filter: 'blur(30px) brightness(0.45)',
         }} />
       )}
-      {isYoutube && active && (
-        // The shared YouTube iframe is a sibling of the scroll list. Keep a
-        // transparent hit target inside the active slide so iOS/Android and
-        // desktop wheel gestures always begin within the real overflow
-        // container. Click still bubbles to handleSlideClick for play/pause.
-        <div className="video-feed-youtube-gesture-surface" aria-hidden="true" />
-      )}
       {!src ? (
         <div style={{ color: '#888', fontSize: '.85rem' }}>Video unavailable</div>
       ) : src.kind === 'youtube' ? (
@@ -1856,7 +1849,7 @@ export default function VideoFeedView({ onExit }) {
               try {
                 const iframe = e.target.getIframe();
                 iframe.style.pointerEvents = 'none';
-                iframe.style.touchAction = 'none';
+                iframe.style.touchAction = 'pan-y';
                 iframe.tabIndex = -1;
               } catch {}
 
