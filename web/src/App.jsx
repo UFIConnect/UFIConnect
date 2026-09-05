@@ -45,6 +45,7 @@ const GuestFeed       = lazy(() => import('./pages/GuestFeed'));
 const Videos         = lazy(() => import('./pages/Videos'));
 const Groups         = lazy(() => import('./pages/Groups'));
 const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
+const JobDetail      = lazy(() => import('./pages/JobDetail'));
 const Messages       = lazy(() => import('./pages/Messages'));
 const Conversation   = lazy(() => import('./pages/Conversation'));
 const Notifications  = lazy(() => import('./pages/Notifications'));
@@ -144,6 +145,9 @@ export default function App() {
       }/>
       <Route path="/opportunities" element={
         <RequireAuth><RequireOnboarding><Search initialTab="jobs" /></RequireOnboarding></RequireAuth>
+      }/>
+      <Route path="/opportunities/:id" element={
+        <RequireAuth><RequireOnboarding><JobDetail /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/resume-builder" element={
         <RequireAuth><RequireOnboarding><ResumeBuilder /></RequireOnboarding></RequireAuth>

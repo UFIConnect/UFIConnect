@@ -84,7 +84,7 @@ function MenuIcon({ size = 18 }) {
   );
 }
 
-function FeedSourceOption({ tab, active, onSelect, compact = false }) {
+function FeedSourceOption({ tab, active, onSelect, compact = false, phoneExtra = false }) {
   const meta = SOURCE_META[tab.key];
   const color = tab.key === 'all' ? 'var(--primary)' : (meta?.color || 'var(--primary)');
   return (
@@ -92,7 +92,9 @@ function FeedSourceOption({ tab, active, onSelect, compact = false }) {
       type="button"
       role="radio"
       aria-checked={active}
-      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}`}
+      aria-label={compact ? tab.label : undefined}
+      title={compact ? tab.label : undefined}
+      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}${phoneExtra ? ' phone-extra' : ''}`}
       style={{ '--feed-source-color': color }}
       onClick={onSelect}
     >
@@ -3262,7 +3264,7 @@ export default function Feed({ forcedMode } = {}) {
   const compactSourceTabs = [
     currentSourceTabs.find(tab => tab.key === selectedSourceKey),
     ...currentSourceTabs.filter(tab => tab.key !== selectedSourceKey),
-  ].filter(Boolean).slice(0, 2);
+  ].filter(Boolean).slice(0, 4);
   const fullSourceTabs = viewMode === 'following'
     ? currentSourceTabs
     : [{ key: 'all', label: 'All sources', icon: '' }, ...currentSourceTabs];
@@ -3398,15 +3400,16 @@ export default function Feed({ forcedMode } = {}) {
           vocabulary (SOURCE_TABS vs FOLLOWING_SOURCE_TABS), since neither
           list of sources can appear in the other view. */}
       {usesSourceControls && (
-        <div className="feed-source-filter-row">
+        <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
             <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
-              {compactSourceTabs.map(tab => (
+              {compactSourceTabs.map((tab, index) => (
                 <FeedSourceOption
                   key={tab.key}
                   tab={tab}
                   active={isSourceActive(tab.key)}
                   compact
+                  phoneExtra={index >= 2}
                   onSelect={() => toggleTab(tab.key)}
                 />
               ))}
@@ -3811,12 +3814,12 @@ export default function Feed({ forcedMode } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
-            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
           </div>
           <div className="home-feed-rail-bottom">
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
+            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

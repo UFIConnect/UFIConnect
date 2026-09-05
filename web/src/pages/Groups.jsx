@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useMemo } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
@@ -36,14 +36,6 @@ const PLATFORM_META = {
   github:      { icon: 'GH', label: 'GitHub',         color: '#24292F' },
   uficonnect:  { icon: 'UFI', label: 'UFIconnect',    color: '#102A6B' },
 };
-
-function debounce(fn, delay) {
-  let timeoutId;
-  return function(...args) {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
-  };
-}
 
 function GroupSkeleton() {
   return (
@@ -209,43 +201,24 @@ export function GroupsContent({ embedded = false }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [groups,      setGroups]      = useState([]);
-  const [joined,      setJoined]      = useState(new Set());
   const [categories,  setCategories]  = useState([]);
-  const [filter,      setFilter]      = useState('all');
-  const [searchInput, setSearchInput] = useState('');
-  const [search,      setSearch]      = useState('');
   const [loading,     setLoading]     = useState(true);
   const [error,       setError]       = useState(false);
   const [refreshing,  setRefreshing]  = useState(false);
   const [showCreate,  setShowCreate]  = useState(() => new URLSearchParams(location.search).get('create') === '1');
-  const [joiningId,   setJoiningId]   = useState(null);
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
 
-  const searchRef = useRef('');
-
-  // Debounced search
-  const debouncedSearch = useMemo(
-    () => debounce((query) => {
-      searchRef.current = query.trim();
-      setSearch(query.trim());
-    }, 400),
-    []
-  );
-
-  function loadGroups(bust = false) {
+  function loadGroups(bust = false, silent = false) {
     if (bust) setRefreshing(true);
-    else setLoading(true);
+    else if (!silent) setLoading(true);
     setError(false);
 
     Promise.all([
       client.get(bust ? '/groups?bust=1' : '/groups'),
       client.get('/groups/categories'),
-      client.get('/profile'),
     ])
-      .then(([gRes, cRes, pRes]) => {
+      .then(([gRes, cRes]) => {
         setGroups(gRes.data.groups || []);
         setCategories(cRes.data.categories || []);
-        setJoined(new Set(pRes.data.joinedGroups || []));
       })
       .catch(err => {
         console.error('Failed to load groups:', err);
@@ -262,95 +235,27 @@ export function GroupsContent({ embedded = false }) {
   }, []);
 
   useEffect(() => {
+    const refresh = () => loadGroups(false, true);
+    const interval = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
+
+  useEffect(() => {
     if (new URLSearchParams(location.search).get('create') === '1') setShowCreate(true);
   }, [location.search]);
 
-  // Scrolling back up to the top acts as pull-to-refresh, same as every
-  // other list page — reuses the same bust path the manual Refresh button
-  // already used, so it shows the same spinner rather than a full reload.
+  // Scrolling back up to the top refreshes this live directory.
   useScrollToRefresh(() => loadGroups(true), { enabled: !loading && !refreshing });
-
-  async function handleJoin(e, groupId) {
-    e?.stopPropagation();
-    if (joiningId) return;
-    const isJoined = joined.has(groupId);
-    setJoiningId(groupId);
-    try {
-      if (isJoined) {
-        await client.delete(`/groups/${groupId}/join`);
-        setJoined((prev) => {
-          const s = new Set(prev);
-          s.delete(groupId);
-          return s;
-        });
-        setGroups((prev) =>
-          prev.map((g) =>
-            g.id === groupId ? { ...g, members: Math.max(0, g.members - 1) } : g
-          )
-        );
-      } else {
-        await client.post(`/groups/${groupId}/join`);
-        setJoined((prev) => new Set([...prev, groupId]));
-        setGroups((prev) =>
-          prev.map((g) =>
-            g.id === groupId ? { ...g, members: g.members + 1 } : g
-          )
-        );
-      }
-    } catch (err) {
-      console.error('Failed to join/leave group:', err);
-    } finally {
-      setJoiningId(null);
-    }
-  }
 
   async function handleCreateGroup({ name, description, category, isPrivate }) {
     const { data } = await client.post('/groups', { name, description, category, isPrivate });
     setGroups((prev) => [data.group, ...prev]);
-    setJoined((prev) => new Set([...prev, data.group.id]));
     setShowCreate(false);
     navigate(`/groups/${data.group.id}`);
-  }
-
-  const displayed = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const byFilter = filter === 'all'
-      ? groups
-      : groups.filter((group) => group.category === filter);
-    return q
-      ? byFilter.filter((group) =>
-          (group.name || '').toLowerCase().includes(q)
-          || (group.description || '').toLowerCase().includes(q)
-          || (group.category || '').toLowerCase().includes(q)
-        )
-      : byFilter;
-  }, [filter, groups, search]);
-
-  useEffect(() => {
-    setSelectedGroupId((current) => (
-      displayed.some((group) => group.id === current)
-        ? current
-        : (displayed[0]?.id || null)
-    ));
-  }, [displayed]);
-
-  const selectedGroupIndex = Math.max(0, displayed.findIndex((group) => group.id === selectedGroupId));
-  const selectedGroup = displayed[selectedGroupIndex] || null;
-
-  function handleGroupTabKeyDown(event, index) {
-    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const nextIndex = event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? displayed.length - 1
-        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
-          ? Math.min(displayed.length - 1, index + 1)
-          : Math.max(0, index - 1);
-    const nextGroup = displayed[nextIndex];
-    if (!nextGroup) return;
-    setSelectedGroupId(nextGroup.id);
-    document.getElementById(`group-directory-tab-${nextIndex}`)?.focus();
   }
 
   const ContentShell = embedded ? 'section' : Layout;
@@ -375,29 +280,6 @@ export function GroupsContent({ embedded = false }) {
           style={{ marginTop: 0, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
         >
           + Create Group
-        </button>
-        <button
-          className="btn btn-ghost btn-sm"
-          aria-label="Refresh groups"
-          onClick={() => loadGroups(true)}
-          disabled={refreshing}
-          style={{
-            marginTop: 0,
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 5,
-          }}
-        >
-          <span
-            style={{
-              display: 'inline-block',
-              animation: refreshing ? 'spin 1s linear infinite' : 'none',
-            }}
-          >
-            ↻
-          </span>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
@@ -444,128 +326,6 @@ export function GroupsContent({ embedded = false }) {
         </div>
       )}
 
-      {/* Search bar */}
-      <div style={{ marginBottom: 16, position: 'relative' }}>
-        <div style={{ position: 'relative' }}>
-          <span
-            style={{
-              position: 'absolute',
-              left: 13,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              fontSize: '1rem',
-              pointerEvents: 'none',
-              opacity: 0.5,
-            }}
-          >
-            Q
-          </span>
-          <input
-            className="form-input"
-            placeholder="Search groups by name, category, or keyword…"
-            value={searchInput}
-            onChange={(e) => {
-              setSearchInput(e.target.value);
-              debouncedSearch(e.target.value);
-            }}
-            style={{
-              paddingLeft: 40,
-              borderRadius: 22,
-              fontSize: '.875rem',
-            }}
-            aria-label="Search groups"
-          />
-          {searchInput && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => {
-                setSearchInput('');
-                searchRef.current = '';
-                setSearch('');
-              }}
-              style={{
-                position: 'absolute',
-                right: 12,
-                top: '50%',
-                transform: 'translateY(-50%)',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                fontSize: '1.2rem',
-                color: 'var(--muted)',
-                padding: 0,
-              }}
-            >
-              ×
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Category filter */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 6,
-          overflowX: 'auto',
-          marginBottom: 16,
-          paddingBottom: 4,
-          scrollbarWidth: 'none',
-        }}
-      >
-        <button
-          className={`filter-btn${filter === 'all' ? ' active' : ''}`}
-          onClick={() => setFilter('all')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 4,
-            flexShrink: 0,
-            padding: '7px 14px',
-            borderRadius: 'var(--radius-sm)',
-            fontWeight: filter === 'all' ? 700 : 500,
-            fontSize: '.8rem',
-            border: `1.5px solid ${filter === 'all' ? 'var(--primary)' : 'var(--border)'}`,
-            background:
-              filter === 'all' ? 'var(--primary)' : 'var(--surface)',
-            color: filter === 'all' ? '#fff' : 'var(--text)',
-            cursor: 'pointer',
-          }}
-        >
-          All
-        </button>
-        {categories.map((cat) => {
-          const meta = CATEGORY_META[cat];
-          const isActive = filter === cat;
-          return (
-            <button
-              key={cat}
-              onClick={() => setFilter(cat)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                flexShrink: 0,
-                padding: '7px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontWeight: isActive ? 700 : 500,
-                fontSize: '.8rem',
-                border: `1.5px solid ${isActive ? meta?.text || 'var(--primary)' : 'var(--border)'}`,
-                background: isActive
-                  ? meta?.bg || 'var(--surface)'
-                  : 'var(--surface)',
-                color: isActive ? meta?.text || 'var(--primary)' : 'var(--text)',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {meta?.icon} {cat}
-            </button>
-          );
-        })}
-      </div>
-
       {/* Loading state */}
       {loading && (
         <div>
@@ -586,33 +346,16 @@ export function GroupsContent({ embedded = false }) {
       )}
 
       {/* Content */}
-      {!loading && !error && displayed.length === 0 && (
+      {!loading && !error && groups.length === 0 && (
         <div className="empty-state">
           <div className="empty-icon">Q</div>
-          <div className="empty-title">
-            {search ? 'No groups found' : 'No groups in this category'}
-          </div>
-          <div className="empty-desc">
-            {search ? (
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => {
-                  setSearchInput('');
-                  searchRef.current = '';
-                  setSearch('');
-                }}
-              >
-                Clear search
-              </button>
-            ) : (
-              <>Try a different category or search for something specific.</>
-            )}
-          </div>
+          <div className="empty-title">No live groups yet</div>
+          <div className="empty-desc">Create the first group or check back shortly.</div>
         </div>
       )}
 
-      {/* Selectable group directory */}
-      {!loading && !error && displayed.length > 0 && (
+      {/* Live group directory. Search and filtering live in Search. */}
+      {!loading && !error && groups.length > 0 && (
         <div>
           <p
             style={{
@@ -622,36 +365,24 @@ export function GroupsContent({ embedded = false }) {
               fontWeight: 500,
             }}
           >
-            {displayed.length} public communit
-            {displayed.length !== 1 ? 'ies' : 'y'}
+            {groups.length} live public communit
+            {groups.length !== 1 ? 'ies' : 'y'}
           </p>
-          <div className="group-directory-browser">
-            <div className="group-directory-list">
+          <div className="group-directory-list group-live-list">
               <div className="group-directory-list-heading">
-                <strong>Groups</strong>
-                <span>{displayed.length.toLocaleString()}</span>
+                <strong>Live groups</strong>
+                <span>{groups.length.toLocaleString()}</span>
               </div>
-              <div className="group-directory-tabs" role="tablist" aria-label="Groups">
-                {displayed.map((group, index) => (
+              <div className="group-directory-tabs" role="list" aria-label="Live groups">
+                {groups.map((group, index) => (
                   <GroupDirectoryTab
                     key={group.id}
                     group={group}
                     index={index}
-                    selected={group.id === selectedGroup?.id}
-                    onSelect={() => setSelectedGroupId(group.id)}
-                    onKeyDown={(event) => handleGroupTabKeyDown(event, index)}
+                    onSelect={() => navigate(`/groups/${group.id}`)}
                   />
                 ))}
               </div>
-            </div>
-            <GroupInformation
-              group={selectedGroup}
-              index={selectedGroupIndex}
-              isJoined={joined.has(selectedGroup?.id)}
-              joining={joiningId === selectedGroup?.id}
-              onJoin={() => handleJoin(null, selectedGroup.id)}
-              onOpen={() => navigate(`/groups/${selectedGroup.id}`)}
-            />
           </div>
         </div>
       )}
@@ -674,20 +405,17 @@ function groupOrigin(group) {
     : PLATFORM_META.uficonnect;
 }
 
-export function GroupDirectoryTab({ group, selected, index, onSelect, onKeyDown }) {
+export function GroupDirectoryTab({ group, index, onSelect }) {
   const meta = CATEGORY_META[group.category] || { icon: 'GR' };
   const origin = groupOrigin(group);
   return (
     <button
       id={`group-directory-tab-${index}`}
       type="button"
-      role="tab"
-      aria-selected={selected}
-      aria-controls="selected-group-information"
-      tabIndex={selected ? 0 : -1}
-      className={`group-directory-tab${selected ? ' active' : ''}`}
+      role="listitem"
+      className="group-directory-tab"
       onClick={onSelect}
-      onKeyDown={onKeyDown}
+      aria-label={`Open ${group.name}`}
     >
       <span className="group-directory-tab-mark" aria-hidden="true">{meta.icon}</span>
       <span className="group-directory-tab-copy">

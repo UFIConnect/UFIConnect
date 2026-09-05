@@ -570,6 +570,10 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
+              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="groups" size={18} />
+                Join a group
+              </NavLink>
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}

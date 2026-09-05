@@ -455,6 +455,7 @@ export default function ResumeBuilder() {
   const [resumeBuilderPrice, setResumeBuilderPrice] = useState(null);
   const [unlocking, setUnlocking] = useState(false);
   const [template, setTemplate] = useState('modern');
+  const [templatePage, setTemplatePage] = useState(0);
   const [data, setData] = useState(emptyDraft());
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -875,9 +876,12 @@ export default function ResumeBuilder() {
 
             {activeBuilderTab === 'resume' && <>
             <div className="card">
-              <div style={{ fontSize: '.75rem', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Template</div>
+              <div className="resume-template-heading">
+                <span>Template</span>
+                <span>{templatePage * 4 + 1}-{Math.min((templatePage + 1) * 4, TEMPLATES.length)} of {TEMPLATES.length}</span>
+              </div>
               <div className="resume-template-grid" role="group" aria-label="Resume template">
-                {TEMPLATES.map(t => (
+                {TEMPLATES.slice(templatePage * 4, templatePage * 4 + 4).map(t => (
                   <button
                     key={t.key} type="button" onClick={() => setTemplate(t.key)}
                     className={`resume-template-option${template === t.key ? ' is-selected' : ''}`}
@@ -890,6 +894,25 @@ export default function ResumeBuilder() {
                     </span>
                   </button>
                 ))}
+              </div>
+              <div className="resume-template-pagination" aria-label="Browse resume templates">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Previous templates"
+                  title="Previous templates"
+                  disabled={templatePage === 0}
+                  onClick={() => setTemplatePage(page => Math.max(0, page - 1))}
+                >&#8249;</button>
+                <span>Page {templatePage + 1} of {Math.ceil(TEMPLATES.length / 4)}</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  aria-label="Next templates"
+                  title="Next templates"
+                  disabled={(templatePage + 1) * 4 >= TEMPLATES.length}
+                  onClick={() => setTemplatePage(page => Math.min(Math.ceil(TEMPLATES.length / 4) - 1, page + 1))}
+                >&#8250;</button>
               </div>
             </div>
 

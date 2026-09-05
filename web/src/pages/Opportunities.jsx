@@ -1,5 +1,5 @@
-﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import Layout from '../components/Layout';
 import client from '../api/client';
@@ -32,14 +32,6 @@ const OPPORTUNITY_SORT_OPTIONS = [
   { value: 'title', label: 'Title A-Z' },
   { value: 'source', label: 'Source A-Z' },
 ];
-
-function debounce(fn, delay) {
-  let timeoutId;
-  return function(...args) {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
-  };
-}
 
 function timeAgo(iso) {
   const timestamp = new Date(iso).getTime();
@@ -95,18 +87,15 @@ function SourceBadge({ opp }) {
   );
 }
 
-function JobTab({ job, selected, index, onSelect, onKeyDown }) {
+function JobTab({ job, index, onSelect }) {
   return (
     <button
       id={`job-tab-${index}`}
       type="button"
-      role="tab"
-      aria-selected={selected}
-      aria-controls="selected-job-panel"
-      tabIndex={selected ? 0 : -1}
-      className={`job-result-tab${selected ? ' active' : ''}`}
+      role="listitem"
+      className="job-result-tab"
       onClick={onSelect}
-      onKeyDown={onKeyDown}
+      aria-label={`Open ${job.title} at ${job.org}`}
     >
       <span className="job-result-tab-title">{job.title}</span>
       <span className="job-result-tab-org">{job.org}</span>
@@ -119,16 +108,13 @@ function JobTab({ job, selected, index, onSelect, onKeyDown }) {
   );
 }
 
-function JobDetail({ job, tabIndex }) {
+export function JobDetail({ job }) {
   if (!job) return null;
   const about = job.about || `${job.org} is hiring for ${job.title}${job.location ? ` in ${job.location}` : ''}. This is a current listing from ${job.source}.`;
   const description = job.description || job.content
     || `Open the listing on ${job.source} for the full position description and requirements.`;
   return (
     <article
-      id="selected-job-panel"
-      role="tabpanel"
-      aria-labelledby={`job-tab-${tabIndex}`}
       className="card job-detail-panel"
     >
       <div className="job-detail-heading">
@@ -202,9 +188,10 @@ function mergeOpportunities(current, incoming) {
   return [...current, ...incoming.filter((opportunity) => !seen.has(opportunity.id))];
 }
 
-export default function Opportunities({ embedded = false } = {}) {
+export default function Opportunities({ embedded = false, searchQuery = null } = {}) {
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const initialRouteQuery = String(searchParams.get('q') || '').trim().slice(0, 200);
+  const initialRouteQuery = String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200);
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
   const [filter,    setFilter]    = useState('job');
@@ -222,8 +209,6 @@ export default function Opportunities({ embedded = false } = {}) {
   const [sourceFilter, setSourceFilter] = useState([]);
   const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
   const [recommendationLabel, setRecommendationLabel] = useState('');
-  const [selectedJobId, setSelectedJobId] = useState(null);
-  const [searchInput, setSearchInput] = useState(initialRouteQuery);
   const [search,    setSearch]    = useState(initialRouteQuery);
   const [loading,   setLoading]   = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -237,9 +222,7 @@ export default function Opportunities({ embedded = false } = {}) {
   const loadingMoreRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const sentinelRef = useRef(null);
-  const jobTabListRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
-  const routeQueryAppliedRef = useRef(initialRouteQuery);
   // Set right before a type-filter click (Job/Gig/Grant/etc, including
   // "All") — the fetch effect below reads and clears it. Live sources
   // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
@@ -250,25 +233,11 @@ export default function Opportunities({ embedded = false } = {}) {
   // refresh for that type, matching how tab-clicks already work in Feed.
   const bustOnNextFetchRef = useRef(false);
 
-  const searchRef = useRef(initialRouteQuery);
-
-  // Debounced search
-  const debouncedSearch = useMemo(
-    () => debounce((query) => {
-      searchRef.current = query.trim();
-      setSearch(query.trim());
-    }, 400),
-    []
-  );
-
   useEffect(() => {
-    const routeQuery = String(searchParams.get('q') || '').trim().slice(0, 200);
-    if (routeQuery === routeQueryAppliedRef.current) return;
-    routeQueryAppliedRef.current = routeQuery;
-    searchRef.current = routeQuery;
-    setSearchInput(routeQuery);
-    setSearch(routeQuery);
-  }, [searchParams]);
+    const nextQuery = String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200);
+    const timer = window.setTimeout(() => setSearch(nextQuery), 280);
+    return () => window.clearTimeout(timer);
+  }, [searchParams, searchQuery]);
 
   // Type filter changing invalidates whatever sources were picked (a
   // source chip is scoped to what's poll-able within the current type — see
@@ -392,10 +361,9 @@ export default function Opportunities({ embedded = false } = {}) {
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el) return;
-    const scrollRoot = filter === 'job' ? jobTabListRef.current : null;
     const obs = new IntersectionObserver(
       ([entry]) => { if (entry.isIntersecting) loadMore(); },
-      { root: scrollRoot, rootMargin: scrollRoot ? '300px' : '400px' }
+      { rootMargin: '400px' }
     );
     obs.observe(el);
     return () => obs.disconnect();
@@ -408,8 +376,6 @@ export default function Opportunities({ embedded = false } = {}) {
   }, { enabled: !loading && !refreshing });
 
   const displayed = allOpps;
-  const selectedJobIndex = Math.max(0, displayed.findIndex((job) => job.id === selectedJobId));
-  const selectedJob = filter === 'job' ? displayed[selectedJobIndex] || null : null;
   const personalizationText = recommendationBasis === 'resume'
     ? `Matched to ${recommendationLabel || 'your selected resume'}`
     : recommendationBasis === 'role'
@@ -419,29 +385,6 @@ export default function Opportunities({ embedded = false } = {}) {
         : recommendationBasis === 'usage'
           ? 'Matched to your activity'
           : 'Newest live listings';
-
-  useEffect(() => {
-    if (filter !== 'job') return;
-    setSelectedJobId((current) => (
-      displayed.some((job) => job.id === current) ? current : (displayed[0]?.id || null)
-    ));
-  }, [displayed, filter]);
-
-  function handleJobTabKeyDown(event, index) {
-    if (!['ArrowDown', 'ArrowUp', 'ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
-    event.preventDefault();
-    const nextIndex = event.key === 'Home'
-      ? 0
-      : event.key === 'End'
-        ? displayed.length - 1
-        : event.key === 'ArrowDown' || event.key === 'ArrowRight'
-          ? Math.min(displayed.length - 1, index + 1)
-          : Math.max(0, index - 1);
-    const nextJob = displayed[nextIndex];
-    if (!nextJob) return;
-    setSelectedJobId(nextJob.id);
-    document.getElementById(`job-tab-${nextIndex}`)?.focus();
-  }
 
   return (
     <>
@@ -472,41 +415,6 @@ export default function Opportunities({ embedded = false } = {}) {
             <span>Newest first</span>
           </div>
         )}
-
-        {/* Search bar */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-          <div style={{ flex: 1, position: 'relative' }}>
-            <span style={{ position: 'absolute', left: 13, top: '50%', transform: 'translateY(-50%)', fontSize: '.75rem', fontWeight: 800, pointerEvents: 'none' }}>Q</span>
-            <input
-              className="form-input"
-              placeholder="Search by title, company, or tag..."
-              value={searchInput}
-              onChange={e => {
-                setSearchInput(e.target.value);
-                debouncedSearch(e.target.value);
-              }}
-              style={{ paddingLeft: 36, borderRadius: 22, fontSize: '.875rem' }}
-            />
-            {searchInput && (
-              <button
-                type="button"
-                aria-label="Clear search"
-                onClick={() => {
-                  setSearchInput('');
-                  searchRef.current = '';
-                  setSearch('');
-                }}
-                style={{
-                  position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                  background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem',
-                  color: 'var(--muted)', padding: 0,
-                }}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        </div>
 
         {/* Type + filters */}
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4, scrollbarWidth: 'none' }}>
@@ -554,7 +462,7 @@ export default function Opportunities({ embedded = false } = {}) {
           >
             Remote
           </button>
-          {!embedded && <button
+          <button
             onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
             style={{
               display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
@@ -566,7 +474,7 @@ export default function Opportunities({ embedded = false } = {}) {
             }}
           >
             Live only
-          </button>}
+          </button>
         </div>
 
         {/* Source filter — multi-select, mirrors Feed's own source chips.
@@ -630,14 +538,6 @@ export default function Opportunities({ embedded = false } = {}) {
               <option key={value} value={value}>{label}</option>
             ))}
           </select>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm opportunities-refresh-btn opportunities-refresh-btn--sort"
-            onClick={requestRefresh}
-            disabled={loading || refreshing}
-          >
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
         </div>
 
         {/* Status messages */}
@@ -669,18 +569,10 @@ export default function Opportunities({ embedded = false } = {}) {
           <div className="empty-state">
             <div className="empty-icon">Jobs</div>
             <div className="empty-title">
-              {searchInput ? 'No opportunities found' : 'No matching opportunities'}
+              {search ? 'No opportunities found' : 'No matching opportunities'}
             </div>
             <div className="empty-desc">
-              {searchInput ? (
-                <button className="btn btn-ghost btn-sm" onClick={() => {
-                  setSearchInput('');
-                  searchRef.current = '';
-                  setSearch('');
-                }}>Clear search</button>
-              ) : (
-                <>Try adjusting your filters or check back soon for new opportunities.</>
-              )}
+              Try a broader unified search or adjust the job filters above.
             </div>
           </div>
         )}
@@ -701,21 +593,22 @@ export default function Opportunities({ embedded = false } = {}) {
             </div>
 
             {filter === 'job' ? (
-              <div className="job-browser">
+              <div className="job-browser job-browser--list">
                 <div className="job-result-column">
                   <div className="job-result-column-heading">
                     <strong>Live job list</strong>
                     <span>{totalCount.toLocaleString()}</span>
                   </div>
-                  <div ref={jobTabListRef} className="job-result-tabs" role="tablist" aria-label="Live jobs">
+                  <div className="job-result-tabs" role="list" aria-label="Live jobs">
                     {displayed.map((job, index) => (
                       <JobTab
                         key={job.id}
                         job={job}
                         index={index}
-                        selected={job.id === selectedJob?.id}
-                        onSelect={() => setSelectedJobId(job.id)}
-                        onKeyDown={(event) => handleJobTabKeyDown(event, index)}
+                        onSelect={() => {
+                          try { sessionStorage.setItem(`ufi_job_detail:${job.id}`, JSON.stringify(job)); } catch {}
+                          navigate(`/opportunities/${encodeURIComponent(job.id)}`, { state: { job } });
+                        }}
                       />
                     ))}
                     {hasMore && (
@@ -725,7 +618,6 @@ export default function Opportunities({ embedded = false } = {}) {
                     )}
                   </div>
                 </div>
-                <JobDetail job={selectedJob} tabIndex={selectedJobIndex} />
               </div>
             ) : displayed.map((opp) => {
               const meta = TYPE_META[opp.type] || TYPE_META.job;

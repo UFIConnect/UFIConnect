@@ -37,11 +37,11 @@ const SECTIONS = [
   { key: 'automation', label: 'Automation' },
   { key: 'accounts',   label: 'Connected Accounts' },
   { key: 'jobs',       label: 'Job Tracker' },
-  { key: 'yourfeed',   label: 'Your Feed' },
-  { key: 'feed',       label: 'Following Feed' },
   { key: 'content',    label: 'AI Content Hub' },
   { key: 'media',      label: 'Media Studio' },
   { key: 'crosspost',  label: 'Cross-Post' },
+  { key: 'yourfeed',   label: 'Your Feed' },
+  { key: 'feed',       label: 'Following Feed' },
 ];
 const SECTION_KEYS = new Set(SECTIONS.map(section => section.key));
 
