@@ -7,6 +7,7 @@ import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
+import { SavePostButton } from '../components/SaveButtons';
 
 const PAGE_SIZE = 40;
 const AUTO_REFRESH_MS = 45 * 1000;
@@ -90,11 +91,14 @@ function OwnPostCard({ post }) {
         <div style={{ color: 'var(--muted)', fontSize: '.78rem' }}>
           {[post.likesCount ? `${post.likesCount} likes` : null, post.commentsCount ? `${post.commentsCount} comments` : null].filter(Boolean).join(' · ') || 'Synced from your connected account'}
         </div>
-        {post.sourceUrl && (
-          <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">
-            View original
-          </a>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
+          {post.sourceUrl && (
+            <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">
+              View original
+            </a>
+          )}
+        </div>
       </div>
     </article>
   );

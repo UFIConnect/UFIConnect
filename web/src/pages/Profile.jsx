@@ -8,6 +8,8 @@ import PostList from '../components/PostList';
 import client from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { uploadMedia } from '../api/upload';
+import { SaveJobButton, SavePostButton } from '../components/SaveButtons';
+import { useSavedItems } from '../contexts/SavedItemsContext';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -51,11 +53,58 @@ function ProfilePanel({ title, summary, open, onToggle, children }) {
   );
 }
 
+function SavedPostCard({ post, onRemoved }) {
+  const sourceLabel = post.sourceLabel || (post.source === 'uficonnect' ? 'UFI' : post.source) || 'Post';
+  const hasUfiDetail = post.source === 'uficonnect' || post.ufiInteractive;
+  return (
+    <article className="card profile-saved-post">
+      <div className="profile-saved-item-heading">
+        <span>{sourceLabel}</span>
+        <time>{post.savedAt ? `Saved ${new Date(post.savedAt).toLocaleDateString()}` : 'Saved post'}</time>
+      </div>
+      {post.title && <h3>{post.title}</h3>}
+      {post.content && <p>{post.content}</p>}
+      {post.mediaType === 'image' && post.mediaUrl && (
+        <img src={post.mediaUrl} alt="" className="profile-saved-post-image" />
+      )}
+      <div className="profile-saved-item-actions">
+        {hasUfiDetail && <Link className="btn btn-ghost btn-sm" to={`/p/${encodeURIComponent(post.id)}`}>View post</Link>}
+        {post.sourceUrl && <a className="btn btn-ghost btn-sm" href={post.sourceUrl} target="_blank" rel="noopener noreferrer">View original</a>}
+        <SavePostButton
+          post={post}
+          className="btn btn-primary btn-sm save-item-button"
+          onChange={(saved) => { if (!saved) onRemoved?.(post.id); }}
+        />
+      </div>
+    </article>
+  );
+}
+
+function SavedJobCard({ job }) {
+  return (
+    <article className="card profile-saved-job">
+      <div className="profile-saved-item-heading">
+        <span>{job.status === 'applied' ? 'Applied' : 'Saved job'}</span>
+        <span>{job.source || 'Career listing'}</span>
+      </div>
+      <h3>{job.title || 'Untitled position'}</h3>
+      <p className="profile-saved-job-org">{job.org || 'Employer listed by source'}</p>
+      {job.jobContent && <p className="profile-saved-job-description">{job.jobContent}</p>}
+      <div className="profile-saved-item-actions">
+        <Link className="btn btn-ghost btn-sm" to={`/opportunities/${encodeURIComponent(job.id)}`} state={{ job: { ...job, description: job.jobContent } }}>View details</Link>
+        {job.sourceUrl && <a className="btn btn-primary btn-sm" href={job.sourceUrl} target="_blank" rel="noopener noreferrer">View listing</a>}
+        <SaveJobButton job={job} className="btn btn-ghost btn-sm save-item-button" />
+      </div>
+    </article>
+  );
+}
+
 export default function Profile() {
   const { profile, updateProfileLocally } = useAuth();
+  const { savedJobs, refreshSavedJobs } = useSavedItems();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [openPanel,   setOpenPanel]   = useState(null);
   const [editing,     setEditing]     = useState(null);
@@ -72,6 +121,17 @@ export default function Profile() {
   const [postsLoading, setPostsLoading] = useState(false);
   const [postsHasMore, setPostsHasMore] = useState(false);
   const [postsLoadingMore, setPostsLoadingMore] = useState(false);
+  const [activeProfileTab, setActiveProfileTab] = useState(() => {
+    const requested = searchParams.get('tab');
+    return ['posts', 'about', 'saved'].includes(requested) ? requested : 'posts';
+  });
+  const [savedSection, setSavedSection] = useState('posts');
+  const [savedPosts, setSavedPosts] = useState([]);
+  const [savedPostsLoading, setSavedPostsLoading] = useState(false);
+  const [savedPostsLoadingMore, setSavedPostsLoadingMore] = useState(false);
+  const [savedPostsHasMore, setSavedPostsHasMore] = useState(false);
+  const [savedPostsTotal, setSavedPostsTotal] = useState(0);
+  const [savedPostsError, setSavedPostsError] = useState('');
   // Follow stats
   const [followStats, setFollowStats] = useState({ followersCount: 0, followingCount: 0 });
   const [followModal, setFollowModal] = useState(null); // 'followers' | 'following' | null
@@ -113,8 +173,9 @@ export default function Profile() {
   // Old profile deep links still open the corresponding right-side panel.
   useEffect(() => {
     const requested = searchParams.get('tab');
+    setActiveProfileTab(['posts', 'about', 'saved'].includes(requested) ? requested : 'posts');
     setOpenPanel(requested === 'skills' ? 'skills' : requested === 'attachments' ? 'files' : null);
-    setEditing(null);
+    if (['skills', 'attachments'].includes(requested)) setEditing(null);
   }, [searchParams]);
 
   // Sync skills from profile when profile loads.
@@ -163,6 +224,47 @@ export default function Profile() {
     if (postsLoadingMore || !postsHasMore) return;
     fetchProfilePosts(posts.length);
   }
+
+  function selectProfileTab(tab) {
+    setActiveProfileTab(tab);
+    setEditing(null);
+    setError('');
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'posts') next.delete('tab');
+    else next.set('tab', tab);
+    setSearchParams(next, { replace: true });
+  }
+
+  async function fetchSavedPosts(offset = 0) {
+    const appending = offset > 0;
+    if (appending) setSavedPostsLoadingMore(true);
+    else setSavedPostsLoading(true);
+    setSavedPostsError('');
+    try {
+      const { data } = await client.get('/saved/posts', { params: { limit: 50, offset } });
+      const incoming = data.posts || [];
+      setSavedPosts(current => appending ? [
+        ...current,
+        ...incoming.filter(post => !current.some(saved => saved.id === post.id)),
+      ] : incoming);
+      setSavedPostsHasMore(!!data.hasMore);
+      setSavedPostsTotal(Number.isFinite(Number(data.total)) ? Number(data.total) : incoming.length);
+    } catch (err) {
+      if (!appending) setSavedPosts([]);
+      setSavedPostsHasMore(false);
+      if (!appending) setSavedPostsTotal(0);
+      setSavedPostsError(err?.response?.data?.message || 'Saved posts could not be loaded.');
+    } finally {
+      if (appending) setSavedPostsLoadingMore(false);
+      else setSavedPostsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeProfileTab !== 'saved' || !profile?.id) return;
+    fetchSavedPosts();
+    refreshSavedJobs().catch(() => {});
+  }, [activeProfileTab, profile?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function fetchAttachments() {
     setAttachmentsLoading(true);
@@ -339,6 +441,7 @@ export default function Profile() {
   }
 
   function startEdit() {
+    selectProfileTab('about');
     setForm({
       name:         profile?.name         || '',
       title:        profile?.title        || '',
@@ -429,6 +532,7 @@ export default function Profile() {
 
   const profileLinks = profile.links || {};
   const hasLinks = Object.values(profileLinks).some(Boolean);
+  const profileSavedJobs = savedJobs.filter(job => ['saved', 'applied'].includes(job.status));
 
   return (
     <Layout>
@@ -527,8 +631,25 @@ export default function Profile() {
       )}
 
       <div className="profile-workspace profile-workspace--details">
+        <nav className="profile-content-tabs" aria-label="Profile sections">
+          {[
+            { key: 'posts', label: 'Posts' },
+            { key: 'about', label: 'About' },
+            { key: 'saved', label: 'Saved' },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              type="button"
+              className={activeProfileTab === tab.key ? 'active' : ''}
+              aria-current={activeProfileTab === tab.key ? 'page' : undefined}
+              onClick={() => selectProfileTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
         <section className="profile-posts-column">
-          {editing === 'profile' ? (
+          {activeProfileTab === 'about' && editing === 'profile' ? (
             <form className="card" onSubmit={handleSave}>
               {error && <div className="auth-error" style={{ marginBottom: 14 }}>{error}</div>}
               <h2 style={{ fontSize: '1rem', margin: '0 0 18px' }}>Edit profile</h2>
@@ -557,14 +678,93 @@ export default function Profile() {
                 <button className="btn btn-ghost" type="button" onClick={() => setEditing(null)}>Cancel</button>
               </div>
             </form>
+          ) : activeProfileTab === 'about' ? (
+            <div className="card profile-about-tab">
+              <div className="profile-about-heading">
+                <h2>About</h2>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={startEdit}>Edit</button>
+              </div>
+              <p className={profile.bio ? '' : 'profile-about-empty'}>
+                {profile.bio || 'Add a short bio so people know what you are building and learning.'}
+              </p>
+              <dl className="profile-about-facts">
+                <div><dt>Role</dt><dd>{profile.preferences?.role || profile.title || 'Not added'}</dd></div>
+                <div><dt>Experience</dt><dd>{profile.preferences?.experience || 'Not added'}</dd></div>
+                <div><dt>Organization</dt><dd>{profile.organization || 'Not added'}</dd></div>
+              </dl>
+              {profile.preferences?.interests?.length > 0 && (
+                <section className="profile-about-section">
+                  <h3>Interests</h3>
+                  <div className="tags">{profile.preferences.interests.map(item => <span key={item} className="tag tag-secondary">{item}</span>)}</div>
+                </section>
+              )}
+              {profile.preferences?.goals?.length > 0 && (
+                <section className="profile-about-section">
+                  <h3>Goals</h3>
+                  <div className="tags">{profile.preferences.goals.map(item => <span key={item} className="tag">{item}</span>)}</div>
+                </section>
+              )}
+              {Array.isArray(profile.skills) && profile.skills.length > 0 && (
+                <section className="profile-about-section">
+                  <h3>Skills</h3>
+                  <div className="tags">{profile.skills.map(item => <span key={item} className="tag tag-primary">{item}</span>)}</div>
+                </section>
+              )}
+            </div>
+          ) : activeProfileTab === 'saved' ? (
+            <div className="profile-saved-tab">
+              <div className="profile-saved-tabs" role="tablist" aria-label="Saved items">
+                <button type="button" role="tab" aria-selected={savedSection === 'posts'} className={savedSection === 'posts' ? 'active' : ''} onClick={() => setSavedSection('posts')}>
+                  Posts <span>{savedPostsTotal}</span>
+                </button>
+                <button type="button" role="tab" aria-selected={savedSection === 'jobs'} className={savedSection === 'jobs' ? 'active' : ''} onClick={() => setSavedSection('jobs')}>
+                  Jobs <span>{profileSavedJobs.length}</span>
+                </button>
+              </div>
+
+              {savedSection === 'posts' ? (
+                savedPostsLoading ? (
+                  <div className="profile-saved-state"><span className="spinner spinner-primary" /> Loading saved posts...</div>
+                ) : savedPostsError ? (
+                  <div className="card profile-saved-state">
+                    <span>{savedPostsError}</span>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => fetchSavedPosts()}>Try again</button>
+                  </div>
+                ) : savedPosts.length ? (
+                  <>
+                    <div className="profile-saved-list">
+                      {savedPosts.map(post => <SavedPostCard key={post.id} post={post} onRemoved={(id) => {
+                        setSavedPosts(current => current.filter(item => item.id !== id));
+                        setSavedPostsTotal(current => Math.max(0, current - 1));
+                      }} />)}
+                    </div>
+                    {savedPostsHasMore && (
+                      <button type="button" className="btn btn-ghost profile-saved-load-more" disabled={savedPostsLoadingMore} onClick={() => fetchSavedPosts(savedPosts.length)}>
+                        {savedPostsLoadingMore ? <span className="spinner spinner-primary" /> : 'Load more saved posts'}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <div className="card profile-saved-state">
+                    <strong>No saved posts yet</strong>
+                    <span>Use Save on any post or video to keep it here.</span>
+                    <Link to="/" className="btn btn-primary btn-sm">Browse posts</Link>
+                  </div>
+                )
+              ) : profileSavedJobs.length ? (
+                <div className="profile-saved-list">
+                  {profileSavedJobs.map(job => <SavedJobCard key={job.id} job={job} />)}
+                </div>
+              ) : (
+                <div className="card profile-saved-state">
+                  <strong>No saved jobs yet</strong>
+                  <span>Save a live job listing and it will stay available here.</span>
+                  <Link to="/opportunities" className="btn btn-primary btn-sm">Browse jobs</Link>
+                </div>
+              )}
+            </div>
           ) : (
             <>
-              <div className="card" style={{ marginBottom: 14 }}>
-                <h2 style={{ fontSize: '1rem', margin: '0 0 6px' }}>About</h2>
-                <p style={{ fontSize: '.9rem', lineHeight: 1.65, color: profile.bio ? 'var(--text)' : 'var(--muted)', margin: 0 }}>
-                  {profile.bio || 'Add a short bio so people know what you are building and learning.'}
-                </p>
-              </div>
               <div style={{ marginTop: 18 }}>
                 <div className="profile-posts-heading">
                   <div>

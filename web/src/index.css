@@ -292,7 +292,47 @@ input, textarea, select { font-family: inherit; }
 }
 .feed-unified-control-bar .feed-topic-filter { margin-left: auto; }
 .feed-unified-control-bar .home-shop-button { flex: 0 0 auto; }
-.feed-group-filter-row { justify-content: flex-end; }
+.feed-group-filter-row { justify-content: flex-end; align-items: center; }
+.group-feed-scope-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: auto;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.group-feed-scope-tabs button {
+  min-height: 32px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 700;
+}
+.group-feed-scope-tabs button.active {
+  background: var(--card);
+  color: var(--primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .1);
+}
+.group-discovery-section {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.group-discovery-section .home-embedded-feed { display: block; }
+.group-discovery-section .group-live-list .group-directory-tabs {
+  max-height: min(48vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.group-public-feed-heading { margin-top: 20px; }
+.group-public-feed-heading h2 { margin: 0 0 3px; font-size: 1rem; }
+.group-public-feed-heading span { color: var(--muted); font-size: .78rem; }
 .feed-toolbar-primary-action {
   height: 40px;
   min-height: 40px;
@@ -2654,17 +2694,48 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   width: 100%;
   min-width: 0;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  padding: 12px;
+  min-height: 108px;
+  padding: 0;
   border: 0;
   border-bottom: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
   text-align: left;
+}
+.job-result-tab-open {
+  display: flex;
+  width: 100%;
+  min-height: 108px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 12px 48px 12px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
 }
+.job-result-save-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+.job-result-save-button:hover,
+.job-result-save-button.saved { border-color: var(--primary); color: var(--primary); }
+.job-result-save-button:disabled { cursor: default; opacity: .7; }
 .job-result-tab::before {
   content: '';
   position: absolute;
@@ -2675,7 +2746,7 @@ input, textarea, select { font-family: inherit; }
 .job-result-tab:hover { background: var(--surface); }
 .job-result-tab.active { background: var(--primary-light); }
 .job-result-tab.active::before { background: var(--primary); }
-.job-result-tab:focus-visible {
+.job-result-tab-open:focus-visible {
   z-index: 1;
   outline: 2px solid var(--primary);
   outline-offset: -2px;
@@ -2828,10 +2899,12 @@ input, textarea, select { font-family: inherit; }
 }
 .job-detail-actions {
   display: flex;
+  gap: 8px;
   margin-top: 18px;
 }
 .job-detail-actions .btn {
-  width: 100%;
+  width: auto;
+  flex: 1 1 0;
   min-height: 40px;
   justify-content: center;
   text-align: center;
@@ -3015,6 +3088,85 @@ input, textarea, select { font-family: inherit; }
 }
 .profile-workspace--details { grid-template-columns: minmax(0, 760px); }
 .profile-posts-column { min-width: 0; }
+.profile-content-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+.profile-content-tabs button {
+  flex: 1 1 0;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .84rem;
+  font-weight: 700;
+}
+.profile-content-tabs button:hover { background: var(--surface); color: var(--text); }
+.profile-content-tabs button.active { background: var(--primary); color: #fff; }
+.profile-about-tab { padding: 20px; }
+.profile-about-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.profile-about-heading h2 { margin: 0; font-size: 1rem; }
+.profile-about-tab > p { margin: 14px 0 0; font-size: .9rem; line-height: 1.7; white-space: pre-wrap; }
+.profile-about-tab > p.profile-about-empty { color: var(--muted); }
+.profile-about-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 0;
+}
+.profile-about-facts div { min-width: 0; padding: 10px; border-left: 2px solid var(--border); }
+.profile-about-facts dt { color: var(--muted); font-size: .68rem; font-weight: 700; text-transform: uppercase; }
+.profile-about-facts dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: .82rem; font-weight: 650; }
+.profile-about-section { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+.profile-about-section h3 { margin: 0 0 9px; font-size: .82rem; }
+.profile-saved-tab { min-width: 0; }
+.profile-saved-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.profile-saved-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: .8rem;
+  font-weight: 700;
+}
+.profile-saved-tabs button.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+.profile-saved-tabs button span { font-variant-numeric: tabular-nums; }
+.profile-saved-list { display: flex; flex-direction: column; gap: 12px; }
+.profile-saved-post,
+.profile-saved-job { margin: 0; padding: 18px; }
+.profile-saved-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: .72rem; }
+.profile-saved-item-heading > span:first-child { color: var(--primary); font-weight: 750; text-transform: capitalize; }
+.profile-saved-post h3,
+.profile-saved-job h3 { margin: 12px 0 6px; overflow-wrap: anywhere; font-size: .96rem; }
+.profile-saved-post > p,
+.profile-saved-job-description { display: -webkit-box; margin: 0 0 12px; overflow: hidden; color: var(--text); font-size: .84rem; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.profile-saved-job-org { margin: 0 0 10px; color: var(--muted); font-size: .8rem; }
+.profile-saved-post-image { display: block; width: 100%; max-height: 360px; margin: 12px 0; border-radius: 7px; background: #000; object-fit: contain; }
+.profile-saved-item-actions { display: flex; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.profile-saved-item-actions .save-item-button { margin-left: auto; }
+.profile-saved-state { display: flex; min-height: 170px; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; color: var(--muted); text-align: center; }
+.profile-saved-state strong { color: var(--text); }
+.profile-saved-state .btn { text-decoration: none; }
+.profile-saved-load-more { width: 100%; margin-top: 12px; justify-content: center; }
+.save-item-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.save-item-button.saved,
+.feed-save-post-button.saved { color: var(--primary) !important; }
+.save-item-button.error,
+.feed-save-post-button.error { color: var(--danger) !important; }
 .profile-side-panels {
   display: flex;
   flex-direction: column;
@@ -3321,6 +3473,12 @@ input, textarea, select { font-family: inherit; }
   }
   .profile-posts-heading { align-items: flex-start; flex-direction: column; }
   .profile-posts-heading > .btn { width: 100%; justify-content: center; }
+  .profile-about-facts { grid-template-columns: 1fr; }
+  .profile-saved-item-actions .save-item-button { margin-left: 0; }
+  .profile-saved-item-actions .btn { flex: 1 1 132px; justify-content: center; text-align: center; }
+  .feed-group-filter-row { flex-wrap: wrap; }
+  .group-feed-scope-tabs { width: 100%; margin-right: 0; }
+  .group-feed-scope-tabs button { flex: 1 1 0; }
 
   /* Mobile browsers (iOS Safari, and Chromium's own mobile emulation) auto-
      zoom the page when a focused input's font-size is under 16px — .9rem
@@ -3770,6 +3928,17 @@ input, textarea, select { font-family: inherit; }
     color: #fff;
   }
   .mobile-command-menu-item--logout { color: var(--danger); }
+  .mobile-account-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 6px;
+  }
+  .mobile-account-actions .mobile-command-menu-item {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    border: 1px solid var(--border);
+  }
 
   /* Layout tweaks */
   .groups-grid { grid-template-columns: 1fr; }

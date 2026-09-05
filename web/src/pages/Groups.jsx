@@ -202,7 +202,7 @@ export default function Groups() {
   );
 }
 
-export function GroupsContent({ embedded = false }) {
+export function GroupsContent({ embedded = false, scope = 'all' }) {
   const navigate = useNavigate();
   const location = useLocation();
   const topicButtonRef = useRef(null);
@@ -222,7 +222,7 @@ export function GroupsContent({ embedded = false }) {
     setError(false);
 
     Promise.all([
-      client.get(bust ? '/groups?bust=1' : '/groups'),
+      client.get('/groups', { params: { ...(bust ? { bust: 1 } : {}), ...(scope === 'public' ? { scope: 'public' } : {}) } }),
       client.get('/groups/categories'),
     ])
       .then(([gRes, cRes]) => {
@@ -241,7 +241,7 @@ export function GroupsContent({ embedded = false }) {
 
   useEffect(() => {
     loadGroups();
-  }, []);
+  }, [scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const refresh = () => loadGroups(false, true);
@@ -251,7 +251,7 @@ export function GroupsContent({ embedded = false }) {
       window.clearInterval(interval);
       window.removeEventListener('focus', refresh);
     };
-  }, []);
+  }, [scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get('create') === '1') setShowCreate(true);
@@ -430,8 +430,7 @@ export function GroupsContent({ embedded = false }) {
               fontWeight: 500,
             }}
           >
-            {selectedTopics.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public communit
-            {visibleGroups.length !== 1 ? 'ies' : 'y'}
+            {selectedTopics.length > 0 ? `${visibleGroups.length} of ${groups.length}` : visibleGroups.length} live public {visibleGroups.length !== 1 ? 'communities' : 'community'}
           </p>
           <div className="group-directory-list group-live-list">
               <div className="group-directory-list-heading">

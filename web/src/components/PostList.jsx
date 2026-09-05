@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import client from '../api/client';
 import ImageLightbox from './ImageLightbox';
 import { InlineAutoplayVideo } from './videoMedia';
+import { SavePostButton } from './SaveButtons';
 
 function timeAgo(iso) {
   const diff = (Date.now() - new Date(iso)) / 1000;
@@ -344,6 +345,12 @@ export default function PostList({
               >
                 {commentsOpen ? 'Hide' : 'Comment'} {post.commentsCount || 0}
               </button>
+
+              <SavePostButton
+                post={post}
+                className="btn btn-ghost btn-sm save-item-button"
+                style={{ minWidth: 92 }}
+              />
 
               {post.group && (
                 <span style={{

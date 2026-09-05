@@ -26,6 +26,8 @@ import { ALL_INTERESTS } from './Onboarding';
 import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
+import { SavePostButton } from '../components/SaveButtons';
+import { GroupsContent } from './Groups';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
@@ -1303,15 +1305,16 @@ function YouTubeCard({ post, cardRef, onMediaOpen, isMediaOpen }) {
         </div>
       ) : null}
       {post.content && <PostText text={post.content} />}
-      {post.sourceUrl && (
-        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+        <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />
+        {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 6, textDecoration: 'none', color: src.color }}>
             <SourceMark source="youtube" label={src.icon} size={11} />
             <span style={{ fontSize: '.7rem', color: 'var(--muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{post.sourceUrl}</span>
             <span style={{ fontSize: '.65rem', fontWeight: 700, color: src.color, background: `${src.color}14`, padding: '2px 7px', borderRadius: 4, flexShrink: 0 }}>Watch</span>
           </a>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -1891,6 +1894,14 @@ export const PostCard = memo(function PostCard({ post, onMediaOpen, onPostUpdate
             {commentCount > 0 ? `${commentCount.toLocaleString()} ` : ''}{showComments ? `Hide ${sectionLabel}` : sectionLabel}
           </button>
         )}
+        <SavePostButton
+          post={post}
+          className="feed-save-post-button"
+          style={{
+            all: 'unset', cursor: 'pointer', fontSize: '.75rem', color: 'var(--muted)',
+            display: 'inline-flex', alignItems: 'center', gap: 4, fontWeight: 500,
+          }}
+        />
         {post.sourceUrl && (
           <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
             onClick={e => {
@@ -2122,7 +2133,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
-  const publicGroupsFeed = groupScope === 'public';
+  const publicGroupsFeed = groupScope === 'public' || routeFeedParams.get('groupScope') === 'public';
   const _cache = forcedMode ? null : readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
@@ -2558,6 +2569,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     }
     switchViewMode(mode);
   }, [switchViewMode]);
+
+  const selectGroupScope = useCallback((scope) => {
+    const params = new URLSearchParams(routeLocation.search);
+    params.set('feed', 'groups');
+    params.delete('all');
+    if (scope === 'public') params.set('groupScope', 'public');
+    else params.delete('groupScope');
+    navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [navigate, routeLocation.search]);
 
   const setHomeToolPanel = useCallback((panel) => {
     const params = new URLSearchParams(routeLocation.search);
@@ -3526,6 +3547,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
 
       {viewMode === 'groups' && (
         <div className="feed-source-filter-row feed-group-filter-row">
+          <div className="group-feed-scope-tabs" role="tablist" aria-label="Group feeds">
+            <button type="button" role="tab" aria-selected={!publicGroupsFeed} className={!publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('joined')}>
+              Your groups
+            </button>
+            <button type="button" role="tab" aria-selected={publicGroupsFeed} className={publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('public')}>
+              Discover groups
+            </button>
+          </div>
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
@@ -3541,6 +3570,16 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             buttonRef={topicFilterBtnRef}
             panelRef={topicPanelRef}
           />
+        </div>
+      )}
+
+      {viewMode === 'groups' && publicGroupsFeed && (
+        <div className="group-discovery-section">
+          <GroupsContent embedded scope="public" />
+          <div className="group-public-feed-heading">
+            <h2>Public group posts</h2>
+            <span>Popular conversations across public groups</span>
+          </div>
         </div>
       )}
 
@@ -3875,7 +3914,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
-            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => activateHomeView('groups')}>Groups</button>
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && !publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('joined')}>Your groups</button>
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('public')}>Discover groups</button>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },

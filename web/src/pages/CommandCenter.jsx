@@ -9,6 +9,7 @@ import { SOURCE_META, CONNECTED_SOCIAL_PLATFORMS, COMMAND_CENTER_ACCOUNT_PLATFOR
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
+import { useSavedItems } from '../contexts/SavedItemsContext';
 
 // Platforms with a real, working "my own posts" fetcher server-side (see
 // OWN_CONTENT_FETCHERS in backend/index.js) — the rest of
@@ -1001,6 +1002,7 @@ const JOB_STATUSES = ['saved', 'applied', 'viewed'];
 // /opportunities' own existing resume-match scoring, not recomputed here.
 function JobTrackerSection() {
   const { showToast } = useToast();
+  const { refreshSavedJobs } = useSavedItems();
   const [opportunities, setOpportunities] = useState(null);
   const [tracked, setTracked] = useState({});
   const [resumes, setResumes] = useState([]);
@@ -1101,6 +1103,7 @@ function JobTrackerSection() {
         recruiterName: job.recruiterName, recruiterRole: job.recruiterRole,
       });
       setTracked(prev => ({ ...prev, [job.id]: { ...prev[job.id], id: job.id, status } }));
+      refreshSavedJobs().catch(() => {});
     } catch {
       showToast('Could not update.', 'error');
     } finally {
@@ -1113,6 +1116,7 @@ function JobTrackerSection() {
     try {
       await client.delete(`/jobs/tracking/${encodeURIComponent(jobId)}`);
       setTracked(prev => { const next = { ...prev }; delete next[jobId]; return next; });
+      refreshSavedJobs().catch(() => {});
     } catch {
       showToast('Could not remove.', 'error');
     } finally {

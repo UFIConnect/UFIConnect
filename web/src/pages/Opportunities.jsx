@@ -7,6 +7,7 @@ import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { SOURCE_META } from '../components/sourceMeta';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
+import { SaveJobButton } from '../components/SaveButtons';
 
 const PAGE_SIZE = 20;
 
@@ -180,22 +181,22 @@ function SourceBadge({ opp }) {
 
 function JobTab({ job, index, onSelect }) {
   return (
-    <button
+    <div
       id={`job-tab-${index}`}
-      type="button"
       role="listitem"
       className="job-result-tab"
-      onClick={onSelect}
-      aria-label={`Open ${job.title} at ${job.org}`}
     >
-      <span className="job-result-tab-title">{job.title}</span>
-      <span className="job-result-tab-org">{job.org}</span>
-      <span className="job-result-tab-meta">
-        <span>{job.location || 'Location listed by source'}</span>
-        <span>{timeAgo(job.posted)}</span>
-      </span>
-      <span className="job-result-tab-source">{job.source}</span>
-    </button>
+      <button type="button" className="job-result-tab-open" onClick={onSelect} aria-label={`Open ${job.title} at ${job.org}`}>
+        <span className="job-result-tab-title">{job.title}</span>
+        <span className="job-result-tab-org">{job.org}</span>
+        <span className="job-result-tab-meta">
+          <span>{job.location || 'Location listed by source'}</span>
+          <span>{timeAgo(job.posted)}</span>
+        </span>
+        <span className="job-result-tab-source">{job.source}</span>
+      </button>
+      <SaveJobButton job={job} className="job-result-save-button" showLabel={false} />
+    </div>
   );
 }
 
@@ -260,6 +261,7 @@ export function JobDetail({ job }) {
       </section>
 
       <div className="job-detail-actions">
+        <SaveJobButton job={job} className="btn btn-ghost save-item-button" />
         <a className="btn btn-primary" href={job.sourceUrl} target="_blank" rel="noopener noreferrer">
           View full position on {job.source}
         </a>

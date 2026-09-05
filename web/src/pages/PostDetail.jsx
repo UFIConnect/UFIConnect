@@ -9,6 +9,7 @@ import client from '../api/client';
 import { SOURCE_META } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import { extractYouTubeId, deriveBlueskyPlaylistUrl, isDirectVideoUrl, HlsVideoPlayer, loadYouTubeIframeApi, useGlobalMuted } from '../components/videoMedia';
+import { SavePostButton } from '../components/SaveButtons';
 
 function timeAgo(iso) {
   if (!iso) return '';
@@ -338,6 +339,7 @@ export default function PostDetail() {
                 See who liked this
               </button>
             )}
+            {token && <SavePostButton post={post} className="btn btn-ghost btn-sm save-item-button" />}
             {post.sourceUrl && (
               <a href={post.sourceUrl} target="_blank" rel="noopener noreferrer"
                 style={{ marginLeft: 'auto', fontSize: '.75rem', fontWeight: 700, color: src.color, textDecoration: 'none' }}>

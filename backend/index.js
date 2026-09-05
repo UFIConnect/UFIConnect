@@ -17097,6 +17097,21 @@ async function migrateDB() {
     await db.query(`ALTER TABLE job_tracking ADD COLUMN IF NOT EXISTS recruiter_role TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS job_tracking_user_idx ON job_tracking(user_id, updated_at DESC)`);
 
+    // Saved feed posts are member-owned bookmarks. External feed rows age out
+    // of the live pool, so keep a small, display-safe snapshot with the source
+    // id instead of relying on the original row still being available later.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS saved_posts (
+        user_id       TEXT NOT NULL,
+        post_id       TEXT NOT NULL,
+        post_snapshot JSONB NOT NULL DEFAULT '{}',
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, post_id)
+      )
+    `);
+    await db.query(`CREATE INDEX IF NOT EXISTS saved_posts_user_idx ON saved_posts(user_id, created_at DESC)`);
+
     // Resume Builder's editable draft — one row per user (upsert, like
     // job_tracking above), so the form persists between visits before the
     // member exports it. `data` holds the structured sections (contact,
@@ -21286,6 +21301,8 @@ async function purgeUser(uid) {
     await db.query('DELETE FROM connections WHERE from_id=$1 OR to_id=$1', [uid]);
     await db.query('DELETE FROM blocks WHERE blocker_id=$1 OR blocked_id=$1', [uid]);
     await db.query('DELETE FROM attachments WHERE user_id=$1', [uid]);
+    await db.query('DELETE FROM saved_posts WHERE user_id=$1', [uid]);
+    await db.query('DELETE FROM job_tracking WHERE user_id=$1', [uid]);
     // seen_posts (used by getUserSeenSet/markPostsSeen to keep refreshes from
     // re-serving the same posts) was never purged here — every other
     // per-user table gets cleaned above, but this one kept accumulating rows
@@ -21319,14 +21336,27 @@ app.get('/profile/export', authenticate, async (req, res) => {
       id: c.id, postId: c.postId, content: c.content, createdAt: c.createdAt,
     }));
     let myAttachments = [];
+    let mySavedPosts = [];
+    let myTrackedJobs = [];
     if (db.isConnected()) {
-      const { rows } = await db.query(
-        `SELECT id, filename, file_size, ats_score, keywords, created_at FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`,
-        [uid]
-      );
-      myAttachments = rows.map(r => ({
+      const [attachmentResult, savedPostResult, trackedJobResult] = await Promise.all([
+        db.query(`SELECT id, filename, file_size, ats_score, keywords, created_at FROM attachments WHERE user_id=$1 ORDER BY created_at DESC`, [uid]),
+        db.query(`SELECT post_id, post_snapshot, created_at FROM saved_posts WHERE user_id=$1 ORDER BY created_at DESC`, [uid]),
+        db.query(`SELECT job_id, status, title, org, source, source_url, match_score, job_content, contact_email, recruiter_name, recruiter_role, created_at, updated_at FROM job_tracking WHERE user_id=$1 ORDER BY updated_at DESC`, [uid]),
+      ]);
+      myAttachments = attachmentResult.rows.map(r => ({
         id: r.id, filename: r.filename, fileSize: r.file_size,
         atsScore: r.ats_score, keywords: r.keywords, createdAt: r.created_at,
+      }));
+      mySavedPosts = savedPostResult.rows.map(r => ({
+        id: r.post_id, ...(r.post_snapshot || {}), savedAt: r.created_at,
+      }));
+      myTrackedJobs = trackedJobResult.rows.map(r => ({
+        id: r.job_id, status: r.status, title: r.title, org: r.org,
+        source: r.source, sourceUrl: r.source_url, matchScore: r.match_score,
+        jobContent: r.job_content, contactEmail: r.contact_email,
+        recruiterName: r.recruiter_name, recruiterRole: r.recruiter_role,
+        trackedAt: r.created_at, updatedAt: r.updated_at,
       }));
     }
     const following = follows.filter(f => f.followerId === uid).map(f => f.followingId);
@@ -21347,6 +21377,8 @@ app.get('/profile/export', authenticate, async (req, res) => {
       posts: myPosts,
       comments: myComments,
       attachments: myAttachments,
+      savedPosts: mySavedPosts,
+      trackedJobs: myTrackedJobs,
       social: { following, followers: followerIds, connections: myConnections },
     });
   } catch (e) {
@@ -29802,6 +29834,147 @@ app.delete('/jobs/tracking/:jobId', authenticate, async (req, res) => {
   } catch (e) {
     console.error('[/jobs/tracking] delete error:', e.message);
     res.status(500).json({ message: 'Could not remove.' });
+  }
+});
+
+// --- Saved posts -----------------------------------------------------------
+// The feed contains both native UFI posts and short-lived rows pulled from
+// external sources. Save an allow-listed snapshot so a member's bookmark is
+// still useful after a source refresh removes the live copy.
+function savedPostString(value, maxLength) {
+  return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function savedPostUrl(value) {
+  const candidate = savedPostString(value, 4000);
+  if (!candidate) return '';
+  try {
+    const parsed = new URL(candidate);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function savedPostDate(value) {
+  const timestamp = new Date(value || 0);
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : new Date().toISOString();
+}
+
+function buildSavedPostSnapshot(rawPost) {
+  const post = rawPost && typeof rawPost === 'object' ? rawPost : {};
+  const id = savedPostString(post.id, 700);
+  if (!id) return null;
+  const author = post.author && typeof post.author === 'object' ? post.author : {};
+  const group = post.group && typeof post.group === 'object' ? post.group : {};
+  const mediaType = ['image', 'video', 'video_thumbnail_only'].includes(post.mediaType)
+    ? post.mediaType
+    : '';
+  return {
+    id,
+    source: savedPostString(post.source, 80) || 'uficonnect',
+    sourceLabel: savedPostString(post.sourceLabel, 160),
+    title: savedPostString(post.title, 1000),
+    content: savedPostString(post.content, 12000),
+    authorId: savedPostString(post.authorId || author.id, 700),
+    author: {
+      id: savedPostString(author.id || post.authorId, 700),
+      name: savedPostString(author.name || post.authorName, 320),
+      title: savedPostString(author.title, 320),
+      organization: savedPostString(author.organization, 320),
+      avatarUrl: savedPostUrl(author.avatarUrl),
+    },
+    groupId: savedPostString(post.groupId || group.id, 700),
+    group: group.id || group.name ? {
+      id: savedPostString(group.id || post.groupId, 700),
+      name: savedPostString(group.name, 320),
+      category: savedPostString(group.category, 160),
+      externalUrl: savedPostUrl(group.externalUrl),
+    } : null,
+    topic: savedPostString(post.topic, 320),
+    sourceUrl: savedPostUrl(post.sourceUrl),
+    mediaUrl: savedPostUrl(post.mediaUrl),
+    mediaPoster: savedPostUrl(post.mediaPoster),
+    mediaType,
+    embedId: savedPostString(post.embedId, 160),
+    createdAt: savedPostDate(post.createdAt || post.publishedAt || post.postedAt),
+    likesCount: Math.max(0, Math.floor(Number(post.likesCount) || 0)),
+    commentsCount: Math.max(0, Math.floor(Number(post.commentsCount) || 0)),
+    isExternal: Boolean(post.isExternal),
+    ufiInteractive: Boolean(post.ufiInteractive),
+    isLiveCamera: Boolean(post.isLiveCamera),
+    matchedByLocation: Boolean(post.matchedByLocation),
+    locationMatchLabel: savedPostString(post.locationMatchLabel, 320),
+  };
+}
+
+app.get('/saved/posts', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ message: 'Saved posts are not available right now.' });
+  try {
+    if (String(req.query.summary || '') === '1') {
+      const { rows } = await db.query(
+        `SELECT post_id FROM saved_posts WHERE user_id = $1 ORDER BY created_at DESC`,
+        [req.user.id]
+      );
+      return res.json({ postIds: rows.map(row => row.post_id) });
+    }
+
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 50));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+    const [{ rows }, countResult] = await Promise.all([
+      db.query(
+        `SELECT post_snapshot, created_at FROM saved_posts WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        [req.user.id, limit, offset]
+      ),
+      db.query(`SELECT COUNT(*)::int AS total FROM saved_posts WHERE user_id = $1`, [req.user.id]),
+    ]);
+    const total = Number(countResult.rows[0]?.total || 0);
+    return res.json({
+      posts: rows.map(row => ({
+        ...(row.post_snapshot || {}),
+        savedByMe: true,
+        savedAt: row.created_at,
+      })),
+      total,
+      hasMore: offset + rows.length < total,
+    });
+  } catch (error) {
+    console.error('[/saved/posts] load error:', error.message);
+    return res.status(500).json({ message: 'Could not load saved posts.' });
+  }
+});
+
+app.post('/saved/posts', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ message: 'Saved posts are not available right now.' });
+  const snapshot = buildSavedPostSnapshot(req.body?.post);
+  if (!snapshot) return res.status(400).json({ message: 'A valid post is required.' });
+  try {
+    await db.query(
+      `INSERT INTO saved_posts (user_id, post_id, post_snapshot, updated_at)
+       VALUES ($1, $2, $3::jsonb, NOW())
+       ON CONFLICT (user_id, post_id) DO UPDATE SET
+         post_snapshot = EXCLUDED.post_snapshot,
+         updated_at = NOW()`,
+      [req.user.id, snapshot.id, JSON.stringify(snapshot)]
+    );
+    return res.json({ ok: true, post: { ...snapshot, savedByMe: true } });
+  } catch (error) {
+    console.error('[/saved/posts] save error:', error.message);
+    return res.status(500).json({ message: 'Could not save this post.' });
+  }
+});
+
+app.delete('/saved/posts/:postId', authenticate, async (req, res) => {
+  if (!db.isConnected()) return res.status(503).json({ message: 'Saved posts are not available right now.' });
+  try {
+    await db.query(
+      `DELETE FROM saved_posts WHERE user_id = $1 AND post_id = $2`,
+      [req.user.id, req.params.postId]
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('[/saved/posts] delete error:', error.message);
+    return res.status(500).json({ message: 'Could not remove this saved post.' });
   }
 });
 

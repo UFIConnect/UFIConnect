@@ -298,7 +298,22 @@ export default function Layout({ children, wide = false }) {
     navigateToMobileFeed(feed);
   }
 
-  const requestedFeed = new URLSearchParams(location.search).get('feed');
+  function selectDiscoverGroups() {
+    saveMobileFeed('groups');
+    setMobileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public') {
+      window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
+      return;
+    }
+    navigate('/?feed=groups&groupScope=public', {
+      state: { refreshHomeAt: Date.now() },
+    });
+  }
+
+  const mobileFeedParams = new URLSearchParams(location.search);
+  const requestedFeed = mobileFeedParams.get('feed');
+  const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
   const isHomeFeedRoute = location.pathname === '/';
   const mobileSourceIds = mobileFeedMode === 'following'
@@ -548,9 +563,13 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="following" size={18} />
                 Following
               </button>
-              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'joined' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'joined'} onClick={() => selectMobileFeed('groups')}>
                 <ShellIcon name="groups" size={18} />
-                Groups
+                Your groups
+              </button>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public'} onClick={selectDiscoverGroups}>
+                <ShellIcon name="search" size={18} />
+                Discover groups
               </button>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
                 <ShellIcon name="countries" size={18} />
@@ -574,14 +593,16 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="command" size={18} />
                 Command Center
               </NavLink>
-              <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="settings" size={18} />
-                Settings
-              </NavLink>
-              <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
-                <ShellIcon name="logout" size={18} />
-                Log out
-              </button>
+              <div className="mobile-account-actions">
+                <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="settings" size={18} />
+                  Settings
+                </NavLink>
+                <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
+                  <ShellIcon name="logout" size={18} />
+                  Log out
+                </button>
+              </div>
             </div>
           </div>
         </aside>

@@ -8,6 +8,7 @@ import { orderNewestFeedCohorts } from '../utils/feedOrdering';
 import { reportConsumed, reportEngaged, reportEngagementSignal } from '../api/engagement';
 import { reportNegativeSignal } from '../api/errorReporting';
 import { ALL_INTERESTS } from '../pages/Onboarding';
+import { SavePostButton } from './SaveButtons';
 
 // A video counts as genuinely watched (as opposed to just scrolled past —
 // see api/engagement.js for the view-vs-seen distinction) once playback
@@ -868,6 +869,15 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
           <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Comments</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.commentsCount || 0).toLocaleString()}</span>
         </button>
+        <SavePostButton
+          post={post}
+          className="video-feed-save-button"
+          style={{
+            all: 'unset', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+            color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)', cursor: 'pointer',
+            fontSize: '.72rem', fontWeight: 800,
+          }}
+        />
       </div>
     </div>
   );
