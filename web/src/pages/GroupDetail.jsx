@@ -9,6 +9,7 @@ import { uploadMedia, MAX_UPLOAD_BYTES } from '../api/upload';
 import EmojiPicker from '../components/EmojiPicker';
 import PhotoPickerButton from '../components/PhotoPickerButton';
 import { orderNewestFeedCohorts } from '../utils/feedOrdering';
+import { GroupInformation } from './Groups';
 
 function initials(name = '') {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
@@ -17,7 +18,7 @@ function initials(name = '') {
 export default function GroupDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
+  const { profile, updateProfileLocally } = useAuth();
   const [group,   setGroup]   = useState(null);
   const [members, setMembers] = useState([]);
   const [joined,  setJoined]  = useState(false);
@@ -56,14 +57,13 @@ export default function GroupDetail() {
 
   useEffect(() => {
     Promise.all([
-      client.get('/groups'),
+      client.get(`/groups/${id}`),
       client.get(`/groups/${id}/members`),
-      client.get('/profile'),
-    ]).then(([gRes, mRes, pRes]) => {
-      const found = (gRes.data.groups || []).find((g) => g.id === id);
-      setGroup(found || null);
+    ]).then(([gRes, mRes]) => {
+      const found = gRes.data.group || null;
+      setGroup(found);
       setMembers(mRes.data.members || []);
-      setJoined((pRes.data.joinedGroups || []).includes(id));
+      setJoined(Boolean(found?.isJoined));
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
 
@@ -104,15 +104,18 @@ export default function GroupDetail() {
     if (joining) return;
     setJoining(true);
     try {
-      if (joined) {
-        await client.delete(`/groups/${id}/join`);
-        setJoined(false);
-        setGroup((g) => g ? { ...g, members: g.members - 1 } : g);
-      } else {
-        await client.post(`/groups/${id}/join`);
-        setJoined(true);
-        setGroup((g) => g ? { ...g, members: g.members + 1 } : g);
-      }
+      const { data } = joined
+        ? await client.delete(`/groups/${id}/join`)
+        : await client.post(`/groups/${id}/join`);
+      const nextJoined = Array.isArray(data.joinedGroups) ? data.joinedGroups : [];
+      const nextGroup = data.group || {
+        ...group,
+        isJoined: !joined,
+        members: Math.max(0, (group?.members || 0) + (joined ? -1 : 1)),
+      };
+      setJoined(Boolean(nextGroup.isJoined));
+      setGroup(nextGroup);
+      updateProfileLocally({ joinedGroups: nextJoined });
     } catch (err) { console.error(err); }
     finally { setJoining(false); }
   }
@@ -208,22 +211,15 @@ export default function GroupDetail() {
         <span className="btn-back-icon">‹</span> Back to Groups
       </button>
 
-      {/* Group header */}
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-          <div style={{ fontSize: '.9rem', fontWeight: 800, color: 'var(--primary)' }}>GR</div>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: 4 }}>{group.name}</h1>
-            <p style={{ fontSize: '.85rem', color: 'var(--muted)', marginBottom: 12 }}>{group.description}</p>
-            <div style={{ display: 'flex', gap: 16, fontSize: '.82rem', color: 'var(--muted)' }}>
-              <span>{group.members?.toLocaleString()} members</span>
-              <span>{group.category}</span>
-            </div>
-          </div>
-          <button className={`btn ${joined ? 'btn-ghost' : 'btn-primary'}`} onClick={handleJoin} disabled={joining} style={{ minWidth: 104 }}>
-            {joining ? <span className={joined ? 'spinner spinner-primary' : 'spinner'} /> : joined ? 'Leave group' : 'Join group'}
-          </button>
-        </div>
+      <div style={{ marginBottom: 16 }}>
+        <GroupInformation
+          group={group}
+          isJoined={joined}
+          joining={joining}
+          onJoin={handleJoin}
+          onOpen={() => document.getElementById('group-posts')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          standalone
+        />
       </div>
 
       {/* Danger zone — only the group's own creator ever sees this */}
@@ -352,7 +348,7 @@ export default function GroupDetail() {
       )}
 
       {/* Group posts */}
-      <div style={{ marginBottom: 16 }}>
+      <div id="group-posts" style={{ marginBottom: 16, scrollMarginTop: 16 }}>
         <PostList
           posts={groupPosts}
           loading={postsLoading}

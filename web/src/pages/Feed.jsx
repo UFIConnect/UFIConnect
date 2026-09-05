@@ -2105,8 +2105,8 @@ function writeFeedCache(userId, posts) {
 
 // forcedMode locks a dedicated route onto one mode while preserving this
 // shared feed engine's cursor pagination, equalizer, seen-state, and media
-// behavior. Groups now lives inside Home and requests the public community
-// scope there; group detail pages remain separate destinations.
+// behavior. Groups lives inside Home and defaults to the signed-in member's
+// joined communities; group detail pages remain separate destinations.
 export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const routeLocation = useLocation();
@@ -2122,7 +2122,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
-  const publicGroupsFeed = groupScope === 'public' || !forcedMode;
+  const publicGroupsFeed = groupScope === 'public';
   const _cache = forcedMode ? null : readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
@@ -3717,7 +3717,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 <p style={{ marginBottom: 12 }}>
                   {publicGroupsFeed
                     ? 'No unseen public group posts are available right now.'
-                    : 'Join a UFIconnect group or connect a social account to build this feed.'}
+                    : 'Your joined groups do not have unseen posts yet.'}
                 </p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   {publicGroupsFeed
@@ -3887,7 +3887,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-            <Link to="/search?tab=groups" className="home-feed-rail-tab">Discover Groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

@@ -52,15 +52,11 @@ function ProfilePanel({ title, summary, open, onToggle, children }) {
 }
 
 export default function Profile() {
-  const { profile, updateProfileLocally, logout } = useAuth();
+  const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  function handleLogout() {
-    logout();
-    navigate('/login');
-  }
   const [openPanel,   setOpenPanel]   = useState(null);
   const [editing,     setEditing]     = useState(null);
   const [form,        setForm]        = useState(null);
@@ -517,14 +513,6 @@ export default function Profile() {
           <Link className="btn btn-ghost btn-sm" to={`/u/${profile.id}`} target="_blank" rel="noopener noreferrer">Preview as public</Link>
         </div>
 
-        {/* Settings/Log out live in the desktop sidebar, which is hidden on
-            mobile with nothing replacing it there — Profile is the one
-            bottom-nav destination every mobile user can already reach, so
-            it's the fallback entry point for both on small screens. */}
-        <div className="profile-mobile-account-actions">
-          <Link className="btn btn-ghost btn-sm" to="/settings">Settings</Link>
-          <button className="btn btn-ghost btn-sm profile-mobile-logout" onClick={handleLogout}>⎋ Log out</button>
-        </div>
       </div>
 
       {followModal && (

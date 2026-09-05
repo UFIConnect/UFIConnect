@@ -881,7 +881,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                     <strong>Live group list</strong>
                     <span>{groupsTotal.toLocaleString()}</span>
                   </div>
-                  <div className="group-directory-tabs" role="list" aria-label="Live groups">
+                  <div className="group-directory-tabs" role="group" aria-label="Live groups">
                     {filteredGroups.map((group, index) => (
                       <GroupDirectoryTab
                         key={group.id}

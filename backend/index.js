@@ -21379,14 +21379,9 @@ app.delete('/office/users/:id', requireOfficeToken, async (req, res) => {
 });
 
 // --- Groups -------------------------------------------------------------------
-// /groups is called both logged-out (public directory) and logged-in, so this
-// reads the token if one is present rather than requiring it — anonymous
-// viewers just see no private groups.
-function optionalViewerId(req) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return null;
-  try { return jwt.verify(authHeader.split(' ')[1], JWT_SECRET).id; } catch { return null; }
-}
+// /groups works for both visitors and signed-in members. Optional auth keeps
+// the public directory open while adding private visibility and per-group
+// membership state for a valid member session.
 // Mirrors Groups.jsx's own origin-badge logic (platform field wins, a
 // subreddit-only external group is Reddit, anything non-external is a
 // native UFIconnect group) — kept as one function so the round-robin key
@@ -21404,17 +21399,21 @@ function canSeeGroup(group, viewerId) {
   const viewer = users.find((u) => u.id === viewerId);
   return Boolean(viewer?.joinedGroups?.includes(group.id));
 }
+function groupForViewer(group, joinedGroupIds = new Set()) {
+  return { ...group, isJoined: joinedGroupIds.has(group.id) };
+}
 function slugifyGroupName(name) {
   return (name || 'group').toLowerCase().trim()
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'group';
 }
 
-app.get('/groups', async (req, res) => {
+app.get('/groups', authenticateOptional, async (req, res) => {
   try {
     if (req.query.bust === '1') await seedAndLoadGroups().catch(() => {});
     const { category } = req.query;
     const searchQuery = String(req.query.q || '').trim().slice(0, 160);
-    const viewerId = optionalViewerId(req);
+    const viewerId = req.user?.id || null;
+    const viewer = viewerId ? await getUser(viewerId) : null;
     let result;
     if (searchQuery && db.isConnected()) {
       const search = databaseSearchTerms(searchQuery);
@@ -21493,8 +21492,9 @@ app.get('/groups', async (req, res) => {
       : 0;
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const page = requestedLimit > 0 ? result.slice(offset, offset + requestedLimit) : result;
+    const joinedGroupIds = new Set(viewer?.joinedGroups || []);
     res.json({
-      groups: page,
+      groups: page.map(group => groupForViewer(group, joinedGroupIds)),
       totalCount,
       hasMore: requestedLimit > 0 ? offset + page.length < totalCount : false,
     });
@@ -21538,7 +21538,7 @@ app.post('/groups', authenticate, async (req, res) => {
       }
       groups.push(group);
       user.joinedGroups = [...prevJoinedGroups, id];
-      res.status(201).json({ group });
+      res.status(201).json({ group: groupForViewer(group, new Set(user.joinedGroups)) });
     } catch (e) {
       console.error('POST /groups DB:', e.message);
       res.status(500).json({ message: 'Failed to create the group. Please try again.' });
@@ -21561,6 +21561,22 @@ app.get('/groups/recommend', authenticate, (req, res) => {
 });
 
 // Group members — registered users + sample users who have joined it
+// Membership belongs to each group response so the client never has to
+// combine a directory request with a separately timed profile request.
+app.get('/groups/:id', authenticate, async (req, res) => {
+  try {
+    const user = await getUser(req.user.id);
+    const group = groups.find((candidate) => candidate.id === req.params.id);
+    if (!user || !group || !canSeeGroup(group, user.id)) {
+      return res.status(404).json({ message: 'Group not found.' });
+    }
+    res.json({ group: groupForViewer(group, new Set(user.joinedGroups || [])) });
+  } catch (e) {
+    console.error('GET /groups/:id:', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 app.get('/groups/:id/members', authenticate, (req, res) => {
   const groupId = req.params.id;
   const group = groups.find((g) => g.id === groupId);
@@ -21598,13 +21614,28 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
       if (isDBId(user.id) && !db.isConnected()) {
         return res.status(503).json({ message: 'Joining is temporarily unavailable — please try again in a moment.' });
       }
-      user.joinedGroups.push(group.id);
-      group.members += 1;
+      const nextJoinedGroups = [...user.joinedGroups, group.id];
       if (isDBId(user.id)) {
-        await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
+        await db.withClient(async (client) => {
+          try {
+            await client.query('BEGIN');
+            await client.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [nextJoinedGroups, user.id]);
+            await client.query('UPDATE community_groups SET member_count=member_count+1 WHERE id=$1', [group.id]);
+            await client.query('COMMIT');
+          } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+          }
+        });
       }
+      user.joinedGroups = nextJoinedGroups;
+      group.members += 1;
     }
-    res.json({ joinedGroups: user.joinedGroups, recommended: recommendGroups(user.id, group.id, 3) });
+    res.json({
+      joinedGroups: user.joinedGroups,
+      group: groupForViewer(group, new Set(user.joinedGroups)),
+      recommended: recommendGroups(user.id, group.id, 3),
+    });
   } catch (e) { console.error('POST /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 
@@ -21618,13 +21649,27 @@ app.delete('/groups/:id/join', authenticate, async (req, res) => {
       if (isDBId(user.id) && !db.isConnected()) {
         return res.status(503).json({ message: 'Leaving is temporarily unavailable — please try again in a moment.' });
       }
-      user.joinedGroups.splice(idx, 1);
-      group.members = Math.max(0, group.members - 1);
+      const nextJoinedGroups = user.joinedGroups.filter((groupId) => groupId !== group.id);
       if (isDBId(user.id)) {
-        await db.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [user.joinedGroups, user.id]);
+        await db.withClient(async (client) => {
+          try {
+            await client.query('BEGIN');
+            await client.query('UPDATE users SET joined_groups=$1 WHERE id=$2', [nextJoinedGroups, user.id]);
+            await client.query('UPDATE community_groups SET member_count=GREATEST(0,member_count-1) WHERE id=$1', [group.id]);
+            await client.query('COMMIT');
+          } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+          }
+        });
       }
+      user.joinedGroups = nextJoinedGroups;
+      group.members = Math.max(0, group.members - 1);
     }
-    res.json({ joinedGroups: user.joinedGroups });
+    res.json({
+      joinedGroups: user.joinedGroups,
+      group: groupForViewer(group, new Set(user.joinedGroups)),
+    });
   } catch (e) { console.error('DELETE /groups/:id/join:', e); res.status(500).json({ error: 'Internal server error' }); }
 });
 

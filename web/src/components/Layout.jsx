@@ -566,10 +566,6 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
-              <NavLink to="/search?tab=groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="groups" size={18} />
-                Discover Groups
-              </NavLink>
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}
@@ -578,6 +574,14 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="command" size={18} />
                 Command Center
               </NavLink>
+              <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="settings" size={18} />
+                Settings
+              </NavLink>
+              <button type="button" className="mobile-command-menu-item mobile-command-menu-item--logout" onClick={handleLogout}>
+                <ShellIcon name="logout" size={18} />
+                Log out
+              </button>
             </div>
           </div>
         </aside>

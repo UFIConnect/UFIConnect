@@ -2387,7 +2387,7 @@ input, textarea, select { font-family: inherit; }
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 86px;
+  min-height: 108px;
   align-items: flex-start;
   gap: 10px;
   padding: 12px;
@@ -2449,6 +2449,20 @@ input, textarea, select { font-family: inherit; }
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.group-directory-tab-copy .group-directory-tab-description {
+  display: -webkit-box;
+  margin: 2px 0;
+  overflow: hidden;
+  color: var(--text);
+  line-height: 1.4;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.group-directory-tab.joined .group-directory-tab-copy small {
+  color: var(--primary);
+  font-weight: 700;
 }
 .group-information-panel {
   position: sticky;
@@ -3168,13 +3182,6 @@ input, textarea, select { font-family: inherit; }
   display: none;
 }
 
-/* Settings/Log out fallback on Profile — see the comment at its JSX for
-   why this exists; only shown once .sidebar (which normally holds these)
-   is hidden below. */
-.profile-mobile-account-actions {
-  display: none;
-}
-
 /* Tablet keeps the familiar left navigation, but condenses it to an icon
    rail so the feed retains a useful reading width alongside its tools. */
 @media (min-width: 769px) and (max-width: 1100px) {
@@ -3762,6 +3769,7 @@ input, textarea, select { font-family: inherit; }
     background: var(--primary-hover);
     color: #fff;
   }
+  .mobile-command-menu-item--logout { color: var(--danger); }
 
   /* Layout tweaks */
   .groups-grid { grid-template-columns: 1fr; }
@@ -3900,15 +3908,6 @@ input, textarea, select { font-family: inherit; }
 
   /* Profile page — Connected Accounts buttons smaller */
   .platform-item { flex-wrap: wrap; gap: 10px; }
-
-  /* Settings/Log out fallback — see JSX comment */
-  .profile-mobile-account-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    margin-top: 10px;
-  }
-  .profile-mobile-logout { color: var(--danger); }
 
   /* Guest/global feed: keep header controls and the banner inside a real
      phone width instead of relying on desktop-sized inline spacing. */

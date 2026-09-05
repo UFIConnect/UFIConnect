@@ -438,7 +438,7 @@ export function GroupsContent({ embedded = false }) {
                 <strong>Live groups</strong>
                 <span>{visibleGroups.length.toLocaleString()}</span>
               </div>
-              <div className="group-directory-tabs" role="list" aria-label="Live groups">
+              <div className="group-directory-tabs" role="group" aria-label="Live groups">
                 {visibleGroups.map((group, index) => (
                   <GroupDirectoryTab
                     key={group.id}
@@ -477,8 +477,7 @@ export function GroupDirectoryTab({ group, index, onSelect }) {
     <button
       id={`group-directory-tab-${index}`}
       type="button"
-      role="listitem"
-      className="group-directory-tab"
+      className={`group-directory-tab${group.isJoined ? ' joined' : ''}`}
       onClick={onSelect}
       aria-label={`Open ${group.name}`}
     >
@@ -486,13 +485,16 @@ export function GroupDirectoryTab({ group, index, onSelect }) {
       <span className="group-directory-tab-copy">
         <strong>{group.name}</strong>
         <span>{group.category || 'Community'}</span>
-        <small>{group.members?.toLocaleString() || 0} members - {origin.label}</small>
+        <span className="group-directory-tab-description">{group.description || 'Open for group details and recent posts.'}</span>
+        <small>
+          {group.members?.toLocaleString() || 0} members - {origin.label} - {group.isJoined ? 'Joined' : 'Not joined'}
+        </small>
       </span>
     </button>
   );
 }
 
-export function GroupInformation({ group, index, isJoined, joining, onJoin, onOpen }) {
+export function GroupInformation({ group, index = 0, isJoined, joining, onJoin, onOpen, standalone = false }) {
   if (!group) return null;
   const meta = CATEGORY_META[group.category] || {
     icon: 'GR',
@@ -505,8 +507,8 @@ export function GroupInformation({ group, index, isJoined, joining, onJoin, onOp
   return (
     <section
       id="selected-group-information"
-      role="tabpanel"
-      aria-labelledby={`group-directory-tab-${index}`}
+      role={standalone ? undefined : 'tabpanel'}
+      aria-labelledby={standalone ? undefined : `group-directory-tab-${index}`}
       className="card group-information-panel"
     >
       <div className="group-information-heading">
@@ -524,7 +526,7 @@ export function GroupInformation({ group, index, isJoined, joining, onJoin, onOp
       <div className="group-information-badges">
         <span style={{ background: meta.bg, color: meta.text }}>{group.category || 'Community'}</span>
         <span>{group.isPrivate ? 'Private group' : 'Public group'}</span>
-        {!group.isExternal && <span>{isJoined ? 'Joined' : 'Available to join'}</span>}
+        <span>{isJoined ? 'Joined' : 'Not joined'}</span>
       </div>
 
       <dl className="group-information-facts">
@@ -555,20 +557,17 @@ export function GroupInformation({ group, index, isJoined, joining, onJoin, onOp
       )}
 
       <div className="group-information-actions">
-        {group.isExternal ? (
+        <button type="button" className={`btn ${isJoined ? 'btn-ghost' : 'btn-primary'}`} onClick={onJoin} disabled={joining}>
+          {joining
+            ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} />
+            : isJoined ? 'Leave group' : 'Join group'}
+        </button>
+        {group.isExternal && externalUrl && (
           <a className="btn btn-primary" href={externalUrl} target="_blank" rel="noopener noreferrer">
             Visit on {origin.label}
           </a>
-        ) : (
-          <>
-            <button type="button" className={`btn ${isJoined ? 'btn-ghost' : 'btn-primary'}`} onClick={onJoin} disabled={joining}>
-              {joining
-                ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} />
-                : isJoined ? 'Leave group' : 'Join group'}
-            </button>
-            <button type="button" className="btn btn-outline" onClick={onOpen}>View group posts</button>
-          </>
         )}
+        {onOpen && <button type="button" className="btn btn-outline" onClick={onOpen}>View group posts</button>}
       </div>
     </section>
   );
