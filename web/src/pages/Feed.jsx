@@ -2116,7 +2116,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
   const publicGroupsFeed = groupScope === 'public' || routeFeedParams.get('groupScope') === 'public';
-  const _cache = forcedMode ? null : readFeedCache(profile?.id);
+  const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
+  const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
+  const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
+  const _cache = !forcedMode && initialViewMode === 'feed' ? readFeedCache(profile?.id) : null;
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   // Following mode's per-source fetch failures (bad scope, API not
@@ -2139,9 +2142,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   }, []);
   // A direct Home action must not restore the last saved mode or source
   // filters. It opens the member's full personalized Home mix instead.
-  const _saved = routeRequestsAllHome ? null : loadFeedState(profile?.id);
-  const routeInitialMode = routeRequestedFeed === 'local' ? 'countries' : routeRequestedFeed;
-  const initialViewMode = forcedMode || (HOME_VIEW_MODES.has(routeInitialMode) ? routeInitialMode : _saved?.viewMode || 'feed');
   const initialFilters = ['feed', 'following'].includes(initialViewMode)
     ? {
         ...DEFAULT_FILTERS,
@@ -2199,6 +2199,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // let every one of those calls read the same stale loadingMore:false and
   // all start their own fetch. A ref updates immediately, in the same tick.
   const loadingMoreRef = useRef(false);
+  const paginationRequestIdRef = useRef(0);
   const activeTabsRef = useRef(_saved?.activeTabs || []);
   const filtersRef    = useRef(initialFilters);
   const viewModeRef   = useRef(initialViewMode);
@@ -2210,6 +2211,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   // Following finishing just after Home is selected). Only the most recently
   // started request is allowed to update the visible feed state.
   const feedRequestIdRef = useRef(0);
+  const feedContextRef = useRef(`${profile?.id}:${initialViewMode}:${initialViewMode === 'groups' && publicGroupsFeed}`);
   const allHomeRouteKeyRef = useRef(routeRequestsAllHome ? routeLocation.key : null);
   const liveRefreshTimeoutRef = useRef(null);
   const sourcePreferenceKeyRef = useRef(disabledSourceKey);
@@ -2251,6 +2253,21 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (manual) refreshSeedRef.current = Math.random().toString(36).slice(2);
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
     const activeMode = requestedMode || viewModeRef.current;
+    const feedContext = `${profile?.id}:${activeMode}:${activeMode === 'groups' && publicGroupsFeed}`;
+    if (feedContextRef.current !== feedContext) {
+      feedContextRef.current = feedContext;
+      postsRef.current = [];
+      knownIds.current = new Set();
+      remoteCursorRef.current = null;
+      paginationRequestIdRef.current += 1;
+      loadingMoreRef.current = false;
+      setPosts([]);
+      setRemotePage(2);
+      setLoadingMore(false);
+      setLoading(true);
+      setLockedPlatform(null);
+      setFeedError(null);
+    }
     activeFilters.sort = activeMode === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
@@ -2362,6 +2379,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         return;
       }
       knownIds.current = new Set(nextPosts.map(p => p.id).filter(Boolean));
+      postsRef.current = nextPosts;
       setPosts(nextPosts);
       if (activeMode === 'feed' && !activeSearch) writeFeedCache(profile?.id, nextPosts);
       // Only reset pagination state (page counter AND cursor) on a genuine
@@ -2796,6 +2814,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     // subside. loadingMoreRef is checked and set synchronously, in the same
     // tick, so only the very first call in a burst ever gets past this line.
     if (loadingMoreRef.current || !remoteHasMoreRef.current) return;
+    const paginationRequestId = ++paginationRequestIdRef.current;
     loadingMoreRef.current = true;
     setLoadingMore(true);
     const requestIdAtStart = feedRequestIdRef.current;
@@ -2887,7 +2906,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     } catch (error) {
       console.error('[feed] position cursor request failed', error);
     }
-    finally { loadingMoreRef.current = false; setLoadingMore(false); }
+    finally {
+      if (paginationRequestId === paginationRequestIdRef.current) {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      }
+    }
   }, [profile, publicGroupsFeed, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
@@ -2897,13 +2921,24 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     ));
   }, []);
 
-  // Load initial feed — if cache is fresh, show it instantly and stream new posts on top silently
+  // Only Home owns this cache. Group scopes must start with their own response.
   useEffect(() => {
     if (!profile?.id) return;
-    const c = forcedMode ? null : readFeedCache(profile.id);
-    setPosts(c?.posts || []);
+    const c = !forcedMode && viewModeRef.current === 'feed' ? readFeedCache(profile.id) : null;
+    postsRef.current = c?.posts || [];
+    knownIds.current = new Set(postsRef.current.map(post => post.id).filter(Boolean));
+    remoteCursorRef.current = null;
+    paginationRequestIdRef.current += 1;
+    loadingMoreRef.current = false;
+    setRemotePage(2);
+    setLoadingMore(false);
+    setPosts(postsRef.current);
     setTravelLiveFeeds([]);
-    loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
+    loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh, replace: !c });
+    return () => {
+      feedRequestIdRef.current += 1;
+      paginationRequestIdRef.current += 1;
+    };
   }, [forcedMode, loadFeed, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
 
   useEffect(() => {
