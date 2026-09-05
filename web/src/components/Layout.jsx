@@ -45,7 +45,7 @@ const NAV = [
   { to: '/videos',        icon: 'videos',        label: 'Videos'       },
   { to: '/search',        icon: 'search',        label: 'Search'       },
   { to: '/notifications', icon: 'notifications', label: 'Notifications', shortLabel: 'Alerts' },
-  { to: '/opportunities', icon: 'opportunities', label: 'Opportunities', shortLabel: 'Jobs' },
+  { to: '/opportunities', icon: 'opportunities', label: 'Jobs'          },
   { to: '/profile',       icon: 'profile',       label: 'Profile'      },
 ];
 const MOBILE_BOTTOM_NAV = NAV
@@ -247,10 +247,6 @@ export default function Layout({ children, wide = false }) {
     event.preventDefault();
     const query = mobileSearchQuery.trim();
     closeMobileOverlays();
-    if (mobileSearchTarget === 'jobs') {
-      navigate(query ? `/opportunities?q=${encodeURIComponent(query)}` : '/opportunities');
-      return;
-    }
     const params = new URLSearchParams({ tab: mobileSearchTarget });
     if (query) params.set('q', query);
     navigate(`/search?${params.toString()}`);

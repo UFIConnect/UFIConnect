@@ -54,6 +54,7 @@ const ConnectedAccounts = lazy(() => import('./pages/ConnectedAccounts'));
 const Post           = lazy(() => import('./pages/Post'));
 const PostDetail     = lazy(() => import('./pages/PostDetail'));
 const Search         = lazy(() => import('./pages/SearchExperience'));
+const Opportunities  = lazy(() => import('./pages/Opportunities'));
 const PublicProfile  = lazy(() => import('./pages/PublicProfile'));
 const Settings       = lazy(() => import('./pages/Settings'));
 const PrivacyPolicy  = lazy(() => import('./pages/PrivacyPolicy'));
@@ -144,7 +145,7 @@ export default function App() {
         <RequireAuth><RequireOnboarding><GroupDetail /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/opportunities" element={
-        <RequireAuth><RequireOnboarding><Search initialTab="jobs" /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><Opportunities /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/opportunities/:id" element={
         <RequireAuth><RequireOnboarding><JobDetail /></RequireOnboarding></RequireAuth>

@@ -463,12 +463,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
 
   function selectTab(tab) {
     setActiveTab(tab);
-    navigate(
-      tab === 'jobs'
-        ? { pathname: '/opportunities' }
-        : { pathname: '/search', search: `?tab=${tab}` },
-      { replace: true }
-    );
+    navigate({ pathname: '/search', search: `?tab=${tab}` }, { replace: true });
   }
 
   function handleQueryChange(event) {

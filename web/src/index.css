@@ -1161,6 +1161,14 @@ input, textarea, select { font-family: inherit; }
 
 @media (max-width: 1180px) {
   .home-feed-layout { grid-template-columns: minmax(0, 1fr) minmax(205px, 225px); }
+  .jobs-page-layout { grid-template-columns: minmax(0, 1fr) minmax(205px, 225px); }
+}
+
+@media (min-width: 1101px) {
+  .jobs-page-right-tabs .jobs-page-tool {
+    border: 0;
+    box-shadow: none;
+  }
 }
 
 .page-header {
@@ -1173,10 +1181,129 @@ input, textarea, select { font-family: inherit; }
   flex-wrap: wrap;
   gap: 12px;
 }
-.opportunities-resume-builder {
-  margin-left: auto;
+.jobs-page-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 248px);
+  align-items: start;
+  gap: 20px;
+  width: 100%;
+}
+.jobs-page-content { min-width: 0; }
+.jobs-page-content--embedded { width: 100%; }
+.jobs-page-right-tabs {
+  position: sticky;
+  top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.jobs-page-tool {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.jobs-page-tool strong {
+  font-size: .82rem;
+  font-weight: 750;
+}
+.jobs-page-tool span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.jobs-page-tool:hover,
+.jobs-page-tool:focus-visible {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  outline: none;
+}
+.jobs-page-tool--primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.jobs-page-tool--primary span { color: #DCE6FF; }
+.jobs-page-tool--primary:hover,
+.jobs-page-tool--primary:focus-visible {
+  border-color: var(--primary-hover);
+  background: var(--primary-hover);
+  color: #fff;
+}
+.jobs-page-mobile-tools { display: none; }
+.jobs-career-filter-row { align-items: center; }
+.jobs-career-source-picker { min-width: 0; }
+.jobs-career-source-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: #fff;
+}
+.jobs-career-source-mark--text {
+  color: var(--primary);
+  font-size: .57rem;
+  font-weight: 800;
+}
+.jobs-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 7px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.jobs-filter-toggle:hover,
+.jobs-filter-toggle:focus-visible {
+  border-color: var(--primary);
+  color: var(--primary);
+  outline: none;
+}
+.jobs-filter-toggle.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+.jobs-embedded-filter-row,
+.jobs-search-source-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.jobs-embedded-filter-row::-webkit-scrollbar,
+.jobs-search-source-filter::-webkit-scrollbar { display: none; }
 .opportunities-sort-row {
   display: flex;
   align-items: center;
@@ -3099,6 +3226,30 @@ input, textarea, select { font-family: inherit; }
     min-width: 0;
     max-width: 100%;
   }
+  .jobs-page-layout { display: block; }
+  .jobs-page-right-tabs { display: none; }
+  .jobs-page-mobile-tools {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .jobs-page-mobile-tools .jobs-page-tool {
+    min-height: 56px;
+    padding: 8px 10px;
+  }
+  .jobs-page-mobile-tools .jobs-page-tool span {
+    white-space: normal;
+  }
+  .jobs-career-filter-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+  .jobs-career-filter-row .jobs-filter-toggle {
+    min-width: 0;
+    padding-inline: 9px;
+  }
   .feed-specialized-toolbar--location {
     gap: 9px 10px;
     padding-top: 0;
@@ -3625,10 +3776,6 @@ input, textarea, select { font-family: inherit; }
     gap: 8px;
   }
   .opportunities-page-header .page-title { min-width: 0; }
-  .opportunities-resume-builder {
-    margin-left: 0;
-    align-self: start;
-  }
   .search-tab-strip { gap: 2px; }
   .search-tab {
     min-height: 38px;

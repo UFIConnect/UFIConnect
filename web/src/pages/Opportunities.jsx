@@ -1,7 +1,10 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
+import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
+import { SOURCE_META } from '../components/sourceMeta';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
@@ -17,11 +20,6 @@ const TYPE_META = {
   learning:   { label: 'Learning',    emoji: 'Learn', color: '#0284C7', bg: '#F0F9FF' },
 };
 
-const FILTERS = [
-  { value: 'all', label: 'All' },
-  ...Object.entries(TYPE_META).map(([value, { label }]) => ({ value, label })),
-];
-
 const OPPORTUNITY_SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
   { value: 'match', label: 'Best match' },
@@ -32,6 +30,99 @@ const OPPORTUNITY_SORT_OPTIONS = [
   { value: 'title', label: 'Title A-Z' },
   { value: 'source', label: 'Source A-Z' },
 ];
+
+const CAREER_SOURCE_FAVORITE_LIMIT = 4;
+const CAREER_SOURCE_DEFINITIONS = [
+  { key: 'indeed', label: 'Indeed' },
+  { key: 'remoteok', label: 'Remote OK' },
+  { key: 'remotive', label: 'Remotive' },
+  { key: 'muse', label: 'The Muse' },
+  { key: 'usajobs', label: 'USAJobs' },
+];
+
+function careerSourceDefinition(source) {
+  const label = String(source || '').trim();
+  const normalized = label.toLowerCase().replace(/[^a-z0-9]/g, '');
+  return CAREER_SOURCE_DEFINITIONS.find(({ key, label: knownLabel }) => (
+    key === normalized || knownLabel.toLowerCase().replace(/[^a-z0-9]/g, '') === normalized
+  )) || { key: normalized || 'career', label: label || 'Career site' };
+}
+
+function normalizeCareerFavorites(value, tabs) {
+  const allowed = new Set(tabs.map(({ key }) => key));
+  const normalized = [];
+  const add = (key) => {
+    if (!allowed.has(key) || normalized.includes(key) || normalized.length >= CAREER_SOURCE_FAVORITE_LIMIT) return;
+    normalized.push(key);
+  };
+  if (Array.isArray(value)) value.forEach(add);
+  CAREER_SOURCE_DEFINITIONS.forEach(({ key }) => add(key));
+  tabs.forEach(({ key }) => add(key));
+  return normalized.slice(0, Math.min(CAREER_SOURCE_FAVORITE_LIMIT, tabs.length));
+}
+
+function MenuIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true">
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h16" />
+    </svg>
+  );
+}
+
+function CareerSourceMark({ tab, active = false }) {
+  const meta = SOURCE_META[tab.key] || {};
+  if (hasBrandIcon(tab.key)) {
+    return (
+      <span className="jobs-career-source-mark">
+        <BrandIcon platform={tab.key} size={13} />
+      </span>
+    );
+  }
+  return (
+    <span className={`jobs-career-source-mark jobs-career-source-mark--text${active ? ' active' : ''}`}>
+      {String(meta.icon || tab.label).slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
+function CareerSourceOption({ tab, active, compact = false, favorite = false, phoneExtra = false, onSelect }) {
+  const color = tab.key === 'all' ? 'var(--primary)' : (SOURCE_META[tab.key]?.color || 'var(--primary)');
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      aria-label={compact ? tab.label : undefined}
+      title={compact ? tab.label : undefined}
+      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}${phoneExtra ? ' phone-extra' : ''}`}
+      style={{ '--feed-source-color': color }}
+      onClick={onSelect}
+    >
+      {tab.key !== 'all' && <CareerSourceMark tab={tab} active={active} />}
+      <span className="feed-source-option-label">{tab.label}</span>
+      {compact && favorite && <span className="feed-source-compact-favorite" aria-hidden="true">★</span>}
+    </button>
+  );
+}
+
+function CareerFavoriteButton({ tab, favorite, disabled, onToggle }) {
+  const action = favorite ? 'Remove from favorites' : 'Add to favorites';
+  return (
+    <button
+      type="button"
+      className={`feed-source-favorite-button${favorite ? ' active' : ''}`}
+      aria-label={`${action}: ${tab.label}`}
+      aria-pressed={favorite}
+      title={disabled ? 'Remove a favorite before adding another' : `${action}: ${tab.label}`}
+      disabled={disabled}
+      onClick={() => onToggle(tab.key)}
+    >
+      <span aria-hidden="true">{favorite ? '★' : '☆'}</span>
+    </button>
+  );
+}
 
 function timeAgo(iso) {
   const timestamp = new Date(iso).getTime();
@@ -180,7 +271,7 @@ export function JobDetail({ job }) {
 function OpportunityFrame({ embedded, children }) {
   return embedded
     ? <section className="search-jobs-panel">{children}</section>
-    : <Layout>{children}</Layout>;
+    : <Layout wide>{children}</Layout>;
 }
 
 function mergeOpportunities(current, incoming) {
@@ -189,24 +280,27 @@ function mergeOpportunities(current, incoming) {
 }
 
 export default function Opportunities({ embedded = false, searchQuery = null } = {}) {
+  const { profile, updateProfileLocally } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const initialRouteQuery = String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200);
+  const initialRouteQuery = embedded
+    ? String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200)
+    : '';
   const [allOpps,   setAllOpps]   = useState([]);
   const [liveCount, setLiveCount] = useState(0);
-  const [filter,    setFilter]    = useState('job');
+  const filter = 'job';
   const [sort,      setSort]      = useState('newest');
   const [remote,    setRemote]    = useState(false);
   const [liveOnly,  setLiveOnly]  = useState(embedded);
-  // Multi-select, same idea as Feed's source chips — which platforms are
-  // actually pickable changes with `filter` (Job's sources are Remotive/The
-  // Muse/Remote OK/USAJobs; other types pull from a much longer curated
-  // list), so this comes from the API's own availableSources rather than a
-  // fixed list here, and resets whenever the type filter changes underneath
-  // it (a source picked for Jobs has no meaning once you're looking at
-  // Grants).
+  // Search can combine career sites; the standalone Jobs stream deliberately
+  // keeps one active site at a time, matching Home's source controls.
   const [availableSources, setAvailableSources] = useState([]);
   const [sourceFilter, setSourceFilter] = useState([]);
+  const [careerSourceMenuOpen, setCareerSourceMenuOpen] = useState(false);
+  const [careerSourceFavorites, setCareerSourceFavorites] = useState([]);
+  const [careerSourceFavoriteDraft, setCareerSourceFavoriteDraft] = useState([]);
+  const [careerSourceFavoriteSaving, setCareerSourceFavoriteSaving] = useState(false);
+  const [careerSourceFavoriteError, setCareerSourceFavoriteError] = useState('');
   const [recommendationBasis, setRecommendationBasis] = useState('recent listings');
   const [recommendationLabel, setRecommendationLabel] = useState('');
   const [search,    setSearch]    = useState(initialRouteQuery);
@@ -222,28 +316,53 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
   const loadingMoreRef = useRef(false);
   const requestGenerationRef = useRef(0);
   const sentinelRef = useRef(null);
+  const careerSourcePickerRef = useRef(null);
   const routeSourcesAppliedRef = useRef('');
-  // Set right before a type-filter click (Job/Gig/Grant/etc, including
-  // "All") — the fetch effect below reads and clears it. Live sources
-  // (Remotive/Muse/RemoteOK/USAJobs/Indeed) are each cached server-side on
-  // their own TTL, same as every other source in this app; a type click
-  // was previously a passive re-filter of whatever happened to already be
-  // cached, same as clicking into a tab that just silently shows stale
-  // data. Bust makes clicking "Job" (or any type) double as a real
-  // refresh for that type, matching how tab-clicks already work in Feed.
+  // Source and quick-filter changes bypass a stale cached listing cohort;
+  // ordinary infinite-scroll requests remain cacheable.
   const bustOnNextFetchRef = useRef(false);
 
   useEffect(() => {
-    const nextQuery = String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200);
+    const nextQuery = embedded
+      ? String(searchQuery ?? searchParams.get('q') ?? '').trim().slice(0, 200)
+      : '';
     const timer = window.setTimeout(() => setSearch(nextQuery), 280);
     return () => window.clearTimeout(timer);
-  }, [searchParams, searchQuery]);
+  }, [embedded, searchParams, searchQuery]);
 
-  // Type filter changing invalidates whatever sources were picked (a
-  // source chip is scoped to what's poll-able within the current type — see
-  // availableSources below), so a stale source picked under Jobs shouldn't
-  // silently keep filtering once you switch to Grants.
-  useEffect(() => { setSourceFilter([]); }, [filter]);
+  const sourceLabels = availableSources.length
+    ? availableSources
+    : CAREER_SOURCE_DEFINITIONS.map(({ label }) => label);
+  const careerSourceTabs = [];
+  const seenCareerSourceKeys = new Set();
+  sourceLabels.forEach((source) => {
+    const tab = careerSourceDefinition(source);
+    if (!seenCareerSourceKeys.has(tab.key)) {
+      seenCareerSourceKeys.add(tab.key);
+      careerSourceTabs.push(tab);
+    }
+  });
+  const careerSourceKey = careerSourceTabs.map(({ key }) => key).join(',');
+  const savedCareerFavoritesKey = JSON.stringify(profile?.roleSettings?.careerSourceFavorites || null);
+  const favoriteRequiredCount = Math.min(CAREER_SOURCE_FAVORITE_LIMIT, careerSourceTabs.length);
+  const compactCareerSourceTabs = normalizeCareerFavorites(careerSourceFavorites, careerSourceTabs)
+    .map((key) => careerSourceTabs.find((tab) => tab.key === key))
+    .filter(Boolean);
+
+  useEffect(() => {
+    const normalized = normalizeCareerFavorites(profile?.roleSettings?.careerSourceFavorites, careerSourceTabs);
+    setCareerSourceFavorites(normalized);
+    setCareerSourceFavoriteDraft(normalized);
+  }, [careerSourceKey, savedCareerFavoritesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!careerSourceMenuOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (!careerSourcePickerRef.current?.contains(event.target)) setCareerSourceMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [careerSourceMenuOpen]);
 
   // Career-site cards link here with a source selection. Apply it once after
   // the API confirms which live job sources are available, then leave normal
@@ -254,8 +373,8 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
     const requested = requestedSources.split(',').map(value => value.trim()).filter(Boolean);
     const matched = requested.filter(source => availableSources.includes(source));
     routeSourcesAppliedRef.current = requestedSources;
-    if (matched.length) setSourceFilter(matched);
-  }, [availableSources, requestedSources]);
+    if (matched.length) setSourceFilter(embedded ? matched : matched.slice(0, 1));
+  }, [availableSources, embedded, requestedSources]);
 
   // Fetch the first page whenever a real filter/search/sort change happens
   // — /opportunities now supports real server-side offset/limit (added
@@ -386,18 +505,65 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
           ? 'Matched to your activity'
           : 'Newest live listings';
 
+  function selectCareerSource(tab) {
+    bustOnNextFetchRef.current = true;
+    if (tab.key === 'all') {
+      setSourceFilter([]);
+    } else {
+      setSourceFilter((current) => current.length === 1 && current[0] === tab.label ? [] : [tab.label]);
+    }
+  }
+
+  function toggleCareerFavorite(key) {
+    setCareerSourceFavoriteDraft((current) => {
+      if (current.includes(key)) return current.filter((source) => source !== key);
+      if (current.length >= CAREER_SOURCE_FAVORITE_LIMIT) return current;
+      return [...current, key];
+    });
+  }
+
+  async function saveCareerFavorites() {
+    if (!profile?.id || careerSourceFavoriteDraft.length !== favoriteRequiredCount) return;
+    const nextFavorites = [...careerSourceFavoriteDraft];
+    setCareerSourceFavoriteSaving(true);
+    setCareerSourceFavoriteError('');
+    try {
+      const { data } = await client.patch('/profile', {
+        roleSettings: {
+          ...(profile.roleSettings || {}),
+          careerSourceFavorites: nextFavorites,
+        },
+      });
+      const persisted = data.profile || data;
+      const savedFavorites = normalizeCareerFavorites(
+        persisted?.roleSettings?.careerSourceFavorites || nextFavorites,
+        careerSourceTabs
+      );
+      setCareerSourceFavorites(savedFavorites);
+      setCareerSourceFavoriteDraft(savedFavorites);
+      updateProfileLocally(persisted);
+      setCareerSourceMenuOpen(false);
+    } catch {
+      setCareerSourceFavoriteError('Favorites could not be saved. Please try again.');
+    } finally {
+      setCareerSourceFavoriteSaving(false);
+    }
+  }
+
   return (
     <>
       {!embedded && <Helmet>
-        <title>Jobs, Gigs, Grants, Events & Career Opportunities | UFIconnect</title>
-        <meta name="description" content="Browse all career opportunities: full-time jobs, gigs, grants, hackathons, events, open-source opportunities, and learning resources. Discover positions and opportunities for engineers, designers, founders, marketers, product managers, and creatives worldwide." />
-        <meta name="keywords" content="job opportunities, career opportunities, gigs, grants, hackathons, events, open source opportunities, learning opportunities, tech jobs, startup jobs, freelance work, internships, positions, career growth, job listings, employment opportunities, career development, work opportunities" />
+        <title>Live Jobs and Career Listings | UFIconnect</title>
+        <meta name="description" content="Browse current job listings personalized to your resume, role, and activity across connected career sites." />
+        <meta name="keywords" content="live jobs, career listings, remote jobs, personalized jobs, tech jobs, startup jobs, internships" />
         <link rel="canonical" href="https://uficonnect.org/opportunities" />
       </Helmet>}
       <OpportunityFrame embedded={embedded}>
+        <div className={embedded ? 'jobs-page-content jobs-page-content--embedded' : 'jobs-page-layout'}>
+        <div className={embedded ? undefined : 'jobs-page-content'}>
         <div className="page-header opportunities-page-header">
           <h1 className="page-title">
-            {embedded ? 'Live Jobs' : 'All Opportunities'}
+            {embedded ? 'Live Jobs' : 'Jobs'}
             {liveCount > 0 && (
               <span style={{
                 marginLeft: 10, fontSize: '.7rem', fontWeight: 700, color: '#059669',
@@ -407,119 +573,155 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
               </span>
             )}
           </h1>
-          <Link to="/resume-builder" className="btn btn-primary btn-sm opportunities-resume-builder">Resume Builder</Link>
         </div>
-        {embedded && (
-          <div className="jobs-personalization-status">
-            <span>{personalizationText}</span>
-            <span>Newest first</span>
+        <div className="jobs-personalization-status">
+          <span>{personalizationText}</span>
+          <span>Newest first</span>
+        </div>
+
+        {!embedded && (
+          <div className="jobs-page-mobile-tools" aria-label="Job tools">
+            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary">
+              <strong>Resume Builder</strong>
+              <span>Build, preview, and export</span>
+            </Link>
+            <Link to="/settings?tab=preferences" className="jobs-page-tool">
+              <strong>Roles</strong>
+              <span>{profile?.preferences?.role || 'Choose your target role'}</span>
+            </Link>
           </div>
         )}
 
-        {/* Type + filters */}
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4, scrollbarWidth: 'none' }}>
-          {!embedded && FILTERS.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => {
-                bustOnNextFetchRef.current = true;
-                if (value === filter) {
-                  // Already active — setFilter(value) alone wouldn't
-                  // actually change state (same value in, same value out),
-                  // so the fetch effect's own [filter, ...] dependency
-                  // would never re-fire and clicking the current type again
-                  // would silently do nothing. refreshTick exists exactly
-                  // for this: re-run the same effect without a real filter
-                  // change, same "click the tab you're already on to
-                  // refresh it" pattern the main Feed uses.
-                  setRefreshTick(t => t + 1);
-                } else {
-                  setFilter(value);
-                }
-              }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-                padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
-                border: `1.5px solid ${filter === value ? 'var(--primary)' : 'var(--border)'}`,
-                background: filter === value ? 'var(--primary)' : 'var(--surface)',
-                color: filter === value ? '#fff' : 'var(--text)',
-                fontWeight: filter === value ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-              }}
-            >
-              {label}
-            </button>
-          ))}
-          <button
-            onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
-              border: `1.5px solid ${remote ? 'var(--primary)' : 'var(--border)'}`,
-              background: remote ? 'var(--primary)' : 'var(--surface)',
-              color: remote ? '#fff' : 'var(--text)',
-              fontWeight: remote ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-            }}
-          >
-            Remote
-          </button>
-          <button
-            onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              padding: '7px 14px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
-              border: `1.5px solid ${liveOnly ? 'var(--primary)' : 'var(--border)'}`,
-              background: liveOnly ? 'var(--primary)' : 'var(--surface)',
-              color: liveOnly ? '#fff' : 'var(--text)',
-              fontWeight: liveOnly ? 700 : 500, fontSize: '.8rem', cursor: 'pointer',
-            }}
-          >
-            Live only
-          </button>
-        </div>
-
-        {/* Source filter — multi-select, mirrors Feed's own source chips.
-            Scoped to whatever's actually pickable for the current type
-            filter (availableSources, from the API) rather than a fixed
-            list, since Job's real sources (Remotive/The Muse/Remote OK/
-            USAJobs) are a completely different set from Grant's or
-            Event's curated ones. Hidden entirely when there's nothing
-            meaningful to narrow (0 or 1 source). */}
-        {availableSources.length > 1 && (
-          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', marginBottom: 16, paddingBottom: 4, scrollbarWidth: 'none', alignItems: 'center' }}>
-            <span style={{ fontSize: '.8rem', fontWeight: 600, color: 'var(--muted)', flexShrink: 0 }}>Source</span>
-            {availableSources.map((src) => {
-              const active = sourceFilter.includes(src);
-              return (
-                <button
-                  key={src}
-                  onClick={() => {
-                    setSourceFilter(cur => cur.includes(src) ? cur.filter(s => s !== src) : [...cur, src]);
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-                    padding: '6px 12px', borderRadius: 'var(--radius-sm)', whiteSpace: 'nowrap',
-                    border: `1.5px solid ${active ? 'var(--primary)' : 'var(--border)'}`,
-                    background: active ? 'var(--primary)' : 'var(--surface)',
-                    color: active ? '#fff' : 'var(--text)',
-                    fontWeight: active ? 700 : 500, fontSize: '.78rem', cursor: 'pointer',
-                  }}
-                >
-                  {src}
-                </button>
-              );
-            })}
-            {sourceFilter.length > 0 && (
+        {!embedded ? (
+          <div className="feed-source-filter-row feed-unified-control-bar jobs-career-filter-row">
+            <div ref={careerSourcePickerRef} className="feed-source-picker jobs-career-source-picker">
+              <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label="Career sites">
+                {compactCareerSourceTabs.map((tab, index) => (
+                  <CareerSourceOption
+                    key={tab.key}
+                    tab={tab}
+                    active={sourceFilter.length === 1 && sourceFilter[0] === tab.label}
+                    compact
+                    favorite
+                    phoneExtra={index >= 2}
+                    onSelect={() => selectCareerSource(tab)}
+                  />
+                ))}
+              </div>
               <button
-                onClick={() => setSourceFilter([])}
-                style={{
-                  flexShrink: 0, padding: '6px 10px', border: 'none', background: 'none',
-                  color: 'var(--muted)', fontSize: '.78rem', fontWeight: 600, cursor: 'pointer', textDecoration: 'underline',
+                type="button"
+                className={`feed-source-menu-button${careerSourceMenuOpen ? ' active' : ''}`}
+                aria-label="View all career sites"
+                aria-expanded={careerSourceMenuOpen}
+                aria-controls="career-source-menu"
+                onClick={() => {
+                  setCareerSourceMenuOpen((open) => {
+                    const nextOpen = !open;
+                    if (nextOpen) {
+                      setCareerSourceFavoriteDraft([...careerSourceFavorites]);
+                      setCareerSourceFavoriteError('');
+                    }
+                    return nextOpen;
+                  });
                 }}
               >
-                Clear
+                <MenuIcon />
               </button>
-            )}
+              {careerSourceMenuOpen && (
+                <div id="career-source-menu" className="feed-source-menu" role="group" aria-label="Career sites and favorites">
+                  <div className="feed-source-menu-header">
+                    <strong>Career sites</strong>
+                    <span>{careerSourceFavoriteDraft.length} / {favoriteRequiredCount} favorites</span>
+                  </div>
+                  <div className="feed-source-menu-item aggregate">
+                    <CareerSourceOption
+                      tab={{ key: 'all', label: 'All career sites' }}
+                      active={sourceFilter.length === 0}
+                      onSelect={() => {
+                        selectCareerSource({ key: 'all', label: 'All career sites' });
+                        setCareerSourceMenuOpen(false);
+                      }}
+                    />
+                  </div>
+                  {careerSourceTabs.map((tab) => {
+                    const favorite = careerSourceFavoriteDraft.includes(tab.key);
+                    return (
+                      <div key={tab.key} className="feed-source-menu-item">
+                        <CareerSourceOption
+                          tab={tab}
+                          active={sourceFilter.length === 1 && sourceFilter[0] === tab.label}
+                          onSelect={() => {
+                            selectCareerSource(tab);
+                            setCareerSourceMenuOpen(false);
+                          }}
+                        />
+                        <CareerFavoriteButton
+                          tab={tab}
+                          favorite={favorite}
+                          disabled={careerSourceFavoriteSaving || (!favorite && careerSourceFavoriteDraft.length >= CAREER_SOURCE_FAVORITE_LIMIT)}
+                          onToggle={toggleCareerFavorite}
+                        />
+                      </div>
+                    );
+                  })}
+                  <div className="feed-source-menu-footer">
+                    {careerSourceFavoriteError && <span role="alert">{careerSourceFavoriteError}</span>}
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={careerSourceFavoriteSaving || careerSourceFavoriteDraft.length !== favoriteRequiredCount || !profile?.id}
+                      onClick={saveCareerFavorites}
+                    >
+                      {careerSourceFavoriteSaving ? <span className="spinner" style={{ width: 12, height: 12 }} /> : 'Save favorites'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              className={`jobs-filter-toggle${remote ? ' active' : ''}`}
+              aria-pressed={remote}
+              onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}
+            >
+              Remote
+            </button>
+            <button
+              type="button"
+              className={`jobs-filter-toggle${liveOnly ? ' active' : ''}`}
+              aria-pressed={liveOnly}
+              onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}
+            >
+              Live
+            </button>
           </div>
+        ) : (
+          <>
+            <div className="jobs-embedded-filter-row">
+              <button type="button" className={`jobs-filter-toggle${remote ? ' active' : ''}`} aria-pressed={remote} onClick={() => { bustOnNextFetchRef.current = true; setRemote(!remote); }}>Remote</button>
+              <button type="button" className={`jobs-filter-toggle${liveOnly ? ' active' : ''}`} aria-pressed={liveOnly} onClick={() => { bustOnNextFetchRef.current = true; setLiveOnly(!liveOnly); }}>Live only</button>
+            </div>
+            {availableSources.length > 1 && (
+              <div className="jobs-search-source-filter" role="group" aria-label="Career sites">
+                {availableSources.map((source) => {
+                  const active = sourceFilter.includes(source);
+                  return (
+                    <button
+                      type="button"
+                      key={source}
+                      className={`jobs-filter-toggle${active ? ' active' : ''}`}
+                      aria-pressed={active}
+                      onClick={() => setSourceFilter((current) => current.includes(source)
+                        ? current.filter((item) => item !== source)
+                        : [...current, source])}
+                    >
+                      {source}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
 
         {/* Sort */}
@@ -548,7 +750,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
             display: 'flex', alignItems: 'center', gap: 8,
           }}>
             <span>!</span>
-            <span>Failed to load opportunities. <button onClick={() => window.location.reload()} style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}>Retry</button></span>
+            <span>Failed to load jobs. <button onClick={() => window.location.reload()} style={{ background: 'none', border: 'none', color: '#991B1B', cursor: 'pointer', textDecoration: 'underline', fontWeight: 600 }}>Retry</button></span>
           </div>
         )}
 
@@ -556,7 +758,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         {loading && (
           <div>
             <div style={{ marginBottom: 12, color: 'var(--muted)', fontSize: '.85rem', fontWeight: 600 }}>
-              Finding opportunities...
+              Finding jobs...
             </div>
             <OpportunitySkeleton />
             <OpportunitySkeleton />
@@ -569,10 +771,10 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
           <div className="empty-state">
             <div className="empty-icon">Jobs</div>
             <div className="empty-title">
-              {search ? 'No opportunities found' : 'No matching opportunities'}
+              {search ? 'No jobs found' : 'No matching jobs'}
             </div>
             <div className="empty-desc">
-              Try a broader unified search or adjust the job filters above.
+              Adjust the career-site filters above, or search for a specific job from Search.
             </div>
           </div>
         )}
@@ -756,6 +958,21 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
             )}
           </div>
         )}
+
+        </div>
+        {!embedded && (
+          <aside className="jobs-page-right-tabs" aria-label="Job tools">
+            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary">
+              <strong>Resume Builder</strong>
+              <span>Build, preview, and export</span>
+            </Link>
+            <Link to="/settings?tab=preferences" className="jobs-page-tool">
+              <strong>Roles</strong>
+              <span>{profile?.preferences?.role || 'Choose your target role'}</span>
+            </Link>
+          </aside>
+        )}
+        </div>
 
         <style>{`
           @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
