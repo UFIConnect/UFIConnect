@@ -3445,6 +3445,9 @@ export default function Feed({ forcedMode } = {}) {
               </div>
             )}
           </div>
+          <button type="button" className="feed-toolbar-control feed-topic-filter-trigger home-shop-button" onClick={openUfiShop}>
+            Shop
+          </button>
           <TopicFilterControl
             topics={filters.topics}
             onChange={applyTopicFilters}
@@ -3456,14 +3459,14 @@ export default function Feed({ forcedMode } = {}) {
             buttonRef={topicFilterBtnRef}
             panelRef={topicPanelRef}
           />
-          <button type="button" className="feed-toolbar-control feed-topic-filter-trigger home-shop-button" onClick={openUfiShop}>
-            Shop
-          </button>
         </div>
       )}
 
       {viewMode === 'groups' && (
         <div className="feed-source-filter-row feed-group-filter-row">
+          <Link to="/groups?create=1" className="feed-toolbar-control feed-topic-filter-trigger group-create-button">
+            Create a group
+          </Link>
           <TopicFilterControl
             topics={filters.topics}
             onChange={applyTopicFilters}
@@ -3475,9 +3478,6 @@ export default function Feed({ forcedMode } = {}) {
             buttonRef={topicFilterBtnRef}
             panelRef={topicPanelRef}
           />
-          <Link to="/groups?create=1" className="feed-toolbar-control feed-topic-filter-trigger group-create-button">
-            Create a group
-          </Link>
         </div>
       )}
 

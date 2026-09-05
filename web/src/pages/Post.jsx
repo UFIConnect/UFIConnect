@@ -279,6 +279,9 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
       <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>
+        <button type="button" className="btn btn-primary btn-sm ufi-compose-button" onClick={openCompose}>
+          Post
+        </button>
         <div className="feed-topic-filter ufi-topic-filter">
           <button
             ref={topicButtonRef}
@@ -343,9 +346,6 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
             </div>
           )}
         </div>
-        <button type="button" className="btn btn-primary btn-sm ufi-compose-button" onClick={openCompose}>
-          Post
-        </button>
       </div>
 
       {composing && (

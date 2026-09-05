@@ -287,10 +287,6 @@ input, textarea, select { font-family: inherit; }
 .feed-unified-control-bar .feed-topic-filter { margin-left: auto; }
 .feed-unified-control-bar .home-shop-button { flex: 0 0 auto; }
 .feed-group-filter-row { justify-content: flex-end; }
-.feed-group-filter-row .feed-topic-filter-popover {
-  right: auto;
-  left: 0;
-}
 .group-create-button {
   min-width: 116px;
   text-decoration: none;
@@ -668,10 +664,6 @@ input, textarea, select { font-family: inherit; }
   justify-content: flex-end;
   gap: 8px;
   margin-bottom: 12px;
-}
-.ufi-topic-filter .feed-topic-filter-popover {
-  right: auto;
-  left: 0;
 }
 .ufi-compose-button {
   min-width: 82px;
