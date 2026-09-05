@@ -14,6 +14,7 @@ test('Office exposes only allowlisted controls and known sources', () => {
     { id: 'reddit', label: 'Duplicate' },
   ]);
   assert.ok(catalog.some((control) => control.id === 'feed.refresh-all'));
+  assert.ok(catalog.some((control) => control.id === 'runtime.clean-stale-caches'));
   assert.ok(catalog.some((control) => control.id === 'source.refresh.reddit'));
   assert.equal(catalog.some((control) => control.id.includes('../bad')), false);
   assert.equal(catalog.filter((control) => control.id === 'source.refresh.reddit').length, 1);
@@ -48,6 +49,13 @@ test('high-impact controls require explicit confirmation', () => {
     validateOfficeControlExecution(deploy, { contextId: 'web-release', contextLabel: 'Ship homepage', confirmed: true }),
     { valid: true, contextId: 'web-release', contextLabel: 'Ship homepage' },
   );
+});
+
+test('stale cache cleanup runs on both backend roles and requires confirmation', () => {
+  const cleanup = findOfficeControl('runtime.clean-stale-caches');
+  assert.equal(cleanup?.target, 'both');
+  assert.equal(cleanup?.requiresConfirmation, true);
+  assert.equal(validateOfficeControlExecution(cleanup, {}).valid, false);
 });
 
 test('low-impact controls receive a default audit context', () => {

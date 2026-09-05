@@ -289,6 +289,15 @@ const BASE_OFFICE_CONTROLS = Object.freeze([
     requiresConfirmation: true,
   },
   {
+    id: 'runtime.clean-stale-caches',
+    category: 'Runtime',
+    label: 'Clean stale caches',
+    description: 'Expire TTL-ended runtime entries on both services and prune bounded old Office operational history.',
+    target: 'both',
+    impact: 'high',
+    requiresConfirmation: true,
+  },
+  {
     id: 'runtime.inspect-queues',
     category: 'Runtime',
     label: 'Inspect live queues',

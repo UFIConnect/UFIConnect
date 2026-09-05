@@ -150,6 +150,7 @@ function buildHealthPayload() {
       cache: feedStorageFreshnessState?.cache || null,
       staging: feedStorageFreshnessState?.staging || null,
       retention: feedRetentionState || null,
+      cacheMaintenance: cacheMaintenanceState || null,
     };
   } catch {
     payload.feedStorage = null;
@@ -349,6 +350,13 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : true; // allow all in dev
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json({ limit: '512kb' }));
+
+// Office is an operational view of live state. Never let a browser or edge
+// cache replay an old status/control response after the underlying job moved.
+app.use('/office', (_req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 // Keep these lightweight probes ahead of the application's rate limits and
 // database-heavy routes, but after CORS so the web app can use them when it
@@ -2252,11 +2260,8 @@ function setCached(key, val, ttl) {
 function bustCache(key)           { postCache.delete(key); }
 function bustCachePrefix(prefix)  { for (const k of postCache.keys()) if (k.startsWith(prefix)) postCache.delete(k); }
 
-// Sweep expired entries every 5 min so RAM doesn't fill with stale cached fetches
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, c] of postCache) if (now - c.t > (c.ttl ?? CACHE_TTL)) postCache.delete(k);
-}, 5 * 60 * 1000);
+// Expired entries are removed by the shared runtime-cache maintenance pass.
+// Keeping one sweep for every cache avoids a growing collection of timers.
 
 // --- Per-source freshness config ----------------------------------------------
 // TTL:    real freshness window — worker busts cache and re-fetches from API after this time
@@ -12650,8 +12655,12 @@ function pruneExpiredFeedSnapshotCaches(now = Date.now()) {
       removed += 1;
     }
   }
+  const mainBeforeTrim = mainFeedSnapshots.size;
+  const filteredBeforeTrim = filteredFeedSnapshots.size;
   trimOldestMapEntries(mainFeedSnapshots, MAIN_FEED_SNAPSHOT_MAX_KEYS);
   trimOldestMapEntries(filteredFeedSnapshots, FILTERED_FEED_SNAPSHOT_MAX_KEYS);
+  removed += mainBeforeTrim - mainFeedSnapshots.size;
+  removed += filteredBeforeTrim - filteredFeedSnapshots.size;
   return removed;
 }
 
@@ -14416,10 +14425,6 @@ setInterval(refreshSharedUserActivity, SHARED_ACTIVITY_REFRESH_MS);
 
 // Stability guard checks heap/RSS/event-loop lag and adapts refresh rates
 setInterval(runStabilityGuard, STABILITY_CHECK_MS);
-setInterval(() => {
-  const removed = pruneExpiredFeedSnapshotCaches();
-  if (removed) logAgentAction('cache_helper', 'trim', `Cleared ${removed.toLocaleString()} stale feed snapshot cache entr${removed === 1 ? 'y' : 'ies'}`, '#38BDF8');
-}, FEED_SNAPSHOT_CACHE_SWEEP_MS);
 // Start maintenance after ingestion has settled; these full-cache passes
 // used to collide with the initial source warm-up at 90-120 seconds.
 // Sort agent re-sorts the global and per-source caches at SORT_AGENT_INTERVAL_MS.
@@ -17774,6 +17779,255 @@ const feedRetentionState = {
 };
 let feedRetentionInFlight = false;
 
+// Runtime responses, location discovery, billing metadata, and Office's
+// operational history all have different natural lifetimes. One maintenance
+// pass expires only entries whose own TTL has elapsed, then periodically
+// bounds the durable history used by Office. Member content, account data,
+// analytics, preferences, seen history, and active Office runs are excluded.
+const CACHE_MAINTENANCE_INTERVAL_MS = envNumber(
+  'CACHE_MAINTENANCE_INTERVAL_MS',
+  FEED_SNAPSHOT_CACHE_SWEEP_MS,
+  60 * 1000,
+  60 * 60 * 1000,
+);
+const OFFICE_CACHE_RETENTION_MS = envNumber(
+  'OFFICE_CACHE_RETENTION_MS',
+  30 * 24 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+  365 * 24 * 60 * 60 * 1000,
+);
+const OFFICE_CACHE_CLEANUP_INTERVAL_MS = envNumber(
+  'OFFICE_CACHE_CLEANUP_INTERVAL_MS',
+  6 * 60 * 60 * 1000,
+  60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
+);
+const OFFICE_CACHE_MAX_ROWS_PER_TABLE = envNumber('OFFICE_CACHE_MAX_ROWS_PER_TABLE', 5000, 500, 50000);
+const OFFICE_CACHE_PRUNE_BATCH_SIZE = envNumber('OFFICE_CACHE_PRUNE_BATCH_SIZE', 5000, 100, 20000);
+const cacheMaintenanceState = {
+  status: 'idle',
+  role: SERVICE_ROLE,
+  inFlight: false,
+  lastReason: null,
+  lastSkippedReason: null,
+  lastRun: null,
+  lastStartedAt: null,
+  lastDurationMs: null,
+  lastError: null,
+  lastRuntimeRemovedCount: 0,
+  totalRuntimeRemovedCount: 0,
+  lastOfficeRemovedCount: 0,
+  totalOfficeRemovedCount: 0,
+  lastOfficeRun: null,
+  nextRunAt: null,
+  nextOfficeRunAt: null,
+  lastBreakdown: { runtime: {}, office: {} },
+  policy: {
+    runtimeIntervalSec: Math.round(CACHE_MAINTENANCE_INTERVAL_MS / 1000),
+    officeRetentionDays: Math.round(OFFICE_CACHE_RETENTION_MS / (24 * 60 * 60 * 1000)),
+    officeIntervalSec: Math.round(OFFICE_CACHE_CLEANUP_INTERVAL_MS / 1000),
+    officeMaxRowsPerTable: OFFICE_CACHE_MAX_ROWS_PER_TABLE,
+    officePruneBatchSize: OFFICE_CACHE_PRUNE_BATCH_SIZE,
+  },
+};
+let cacheMaintenanceInFlight = false;
+let lastOfficeCacheCleanupAt = 0;
+
+function pruneCacheEntries(cache, shouldRemove) {
+  let removed = 0;
+  for (const [key, value] of cache.entries()) {
+    if (shouldRemove(value, key) && cache.delete(key)) removed += 1;
+  }
+  return removed;
+}
+
+function pruneExpiredRuntimeCaches(now = Date.now()) {
+  const invalidTimestamp = (value) => !Number.isFinite(Number(value));
+  const expiredAt = (value) => invalidTimestamp(value) || Number(value) <= now;
+  const olderThan = (value, maxAgeMs) => invalidTimestamp(value) || now - Number(value) > maxAgeMs;
+  const breakdown = {
+    postFetches: pruneCacheEntries(postCache, entry => (
+      !entry || olderThan(entry.t, Number(entry.ttl) || CACHE_TTL)
+    )),
+    feedSnapshots: pruneExpiredFeedSnapshotCaches(now),
+    aggregateCandidates: pruneCacheEntries(aggregateFeedCandidateCache, entry => (
+      !entry || olderThan(entry.computedAt, AGGREGATE_FEED_CANDIDATE_CACHE_MS)
+    )),
+    guestPages: pruneCacheEntries(guestFeedPageCache, entry => (
+      !entry || olderThan(entry.computedAt, GUEST_FEED_PAGE_CACHE_MS)
+    )),
+    followingSources: pruneCacheEntries(followingSourceCache, entry => (
+      !entry || olderThan(entry.fetchedAt, FOLLOWING_SOURCE_CACHE_MAX_AGE_MS)
+    )),
+    locationFeeds: pruneCacheEntries(locationLiveFeedCache, entry => (
+      !entry?.pending && (!entry || expiredAt(entry.expiresAt))
+    )),
+    restaurantPhotos: pruneCacheEntries(restaurantOpeningPhotoCache, entry => (
+      !entry || expiredAt(entry.expiresAt)
+    )),
+    liveCameraStreams: pruneCacheEntries(liveCameraResolvedStreams, entry => (
+      !entry || expiredAt(entry.expiresAt)
+    )),
+    liveCameraDiscoveries: pruneCacheEntries(liveCameraDiscoveryCache, entry => (
+      !entry?.pending && (!entry || expiredAt(entry.expiresAt))
+    )),
+    liveCameraLocationRefreshes: pruneCacheEntries(liveCameraLocationRefreshes, expiresAt => expiredAt(expiresAt)),
+    stripePrices: pruneCacheEntries(stripePriceSummaryCache, entry => (
+      !entry || olderThan(entry.at, STRIPE_PRICE_SUMMARY_CACHE_MS)
+    )),
+    contentScreening: pruneContentScreeningCache(now),
+  };
+  return {
+    breakdown,
+    removed: Object.values(breakdown).reduce((sum, count) => sum + Number(count || 0), 0),
+  };
+}
+
+async function pruneOfficeCacheHistory() {
+  const tables = [
+    {
+      key: 'controlRuns',
+      table: 'office_control_runs',
+      timestamp: 'started_at',
+      eligible: "status IS DISTINCT FROM 'running' AND status IS DISTINCT FROM 'queued'",
+      maxRows: OFFICE_CACHE_MAX_ROWS_PER_TABLE,
+    },
+    {
+      key: 'transferRuns',
+      table: 'feed_transfer_runs',
+      timestamp: 'started_at',
+      eligible: "status IS DISTINCT FROM 'running' AND status IS DISTINCT FROM 'queued'",
+      maxRows: OFFICE_CACHE_MAX_ROWS_PER_TABLE,
+    },
+    {
+      key: 'websiteHealthRuns',
+      table: 'website_optimization_runs',
+      timestamp: 'created_at',
+      eligible: 'TRUE',
+      maxRows: Math.min(2000, OFFICE_CACHE_MAX_ROWS_PER_TABLE),
+    },
+  ];
+  const breakdown = {};
+  for (const table of tables) {
+    // Identifiers and eligibility expressions come only from the fixed list
+    // above. Values remain parameterized and deletion is bounded per pass.
+    const { rows } = await db.query(
+      `WITH ranked AS (
+         SELECT id,
+                ${table.timestamp} AS cached_at,
+                ROW_NUMBER() OVER (ORDER BY ${table.timestamp} DESC) AS cache_rank
+         FROM ${table.table}
+         WHERE ${table.eligible}
+       ),
+       candidates AS (
+         SELECT id
+         FROM ranked
+         WHERE cached_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+            OR cache_rank > $2
+         ORDER BY cached_at ASC
+         LIMIT $3
+       ),
+       removed AS (
+         DELETE FROM ${table.table} AS existing
+         USING candidates
+         WHERE existing.id = candidates.id
+         RETURNING existing.id
+       )
+       SELECT COUNT(*)::int AS removed FROM removed`,
+      [OFFICE_CACHE_RETENTION_MS, table.maxRows, OFFICE_CACHE_PRUNE_BATCH_SIZE],
+    );
+    breakdown[table.key] = Number(rows?.[0]?.removed || 0);
+  }
+  return {
+    breakdown,
+    removed: Object.values(breakdown).reduce((sum, count) => sum + Number(count || 0), 0),
+  };
+}
+
+async function runCacheMaintenance({ reason = 'scheduled', forceOffice = false } = {}) {
+  if (cacheMaintenanceInFlight) {
+    cacheMaintenanceState.lastSkippedReason = reason;
+    return { started: false, skipped: 'in-flight' };
+  }
+
+  cacheMaintenanceInFlight = true;
+  cacheMaintenanceState.inFlight = true;
+  cacheMaintenanceState.status = 'running';
+  cacheMaintenanceState.lastReason = reason;
+  cacheMaintenanceState.lastSkippedReason = null;
+  cacheMaintenanceState.lastStartedAt = new Date().toISOString();
+  cacheMaintenanceState.lastError = null;
+  const started = Date.now();
+
+  try {
+    const runtime = pruneExpiredRuntimeCaches(started);
+    let office = { breakdown: {}, removed: 0, skipped: IS_PIPELINE_ROLE ? 'api-role-only' : 'not-due' };
+    const officeDue = !IS_PIPELINE_ROLE && (
+      forceOffice || !lastOfficeCacheCleanupAt || started - lastOfficeCacheCleanupAt >= OFFICE_CACHE_CLEANUP_INTERVAL_MS
+    );
+    if (officeDue && db.isConnected()) {
+      office = await pruneOfficeCacheHistory();
+      lastOfficeCacheCleanupAt = Date.now();
+      cacheMaintenanceState.lastOfficeRun = new Date(lastOfficeCacheCleanupAt).toISOString();
+      cacheMaintenanceState.nextOfficeRunAt = new Date(lastOfficeCacheCleanupAt + OFFICE_CACHE_CLEANUP_INTERVAL_MS).toISOString();
+    } else if (officeDue) {
+      office = { breakdown: {}, removed: 0, skipped: 'database-unavailable' };
+    }
+
+    cacheMaintenanceState.lastRuntimeRemovedCount = runtime.removed;
+    cacheMaintenanceState.totalRuntimeRemovedCount += runtime.removed;
+    if (!office.skipped) {
+      cacheMaintenanceState.lastOfficeRemovedCount = office.removed;
+      cacheMaintenanceState.totalOfficeRemovedCount += office.removed;
+    }
+    cacheMaintenanceState.lastBreakdown = {
+      runtime: runtime.breakdown,
+      office: office.skipped ? cacheMaintenanceState.lastBreakdown.office : office.breakdown,
+    };
+    cacheMaintenanceState.lastDurationMs = Date.now() - started;
+    cacheMaintenanceState.lastRun = new Date().toISOString();
+    cacheMaintenanceState.status = 'ready';
+    if (runtime.removed || office.removed) {
+      logAgentAction(
+        'cache_helper',
+        'trim',
+        `Cache maintenance (${reason}) expired ${runtime.removed.toLocaleString()} runtime entr${runtime.removed === 1 ? 'y' : 'ies'} and pruned ${office.removed.toLocaleString()} Office history row(s)`,
+        '#38BDF8',
+      );
+    }
+    return { started: true, runtime, office, durationMs: cacheMaintenanceState.lastDurationMs };
+  } catch (error) {
+    cacheMaintenanceState.lastError = error.message;
+    cacheMaintenanceState.lastDurationMs = Date.now() - started;
+    cacheMaintenanceState.lastRun = new Date().toISOString();
+    cacheMaintenanceState.status = 'degraded';
+    console.warn('[cache maintenance] failed:', error.message);
+    throw error;
+  } finally {
+    cacheMaintenanceInFlight = false;
+    cacheMaintenanceState.inFlight = false;
+  }
+}
+
+function scheduleCacheMaintenanceTimer() {
+  const initialDelayMs = CACHE_MAINTENANCE_INTERVAL_MS;
+  const recordNextRun = (delayMs) => {
+    cacheMaintenanceState.nextRunAt = new Date(Date.now() + delayMs).toISOString();
+    if (!IS_PIPELINE_ROLE && !cacheMaintenanceState.nextOfficeRunAt) {
+      cacheMaintenanceState.nextOfficeRunAt = new Date(Date.now() + delayMs).toISOString();
+    }
+  };
+  const run = () => {
+    recordNextRun(CACHE_MAINTENANCE_INTERVAL_MS);
+    runCacheMaintenance({ reason: 'cache-maintenance-timer' }).catch(() => {});
+  };
+  recordNextRun(initialDelayMs);
+  setTimeout(() => {
+    run();
+    setInterval(run, CACHE_MAINTENANCE_INTERVAL_MS);
+  }, initialDelayMs);
+}
+
 function retentionAuditRows(value) {
   if (Array.isArray(value)) return value;
   if (typeof value !== 'string') return [];
@@ -17886,9 +18140,9 @@ async function archiveAgeCappedRows() {
      ) sc
      WHERE fp.source = sc.source
        AND (
-         (sc.share > $1 AND fp.source != ALL($2::text[]) AND fp.post_created_at < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
-         OR
-         ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND fp.post_created_at < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
+          (sc.share > $1 AND fp.source != ALL($2::text[]) AND COALESCE(fp.post_created_at, fp.fetched_at) < NOW() - INTERVAL '${HIGH_VOLUME_SOURCE_MAX_AGE_MS / 1000} seconds')
+          OR
+          ((sc.share <= $1 OR fp.source = ANY($2::text[])) AND COALESCE(fp.post_created_at, fp.fetched_at) < NOW() - INTERVAL '${STALE_POST_MAX_AGE_MS / 1000} seconds')
        )`,
     [HIGH_VOLUME_SOURCE_SHARE_THRESHOLD, JOB_LISTING_SOURCES],
     { reason: 'age-cap' }
@@ -17900,8 +18154,8 @@ async function archiveCountCappedRows() {
     `DELETE FROM feed_posts_cache fp WHERE fp.id IN (
        SELECT id FROM (
          SELECT id,
-                ROW_NUMBER() OVER (ORDER BY post_created_at DESC)                    AS global_rank,
-                ROW_NUMBER() OVER (PARTITION BY source ORDER BY post_created_at DESC) AS source_rank
+                 ROW_NUMBER() OVER (ORDER BY COALESCE(post_created_at, fetched_at) DESC NULLS LAST) AS global_rank,
+                 ROW_NUMBER() OVER (PARTITION BY source ORDER BY COALESCE(post_created_at, fetched_at) DESC NULLS LAST) AS source_rank
          FROM feed_posts_cache
        ) ranked
        WHERE global_rank > $1 AND source_rank > $2
@@ -17914,7 +18168,7 @@ async function archiveCountCappedRows() {
 async function archiveUnseenExpiredRows() {
   return archiveThenDelete(
     `DELETE FROM feed_posts_cache fp
-     WHERE fp.post_created_at < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
+     WHERE COALESCE(fp.post_created_at, fp.fetched_at) < NOW() - INTERVAL '${UNSEEN_POST_MAX_AGE_MS / 1000} seconds'
        AND NOT EXISTS (SELECT 1 FROM seen_posts sp WHERE sp.post_id = fp.id)`,
     [],
     { reason: 'unseen-cap' }
@@ -25297,6 +25551,7 @@ app.get('/office/status', requireOfficeToken, (req, res) => {
       cache: feedStorageFreshnessState.cache,
       staging: feedStorageFreshnessState.staging,
       retention: feedRetentionState,
+      cacheMaintenance: cacheMaintenanceState,
     },
     // See "Database size guard" (checkDatabaseSize) — status is 'ok' /
     // 'warn' / 'critical' against DB_SIZE_WARN_MB/DB_SIZE_CRITICAL_MB.
@@ -25942,6 +26197,7 @@ scheduleFeedRetentionTimer('count-cap-timer', FEED_COUNT_CAP_INTERVAL_MS, ['coun
 scheduleFeedRetentionTimer('age-cap-timer', FEED_AGE_CAP_INTERVAL_MS, ['ageCap'], 3 * 60 * 1000);
 scheduleFeedRetentionTimer('unseen-cap-timer', FEED_UNSEEN_CAP_INTERVAL_MS, ['unseenCap'], 4 * 60 * 1000);
 scheduleFeedRetentionTimer('archive-age-timer', ARCHIVE_AGE_PRUNE_INTERVAL_MS, ['archiveAgeCap', 'archiveCap'], 6 * 60 * 1000);
+scheduleCacheMaintenanceTimer();
 if (!IS_PIPELINE_ROLE) {
   setTimeout(() => runSourceDeletionReconciliation({ reason: 'startup' }), 30 * 1000);
   setInterval(() => runSourceDeletionReconciliation({ reason: 'scheduled' }), SOURCE_DELETION_CHECK_INTERVAL_MS);
@@ -26356,6 +26612,8 @@ async function executeOfficeControl(control, body) {
       trimRuntimeCaches('pressure');
       return { hotPostsBefore: before, hotPostsAfter: globalFeedCache.posts.length, durableHistoryChanged: false };
     }
+    case 'runtime.clean-stale-caches':
+      return runCacheMaintenance({ reason: 'office-controls', forceOffice: !IS_PIPELINE_ROLE });
     case 'runtime.inspect-queues':
       return {
         role: SERVICE_ROLE,
@@ -29421,14 +29679,16 @@ function contentScreeningFingerprint(content, mediaUrl, mediaType) {
 }
 
 function pruneContentScreeningCache(now = Date.now()) {
+  let removed = 0;
   for (const [key, entry] of contentScreeningCache) {
-    if (entry.expiresAt <= now) contentScreeningCache.delete(key);
+    if (entry.expiresAt <= now && contentScreeningCache.delete(key)) removed += 1;
   }
   while (contentScreeningCache.size > CONTENT_SCREENING_CACHE_MAX) {
     const oldestKey = contentScreeningCache.keys().next().value;
     if (!oldestKey) break;
-    contentScreeningCache.delete(oldestKey);
+    if (contentScreeningCache.delete(oldestKey)) removed += 1;
   }
+  return removed;
 }
 
 function callOpenAIModeration(apiKey, model, input) {

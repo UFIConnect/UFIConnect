@@ -1677,6 +1677,10 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
   const dbSize       = status?.dbSize;
   const cacheFreshness = status?.feedStorage?.cache || {};
   const retention    = status?.feedStorage?.retention || {};
+  const cacheMaintenance = status?.feedStorage?.cacheMaintenance || {};
+  const afterTransferRunning = Boolean(retention?.inFlight || cacheMaintenance?.inFlight);
+  const afterTransferDegraded = retention?.status === 'degraded' || cacheMaintenance?.status === 'degraded';
+  const afterTransferLastRun = [retention?.lastRun, cacheMaintenance?.lastRun].filter(Boolean).sort().at(-1) || null;
   const topicFilterAgent = status?.topicFilterAgent;
   // Computed from globalFeedCache.posts server-side (see its own comment) —
   // only real on the pipeline role, same as composition/sortAgent above,
@@ -1889,21 +1893,22 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
 
           <FlowConnector colors={['#00d4aa', '#22c55e']} compact={compact} />
 
-          <PipelineNode glow={retention?.inFlight ? '#22c55e' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
+          <PipelineNode glow={afterTransferRunning ? '#22c55e' : undefined} style={{ flex: '0 0 200px', textAlign: 'center', alignItems: 'center', ...smallNode }}>
             <div><Label color="#22c55e">After Transfer</Label><SvcTag svc="api" /></div>
             <div style={{
               width: ringSize, height: ringSize, borderRadius: '50%', margin: '14px 0',
               background: 'radial-gradient(circle, rgba(34,197,94,.24), rgba(34,197,94,.03))',
               border: '1px solid rgba(34,197,94,.4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24,
-              animation: retention?.inFlight ? 'glowPulse 1.8s ease-in-out infinite' : 'none',
+              animation: afterTransferRunning ? 'glowPulse 1.8s ease-in-out infinite' : 'none',
             }}><span style={{ fontSize: 12, fontWeight: 800 }}>RT</span></div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: retention?.status === 'degraded' ? '#f87171' : '#e2e8f0', marginBottom: 4 }}>
-              {retention?.inFlight ? 'Cleaning now' : retention?.lastRun ? `Cleaned ${fmtAgo(retention.lastRun)}` : 'Ready'}
+            <div style={{ fontSize: 11, fontWeight: 700, color: afterTransferDegraded ? '#f87171' : '#e2e8f0', marginBottom: 4 }}>
+              {afterTransferRunning ? 'Cleaning now' : afterTransferLastRun ? `Cleaned ${fmtAgo(afterTransferLastRun)}` : 'Ready'}
             </div>
             <div style={{ fontSize: 10.5, color: '#475569', marginTop: 4 }}>
               {(retention?.lastArchivedCount ?? 0).toLocaleString()} archived from live
               {retention?.lastArchivePrunedCount ? ` · ${retention.lastArchivePrunedCount.toLocaleString()} pruned` : ''}
+              {cacheMaintenance?.lastRuntimeRemovedCount ? ` · ${cacheMaintenance.lastRuntimeRemovedCount.toLocaleString()} cache expired` : ''}
             </div>
           </PipelineNode>
 
@@ -1977,7 +1982,7 @@ function PipelineView({ status, pipelineStatus, compact = false }) {
         <SortRankDetailCard sortAgent={sortAgent} distrib={pipelineStatus?.sortDistributionAgent} composition={composition} />
         <TransferDetailCard q={q} workers={workers} dbSize={dbSize} cacheFreshness={cacheFreshness} />
         <StagingTransferDetailCard staging={staging} />
-        <AfterTransferDetailCard retention={retention} cacheFreshness={cacheFreshness} />
+        <AfterTransferDetailCard retention={retention} cacheFreshness={cacheFreshness} cacheMaintenance={cacheMaintenance} />
         <TopicFilterDetailCard topicFilterAgent={topicFilterAgent} />
         <TransferByTopicCard topicComposition={topicComposition} />
         <ViewedDetailCard pageviews={pageviews} />
@@ -2462,8 +2467,9 @@ function StagingTransferDetailCard({ staging }) {
   );
 }
 
-function AfterTransferDetailCard({ retention, cacheFreshness }) {
+function AfterTransferDetailCard({ retention, cacheFreshness, cacheMaintenance }) {
   const policy = retention?.policy || {};
+  const cachePolicy = cacheMaintenance?.policy || {};
   const breakdown = retention?.lastBreakdown || {};
   const rows = [
     ['Count cap', breakdown.countCap],
@@ -2473,6 +2479,10 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
     ['Archive cap', breakdown.archiveCap],
   ].filter(([, item]) => item);
   const timers = Object.entries(retention?.timers || {});
+  const runtimeCacheRows = Object.entries(cacheMaintenance?.lastBreakdown?.runtime || {})
+    .filter(([, count]) => Number(count || 0) > 0);
+  const officeCacheRows = Object.entries(cacheMaintenance?.lastBreakdown?.office || {})
+    .filter(([, count]) => Number(count || 0) > 0);
   const sourceDeletion = retention?.sourceDeletion || {};
   const sourceDeletedPosts = Array.isArray(sourceDeletion.lastDeletedPosts) ? sourceDeletion.lastDeletedPosts : [];
   const removedPosts = Array.isArray(retention?.lastRemovedPosts) ? retention.lastRemovedPosts : [];
@@ -2504,6 +2514,8 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
         <DetailStat label="last pruned" value={(retention?.lastArchivePrunedCount ?? 0).toLocaleString()} />
         <DetailStat label="source deleted" value={(sourceDeletion.lastConfirmedDeletedCount ?? 0).toLocaleString()} color="#f87171" />
         <DetailStat label="source checked" value={(sourceDeletion.lastCheckedCount ?? 0).toLocaleString()} color="#38bdf8" />
+        <DetailStat label="runtime cache expired" value={(cacheMaintenance?.lastRuntimeRemovedCount ?? 0).toLocaleString()} color="#38bdf8" />
+        <DetailStat label="Office cache pruned" value={(cacheMaintenance?.lastOfficeRemovedCount ?? 0).toLocaleString()} />
         <DetailStat label="last duration" value={formatMs(retention?.lastDurationMs)} />
         <DetailStat label="last run" value={retention?.lastRun ? fmtAgo(retention.lastRun) : '-'} />
       </div>
@@ -2515,9 +2527,12 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
         <div>Unseen cap: <span style={{ color: '#94a3b8' }}>{policy.unseenPostDays || '-'}d unseen posts, every {policy.unseenCapIntervalSec || '-'}s</span></div>
         <div>Count timer: <span style={{ color: '#94a3b8' }}>every {policy.countCapIntervalSec || '-'}s</span></div>
         <div>Archive cap: <span style={{ color: '#94a3b8' }}>{policy.maxArchivePosts?.toLocaleString?.() || '-'} rows, {policy.archivePostDays || '-'}d max age</span></div>
+        <div>Runtime cache cleanup: <span style={{ color: '#94a3b8' }}>every {cachePolicy.runtimeIntervalSec || '-'}s{cacheMaintenance?.nextRunAt ? `, next in ${fmtUntil(cacheMaintenance.nextRunAt)}` : ''}</span></div>
+        <div>Office cache cleanup: <span style={{ color: '#94a3b8' }}>{cachePolicy.officeRetentionDays || '-'}d retention, {cachePolicy.officeMaxRowsPerTable?.toLocaleString?.() || '-'} rows/table, every {cachePolicy.officeIntervalSec || '-'}s</span></div>
         <div>Source deletion check: <span style={{ color: '#94a3b8' }}>every {policy.sourceDeletionCheckIntervalSec || '-'}s, {policy.sourceDeletionCheckBatchSize || '-'} URLs per pass, after {policy.sourceDeletionGraceSec || '-'}s grace</span></div>
         <div>Source checker: <span style={{ color: '#94a3b8' }}>{sourceDeletion.inFlight ? 'running' : (sourceDeletion.status || 'idle')}, {sourceDeletion.lastUnverifiedCount || 0} kept after temporary/unknown responses</span></div>
         {retention?.lastError && <div style={{ color: '#f87171' }}>! {retention.lastError}</div>}
+        {cacheMaintenance?.lastError && <div style={{ color: '#f87171' }}>! Cache cleanup: {cacheMaintenance.lastError}</div>}
         {sourceDeletion.lastError && <div style={{ color: '#f87171' }}>! Source deletion check: {sourceDeletion.lastError}</div>}
         {retention?.lastSkippedReason && <div style={{ color: '#fbbf24' }}>Skipped overlapping pass: {retention.lastSkippedReason}</div>}
       </div>
@@ -2535,6 +2550,27 @@ function AfterTransferDetailCard({ retention, cacheFreshness }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {(cacheMaintenance?.lastRun || runtimeCacheRows.length > 0 || officeCacheRows.length > 0) && (
+        <div style={{ marginTop: 14, borderTop: '1px solid rgba(255,255,255,.06)', paddingTop: 12 }}>
+          <div style={{ fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Last cache cleanup</div>
+          <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
+            {cacheMaintenance?.lastRun ? `${fmtAgo(cacheMaintenance.lastRun)} - ${formatMs(cacheMaintenance.lastDurationMs)}` : 'Waiting for first scheduled pass'}
+          </div>
+          {runtimeCacheRows.length === 0 && officeCacheRows.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#475569' }}>No expired cache entries were waiting.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[...runtimeCacheRows.map(([name, count]) => [`Runtime - ${name}`, count]), ...officeCacheRows.map(([name, count]) => [`Office - ${name}`, count])].map(([name, count]) => (
+                <div key={name} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                  <span style={{ color: '#94a3b8' }}>{name.replace(/([a-z])([A-Z])/g, '$1 $2')}</span>
+                  <strong style={{ color: '#e2e8f0' }}>{Number(count || 0).toLocaleString()} removed</strong>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

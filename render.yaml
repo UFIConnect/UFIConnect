@@ -68,6 +68,16 @@ services:
         value: '300000'
       - key: FEED_SNAPSHOT_MAX_IDLE_MS
         value: '5400000'
+      - key: CACHE_MAINTENANCE_INTERVAL_MS
+        value: '300000'
+      - key: OFFICE_CACHE_RETENTION_MS
+        value: '2592000000'
+      - key: OFFICE_CACHE_CLEANUP_INTERVAL_MS
+        value: '21600000'
+      - key: OFFICE_CACHE_MAX_ROWS_PER_TABLE
+        value: '5000'
+      - key: OFFICE_CACHE_PRUNE_BATCH_SIZE
+        value: '5000'
       # 'api' (the default if unset) serves real user traffic and never
       # fetches external sources on its own — see the SERVICE_ROLE gates in
       # backend/index.js. uficonnect-pipeline below sets this to 'pipeline'
@@ -411,6 +421,16 @@ services:
         value: '300000'
       - key: FEED_SNAPSHOT_MAX_IDLE_MS
         value: '5400000'
+      - key: CACHE_MAINTENANCE_INTERVAL_MS
+        value: '300000'
+      - key: OFFICE_CACHE_RETENTION_MS
+        value: '2592000000'
+      - key: OFFICE_CACHE_CLEANUP_INTERVAL_MS
+        value: '21600000'
+      - key: OFFICE_CACHE_MAX_ROWS_PER_TABLE
+        value: '5000'
+      - key: OFFICE_CACHE_PRUNE_BATCH_SIZE
+        value: '5000'
       - key: SERVICE_ROLE
         value: pipeline
       - key: JWT_SECRET
@@ -608,6 +628,9 @@ services:
         destination: /index.html
     headers:
       - path: /health*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /index.html
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /assets/*
