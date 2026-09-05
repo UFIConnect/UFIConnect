@@ -4,6 +4,7 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import JobsSidebarControls, { JOB_CAREER_SITES, JOB_SORT_OPTIONS } from '../components/JobsSidebarControls';
+import HomeFeedTools from '../components/HomeFeedTools';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { SaveJobButton } from '../components/SaveButtons';
@@ -725,12 +726,13 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
               </Link>
             </div>
             <div className="jobs-page-rail-bottom">
-              <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
-                <strong>Discover groups</strong>
-              </Link>
               <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Messages</strong>
               </Link>
+              <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
+                <strong>Discover groups</strong>
+              </Link>
+              <HomeFeedTools showSources={false} />
               <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
                 <strong>Resume Builder</strong>
                 <span>Build, preview, and export</span>

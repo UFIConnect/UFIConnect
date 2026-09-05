@@ -3302,10 +3302,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const selectedSourceKey = activeTabs[0] || filters.sources[0] || null;
   const sourceFavoriteMode = viewMode === 'following' ? 'following' : 'feed';
   const currentSourceFavoriteKeys = sourceFavorites[sourceFavoriteMode] || [];
-  const compactSourceTabs = currentSourceFavoriteKeys
+  const favoriteCompactSourceTabs = currentSourceFavoriteKeys
     .map(key => currentSourceTabs.find(tab => tab.key === key))
-    .filter(Boolean)
-    .slice(0, SOURCE_QUICK_ACCESS_COUNT);
+    .filter(Boolean);
+  const favoriteCompactSourceKeys = new Set(favoriteCompactSourceTabs.map(tab => tab.key));
+  const compactSourceTabs = [
+    ...favoriteCompactSourceTabs,
+    ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
+  ].slice(0, SOURCE_QUICK_ACCESS_COUNT);
   const aggregateSourceTab = currentSourceTabs.find(tab => tab.key === 'all')
     || { key: 'all', label: 'All sources', icon: '' };
   const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
@@ -3940,7 +3944,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
             <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && !publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('joined')}>Your groups</button>
-            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('public')}>Discover groups</button>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
@@ -3952,16 +3955,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
+            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('public')}>Discover groups</button>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
               activePanel={requestedHomeToolPanel}
               onActivePanelChange={setHomeToolPanel}
             />
-            <div className="home-member-shortcuts">
-              <Link to="/settings?tab=preferences" className="home-feed-rail-tab">Roles</Link>
-              <Link to="/profile?tab=saved" className="home-feed-rail-tab">Saved</Link>
-            </div>
             <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
               <span>
                 <span className="home-feed-command-center-title">Command Center</span>
@@ -3970,12 +3970,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     ? 'Tools and automation'
                     : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
                 </span>
-              </span>
-            </Link>
-            <Link to="/resume-builder" className="home-feed-rail-tab home-feed-resume-builder-link">
-              <span>
-                <span className="home-feed-command-center-title">Resume Builder</span>
-                <span className="home-feed-command-center-summary">Build, preview, and export</span>
               </span>
             </Link>
           </div>

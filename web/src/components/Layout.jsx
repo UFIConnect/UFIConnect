@@ -571,14 +571,15 @@ export default function Layout({ children, wide = false }) {
                   </NavLink>
                 </div>
                 <div className="mobile-feed-drawer-bottom mobile-jobs-drawer-bottom">
-                  <NavLink to="/?feed=groups&groupScope=public" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                    <ShellIcon name="groups" size={18} />
-                    Discover groups
-                  </NavLink>
                   <NavLink to="/messages" className="mobile-command-menu-item" style={{ fontWeight: 400 }} onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="messages" size={18} />
                     Messages
                   </NavLink>
+                  <NavLink to="/?feed=groups&groupScope=public" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                    <ShellIcon name="groups" size={18} />
+                    Discover groups
+                  </NavLink>
+                  <HomeFeedTools showSources={false} />
                   <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="files" size={18} />
                     Resume Builder
@@ -610,10 +611,6 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="groups" size={18} />
                 Your groups
               </button>
-              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public'} onClick={selectDiscoverGroups}>
-                <ShellIcon name="search" size={18} />
-                Discover groups
-              </button>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
                 <ShellIcon name="countries" size={18} />
                 Travel
@@ -628,16 +625,10 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
-              <div className="mobile-member-shortcuts">
-                <NavLink to="/settings?tab=preferences" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="profile" size={18} />
-                  Roles
-                </NavLink>
-                <NavLink to="/profile?tab=saved" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
-                  <ShellIcon name="saved" size={18} />
-                  Saved
-                </NavLink>
-              </div>
+              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public'} onClick={selectDiscoverGroups}>
+                <ShellIcon name="search" size={18} />
+                Discover groups
+              </button>
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}
@@ -645,10 +636,6 @@ export default function Layout({ children, wide = false }) {
               <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="command" size={18} />
                 Command Center
-              </NavLink>
-              <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--resume" onClick={() => setMobileMenuOpen(false)}>
-                <ShellIcon name="files" size={18} />
-                Resume Builder
               </NavLink>
               <div className="mobile-account-actions">
                 <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
