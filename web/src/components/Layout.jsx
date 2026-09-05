@@ -574,7 +574,7 @@ export default function Layout({ children, wide = false }) {
         <div id="mobile-command-menu-panel" className="mobile-command-menu-panel" role="dialog" aria-label="App menu">
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'feed' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'feed'} onClick={() => selectMobileFeed('feed')}>
             <ShellIcon name="home" size={18} />
-            All feed
+            Home
           </button>
           <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
             <ShellIcon name="posts" size={18} />

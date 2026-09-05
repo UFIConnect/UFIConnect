@@ -367,7 +367,7 @@ const SOURCE_TABS = [
   { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
   { key: 'designweb' }, { key: 'mastodon' },
 ].map(({ key }) => key === 'all'
-  ? { key: 'all', label: 'All', icon: 'All' }
+  ? { key: 'all', label: 'Home', icon: 'Home' }
   : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' });
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
@@ -380,7 +380,7 @@ const SOURCE_TABS = [
 // LinkedIn/Twitter/Instagram/Facebook, so a user who'd connected e.g.
 // GitHub or Reddit had no way to even select it here.
 const FOLLOWING_SOURCE_TABS = [
-  { key: 'all', label: 'All', icon: '' },
+  { key: 'all', label: 'Following', icon: '' },
   { key: 'uficonnect', label: 'UFIconnect', icon: 'UFI' },
   ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
@@ -419,6 +419,12 @@ function normalizeLocationFilters(value = {}) {
   };
 }
 
+function normalizeSingleSourceSelection(value, allowedSourceIds = []) {
+  if (!Array.isArray(value)) return [];
+  const selected = value.find(source => allowedSourceIds.includes(source));
+  return selected ? [selected] : [];
+}
+
 function locationScopeLabel(value = {}) {
   return [value?.city, value?.country].filter(Boolean).join(', ');
 }
@@ -435,14 +441,10 @@ function loadFeedState(userId) {
     const allowedSourceIds = viewMode === 'following'
       ? FOLLOWING_FEED_SOURCE_IDS
       : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
-    const activeTabs = Array.isArray(s.activeTabs)
-      ? s.activeTabs.filter(source => allowedSourceIds.includes(source))
-      : [];
+    const activeTabs = normalizeSingleSourceSelection(s.activeTabs, allowedSourceIds);
     const filters = { ...DEFAULT_FILTERS, ...(s.filters || {}) };
     filters.sort = 'newest';
-    filters.sources = Array.isArray(filters.sources)
-      ? filters.sources.filter(source => allowedSourceIds.includes(source))
-      : [];
+    filters.sources = normalizeSingleSourceSelection(filters.sources, allowedSourceIds);
     filters.topics = Array.isArray(filters.topics)
       ? filters.topics.filter(topic => ALL_INTERESTS.includes(topic))
       : [];
@@ -463,13 +465,21 @@ function saveFeedState(userId, filters, activeTabs, _search, viewMode, location)
   try {
     const key = memberStorageKey(FEED_STATE_KEY, userId);
     if (!key) return;
-    const value = JSON.stringify({ filters, activeTabs, search: '', viewMode, location });
+    const allowedSourceIds = viewMode === 'following'
+      ? FOLLOWING_FEED_SOURCE_IDS
+      : viewMode === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+    const savedTabs = normalizeSingleSourceSelection(activeTabs, allowedSourceIds);
+    const savedFilters = {
+      ...filters,
+      sources: normalizeSingleSourceSelection(filters?.sources, allowedSourceIds),
+    };
+    const value = JSON.stringify({ filters: savedFilters, activeTabs: savedTabs, search: '', viewMode, location });
     sessionStorage.setItem(key, value);
     localStorage.setItem(key, value);
 
     if (viewMode === 'feed' || viewMode === 'following') {
       const suggestionKey = memberStorageKey(`ufi_feed_suggestions:${viewMode}`, userId);
-      const sources = filters?.sources?.length ? filters.sources : activeTabs;
+      const sources = savedFilters.sources.length ? savedFilters.sources : savedTabs;
       localStorage.setItem(suggestionKey, JSON.stringify({
         sources: Array.isArray(sources) ? sources : [],
         topics: Array.isArray(filters?.topics) ? filters.topics : [],
@@ -2277,6 +2287,7 @@ export default function Feed({ forcedMode } = {}) {
     }
     const requestedSources = ['feed', 'following'].includes(activeMode)
       ? (activeFilters.sources?.length ? activeFilters.sources : activeSourceTabs)
+        .slice(0, 1)
       : [];
     const requestId = ++feedRequestIdRef.current;
     const isCurrentRequest = () => requestId === feedRequestIdRef.current;
@@ -2417,10 +2428,10 @@ export default function Feed({ forcedMode } = {}) {
     sourcePreferenceKeyRef.current = disabledSourceKey;
     if (!['feed', 'following'].includes(viewModeRef.current)) return;
     const disabled = new Set(disabledSourceKey ? disabledSourceKey.split(',') : []);
-    const nextTabs = activeTabsRef.current.filter(source => !disabled.has(source));
+    const nextTabs = activeTabsRef.current.filter(source => !disabled.has(source)).slice(0, 1);
     const nextFilters = {
       ...filtersRef.current,
-      sources: (filtersRef.current.sources || []).filter(source => !disabled.has(source)),
+      sources: (filtersRef.current.sources || []).filter(source => !disabled.has(source)).slice(0, 1),
     };
     activeTabsRef.current = nextTabs;
     filtersRef.current = nextFilters;
@@ -2488,7 +2499,10 @@ export default function Feed({ forcedMode } = {}) {
     const requestedMode = mode === 'local' ? 'countries' : mode;
     const nextMode = HOME_VIEW_MODES.has(requestedMode) ? requestedMode : 'feed';
     const usesSources = ['feed', 'following'].includes(nextMode);
-    const nextTabs = resetHome ? [] : (usesSources ? activeTabsRef.current : []);
+    const allowedSourceIds = nextMode === 'following' ? FOLLOWING_FEED_SOURCE_IDS : HOME_FEED_SOURCE_IDS;
+    const nextTabs = resetHome || !usesSources
+      ? []
+      : normalizeSingleSourceSelection(activeTabsRef.current, allowedSourceIds);
     const currentTopics = Array.isArray(filtersRef.current.topics) ? filtersRef.current.topics : [];
     const nextFilters = usesSources
       ? { ...DEFAULT_FILTERS, topics: currentTopics }
@@ -2560,6 +2574,10 @@ export default function Feed({ forcedMode } = {}) {
   const applyFilters = useCallback((nextFilters) => {
     const next = { ...DEFAULT_FILTERS, ...(nextFilters || {}) };
     next.sort = 'newest';
+    const allowedSourceIds = viewModeRef.current === 'following'
+      ? FOLLOWING_FEED_SOURCE_IDS
+      : viewModeRef.current === 'feed' ? HOME_FEED_SOURCE_IDS : [];
+    next.sources = normalizeSingleSourceSelection(next.sources, allowedSourceIds);
     if (next.sources.length > 0) {
       activeTabsRef.current = [];
       setActiveTabs([]);
@@ -2687,8 +2705,11 @@ export default function Feed({ forcedMode } = {}) {
       });
       return;
     }
-    const prev = activeTabsRef.current;
-    const next = prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key];
+    const allowedSourceIds = viewModeRef.current === 'following'
+      ? FOLLOWING_FEED_SOURCE_IDS
+      : HOME_FEED_SOURCE_IDS;
+    if (!allowedSourceIds.includes(key)) return;
+    const next = [key];
     const sourceClearedFilters = { ...filtersRef.current, sources: [] };
     activeTabsRef.current = next;
     filtersRef.current = sourceClearedFilters;
@@ -2719,6 +2740,7 @@ export default function Feed({ forcedMode } = {}) {
       activeFilters.sort = 'newest';
       const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
+          .slice(0, 1)
         : [];
       const q = searchRef.current.trim();
       const cursorEligible = isCursorEligible(viewModeRef.current, activeFilters.sort, q);
@@ -3303,7 +3325,7 @@ export default function Feed({ forcedMode } = {}) {
           list of sources can appear in the other view. */}
       {usesSourceControls && (
         <div className="feed-source-filter-row">
-          <div className="feed-source-tabs" aria-label={`${viewMode === 'following' ? 'Following' : 'All feed'} sources`}>
+          <div className="feed-source-tabs" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
             {(viewMode === 'following' ? FOLLOWING_SOURCE_TABS : SOURCE_TABS).map(tab => {
               const meta  = SOURCE_META[tab.key];
               const color = meta?.color || 'var(--primary)';
@@ -3312,6 +3334,9 @@ export default function Feed({ forcedMode } = {}) {
               return (
                 <button
                   key={tab.key}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
                   onClick={() => toggleTab(tab.key)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0,
@@ -3356,7 +3381,7 @@ export default function Feed({ forcedMode } = {}) {
               }}>
                 <SourceMark source={key} label={meta.icon} size={12} />
                 {meta.label || key}
-                <button onClick={() => toggleTab(key)} style={{
+                <button type="button" aria-label={`Clear ${meta.label || key} source`} onClick={() => toggleTab('all')} style={{
                   marginLeft: 2, background: 'none', border: 'none', cursor: 'pointer',
                   color, fontWeight: 700, fontSize: '.75rem', padding: 0, lineHeight: 1,
                 }}>×</button>
@@ -3703,7 +3728,7 @@ export default function Feed({ forcedMode } = {}) {
         <aside className="home-feed-right-tabs" aria-label="Home feed controls">
           <div className="home-feed-view-tabs">
             {[
-              { key: 'feed', label: 'All feed' },
+              { key: 'feed', label: 'Home' },
               { key: 'ufi', label: 'UFI' },
               { key: 'following', label: 'Following' },
             ].map(({ key, label }) => (
