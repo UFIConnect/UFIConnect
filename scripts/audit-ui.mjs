@@ -45,7 +45,12 @@ try {
     const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 900 });
     const errors = [];
     const requests = [];
-    await context.addInitScript(token => localStorage.setItem('pc_token', token), app.token('preview-member'));
+    await context.addInitScript(token => {
+      if (new URL(location.href).searchParams.has('audit-public')) {
+        localStorage.removeItem('pc_token');
+        localStorage.removeItem('ufi_profile_snapshot');
+      } else localStorage.setItem('pc_token', token);
+    }, app.token('preview-member'));
     await context.addInitScript(() => {
       window.YT = { PlayerState: { PLAYING: 1, PAUSED: 2, ENDED: 0 }, Player: class {
         constructor(host, options) {
@@ -193,6 +198,18 @@ try {
     await page.getByRole('button', { name: /^Continue/ }).click();
     await page.getByRole('heading', { name: 'Who are you professionally?' }).waitFor();
     checks++;
+    await page.goto(base + '?audit-public=1');
+    const homepageImage = page.locator('.landing-product-shot img');
+    await homepageImage.scrollIntoViewIfNeeded();
+    const dimensions = await homepageImage.evaluate(async image => {
+      await image.decode();
+      const box = image.getBoundingClientRect();
+      return { rendered: box.width / box.height, original: image.naturalWidth / image.naturalHeight };
+    });
+    assert.ok(Math.abs(dimensions.rendered - dimensions.original) < 0.01, `Homepage image stretched at ${viewport.width}`);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+    await page.screenshot({ path: path.join(output, `landing-${viewport.width}.png`) });
+    checks += 2;
     assert.deepEqual(errors, [], `${viewport.width}: browser runtime errors`);
     await context.close();
     console.log(`PASS: responsive flows at ${viewport.width}px`);

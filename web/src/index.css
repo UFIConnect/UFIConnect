@@ -574,7 +574,7 @@ input, textarea, select { font-family: inherit; }
   flex: 0 0 auto;
   min-width: 118px;
 }
-@media (min-width: 601px) and (max-width: 1100px) {
+@media (min-width: 601px) and (max-width: 1300px) {
   .feed-source-tabs--compact { grid-auto-columns: 40px; }
   .feed-source-tabs--compact .feed-source-option { justify-content: center; padding-inline: 4px; }
   .feed-source-tabs--compact .feed-source-option-label { display: none; }
@@ -2296,6 +2296,7 @@ input, textarea, select { font-family: inherit; }
 }
 .landing-product-shot img {
   width: 100%;
+  height: auto;
   display: block;
 }
 .landing-product-copy {

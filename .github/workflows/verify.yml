@@ -32,3 +32,4 @@ jobs:
         with:
           name: responsive-audit-screenshots
           path: .cache/audit-ui/
+          include-hidden-files: true
