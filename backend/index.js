@@ -15255,6 +15255,14 @@ const INTERNAL_GROUPS_SEED = [
     members: 0,
     isExternal: false,
   },
+  {
+    id: 'ufi-shop',
+    category: 'Marketplace',
+    name: 'Shop',
+    description: 'Products, services, launches, and offers from UFIconnect members.',
+    members: 0,
+    isExternal: false,
+  },
 ];
 
 const GROUPS_SEED = [...INTERNAL_GROUPS_SEED, ...ALL_GROUPS_SEED];

@@ -30,6 +30,7 @@ const COMMUNITY_ICONS = {
   'ufi-creative': 'CRT',
   'ufi-career':   'JOB',
   'ufi-wellness': 'WELL',
+  'ufi-shop':     'SHOP',
 };
 
 export function UfiFeedContent({ embedded = false }) {
@@ -83,7 +84,7 @@ export function UfiFeedContent({ embedded = false }) {
 
   useEffect(() => {
     if (!topicFilterOpen) return undefined;
-    setDraftTopicIds(selectedTopicIds);
+    setDraftTopicIds(selectedTopicIds.filter(id => id !== 'ufi-shop'));
     setTopicSearch('');
 
     function closeTopics(event) {
@@ -170,8 +171,19 @@ export function UfiFeedContent({ embedded = false }) {
   }
 
   function applyTopicFilter() {
-    setSelectedTopicIds(draftTopicIds);
+    setSelectedTopicIds(draftTopicIds.filter(id => id !== 'ufi-shop'));
     setTopicFilterOpen(false);
+  }
+
+  function toggleShop() {
+    setTopicFilterOpen(false);
+    if (selectedTopicIds.length === 1 && selectedTopicIds[0] === 'ufi-shop') {
+      setSelectedTopicIds([]);
+      setGroupId(groups.find(group => group.id === 'ufi-general')?.id || groups[0]?.id || 'ufi-general');
+      return;
+    }
+    setSelectedTopicIds(['ufi-shop']);
+    setGroupId('ufi-shop');
   }
 
   // Local preview URLs are only ever released explicitly (resetMedia) or on
@@ -247,10 +259,13 @@ export function UfiFeedContent({ embedded = false }) {
   }
 
   const ContentShell = embedded ? 'section' : Layout;
+  const shopActive = selectedTopicIds.length === 1 && selectedTopicIds[0] === 'ufi-shop';
+  const selectedTopicCount = shopActive ? 0 : selectedTopicIds.length;
   const normalizedTopicSearch = topicSearch.trim().toLowerCase();
+  const topicGroups = groups.filter(group => group.id !== 'ufi-shop');
   const visibleTopicGroups = normalizedTopicSearch
-    ? groups.filter(group => `${group.name} ${group.category || ''}`.toLowerCase().includes(normalizedTopicSearch))
-    : groups;
+    ? topicGroups.filter(group => `${group.name} ${group.category || ''}`.toLowerCase().includes(normalizedTopicSearch))
+    : topicGroups;
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
@@ -261,13 +276,13 @@ export function UfiFeedContent({ embedded = false }) {
           <button
             ref={topicButtonRef}
             type="button"
-            className={`feed-toolbar-control feed-topic-filter-trigger${topicFilterOpen || selectedTopicIds.length ? ' active' : ''}`}
+            className={`feed-toolbar-control feed-topic-filter-trigger${topicFilterOpen || selectedTopicCount ? ' active' : ''}`}
             aria-label="Filter UFI posts by topic"
             aria-expanded={topicFilterOpen}
             aria-controls="ufi-topic-filter-panel"
             onClick={() => setTopicFilterOpen(open => !open)}
           >
-            Topics{selectedTopicIds.length ? ` (${selectedTopicIds.length})` : ''}
+            Topics{selectedTopicCount ? ` (${selectedTopicCount})` : ''}
           </button>
           {topicFilterOpen && (
             <div ref={topicPanelRef} id="ufi-topic-filter-panel" className="feed-topic-filter-popover">
@@ -321,6 +336,15 @@ export function UfiFeedContent({ embedded = false }) {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          className={`feed-toolbar-control feed-topic-filter-trigger ufi-shop-button${shopActive ? ' active' : ''}`}
+          aria-label="Show UFI Shop posts"
+          aria-pressed={shopActive}
+          onClick={toggleShop}
+        >
+          Shop
+        </button>
         <button type="button" className="btn btn-primary btn-sm ufi-compose-button" onClick={openCompose}>
           Post
         </button>
@@ -440,9 +464,9 @@ export function UfiFeedContent({ embedded = false }) {
         <PostList
           posts={feed}
           loading={feedLoading}
-          emptyTitle="Nothing here yet"
-          emptyDesc="Be the first to post to the UFIconnect community."
-          emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button>}
+          emptyTitle={shopActive ? 'No Shop posts yet' : 'Nothing here yet'}
+          emptyDesc={shopActive ? 'Be the first member to share something in Shop.' : 'Be the first to post to the UFIconnect community.'}
+          emptyAction={<button className="btn btn-primary btn-sm" onClick={openCompose}>{shopActive ? 'Create a Shop post' : 'Write a post'}</button>}
           currentUserId={profile?.id}
           onNearEnd={loadMoreFeed}
           maxWidth={embedded ? 'none' : 640}
