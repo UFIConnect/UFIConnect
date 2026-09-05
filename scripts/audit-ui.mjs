@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { createServer } from '../web/node_modules/vite/dist/node/index.js';
+import { HOME_FEED_SOURCE_IDS, FOLLOWING_FEED_SOURCE_IDS, SOURCE_META } from '../web/src/components/sourceMeta.js';
 
 const require = createRequire(import.meta.url);
 const { createAppHarness, member } = require('../backend/test-support/app-harness');
@@ -13,11 +14,15 @@ const output = path.join(root, '.cache/audit-ui');
 await fs.mkdir(output, { recursive: true });
 const app = await createAppHarness();
 app.seedUser(member('preview-member', { name: 'UFIconnect Member', resumeBuilderAddon: true, plan: 'pro', skills: ['Product design'] }));
+app.seedUser(member('other-member', { roleSettings: { feedSourceFavorites: { feed: ['github'], following: ['reddit'] } } }));
 const server = await createServer({
   root: path.join(root, 'web'), configFile: path.join(root, 'web/vite.config.js'), envFile: false,
   define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/api'), 'import.meta.env.VITE_API_FALLBACK_URL': JSON.stringify('/fallback') },
   server: { host: '127.0.0.1', port: 5190, strictPort: false,
-    proxy: { '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') } } },
+    proxy: {
+      '/api': { target: app.base, rewrite: value => value.replace(/^\/api/, '') },
+      '/fallback': { target: app.base, rewrite: value => value.replace(/^\/fallback/, '') },
+    } },
 });
 let browser;
 let checks = 0;
@@ -44,6 +49,10 @@ try {
     assert.ok(feed.length, 'Need healthy public posts for the homepage preview');
   }
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
+    app.users.find(user => user.id === 'preview-member').roleSettings = {
+      feedLanguages: ['en'],
+      feedSourceFavorites: { feed: ['mastodon', 'reddit'], following: ['bluesky', 'uficonnect'] },
+    };
     const context = await browser.newContext({ viewport, isMobile: viewport.width < 600, hasTouch: viewport.width < 900 });
     const errors = [];
     const requests = [];
@@ -76,9 +85,9 @@ try {
         destroy() { this.frame.remove(); }
       } };
     });
-    await context.route('**/api/**', async route => {
+    const routeApi = async route => {
       const url = new URL(route.request().url());
-      const endpoint = url.pathname.replace(/^\/api/, '');
+      const endpoint = url.pathname.replace(/^\/(api|fallback)/, '');
       requests.push(endpoint);
       if (endpoint === '/office/feed') return route.fulfill({ json: { posts: feed, total: feed.length, hasMore: true, nextCursor: 'audit-next' } });
       if (endpoint.startsWith('/office/feed/videos')) return route.fulfill({ json: {
@@ -94,8 +103,9 @@ try {
       if (/events|stream/.test(endpoint)) return route.abort();
       if (endpoint === '/resume-builder/draft') return route.fulfill({ status: 503, json: { message: 'Storage temporarily unavailable' } });
       return route.continue();
-    });
-    await context.route('**/fallback/**', route => route.fulfill({ status: 503, json: { message: 'Unavailable' } }));
+    };
+    await context.route('**/api/**', routeApi);
+    await context.route('**/fallback/**', routeApi);
     const page = await context.newPage();
     page.setDefaultTimeout(12000);
     page.on('pageerror', error => errors.push(error.message));
@@ -103,7 +113,7 @@ try {
     await page.locator('.feed-source-option').first().waitFor();
     await page.waitForFunction(() => !document.querySelector('.splash'));
     const buttons = page.locator('.feed-source-tabs--compact .feed-source-option');
-    assert.equal(await buttons.count(), 6);
+    assert.equal(await buttons.count(), HOME_FEED_SOURCE_IDS.length);
     const visible = await buttons.evaluateAll(elements => {
       const parent = elements[0].parentElement.getBoundingClientRect();
       return elements.filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.left >= parent.left - 1 && r.right <= parent.right + 1; }).length;
@@ -120,9 +130,26 @@ try {
     }
     checks += 3;
 
-    async function checkFavoriteColors(feedName) {
+    async function checkSourceFavorites(feedName, sourceIds) {
+      const mode = feedName === 'home' ? 'feed' : 'following';
+      const otherMode = mode === 'feed' ? 'following' : 'feed';
+      const before = (await app.request('/profile', { userId: 'preview-member' })).data;
+      const expectedLabels = sourceIds.map(key => SOURCE_META[key]?.label || key).sort();
+      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).sort(), expectedLabels);
+      const favoriteLabels = before.roleSettings.feedSourceFavorites[mode].map(key => SOURCE_META[key]?.label || key);
+      assert.deepEqual((await buttons.evaluateAll(elements => elements.map(el => el.getAttribute('aria-label')))).slice(0, favoriteLabels.length), favoriteLabels);
+      await buttons.last().scrollIntoViewIfNeeded();
+      assert.ok(await buttons.last().evaluate(el => {
+        const bounds = el.getBoundingClientRect();
+        const parent = el.parentElement.getBoundingClientRect();
+        return bounds.left >= parent.left - 1 && bounds.right <= parent.right + 1;
+      }), `Last ${feedName} source cannot be reached at ${viewport.width}`);
+      await page.locator('.feed-source-tabs--compact').evaluate(el => { el.scrollLeft = 0; });
+      assert.ok(await buttons.last().evaluate(el => el.getBoundingClientRect().right >= el.parentElement.getBoundingClientRect().right - 1), 'Source bar leaves unused space');
       const sourceMenu = page.getByRole('button', { name: 'View all feed sources', exact: true });
       await sourceMenu.click();
+      const menuLabels = await page.locator('.feed-source-menu-item:not(.aggregate) .feed-source-option-label').allTextContents();
+      assert.deepEqual(menuLabels.sort(), expectedLabels);
       const favorite = page.locator('.feed-source-favorite-button:not(.active)').first();
       const label = await favorite.getAttribute('aria-label');
       await favorite.hover();
@@ -139,18 +166,44 @@ try {
       await page.screenshot({ path: path.join(output, `favorites-${feedName}-${viewport.width}.png`) });
       await selected.click();
       assert.equal(await page.getByRole('button', { name: label, exact: true }).getAttribute('aria-pressed'), 'false');
+      await page.getByRole('button', { name: 'Clear favorites', exact: true }).click();
+      assert.equal(await page.locator('.feed-source-favorite-button.active').count(), 0);
+      assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
+      const saved = page.waitForResponse(response => response.url().endsWith('/profile') && response.request().method() === 'PATCH');
+      await page.getByRole('button', { name: 'Save favorites', exact: true }).click();
+      assert.equal((await saved).status(), 200);
+      await page.locator('.feed-source-menu').waitFor({ state: 'hidden' });
+      await page.reload();
+      await buttons.first().waitFor();
+      assert.equal(await buttons.count(), sourceIds.length);
+      assert.equal(await page.locator('.feed-source-compact-favorite').count(), 0);
+      const after = (await app.request('/profile', { userId: 'preview-member' })).data;
+      assert.deepEqual(after.roleSettings.feedSourceFavorites[mode], []);
+      assert.deepEqual(after.roleSettings.feedSourceFavorites[otherMode], before.roleSettings.feedSourceFavorites[otherMode]);
+      assert.deepEqual(after.roleSettings.feedLanguages, ['en']);
+      assert.deepEqual((await app.request('/profile', { userId: 'other-member' })).data.roleSettings.feedSourceFavorites, { feed: ['github'], following: ['reddit'] });
       await sourceMenu.click();
-      checks += 5;
+      assert.ok(await page.getByRole('button', { name: 'Clear favorites', exact: true }).isDisabled());
+      assert.ok(await page.getByRole('button', { name: 'Save favorites', exact: true }).isDisabled());
+      await page.screenshot({ path: path.join(output, `favorites-cleared-${feedName}-${viewport.width}.png`) });
+      await sourceMenu.click();
+      checks += 21;
     }
-    await checkFavoriteColors('home');
+    await checkSourceFavorites('home', HOME_FEED_SOURCE_IDS);
 
     const menu = page.getByRole('button', { name: 'Open menu', exact: true });
     if (await menu.isVisible()) await menu.click();
     await page.getByRole('button', { name: 'Following', exact: true }).filter({ visible: true }).first().click();
-    await page.locator('.feed-source-tabs--compact').waitFor();
-    assert.equal(await buttons.count(), 6);
+    await page.waitForFunction(count => document.querySelectorAll('.feed-source-tabs--compact .feed-source-option').length === count, FOLLOWING_FEED_SOURCE_IDS.length);
+    assert.equal(await buttons.count(), FOLLOWING_FEED_SOURCE_IDS.length);
     checks++;
-    await checkFavoriteColors('following');
+    await checkSourceFavorites('following', FOLLOWING_FEED_SOURCE_IDS);
+    if (process.argv.includes('--favorites-only')) {
+      assert.deepEqual(errors, [], `${viewport.width}: browser runtime errors`);
+      await context.close();
+      console.log(`PASS: source favorites at ${viewport.width}px`);
+      continue;
+    }
     await page.goto(base + 'videos');
     const videoScroll = page.locator('.video-feed-scroll');
     await page.locator('[data-post-id="audit-video-0"]').waitFor();
