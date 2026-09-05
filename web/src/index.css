@@ -405,9 +405,10 @@ input, textarea, select { font-family: inherit; }
 }
 .feed-source-tabs--compact {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
   gap: 6px;
-  overflow: hidden;
+  overflow-x: auto;
   padding: 0;
 }
 .feed-source-option {
@@ -445,7 +446,6 @@ input, textarea, select { font-family: inherit; }
   color: #fff;
   font-weight: 750;
 }
-.feed-source-option.phone-extra { display: none; }
 .feed-source-compact-favorite {
   position: absolute;
   top: 2px;
@@ -574,10 +574,12 @@ input, textarea, select { font-family: inherit; }
   flex: 0 0 auto;
   min-width: 118px;
 }
+@media (min-width: 601px) and (max-width: 1100px) {
+  .feed-source-tabs--compact { grid-auto-columns: 40px; }
+  .feed-source-tabs--compact .feed-source-option { justify-content: center; padding-inline: 4px; }
+  .feed-source-tabs--compact .feed-source-option-label { display: none; }
+}
 @media (min-width: 1101px) {
-  .feed-source-tabs--compact {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
   .feed-source-menu {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2170,7 +2172,7 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden;
   background:
     linear-gradient(90deg, rgba(15,23,42,.82), rgba(15,23,42,.42), rgba(15,23,42,.12)),
-    url('/homepage-feed-photo.png') center / cover no-repeat;
+    url('/homepage-feed-2026-09.png') center / cover no-repeat;
 }
 .landing-hero-inner {
   width: 100%;
@@ -4223,7 +4225,7 @@ input, textarea, select { font-family: inherit; }
     align-items: flex-start;
     background:
       linear-gradient(180deg, rgba(15,23,42,.92) 0%, rgba(15,23,42,.8) 38%, rgba(15,23,42,.18) 100%),
-      url('/homepage-feed-photo.png') center bottom / min(94vw, 430px) auto no-repeat,
+      url('/homepage-feed-2026-09.png') center bottom / min(94vw, 430px) auto no-repeat,
       #0f172a;
   }
   .landing-hero-inner { padding: 48px 16px 330px; }
@@ -4262,9 +4264,8 @@ input, textarea, select { font-family: inherit; }
     min-width: 0;
   }
   .feed-source-tabs--compact {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-columns: minmax(40px, 1fr);
   }
-  .feed-source-option.phone-extra { display: flex; }
   .feed-source-tabs--compact .feed-source-option {
     justify-content: center;
     padding-inline: 4px;

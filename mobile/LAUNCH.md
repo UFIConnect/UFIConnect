@@ -56,7 +56,7 @@ This injects `API_URL` into every production build automatically.
 3. Fill in:
    - **Platform**: iOS
    - **Name**: UFconnect
-   - **Bundle ID**: `com.uficonnect.app`
+   - **Bundle ID**: `org.uficonnect.app`
    - **SKU**: `uficonnect-001`
 4. Copy the **Apple ID** shown (a numeric ID like `1234567890`) — you'll need it for `eas.json`
 

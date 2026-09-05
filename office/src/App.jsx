@@ -19,10 +19,8 @@ const OFFICE_TOKEN_KEY = 'ufi_office_token';
 const STAGING_BACKLOG_WARN = 20000;
 
 // ─── office auth ────────────────────────────────────────────────────────────
-// The API accepts requests with no token until OFFICE_TOKEN is set server-side
-// (Render dashboard), so this stays a no-op until that's configured — nothing
-// changes here until then. Once it is, requests need a matching x-office-token
-// header (or ?token= for the EventSource, which can't set custom headers).
+// Office requires a configured server token and a matching x-office-token
+// header (or ?token= for EventSource, which cannot set custom headers).
 function getOfficeToken() {
   try { return localStorage.getItem(OFFICE_TOKEN_KEY) || ''; } catch { return ''; }
 }

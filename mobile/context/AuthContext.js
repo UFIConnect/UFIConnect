@@ -25,10 +25,14 @@ export function AuthProvider({ children }) {
           const res = await axios.get(`${API_BASE}/profile`, {
             headers: { Authorization: `Bearer ${stored}` },
           });
-          setProfile(res.data.profile);
+          setProfile(res.data.profile || res.data);
         }
-      } catch {
-        await AsyncStorage.removeItem('token');
+      } catch (error) {
+        if ([401, 403].includes(error?.response?.status)) {
+          await AsyncStorage.removeItem('token');
+          setToken(null);
+          setProfile(null);
+        }
       } finally {
         setLoading(false);
       }
@@ -43,8 +47,8 @@ export function AuthProvider({ children }) {
     return res.data;
   }
 
-  async function register(name, email, password, title) {
-    const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password, title });
+  async function register(name, email, password, title, phone) {
+    const res = await axios.post(`${API_BASE}/auth/register`, { name, email, password, title, phone });
     await AsyncStorage.setItem('token', res.data.token);
     setToken(res.data.token);
     setProfile(res.data.profile);

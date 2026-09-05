@@ -10,20 +10,21 @@ export default function RegisterScreen({ navigation }) {
   const { register } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [title, setTitle] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleRegister() {
     if (!name.trim() || !email.trim() || !password.trim() || !title.trim()) {
-      return Alert.alert('Missing fields', 'Please fill in all fields.');
+      return Alert.alert('Missing fields', 'Please fill in the required fields.');
     }
     if (password.length < 6) {
       return Alert.alert('Weak password', 'Password must be at least 6 characters.');
     }
     setLoading(true);
     try {
-      await register(name.trim(), email.trim().toLowerCase(), password, title.trim());
+      await register(name.trim(), email.trim().toLowerCase(), password, title.trim(), phone.trim());
     } catch (err) {
       Alert.alert('Registration failed', err?.response?.data?.message || 'Please try again.');
     } finally {
@@ -35,7 +36,7 @@ export default function RegisterScreen({ navigation }) {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.logo}>UFconnect</Text>
+          <Text style={styles.logo}>UFIconnect</Text>
           <Text style={styles.tagline}>Join your professional community</Text>
         </View>
 
@@ -54,6 +55,10 @@ export default function RegisterScreen({ navigation }) {
           <Text style={styles.label}>Email</Text>
           <TextInput style={styles.input} placeholder="you@example.com" placeholderTextColor={COLORS.muted}
             value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoCorrect={false} />
+
+          <Text style={styles.label}>Phone number (optional)</Text>
+          <TextInput style={styles.input} placeholder="+1 555 123 4567" placeholderTextColor={COLORS.muted}
+            value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" />
 
           <Text style={styles.label}>Password</Text>
           <TextInput style={styles.input} placeholder="Min. 6 characters" placeholderTextColor={COLORS.muted}

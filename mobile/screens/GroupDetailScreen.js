@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, ActivityIndicator,
-  TouchableOpacity, ScrollView,
+  TouchableOpacity, ScrollView, Linking, Alert,
 } from 'react-native';
 import axios from 'axios';
 import { useAuth, API_BASE } from '../context/AuthContext';
@@ -22,20 +22,27 @@ export default function GroupDetailScreen({ route, navigation }) {
   const [joining, setJoining] = useState(false);
 
   const joinedGroups = profile?.joinedGroups || [];
-  const isJoined = joinedGroups.includes(group.id);
+  const canJoin = !group.isExternal && group.canJoin !== false;
+  const isJoined = canJoin && joinedGroups.includes(group.id);
   const cc = CATEGORY_COLORS[group.category] || { bg: COLORS.surface, text: COLORS.muted };
   const icon = CATEGORY_ICONS[group.category] || '📌';
 
   useEffect(() => {
+    if (group.isExternal) {
+      setMembers([]);
+      setLoading(false);
+      return;
+    }
     axios.get(`${API_BASE}/groups/${group.id}/members`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => { setMembers(r.data.members); setTotalMembers(r.data.total); })
       .catch((e) => console.error(e.message))
       .finally(() => setLoading(false));
-  }, [group.id, token]);
+  }, [group.id, group.isExternal, token]);
 
   async function toggleJoin() {
+    if (!canJoin || joining) return;
     setJoining(true);
     try {
       if (isJoined) {
@@ -75,7 +82,7 @@ export default function GroupDetailScreen({ route, navigation }) {
             <Text style={styles.heroDesc}>{group.description}</Text>
             <Text style={styles.heroMembers}>{formatMembers(totalMembers)} members</Text>
 
-            <TouchableOpacity
+            {canJoin && <TouchableOpacity
               style={[styles.joinBtn, isJoined && styles.joinedBtn]}
               onPress={toggleJoin}
               disabled={joining}
@@ -88,21 +95,26 @@ export default function GroupDetailScreen({ route, navigation }) {
                   {isJoined ? '✓ Joined' : 'Join group'}
                 </Text>
               )}
-            </TouchableOpacity>
+            </TouchableOpacity>}
+            {group.isExternal && /^https?:\/\//i.test(group.externalUrl || '') && (
+              <TouchableOpacity style={styles.joinBtn} onPress={() => Linking.openURL(group.externalUrl).catch(() => Alert.alert('Could not open this group', 'Please try again.'))}>
+                <Text style={styles.joinBtnText}>Visit original group</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Members header */}
-          <View style={styles.sectionHeader}>
+          {!group.isExternal && <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Members</Text>
             {loading && <ActivityIndicator size="small" color={COLORS.primary} />}
-          </View>
+          </View>}
         </View>
       }
       renderItem={({ item }) => (
         <MemberCard member={item} token={token} />
       )}
       ListEmptyComponent={
-        !loading ? <Text style={styles.empty}>No members to show yet.</Text> : null
+        !loading && !group.isExternal ? <Text style={styles.empty}>No members to show yet.</Text> : null
       }
     />
   );

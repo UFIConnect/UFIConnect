@@ -43,7 +43,7 @@ function GroupCard({ group, joined, onToggle, toggling, onPress }) {
       <Text style={styles.groupName}>{group.name}</Text>
       <Text style={styles.groupDesc}>{group.description}</Text>
       <View style={styles.cardFooter}>
-        <TouchableOpacity
+        {!group.isExternal && group.canJoin !== false && <TouchableOpacity
           style={[styles.joinBtn, joined && styles.joinedBtn]}
           onPress={(e) => { e.stopPropagation && e.stopPropagation(); onToggle(group, joined); }}
           disabled={toggling === group.id}
@@ -56,7 +56,7 @@ function GroupCard({ group, joined, onToggle, toggling, onPress }) {
               {joined ? '✓ Joined' : 'Join group'}
             </Text>
           )}
-        </TouchableOpacity>
+        </TouchableOpacity>}
         <TouchableOpacity style={styles.viewBtn} onPress={onPress} activeOpacity={0.8}>
           <Text style={styles.viewBtnText}>View →</Text>
         </TouchableOpacity>
@@ -84,7 +84,7 @@ export default function GroupsScreen({ navigation }) {
   const fetchAll = useCallback(async () => {
     try {
       const [gRes, cRes] = await Promise.all([
-        axios.get(`${API_BASE}/groups`),
+        axios.get(`${API_BASE}/groups`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }),
         axios.get(`${API_BASE}/groups/categories`),
       ]);
       setGroups(gRes.data.groups);
@@ -95,14 +95,14 @@ export default function GroupsScreen({ navigation }) {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = () => { setRefreshing(true); fetchAll(); };
 
   async function toggleJoin(group, isJoined) {
-    if (!token) return;
+    if (!token || group.isExternal || group.canJoin === false) return;
     setToggling(group.id);
     try {
       if (isJoined) {

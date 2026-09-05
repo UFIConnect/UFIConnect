@@ -14,7 +14,7 @@ import {
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
-import TopicFilterControl from '../components/TopicFilterControl';
+import TopicFilterControl, { TopicChoices } from '../components/TopicFilterControl';
 import { TIERS } from '../components/PricingModal';
 import ImageLightbox from '../components/ImageLightbox';
 import { useEngagementTracking } from '../hooks/useEngagementTracking';
@@ -86,7 +86,7 @@ function MenuIcon({ size = 18 }) {
   );
 }
 
-function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false, phoneExtra = false }) {
+function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = false }) {
   const meta = SOURCE_META[tab.key];
   const color = tab.key === 'all' ? 'var(--primary)' : (meta?.color || 'var(--primary)');
   return (
@@ -96,7 +96,7 @@ function FeedSourceOption({ tab, active, onSelect, compact = false, favorite = f
       aria-checked={active}
       aria-label={compact ? tab.label : undefined}
       title={compact ? tab.label : undefined}
-      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}${phoneExtra ? ' phone-extra' : ''}`}
+      className={`feed-source-option${active ? ' active' : ''}${compact ? ' compact' : ''}`}
       style={{ '--feed-source-color': color }}
       onClick={onSelect}
     >
@@ -433,7 +433,7 @@ const FOLLOWING_SOURCE_TABS = [
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
-const SOURCE_QUICK_ACCESS_COUNT = 4;
+const SOURCE_QUICK_ACCESS_COUNT = 6;
 const DEFAULT_SOURCE_FAVORITES = Object.freeze({
   feed: SOURCE_TABS.slice(0, SOURCE_QUICK_ACCESS_COUNT).map(tab => tab.key),
   following: FOLLOWING_SOURCE_TABS
@@ -768,6 +768,7 @@ function FilterPanel({ filters, onChange, sources, onClose, panelRef, includeTop
           Topic {local.topics.length > 0 && `(${local.topics.length} selected)`}
         </div>
         <TopicChoices
+          options={ALL_INTERESTS}
           selectedTopics={local.topics}
           onToggle={topic => setLocal(f => ({
             ...f,
@@ -3477,14 +3478,13 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
         <div className="feed-source-filter-row feed-unified-control-bar">
           <div className="feed-source-picker">
             <div className="feed-source-tabs feed-source-tabs--compact" role="radiogroup" aria-label={`${viewMode === 'following' ? 'Following' : 'Home'} sources`}>
-              {compactSourceTabs.map((tab, index) => (
+              {compactSourceTabs.map(tab => (
                 <FeedSourceOption
                   key={tab.key}
                   tab={tab}
                   active={isSourceActive(tab.key)}
                   compact
-                  favorite
-                  phoneExtra={index >= 2}
+                  favorite={currentSourceFavoriteKeys.includes(tab.key)}
                   onSelect={() => toggleTab(tab.key)}
                 />
               ))}

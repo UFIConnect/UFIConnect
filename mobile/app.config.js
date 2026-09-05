@@ -17,7 +17,7 @@ export default ({ config }) => ({
   assetBundlePatterns: ['**/*'],
   ios: {
     supportsTablet: true,
-    bundleIdentifier: 'com.uficonnect.app',
+    bundleIdentifier: 'org.uficonnect.app',
     buildNumber: '1',
     infoPlist: {
       NSPhotoLibraryUsageDescription: 'UFIConnect uses your photo library to share images in messages.',
@@ -31,7 +31,7 @@ export default ({ config }) => ({
       foregroundImage: './assets/adaptive-icon.png',
       backgroundColor: '#102A6B',
     },
-    package: 'com.uficonnect.app',
+    package: 'org.uficonnect.app',
     versionCode: 1,
     permissions: [
       'READ_EXTERNAL_STORAGE',

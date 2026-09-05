@@ -197,7 +197,7 @@ export default function Landing() {
             </SectionHeading>
             <div className="landing-product-grid">
               <div className="landing-product-shot">
-                <img src="/homepage-feed-photo.png" alt="UFIconnect home feed preview" />
+                <img src="/homepage-feed-2026-09.png" alt="UFIconnect home feed with favorite sources and account tools" width="1440" height="1000" loading="lazy" />
               </div>
               <div className="landing-product-copy">
                 {FEATURES.map(({ label, title, desc }) => (

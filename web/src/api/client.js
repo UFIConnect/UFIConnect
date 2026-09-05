@@ -76,7 +76,7 @@ client.interceptors.response.use(
     const transient = !response || TRANSIENT_STATUS_CODES.has(response.status);
     if (!transient) return Promise.reject(error);
 
-    if (!config._ufiFailoverAttempt) {
+    if (canFailover(config) && !config._ufiFailoverAttempt) {
       const fallback = markApiOriginFailure(config._ufiApiOrigin);
       if (fallback) {
         config._ufiFailoverAttempt = true;
