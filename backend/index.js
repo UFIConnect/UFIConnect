@@ -27,6 +27,7 @@ const {
   screenExternalComment,
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
+const { PUBLIC_GROUP_LEGACY_SOURCES, inferPublicGroupId } = require('./group-feed');
 const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const {
@@ -17272,6 +17273,7 @@ async function migrateDB() {
       CREATE TABLE IF NOT EXISTS feed_posts_cache (
         id              TEXT PRIMARY KEY,
         source          TEXT NOT NULL,
+        group_id        TEXT,
         title           TEXT,
         content         TEXT,
         author_name     TEXT,
@@ -17294,6 +17296,7 @@ async function migrateDB() {
     // playback actually started (see resolveVideoSource client-side).
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_idx ON feed_posts_cache(source)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_time_idx   ON feed_posts_cache(post_created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_topic_idx  ON feed_posts_cache(topic)`);
@@ -17326,6 +17329,7 @@ async function migrateDB() {
     // satisfy source + media_type + the time ordering directly from the
     // index alone for that specific access pattern.
     await db.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
+    await db.query(`CREATE INDEX IF NOT EXISTS fpc_group_time_idx ON feed_posts_cache(group_id, post_created_at DESC) WHERE group_id IS NOT NULL`);
     // Added for location-based job matching — only Indeed/Remote OK's real
     // API responses ever populate this (candidate_required_location /
     // location); never inferred or guessed for sources that don't have it.
@@ -17355,6 +17359,7 @@ async function migrateDB() {
       CREATE TABLE IF NOT EXISTS feed_posts_staging (
         id              TEXT PRIMARY KEY,
         source          TEXT NOT NULL,
+        group_id        TEXT,
         title           TEXT,
         content         TEXT,
         author_name     TEXT,
@@ -17374,6 +17379,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_staging ADD COLUMN IF NOT EXISTS group_id TEXT`);
     // fetched_at + id matches the transfer job's oldest-first drain order.
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_idx ON feed_posts_staging(fetched_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fps_fetched_id_idx ON feed_posts_staging(fetched_at, id)`);
@@ -17420,6 +17426,7 @@ async function migrateDB() {
       CREATE TABLE IF NOT EXISTS feed_posts_archive (
         id              TEXT PRIMARY KEY,
         source          TEXT NOT NULL,
+        group_id        TEXT,
         title           TEXT,
         content         TEXT,
         author_name     TEXT,
@@ -17441,6 +17448,7 @@ async function migrateDB() {
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS location TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS group_id TEXT`);
     await db.query(`ALTER TABLE feed_posts_archive ADD COLUMN IF NOT EXISTS archive_reason TEXT`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_archived_idx ON feed_posts_archive(archived_at)`);
     await db.query(`CREATE INDEX IF NOT EXISTS fpa_reason_archived_idx ON feed_posts_archive(archive_reason, archived_at DESC)`);
@@ -17707,7 +17715,7 @@ const SOURCE_KEEP_FLOOR = envNumber('SOURCE_KEEP_FLOOR', 150, 20, 2000);
 // (one round trip, no risk of a row falling through a gap between two
 // separate queries). ON CONFLICT DO NOTHING covers a row that somehow
 // already made it to the archive (re-ingested, then trimmed again).
-const ARCHIVE_COLUMNS = 'id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
+const ARCHIVE_COLUMNS = 'id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, fetched_at, location, media_poster';
 const ARCHIVE_RETURNING_COLUMNS = ARCHIVE_COLUMNS.split(', ').map((column) => `fp.${column}`).join(', ');
 // Was 2,000,000 — sized purely as "a number that felt generous," never
 // checked against what that actually costs in real disk space, and never
@@ -18787,9 +18795,10 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
     try {
       await db.query(
         `INSERT INTO ${targetTable}
-           (id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          ON CONFLICT (id) DO UPDATE SET
+           group_id       = COALESCE(EXCLUDED.group_id, ${targetTable}.group_id),
            title          = EXCLUDED.title,
            content        = EXCLUDED.content,
            author_name    = EXCLUDED.author_name,
@@ -18806,6 +18815,7 @@ async function savePostsToDB(posts, targetTable = 'feed_posts_cache') {
            fetched_at     = NOW()`,
         [
           p.id, p.source,
+          p.groupId || p.group?.id || null,
           (p.title || '').slice(0, 500),
           (p.content || '').slice(0, 2000),
           p.author?.name || null,
@@ -18849,6 +18859,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
     rows.push({
       id: clean(p.id),
       source: clean(p.source || 'unknown'),
+      group_id: p.groupId || p.group?.id ? clean(p.groupId || p.group.id) : null,
       title: clean(p.title, 500),
       content: clean(p.content, 2000),
       author_name: p.author?.name ? clean(p.author.name) : null,
@@ -18871,6 +18882,7 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(
          id TEXT,
          source TEXT,
+         group_id TEXT,
          title TEXT,
          content TEXT,
          author_name TEXT,
@@ -18887,10 +18899,11 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        )
      )
      INSERT INTO ${targetTable} AS existing
-       (id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
-     SELECT id, source, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster
+       (id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster)
+     SELECT id, source, group_id, title, content, author_name, source_url, media_url, media_type, video_duration_seconds, topic, likes_count, comments_count, post_created_at, location, media_poster
      FROM incoming
      ON CONFLICT (id) DO UPDATE SET
+       group_id       = COALESCE(EXCLUDED.group_id, existing.group_id),
        title          = EXCLUDED.title,
        content        = EXCLUDED.content,
        author_name    = EXCLUDED.author_name,
@@ -18905,7 +18918,8 @@ async function savePostsToDBFast(posts, targetTable = 'feed_posts_cache', queryR
        location       = EXCLUDED.location,
        media_poster   = EXCLUDED.media_poster,
        fetched_at     = NOW()
-     WHERE existing.title IS DISTINCT FROM EXCLUDED.title
+     WHERE (EXCLUDED.group_id IS NOT NULL AND existing.group_id IS DISTINCT FROM EXCLUDED.group_id)
+        OR existing.title IS DISTINCT FROM EXCLUDED.title
         OR existing.content IS DISTINCT FROM EXCLUDED.content
         OR existing.author_name IS DISTINCT FROM EXCLUDED.author_name
         OR existing.source_url IS DISTINCT FROM EXCLUDED.source_url
@@ -18990,12 +19004,22 @@ function dbFeedOrder(sortMode = 'ranked') {
 }
 
 function dbRowToFeedPost(r) {
+  const sourceUrl = r.source_url ? decodeHTMLEntities(r.source_url) : r.source_url;
+  const groupId = inferPublicGroupId({ ...r, sourceUrl }, groups);
+  const group = groupId ? groups.find(candidate => candidate.id === groupId) : null;
   return {
     id:          r.id,
     source:      r.source,
+    groupId,
+    group:       group ? {
+      id: group.id,
+      name: group.name,
+      category: group.category,
+      externalUrl: group.externalUrl || group.platformUrl || null,
+    } : null,
     title:       r.title,
     content:     r.content,
-    sourceUrl:   r.source_url ? decodeHTMLEntities(r.source_url) : r.source_url,
+    sourceUrl,
     mediaUrl:    r.media_url ? decodeHTMLEntities(r.media_url) : r.media_url,
     mediaType:   r.media_type,
     videoDurationSeconds: normalizeVideoDurationSeconds(r.video_duration_seconds),
@@ -19093,6 +19117,54 @@ async function getPostsFromDB(topics = [], limit = 5000, offset = 0, source = nu
     );
     return realFeedPosts(rows.map(dbRowToFeedPost));
   } catch { return []; }
+}
+
+async function getPublicGroupPostsFromDB(groupIds, { limit = 1500, sort = 'popular' } = {}) {
+  if (!db.isConnected()) return { posts: [], hasMore: false };
+  const publicIds = [...new Set((groupIds || []).filter(Boolean))];
+  if (!publicIds.length) return { posts: [], hasMore: false };
+  const safeLimit = Math.min(5000, Math.max(50, Number(limit) || 1500));
+  const perSourceLimit = Math.max(20, Math.ceil(safeLimit / PUBLIC_GROUP_LEGACY_SOURCES.length));
+  const order = dbFeedOrder(normalizeFeedSort(sort, 'popular'));
+  const realRowConditions = `
+    id NOT LIKE '%\\_fallback' ESCAPE '\\'
+    AND id NOT LIKE '%\\_social' ESCAPE '\\'
+    AND id NOT LIKE 'social\\_%' ESCAPE '\\'
+    AND id !~* '^indeed_j[0-9]+$'
+    AND id !~* '^govt_g[0-9]+$'`;
+  try {
+    const { rows } = await db.readQuery(
+      `WITH candidates AS (
+         SELECT * FROM feed_posts_cache
+         WHERE group_id = ANY($1::text[])
+           AND source = ANY($2::text[])
+           AND ${realRowConditions}
+         UNION ALL
+         SELECT * FROM feed_posts_cache
+         WHERE group_id IS NULL
+           AND source = ANY($2::text[])
+           AND ${realRowConditions}
+       ), ranked AS (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY source ORDER BY ${order}) AS source_rank
+         FROM candidates
+       )
+       SELECT * FROM ranked
+       WHERE source_rank <= $3
+       ORDER BY ${order}
+      `,
+      [publicIds, PUBLIC_GROUP_LEGACY_SOURCES, perSourceLimit],
+    );
+    const publicIdSet = new Set(publicIds);
+    const mapped = uniqueEqualizerPosts(realFeedPosts(rows.map(dbRowToFeedPost)))
+      .filter(post => publicIdSet.has(post.groupId || post.group?.id));
+    return {
+      posts: mapped.slice(0, safeLimit),
+      hasMore: rows.some(row => Number(row.source_rank) >= perSourceLimit) || mapped.length > safeLimit,
+    };
+  } catch (error) {
+    console.warn('getPublicGroupPostsFromDB:', error.message);
+    return { posts: [], hasMore: false };
+  }
 }
 
 // --- True chronological infinite scroll: per-source date-cursor pagination ---
@@ -19566,24 +19638,7 @@ async function getBalancedFeedPosts({ sortMode = 'ranked', timeRange = 'all', pa
        ORDER BY ${order}`,
       params
     );
-    const mapped = realFeedPosts(rows.map(r => ({
-      id:          r.id,
-      source:      r.source,
-      title:       r.title,
-      content:     r.content,
-      sourceUrl:   r.source_url,
-      mediaUrl:    r.media_url,
-      mediaType:   r.media_type,
-      videoDurationSeconds: normalizeVideoDurationSeconds(r.video_duration_seconds),
-      mediaPoster: r.media_poster,
-      location:    r.location,
-      topic:       r.topic,
-      likesCount:  normalizeCount(r.likes_count),
-      commentsCount: normalizeCount(r.comments_count),
-      createdAt:   normalizeTimestamp(r.post_created_at, r.fetched_at || Date.now()),
-      author:      { name: r.author_name },
-      isExternal:  true,
-    })));
+    const mapped = realFeedPosts(rows.map(dbRowToFeedPost));
 
     // Trim every source down to whichever source came back with the fewest
     // rows — the actual "pull the same amount as the least platform" step.
@@ -21375,6 +21430,8 @@ app.get('/groups', async (req, res) => {
     result = result.filter((g) => canSeeGroup(g, viewerId));
     if (req.query.scope === 'native') {
       result = result.filter((group) => group.isExternal !== true);
+    } else if (req.query.scope === 'public') {
+      result = result.filter((group) => !group.isPrivate);
     }
     if (!category && !searchQuery) {
       // "All" view — same true-mix reasoning as the main Feed's
@@ -21836,65 +21893,78 @@ async function handleFeedRequest(req, res) {
 
   if (feedMode === 'groups') {
     const groupCursor = decodeFeedCursor(req.query.cursor);
-    const joinedGroupModels = groups.filter(group => joined.has(group.id));
-    const nativeGroupIds = joinedGroupModels.filter(group => !group.isExternal).map(group => group.id);
-    const joinedExternalIds = new Set(joinedGroupModels.filter(group => group.isExternal).map(group => group.id));
-    const connectedSources = [...new Set(Object.entries(user?.socialTokens || {})
+    const publicGroupsRequested = req.query.groupScope === 'public';
+    const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
+    const scopedGroupModels = publicGroupsRequested
+      ? groups.filter(group => !group.isPrivate)
+      : groups.filter(group => joined.has(group.id));
+    const nativeGroupIds = scopedGroupModels.filter(group => !group.isExternal).map(group => group.id);
+    const externalGroupIds = new Set(scopedGroupModels.filter(group => group.isExternal).map(group => group.id));
+    const connectedSources = publicGroupsRequested ? [] : [...new Set(Object.entries(user?.socialTokens || {})
       .filter(([, token]) => Boolean(token))
       .map(([source]) => canonicalFeedSourceId(source) || source)
       .filter(source => FOLLOWING_SOURCE_FETCHERS[source] || CONNECTED_SOCIAL_SEARCH_FETCHERS[source]))];
-    const cursorPage = groupCursor.__poolMode === 'groups'
+    const cursorPage = groupCursor.__poolMode === poolMode
       ? Math.max(1, Number(groupCursor.__poolPage) + 1 || 1)
       : reqPage;
     const nativeLimit = Math.min(1500, Math.max(250, feedLimit * cursorPage * 4));
-    const [nativeResult, connectedResult] = await Promise.all([
+    const externalLimit = Math.min(5000, Math.max(500, feedLimit * cursorPage * 8));
+    const groupSortMode = publicGroupsRequested ? 'popular' : sortMode;
+    const [nativeResult, connectedResult, durableExternalResult] = await Promise.all([
       nativeGroupIds.length
         ? getCommunityPosts({ viewerId: req.user.id, groupIds: nativeGroupIds, limit: nativeLimit, offset: 0 })
         : Promise.resolve({ posts: [], hasMore: false }),
       connectedSources.length
         ? getFollowingFeedPosts(req.user.id, connectedSources, { bust: req.query.bust === '1', surface: null })
         : Promise.resolve({ posts: [], sourceErrors: {} }),
+      publicGroupsRequested && externalGroupIds.size
+        ? getPublicGroupPostsFromDB([...externalGroupIds], { limit: externalLimit, sort: groupSortMode })
+        : Promise.resolve({ posts: [], hasMore: false }),
     ]);
 
-    // Source workers retain groupId in memory even though the durable feed
-    // cache is source-oriented. This supplies posts for external communities
-    // a member explicitly joined without adding per-request third-party calls.
-    const cachedJoinedCommunityPosts = joinedExternalIds.size
+    // The durable cache now preserves group_id through staging and transfer.
+    // Keep the memory pool in this merge as well so a monolithic/local service
+    // can surface a freshly screened group post before its next DB read.
+    const cachedCommunityPosts = externalGroupIds.size
       ? realFeedPosts([
           ...(globalFeedCache.posts || []),
           ...[...agentSourceCache.values()].flatMap(cache => cache.posts || []),
-        ]).filter(post => joinedExternalIds.has(post.groupId || post.group?.id))
+        ]).filter(post => externalGroupIds.has(post.groupId || post.group?.id))
       : [];
     const connectedSocialPosts = realFeedPosts(connectedResult.posts || [])
       .filter(post => (post.source || 'uficonnect') !== 'uficonnect');
-    const groupById = new Map(joinedGroupModels.map(group => [group.id, group]));
+    const groupById = new Map(scopedGroupModels.map(group => [group.id, group]));
     const annotateGroup = (rawPost) => {
       const post = normalizeFeedPost(rawPost);
       const group = groupById.get(post.groupId || post.group?.id);
+      if (publicGroupsRequested && !group) return null;
       return {
         ...post,
+        groupId: group?.id || post.groupId || post.group?.id || null,
         group: group
           ? { id: group.id, name: group.name, category: group.category, externalUrl: group.externalUrl }
           : post.group,
         likedByMe: Boolean(post.likedByMe),
-        fromJoinedGroup: Boolean(group),
+        fromJoinedGroup: !publicGroupsRequested && Boolean(group),
+        fromPublicGroup: publicGroupsRequested && Boolean(group),
       };
     };
     const queryWords = splitSearchWords(searchQuery);
     const candidates = uniqueEqualizerPosts([
       ...(nativeResult.posts || []),
-      ...cachedJoinedCommunityPosts,
+      ...(durableExternalResult.posts || []),
+      ...cachedCommunityPosts,
       ...connectedSocialPosts,
-    ].map(annotateGroup)).filter((post) => {
+    ].map(annotateGroup).filter(Boolean)).filter((post) => {
       const source = String(post.source || '').trim().toLowerCase();
       if (disabledFeedSources.has(source) || !matchesTopic(post)) return false;
       if (!queryWords.length) return true;
       const haystack = `${post.title || ''} ${post.content || ''} ${post.author?.name || ''} ${post.group?.name || ''} ${post.topic || ''}`.toLowerCase();
       return queryWords.every(word => haystack.includes(word));
     });
-    const sorted = sortFeedBatch(candidates, 'joined-groups-feed', {
+    const sorted = sortFeedBatch(candidates, publicGroupsRequested ? 'public-groups-feed' : 'joined-groups-feed', {
       limit: Math.max(candidates.length, feedLimit),
-      sort: sortMode,
+      sort: groupSortMode,
       diversify: true,
       maxConsecutivePerSource: 2,
     });
@@ -21913,20 +21983,22 @@ async function handleFeedRequest(req, res) {
       // membership, connected accounts, language, preferences, and usage.
       { request: req },
     );
-    const personalized = sortMode === 'newest'
+    const personalized = groupSortMode === 'newest'
       ? orderNewestFeedCohorts(personalizedResult)
       : personalizedResult;
 
-    // A native UFI group is its own community lane; connected posts without
-    // a group use their social source as the lane. Each page takes at most
-    // two from a lane, then later pages continue with that lane's remainder.
+    // Public discovery is capped by source so a platform with hundreds of
+    // seeded communities cannot take over one look. The joined feed keeps
+    // its finer community lanes because membership itself is the scope.
     const groupPage = paginateEqualizedPool(personalized, {
-      mode: 'groups',
+      mode: poolMode,
       cursorMap: groupCursor,
       page: reqPage,
       limit: feedLimit,
       seenIds,
-      laneForPost: post => post.groupId || post.group?.id || post.source || 'unknown',
+      laneForPost: post => publicGroupsRequested
+        ? post.source || 'unknown'
+        : post.groupId || post.group?.id || post.source || 'unknown',
       maxPerLane: BLENDED_FEED_MAX_POSTS_PER_SOURCE,
     });
     const pageRows = groupPage.posts;
@@ -21935,14 +22007,22 @@ async function handleFeedRequest(req, res) {
       posts: pageRows,
       page: reqPage,
       mode: 'groups',
+      groupScope: publicGroupsRequested ? 'public' : 'joined',
+      sort: groupSortMode,
       cursor: groupPage.nextCursor,
-      hasMore: groupPage.hasMore || nativeResult.hasMore,
+      hasMore: groupPage.hasMore || nativeResult.hasMore || durableExternalResult.hasMore,
       totalAvailable: groupPage.totalAvailable,
-      joinedGroupCount: joinedGroupModels.length,
+      joinedGroupCount: publicGroupsRequested ? joined.size : scopedGroupModels.length,
+      publicGroupCount: publicGroupsRequested ? scopedGroupModels.length : undefined,
       connectedSourceCount: connectedSources.length,
       nativeUficonnectIncluded: true,
       sourceErrors: connectedResult.sourceErrors || {},
-      equalizer: { mode: 'member-topic-source-community', maxPerCommunityPerPage: BLENDED_FEED_MAX_POSTS_PER_SOURCE },
+      equalizer: {
+        mode: publicGroupsRequested ? 'popular-public-group-source' : 'member-topic-source-community',
+        maxPerSourcePerPage: publicGroupsRequested ? BLENDED_FEED_MAX_POSTS_PER_SOURCE : undefined,
+        maxPerCommunityPerPage: publicGroupsRequested ? undefined : BLENDED_FEED_MAX_POSTS_PER_SOURCE,
+        sourceCount: new Set(candidates.map(post => post.source || 'unknown')).size,
+      },
     });
   }
 

@@ -548,10 +548,10 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="following" size={18} />
                 Following
               </button>
-              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups'} onClick={() => selectMobileFeed('groups')}>
+              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="groups" size={18} />
                 Groups
-              </button>
+              </NavLink>
               <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'countries' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'countries'} onClick={() => selectMobileFeed('countries')}>
                 <ShellIcon name="countries" size={18} />
                 Travel
@@ -566,7 +566,7 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
-              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+              <NavLink to="/search?tab=groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="groups" size={18} />
                 Discover Groups
               </NavLink>

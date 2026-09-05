@@ -13,7 +13,7 @@ import client from '../api/client';
 import { ALL_INTERESTS } from './Onboarding';
 import { PostCard } from './Feed';
 import Opportunities from './Opportunities';
-import { GroupDirectoryTab } from './Groups';
+import { CreateGroupModal, GroupDirectoryTab } from './Groups';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 
 const SEARCH_TABS = [
@@ -231,6 +231,9 @@ export default function SearchExperience({ initialTab = null } = {}) {
   const [groupsError, setGroupsError] = useState('');
   const [groupCategories, setGroupCategories] = useState([]);
   const [groupCategory, setGroupCategory] = useState('all');
+  const [showCreateGroup, setShowCreateGroup] = useState(() => (
+    new URLSearchParams(window.location.search).get('create') === '1'
+  ));
   const [postStates, setPostStates] = useState({ posts: emptyPostState(), following: emptyPostState() });
   const [postSources, setPostSources] = useState({ posts: [], following: [] });
   const [postTopics, setPostTopics] = useState({ posts: [], following: [] });
@@ -255,6 +258,11 @@ export default function SearchExperience({ initialTab = null } = {}) {
       const targetTab = SEARCH_TABS.some((tab) => tab.key === nextTab) ? nextTab : activeTab;
       setQueries(current => ({ ...current, [targetTab]: nextQuery }));
     }
+  }, [activeTab, location.search]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    setShowCreateGroup(activeTab === 'groups' && params.get('create') === '1');
   }, [activeTab, location.search]);
 
   const disabledSources = useMemo(() => new Set(
@@ -428,7 +436,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
       const params = new URLSearchParams({
         limit: String(DIRECTORY_PAGE_SIZE),
         offset: String(offset),
-        scope: 'native',
+        scope: 'public',
       });
       if (value) params.set('q', value);
       if (groupCategory !== 'all') params.set('category', groupCategory);
@@ -454,6 +462,23 @@ export default function SearchExperience({ initialTab = null } = {}) {
       }
     }
   }, [groupCategory]);
+
+  const closeCreateGroup = useCallback(() => {
+    setShowCreateGroup(false);
+    const params = new URLSearchParams(location.search);
+    params.delete('create');
+    const nextSearch = params.toString();
+    navigate({ pathname: '/search', search: nextSearch ? `?${nextSearch}` : '?tab=groups' }, { replace: true });
+  }, [location.search, navigate]);
+
+  const createGroup = useCallback(async (group) => {
+    const { data } = await client.post('/groups', group);
+    if (!data?.group) throw new Error('Group creation did not return a group.');
+    setAllGroups((current) => mergeById([data.group], current));
+    setGroupsTotal((current) => current + 1);
+    setShowCreateGroup(false);
+    navigate(`/groups/${data.group.id}`);
+  }, [navigate]);
 
   useEffect(() => {
     if (activeTab !== 'groups') return undefined;
@@ -586,6 +611,14 @@ export default function SearchExperience({ initialTab = null } = {}) {
         <meta name="twitter:card" content="summary_large_image" />
       </Helmet>
 
+      {showCreateGroup && (
+        <CreateGroupModal
+          categories={groupCategories.length ? groupCategories : ['Community']}
+          onClose={closeCreateGroup}
+          onCreate={createGroup}
+        />
+      )}
+
       <div className="search-page-shell">
         <div className="page-header"><h1 className="page-title">Search</h1></div>
 
@@ -613,7 +646,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                 : activeTab === 'people'
                   ? 'Search by name, role, skill, or interest...'
                   : activeTab === 'groups'
-                    ? 'Search UFIconnect groups by name or topic...'
+                    ? 'Search public groups by name, source, or topic...'
                     : 'Search jobs by title, company, skill, or location...'}
             value={query}
             onChange={handleQueryChange}
@@ -788,6 +821,15 @@ export default function SearchExperience({ initialTab = null } = {}) {
         {activeTab === 'groups' && (
           <>
             <div className="search-post-filters search-group-filters">
+              <div className="search-group-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button"
+                  onClick={() => setShowCreateGroup(true)}
+                >
+                  Create a group
+                </button>
+              </div>
               <div className="search-filter-line">
                 <span className="search-filter-label">Group category</span>
                 <div className="search-filter-rail" role="group" aria-label="Filter groups by category">
@@ -810,7 +852,7 @@ export default function SearchExperience({ initialTab = null } = {}) {
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => loadGroups(queries.groups.trim())}>Try again</button>
               </div>
             )}
-            {!groupsLoading && !groupsError && <div className="search-result-summary">{groupsTotal.toLocaleString()} UFIconnect group{groupsTotal === 1 ? '' : 's'}{hasQuery ? ` matching "${query}"` : ''}</div>}
+            {!groupsLoading && !groupsError && <div className="search-result-summary">{groupsTotal.toLocaleString()} public group{groupsTotal === 1 ? '' : 's'}{hasQuery ? ` matching "${query}"` : ''}</div>}
             {!groupsLoading && !groupsError && filteredGroups.length === 0 && (
               <div className="card search-empty-state"><strong>No groups found</strong><p>Try a different keyword or browse without a filter.</p></div>
             )}

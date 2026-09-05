@@ -140,8 +140,8 @@ function feedPostTime(post) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function normalizeFeedSort() {
-  return 'newest';
+function normalizeFeedSort(value) {
+  return value === 'popular' ? 'popular' : 'newest';
 }
 
 // Mirrors handleFeedRequest's own date-cursor eligibility check
@@ -159,8 +159,8 @@ function isCursorEligible(mode, sort, search) {
 
 // Keep newer minute-level cohorts above older ones while preserving the
 // server's source-equalized order inside each cohort.
-function sortPostsForView(list = []) {
-  return orderNewestFeedCohorts(list);
+function sortPostsForView(list = [], sort = 'newest') {
+  return normalizeFeedSort(sort) === 'popular' ? list : orderNewestFeedCohorts(list);
 }
 
 function mergeFeedPosts(list = [], sort = 'ranked') {
@@ -2103,13 +2103,10 @@ function writeFeedCache(userId, posts) {
   } catch {}
 }
 
-// forcedMode: set by the /you route (see App.jsx) to lock this page into
-// Following mode — the "You" nav tab's full equalizer feed of the member's
-// connected-platform activity. Reuses every bit of Following mode's
-// existing machinery (cursor pagination, equalizer, infinite scroll) rather
-// than a second feed engine; the toggle pill below is just hidden so /you
-// can't be switched away from it mid-visit.
-export default function Feed({ forcedMode } = {}) {
+// forcedMode locks a dedicated route onto one mode while preserving this
+// shared feed engine's cursor pagination, equalizer, seen-state, and media
+// behavior. /groups additionally requests the public community scope.
+export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const { profile, updateProfileLocally } = useAuth();
   const routeLocation = useLocation();
   const navigate = useNavigate();
@@ -2124,7 +2121,8 @@ export default function Feed({ forcedMode } = {}) {
   // server-side) — a gated platform tab clicked without that account connected.
   // null whenever the current view isn't a locked single-gated-source tab.
   const [lockedPlatform, setLockedPlatform] = useState(null);
-  const _cache = readFeedCache(profile?.id);
+  const publicGroupsFeed = groupScope === 'public';
+  const _cache = forcedMode ? null : readFeedCache(profile?.id);
   const [posts,         setPosts]        = useState(_cache?.posts || []);
   const [travelLiveFeeds, setTravelLiveFeeds] = useState([]);
   // Following mode's per-source fetch failures (bad scope, API not
@@ -2258,8 +2256,8 @@ export default function Feed({ forcedMode } = {}) {
     // asked for a refresh, and nowhere else.
     if (manual) refreshSeedRef.current = Math.random().toString(36).slice(2);
     const activeFilters = { ...DEFAULT_FILTERS, ...(requestedFilters || filtersRef.current) };
-    activeFilters.sort = 'newest';
     const activeMode = requestedMode || viewModeRef.current;
+    activeFilters.sort = activeMode === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
     const activeSearch = typeof q === 'string' ? q.trim() : searchRef.current.trim();
     const activeSourceTabs = Array.isArray(tabs) ? tabs : activeTabsRef.current;
     if (EMBEDDED_HOME_MODES.has(activeMode)) {
@@ -2297,6 +2295,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeSearch) params.set('q', activeSearch);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
+      if (activeMode === 'groups' && publicGroupsFeed) params.set('groupScope', 'public');
       if (bust) {
         params.set('bust', '1');
       }
@@ -2403,7 +2402,7 @@ export default function Feed({ forcedMode } = {}) {
         setRefreshing(false);
       }
     }
-  }, [profile]);
+  }, [profile, publicGroupsFeed]);
 
   // Keep postsRef in sync so loadFeed can read current posts without a dep cycle
   useEffect(() => { postsRef.current = posts; }, [posts]);
@@ -2800,7 +2799,7 @@ export default function Feed({ forcedMode } = {}) {
     try {
       const tabs = activeTabsRef.current;
       const activeFilters = { ...DEFAULT_FILTERS, ...filtersRef.current };
-      activeFilters.sort = 'newest';
+      activeFilters.sort = viewModeRef.current === 'groups' && publicGroupsFeed ? 'popular' : 'newest';
       const requestedSources = ['feed', 'following'].includes(viewModeRef.current)
         ? (activeFilters.sources?.length ? activeFilters.sources : tabs)
           .slice(0, 1)
@@ -2810,8 +2809,11 @@ export default function Feed({ forcedMode } = {}) {
       // Home has always used a cursor. Travel/Restaurants opt into it only
       // after page one proves the deployed API supports their new cursor;
       // this keeps scrolling correct during a rolling frontend/API deploy.
-      const useCursor = cursorEligible
-        && (viewModeRef.current === 'feed' || Boolean(remoteCursorRef.current));
+      const usesPublicGroupPoolCursor = viewModeRef.current === 'groups'
+        && publicGroupsFeed
+        && Boolean(remoteCursorRef.current);
+      const useCursor = usesPublicGroupPoolCursor || (cursorEligible
+        && (viewModeRef.current === 'feed' || Boolean(remoteCursorRef.current)));
       const params = new URLSearchParams({
         limit: `${FEED_PAGE_SIZE}`,
         mode: viewModeRef.current,
@@ -2835,6 +2837,7 @@ export default function Feed({ forcedMode } = {}) {
       if (activeFilters.timeRange && activeFilters.timeRange !== 'all') params.set('timeRange', activeFilters.timeRange);
       if (requestedSources.length === 1) params.set('source', requestedSources[0]);
       else if (requestedSources.length > 1) params.set('sources', requestedSources.join(','));
+      if (viewModeRef.current === 'groups' && publicGroupsFeed) params.set('groupScope', 'public');
       const data = await requestFeedPage(params, profile);
       if (requestIdAtStart !== feedRequestIdRef.current) return;
       if (viewModeRef.current === 'countries' && Array.isArray(data.liveFeeds)) {
@@ -2882,7 +2885,7 @@ export default function Feed({ forcedMode } = {}) {
       console.error('[feed] position cursor request failed', error);
     }
     finally { loadingMoreRef.current = false; setLoadingMore(false); }
-  }, [profile, remotePage]);
+  }, [profile, publicGroupsFeed, remotePage]);
 
   const updateFeedPost = useCallback((updatedPost) => {
     if (!updatedPost?.id) return;
@@ -2894,11 +2897,11 @@ export default function Feed({ forcedMode } = {}) {
   // Load initial feed — if cache is fresh, show it instantly and stream new posts on top silently
   useEffect(() => {
     if (!profile?.id) return;
-    const c = readFeedCache(profile.id);
+    const c = forcedMode ? null : readFeedCache(profile.id);
     setPosts(c?.posts || []);
     setTravelLiveFeeds([]);
     loadFeed(false, activeTabsRef.current, { silent: !!c?.fresh, live: !!c?.fresh });
-  }, [loadFeed, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
+  }, [forcedMode, loadFeed, profile?.id, JSON.stringify(profile?.roleSettings?.feedLanguages || [])]);
 
   useEffect(() => {
     const refreshQuietly = () => {
@@ -3293,10 +3296,12 @@ export default function Feed({ forcedMode } = {}) {
   return (
     <Layout wide={!forcedMode}>
       <Helmet>
-        <title>{forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
+        <title>{publicGroupsFeed ? 'Popular Public Groups | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
         <meta name="description" content="Your personalized UFIconnect social feed brings posts, people, communities, videos, and job discovery into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
-        {!forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
+        {publicGroupsFeed
+          ? <link rel="canonical" href="https://uficonnect.org/groups" />
+          : !forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
       <div className="home-feed-content">
@@ -3520,7 +3525,12 @@ export default function Feed({ forcedMode } = {}) {
 
       {viewMode === 'groups' && (
         <div className="feed-source-filter-row feed-group-filter-row">
-          <Link to="/groups?create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
+          {publicGroupsFeed && (
+            <Link to="/search?tab=groups" className="btn btn-ghost btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
+              Browse groups
+            </Link>
+          )}
+          <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">
             Create a group
           </Link>
           <TopicFilterControl
@@ -3708,10 +3718,16 @@ export default function Feed({ forcedMode } = {}) {
               </>
             ) : viewMode === 'groups' ? (
               <>
-                <p style={{ marginBottom: 12 }}>Join a UFIconnect group or connect a social account to build this feed.</p>
+                <p style={{ marginBottom: 12 }}>
+                  {publicGroupsFeed
+                    ? 'No unseen public group posts are available right now.'
+                    : 'Join a UFIconnect group or connect a social account to build this feed.'}
+                </p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <Link to="/search?tab=groups" className="btn btn-primary btn-sm">Find groups</Link>
-                  <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>
+                  <Link to="/search?tab=groups" className="btn btn-primary btn-sm">Browse groups</Link>
+                  {publicGroupsFeed
+                    ? <Link to="/search?tab=groups&create=1" className="btn btn-ghost btn-sm">Create a group</Link>
+                    : <Link to="/connected-accounts" className="btn btn-ghost btn-sm">Connected accounts</Link>}
                 </div>
               </>
             ) : (viewMode === 'countries' || viewMode === 'restaurants') ? (
@@ -3746,7 +3762,7 @@ export default function Feed({ forcedMode } = {}) {
                 <p style={{ marginBottom: 12 }}>Home is ready. Connect accounts when you want the scroll to feel more like yours.</p>
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   <Link to="/connected-accounts" className="btn btn-primary btn-sm">Connect accounts</Link>
-                  <Link to="/groups" className="btn btn-ghost btn-sm">Join communities</Link>
+                  <Link to="/search?tab=groups" className="btn btn-ghost btn-sm">Join communities</Link>
                 </div>
               </>
             )}
@@ -3864,7 +3880,7 @@ export default function Feed({ forcedMode } = {}) {
             ].map(({ key, label }) => (
               <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => activateHomeView(key)}>{label}</button>
             ))}
-            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => activateHomeView('groups')}>Groups</button>
+            <Link to="/groups" className="home-feed-rail-tab">Groups</Link>
             {[
               { key: 'countries', label: 'Travel' },
               { key: 'restaurants', label: 'Restaurants' },
@@ -3876,7 +3892,7 @@ export default function Feed({ forcedMode } = {}) {
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-            <Link to="/groups" className="home-feed-rail-tab">Discover Groups</Link>
+            <Link to="/search?tab=groups" className="home-feed-rail-tab">Discover Groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

@@ -52,7 +52,7 @@ function GroupSkeleton() {
   );
 }
 
-function CreateGroupModal({ categories, onClose, onCreate }) {
+export function CreateGroupModal({ categories, onClose, onCreate }) {
   const [name,        setName]        = useState('');
   const [description, setDescription] = useState('');
   const [category,    setCategory]    = useState(categories[0] || '');
@@ -65,6 +65,10 @@ function CreateGroupModal({ categories, onClose, onCreate }) {
     document.addEventListener('keydown', h);
     return () => document.removeEventListener('keydown', h);
   }, [onClose]);
+
+  useEffect(() => {
+    if (!category && categories[0]) setCategory(categories[0]);
+  }, [categories, category]);
 
   async function handleSubmit(e) {
     e.preventDefault();

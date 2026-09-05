@@ -154,6 +154,7 @@ async function initBackupDB() {
       CREATE TABLE IF NOT EXISTS feed_posts_cache (
         id              TEXT PRIMARY KEY,
         source          TEXT NOT NULL,
+        group_id        TEXT,
         title           TEXT,
         content         TEXT,
         author_name     TEXT,
@@ -173,6 +174,7 @@ async function initBackupDB() {
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS location TEXT`);
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS media_poster TEXT`);
     await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS video_duration_seconds INTEGER`);
+    await client.query(`ALTER TABLE feed_posts_cache ADD COLUMN IF NOT EXISTS group_id TEXT`);
     // Same compound indexes migrateDB() gives the primary for this exact
     // query shape — without these the backup just reproduces the seq-scan-
     // and-external-sort cost failover exists to avoid, the moment any real
@@ -180,6 +182,7 @@ async function initBackupDB() {
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_idx ON feed_posts_cache(source, post_created_at DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_time_id_idx ON feed_posts_cache(source, post_created_at DESC, id DESC)`);
     await client.query(`CREATE INDEX IF NOT EXISTS fpc_source_media_time_idx ON feed_posts_cache(source, media_type, post_created_at DESC)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS fpc_group_time_idx ON feed_posts_cache(group_id, post_created_at DESC) WHERE group_id IS NOT NULL`);
     client.release();
     backupPool = backup;
     _backupConnected = true;
@@ -195,7 +198,7 @@ async function initBackupDB() {
 }
 
 const BACKUP_SYNC_COLUMNS = [
-  'id', 'source', 'title', 'content', 'author_name', 'source_url', 'media_url',
+  'id', 'source', 'group_id', 'title', 'content', 'author_name', 'source_url', 'media_url',
   'media_type', 'media_poster', 'video_duration_seconds', 'topic', 'likes_count', 'comments_count', 'post_created_at', 'fetched_at', 'location',
 ];
 
