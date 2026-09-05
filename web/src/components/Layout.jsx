@@ -300,19 +300,6 @@ export default function Layout({ children, wide = false }) {
     navigateToMobileFeed(feed);
   }
 
-  function selectDiscoverGroups() {
-    saveMobileFeed('groups');
-    setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public') {
-      window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
-      return;
-    }
-    navigate('/?feed=groups&groupScope=public', {
-      state: { refreshHomeAt: Date.now() },
-    });
-  }
-
   const mobileFeedParams = new URLSearchParams(location.search);
   const requestedFeed = mobileFeedParams.get('feed');
   const mobileGroupScope = mobileFeedParams.get('groupScope') === 'public' ? 'public' : 'joined';
@@ -575,7 +562,7 @@ export default function Layout({ children, wide = false }) {
                     <ShellIcon name="messages" size={18} />
                     Messages
                   </NavLink>
-                  <NavLink to="/?feed=groups&groupScope=public" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                     <ShellIcon name="groups" size={18} />
                     Discover groups
                   </NavLink>
@@ -625,10 +612,10 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
-              <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'groups' && mobileGroupScope === 'public'} onClick={selectDiscoverGroups}>
+              <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="search" size={18} />
                 Discover groups
-              </button>
+              </NavLink>
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}

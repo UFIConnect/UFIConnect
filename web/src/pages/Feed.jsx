@@ -27,7 +27,6 @@ import ReportModal from '../components/ReportModal';
 import { useToast } from '../contexts/ToastContext';
 import { UfiFeedContent } from './Post';
 import { SavePostButton } from '../components/SaveButtons';
-import { GroupsContent } from './Groups';
 
 const COMMAND_CENTER_PRO_TIER = TIERS.find((tier) => tier.tier === 'pro');
 const HOME_VIEW_MODES = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
@@ -3580,7 +3579,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <button type="button" role="tab" aria-selected={!publicGroupsFeed} className={!publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('joined')}>
               Your groups
             </button>
-            <button type="button" role="tab" aria-selected={publicGroupsFeed} className={publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('public')}>
+            <button type="button" role="tab" aria-selected="false" onClick={() => navigate('/groups')}>
               Discover groups
             </button>
           </div>
@@ -3599,16 +3598,6 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             buttonRef={topicFilterBtnRef}
             panelRef={topicPanelRef}
           />
-        </div>
-      )}
-
-      {viewMode === 'groups' && publicGroupsFeed && (
-        <div className="group-discovery-section">
-          <GroupsContent embedded scope="public" />
-          <div className="group-public-feed-heading">
-            <h2>Public group posts</h2>
-            <span>Popular conversations across public groups</span>
-          </div>
         </div>
       )}
 
@@ -3955,7 +3944,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-            <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' && publicGroupsFeed ? ' active' : ''}`} onClick={() => selectGroupScope('public')}>Discover groups</button>
+            <Link to="/groups" className="home-feed-rail-tab">Discover groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}

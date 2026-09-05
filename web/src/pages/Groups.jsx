@@ -197,7 +197,7 @@ export default function Groups() {
         <meta name="keywords" content="professional communities, tech communities, developer groups, connect communities, networking groups, Discord communities, Reddit communities, LinkedIn groups, Facebook Groups, tech groups, engineering communities, design communities, startup communities, news communities, group networking, professional groups, career groups" />
         <link rel="canonical" href="https://uficonnect.org/groups" />
       </Helmet>
-      <GroupsContent />
+      <GroupsContent scope="public" />
     </>
   );
 }

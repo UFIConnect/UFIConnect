@@ -729,7 +729,7 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
               <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Messages</strong>
               </Link>
-              <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
+              <Link to="/groups" className="jobs-page-tool jobs-page-tool--compact">
                 <strong>Discover groups</strong>
               </Link>
               <HomeFeedTools showSources={false} />

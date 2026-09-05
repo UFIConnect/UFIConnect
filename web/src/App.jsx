@@ -43,6 +43,7 @@ const Onboarding     = lazy(() => import('./pages/Onboarding'));
 const Feed           = lazy(() => import('./pages/Feed'));
 const GuestFeed       = lazy(() => import('./pages/GuestFeed'));
 const Videos         = lazy(() => import('./pages/Videos'));
+const Groups         = lazy(() => import('./pages/Groups'));
 const GroupDetail    = lazy(() => import('./pages/GroupDetail'));
 const JobDetail      = lazy(() => import('./pages/JobDetail'));
 const Messages       = lazy(() => import('./pages/Messages'));
@@ -138,7 +139,7 @@ export default function App() {
         <RequireAuth><RequireOnboarding><YourPostsFeed /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups" element={
-        <RequireAuth><RequireOnboarding><Navigate to="/?feed=groups" replace /></RequireOnboarding></RequireAuth>
+        <RequireAuth><RequireOnboarding><Groups /></RequireOnboarding></RequireAuth>
       }/>
       <Route path="/groups/:id" element={
         <RequireAuth><RequireOnboarding><GroupDetail /></RequireOnboarding></RequireAuth>
