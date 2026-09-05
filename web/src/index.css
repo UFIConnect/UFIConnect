@@ -3842,6 +3842,7 @@ input, textarea, select { font-family: inherit; }
   scrollbar-width: none;
   -ms-overflow-style: none;
   touch-action: pan-y;
+  min-height: 0;
 }
 .video-feed-scroll::-webkit-scrollbar {
   display: none;
@@ -3851,13 +3852,22 @@ input, textarea, select { font-family: inherit; }
   pointer-events: auto;
   touch-action: manipulation;
 }
-.video-feed-youtube-player iframe {
+.video-feed-youtube-player,
+.video-feed-youtube-player * {
   pointer-events: none !important;
-}
-.video-feed-youtube-player {
-  pointer-events: none;
+  touch-action: pan-y !important;
 }
 .video-feed-slide {
+  touch-action: pan-y;
+  min-height: 0;
+}
+.video-feed-caption,
+.video-feed-action-rail {
+  max-width: calc(100% - 28px);
+}
+.video-feed-caption-actions > button,
+.video-feed-caption-actions > a,
+.video-feed-action-rail button {
   touch-action: pan-y;
 }
 /* Command Center tabs are URL-backed in CommandCenter.jsx. These styles keep

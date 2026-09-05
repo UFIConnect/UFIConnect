@@ -154,7 +154,6 @@ function resolveVideoSource(post) {
 const VIDEO_FEED_AUTO_REFRESH_MS = 2 * 60 * 1000;
 const VIDEO_COMMENTS_LIVE_REFRESH_MS = 15 * 1000;
 const VIDEO_COMMENTS_PASSIVE_REFRESH_MS = 30 * 1000;
-const YOUTUBE_SHORTS_MAX_DURATION_SECONDS = 183;
 
 // How many slides on either side of the active one actually mount a real
 // VideoSlide (video/iframe element, engagement tracking, comments wiring,
@@ -212,8 +211,10 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
   // there's actually more than the clamp already reveals: a long title, or
   // real content beyond just the title repeated.
   const [captionExpanded, setCaptionExpanded] = useState(false);
-  const hasExtraCaption = (post.title?.length || 0) > 80
-    || (post.content && post.content.trim() && post.content.trim() !== post.title?.trim());
+  const captionBody = post.content?.trim() && post.content.trim() !== post.title?.trim()
+    ? post.content.trim()
+    : '';
+  const hasExtraCaption = (post.title?.length || 0) > 80 || Boolean(captionBody);
 
   // file/hls/vimeo's own fully-local playback state — youtube reads
   // sharedYt instead (see effectivePaused/effectiveDuration/
@@ -262,6 +263,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
   const railBottom = youtubeFrameInset === null ? 46 : youtubeFrameInset + 46;
   const scrubberBottom = youtubeFrameInset === null ? 12 : youtubeFrameInset + 12;
   const durationBottom = youtubeFrameInset === null ? 20 : youtubeFrameInset + 20;
+  const safeBottom = value => `calc(${value}px + env(safe-area-inset-bottom, 0px))`;
 
   // Genuine-watch engagement signal (see api/engagement.js) — currentTime
   // already updates continuously during real playback (onTimeUpdate/the
@@ -711,8 +713,11 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
           "Show less just disappears." It's outside the scrollable region
           entirely now, so it's always reachable regardless of how far the
           writing itself is scrolled. */}
-      <div className={isYoutube ? 'video-feed-caption video-feed-caption--youtube' : 'video-feed-caption'} style={{
-        position: 'absolute', zIndex: 4, left: 16, right: 76, bottom: captionBottom, color: '#fff',
+      <div
+        className={isYoutube ? 'video-feed-caption video-feed-caption--youtube' : 'video-feed-caption'}
+        data-video-caption
+        style={{
+        position: 'absolute', zIndex: 4, left: 16, right: 76, bottom: safeBottom(captionBottom), color: '#fff',
         textShadow: '0 1px 6px rgba(0,0,0,.7)', pointerEvents: 'none',
       }}>
         <div style={{ marginBottom: 8 }}>
@@ -737,6 +742,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
             maxHeight: captionExpanded ? '42dvh' : undefined,
             overflowY: captionExpanded ? 'auto' : undefined,
             WebkitOverflowScrolling: captionExpanded ? 'touch' : undefined,
+            touchAction: captionExpanded ? 'pan-y' : undefined,
             pointerEvents: captionExpanded ? 'auto' : 'none',
           }}
         >
@@ -750,41 +756,50 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
               {post.title}
             </div>
           )}
-          {captionExpanded && post.content && post.content.trim() !== post.title?.trim() && (
-            <div style={{ fontSize: '.82rem', lineHeight: 1.5, whiteSpace: 'pre-wrap', opacity: 0.92 }}>
-              {post.content}
+          {captionBody && (
+            <div style={{
+              fontSize: '.82rem', lineHeight: 1.45, whiteSpace: 'pre-wrap', opacity: 0.92,
+              display: captionExpanded ? 'block' : '-webkit-box',
+              WebkitLineClamp: captionExpanded ? 'unset' : 2,
+              WebkitBoxOrient: 'vertical', overflow: captionExpanded ? 'visible' : 'hidden',
+            }}>
+              {captionBody}
             </div>
           )}
         </div>
-        {hasExtraCaption && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
-            style={{
-              marginTop: 6, background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
-              color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
-              cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
-            }}
-          >
-            {captionExpanded ? 'Show less' : 'Read more'}
-          </button>
-        )}
-        {post.sourceUrl && (
-          <a
-            href={post.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => {
-              e.stopPropagation();
-              reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
-            }}
-            style={{
-              display: 'inline-block', marginTop: 6, background: 'rgba(0,0,0,.5)',
-              borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: '.75rem',
-              padding: '4px 9px', textDecoration: 'none', pointerEvents: 'auto', opacity: 0.95,
-            }}
-          >
-            View original post ↗
-          </a>
+        {(hasExtraCaption || post.sourceUrl) && (
+          <div className="video-feed-caption-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {hasExtraCaption && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setCaptionExpanded(x => !x); }}
+                style={{
+                  background: 'rgba(0,0,0,.5)', border: 'none', borderRadius: 10,
+                  color: '#fff', fontWeight: 700, fontSize: '.75rem', padding: '4px 9px',
+                  cursor: 'pointer', pointerEvents: 'auto', opacity: 0.95,
+                }}
+              >
+                {captionExpanded ? 'Show less' : 'Read more'}
+              </button>
+            )}
+            {post.sourceUrl && (
+              <a
+                href={post.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  reportEngagementSignal({ postId: post.id, source: post.source, topic: post.topic, linkClick: true });
+                }}
+                style={{
+                  display: 'inline-block', background: 'rgba(0,0,0,.5)',
+                  borderRadius: 10, color: '#fff', fontWeight: 700, fontSize: '.75rem',
+                  padding: '4px 9px', textDecoration: 'none', pointerEvents: 'auto', opacity: 0.95,
+                }}
+              >
+                View original post ↗
+              </a>
+            )}
+          </div>
         )}
       </div>
 
@@ -801,7 +816,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
           ref={progressBarRef}
           onPointerDown={handleBarPointerDown}
           style={{
-            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: scrubberBottom,
+            position: 'absolute', zIndex: 2, left: 12, right: 12, bottom: safeBottom(scrubberBottom),
             height: seeking ? 10 : 4, borderRadius: 4, background: 'rgba(0,0,0,.45)',
             cursor: 'pointer', touchAction: 'none', transition: 'height .12s',
           }}
@@ -823,7 +838,7 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
       )}
       {src && effectiveDuration > 0 && (
         <div style={{
-          position: 'absolute', zIndex: 2, right: 14, bottom: durationBottom, color: '#fff', fontSize: '.65rem',
+          position: 'absolute', zIndex: 2, right: 14, bottom: safeBottom(durationBottom), color: '#fff', fontSize: '.65rem',
           fontWeight: 600, textShadow: '0 1px 4px rgba(0,0,0,.7)', pointerEvents: 'none',
         }}>
           {formatTime(effectiveCurrentTime)} / {formatTime(effectiveDuration)}
@@ -831,7 +846,13 @@ function VideoSlide({ post, active, playbackAllowed, muted, onToggleMute, isScro
       )}
 
       {/* Right-side action rail */}
-      <div className={isYoutube ? 'video-feed-action-rail video-feed-action-rail--youtube' : 'video-feed-action-rail'} style={{ position: 'absolute', zIndex: 4, right: 14, bottom: railBottom, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}>
+      <div
+        className={isYoutube ? 'video-feed-action-rail video-feed-action-rail--youtube' : 'video-feed-action-rail'}
+        data-video-actions
+        role="group"
+        aria-label="Video engagement"
+        style={{ position: 'absolute', zIndex: 4, right: 14, bottom: safeBottom(railBottom), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18 }}
+      >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, color: '#fff', textShadow: '0 1px 6px rgba(0,0,0,.7)' }}>
           <span style={{ fontSize: '.72rem', fontWeight: 800 }}>Likes</span>
           <span style={{ fontSize: '.68rem', fontWeight: 700 }}>{(post.likesCount || 0).toLocaleString()}</span>
@@ -1150,7 +1171,7 @@ export default function VideoFeedView({ onExit }) {
     knownIds.current.add(id);
   }, []);
 
-  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, quiet = false } = {}) => {
+  const loadPage = useCallback(async ({ reset = false, bust = false, preserveOnEmpty = false, preserveQueue = false, quiet = false } = {}) => {
     const requestId = ++loadRequestRef.current;
     try {
       // A genuinely new search/topic/filter/mode shouldn't inherit a
@@ -1200,6 +1221,8 @@ export default function VideoFeedView({ onExit }) {
         // Search is the explicit exception to the no-repeat rule.
         knownIds.current = new Set();
       }
+      const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
+      fresh.forEach(p => markKnownId(p.id));
       setVideoPosts(prev => {
         // A flat all-time dedup here used to make infinite scroll dead-end
         // (once a user had scrolled through the whole real pool once, every
@@ -1223,15 +1246,19 @@ export default function VideoFeedView({ onExit }) {
         // Following videos look stuck at a small fixed amount even while
         // the server kept reporting hasMore:true. Confirmed live as
         // exactly that complaint.
-        const fresh = isExplicitSearch ? incoming : incoming.filter(p => !knownIds.current.has(p.id));
-        fresh.forEach(p => markKnownId(p.id));
         // A reset always replaces wholesale rather than merging — a
         // user-initiated refresh should hand back a clean view instead of
         // old and new videos interleaved indefinitely.
-        const nextVideos = reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0
-          ? prev
-          : (reset ? fresh : [...prev, ...fresh]);
-        return orderNewestFeedCohorts(nextVideos);
+        if (reset && preserveOnEmpty && fresh.length === 0 && prev.length > 0) return prev;
+        if (reset && preserveQueue) {
+          const freshIds = new Set(fresh.map(post => post.id));
+          return [...orderNewestFeedCohorts(fresh), ...prev.filter(post => !freshIds.has(post.id))];
+        }
+        if (reset) return orderNewestFeedCohorts(fresh);
+        // Cursor pages are already ordered by the API. Re-sorting the full
+        // mounted queue here moves slides above the viewport and makes the
+        // same swipe jump backward when pagination lands.
+        return [...prev, ...fresh];
       });
       if (mode === 'following') {
         followingPageRef.current += 1;
@@ -1282,8 +1309,8 @@ export default function VideoFeedView({ onExit }) {
     const refreshQuietly = () => {
       const state = videoLiveStateRef.current;
       if (document.hidden || state.loading || state.refreshing || loadingMoreRef.current) return;
-      if (state.activeIndex > 1) return;
-      loadPage({ reset: true, bust: false, preserveOnEmpty: true, quiet: true });
+      if (state.activeIndex !== 0 || (containerRef.current?.scrollTop || 0) > 1) return;
+      loadPage({ reset: true, bust: false, preserveOnEmpty: true, preserveQueue: true, quiet: true });
     };
     const interval = window.setInterval(refreshQuietly, VIDEO_FEED_AUTO_REFRESH_MS);
     window.addEventListener('focus', refreshQuietly);
@@ -1419,9 +1446,9 @@ export default function VideoFeedView({ onExit }) {
   // already reports scrollTop the same way a normal list would.
   useScrollToRefresh(handleRefresh, { containerRef, enabled: !loading });
 
-  // Which slide is centered in the scroll-snap container is "active" — that's
-  // the only one that actually mounts a player, so scrolling past a video
-  // stops it exactly like swiping away in TikTok.
+  // This observer only records videos that have moved above the viewport.
+  // Active selection is synchronized from real scrollTop below, avoiding an
+  // undefined gap where neither of two half-visible slides crosses 60%.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -1429,10 +1456,6 @@ export default function VideoFeedView({ onExit }) {
       entries.forEach(entry => {
         const idx = Number(entry.target.dataset.idx);
         if (Number.isNaN(idx)) return;
-        if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
-          setActiveIndex(idx);
-          return;
-        }
         const passedAboveViewport = !entry.isIntersecting
           && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0);
         const post = videoPosts[idx];
@@ -1441,7 +1464,7 @@ export default function VideoFeedView({ onExit }) {
           reportConsumed(post.id, 'videos');
         }
       });
-    }, { root: container, threshold: [0, 0.6] });
+    }, { root: container, threshold: 0 });
     slideRefs.current.forEach(el => el && observer.observe(el));
     return () => observer.disconnect();
   }, [videoPosts]);
@@ -1463,14 +1486,30 @@ export default function VideoFeedView({ onExit }) {
     const container = containerRef.current;
     if (!container) return;
     let settleTimer;
+    let activeFrame;
+    const syncActiveSlide = () => {
+      activeFrame = null;
+      const height = container.clientHeight || 1;
+      const next = Math.min(
+        Math.max(Math.round(container.scrollTop / height), 0),
+        Math.max(videoPosts.length - 1, 0),
+      );
+      setActiveIndex(current => current === next ? current : next);
+    };
     const handleScroll = () => {
       setIsScrolling(true);
+      if (!activeFrame) activeFrame = requestAnimationFrame(syncActiveSlide);
       clearTimeout(settleTimer);
-      settleTimer = setTimeout(() => setIsScrolling(false), 150);
+      settleTimer = setTimeout(() => {
+        syncActiveSlide();
+        setIsScrolling(false);
+      }, 150);
     };
+    syncActiveSlide();
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       container.removeEventListener('scroll', handleScroll);
+      if (activeFrame) cancelAnimationFrame(activeFrame);
       clearTimeout(settleTimer);
     };
   }, [videoPosts.length]);
@@ -1524,6 +1563,65 @@ export default function VideoFeedView({ onExit }) {
     container.addEventListener('pointerdown', handlePointerDown);
     return () => {
       container.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [videoPosts.length]);
+
+  // iOS can occasionally finish a vertical gesture without moving this
+  // nested snap container when the gesture began over embedded media or an
+  // overlay control. Native scrolling remains the primary path; this only
+  // advances when a clear swipe produced effectively zero container motion.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let gesture = null;
+    let fallbackTimer = null;
+    const handleTouchStart = event => {
+      if (event.touches.length !== 1) {
+        gesture = null;
+        return;
+      }
+      gesture = {
+        y: event.touches[0].clientY,
+        scrollTop: container.scrollTop,
+        nestedScroller: event.target instanceof Element
+          ? event.target.closest('.video-caption-scroll')
+          : null,
+      };
+    };
+    const handleTouchEnd = event => {
+      if (!gesture || event.changedTouches.length !== 1) return;
+      const start = gesture;
+      gesture = null;
+      const deltaY = start.y - event.changedTouches[0].clientY;
+      if (Math.abs(deltaY) < 56) return;
+      if (start.nestedScroller) {
+        const maxScroll = start.nestedScroller.scrollHeight - start.nestedScroller.clientHeight;
+        const canContinueInside = deltaY > 0
+          ? start.nestedScroller.scrollTop < maxScroll - 1
+          : start.nestedScroller.scrollTop > 1;
+        if (canContinueInside) return;
+      }
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(() => {
+        if (Math.abs(container.scrollTop - start.scrollTop) > 16) return;
+        const height = container.clientHeight || 1;
+        const startIndex = Math.round(start.scrollTop / height);
+        const targetIndex = Math.min(
+          Math.max(startIndex + (deltaY > 0 ? 1 : -1), 0),
+          Math.max(videoPosts.length - 1, 0),
+        );
+        container.scrollTo({ top: targetIndex * height, behavior: 'smooth' });
+      }, 120);
+    };
+    const cancelTouch = () => { gesture = null; };
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', cancelTouch, { passive: true });
+    return () => {
+      clearTimeout(fallbackTimer);
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', cancelTouch);
     };
   }, [videoPosts.length]);
 
@@ -1707,17 +1805,6 @@ export default function VideoFeedView({ onExit }) {
     return () => observer.disconnect();
   }, [activeSrc?.vertical]);
 
-  // RSS and third-party embeds can preserve a regular /watch URL even when
-  // the actual video is a Short. Once YouTube exposes its duration, use its
-  // current Shorts duration limit as a practical fallback so that clip is
-  // framed as portrait instead of reduced to a small 16:9 player.
-  const classifyShortFromDuration = useCallback((videoId, duration) => {
-    if (!videoId || !Number.isFinite(duration) || duration <= 0 || duration > YOUTUBE_SHORTS_MAX_DURATION_SECONDS) return;
-    setYoutubeFrameOrientations(current => (
-      current[videoId] === 'portrait' ? current : { ...current, [videoId]: 'portrait' }
-    ));
-  }, []);
-
   const startSharedYtAutoplayRetry = useCallback((player, videoId) => {
     clearInterval(sharedYtRetryRef.current);
     let attempts = 0;
@@ -1869,7 +1956,6 @@ export default function VideoFeedView({ onExit }) {
               try {
                 const duration = e.target.getDuration() || 0;
                 setSharedYt(s => ({ ...s, duration, currentTime: 0, paused: false }));
-                classifyShortFromDuration(desiredId, duration);
               } catch {}
               startSharedYtAutoplayRetry(e.target, desiredId);
             },
@@ -1880,7 +1966,6 @@ export default function VideoFeedView({ onExit }) {
                 const duration = e.target.getDuration() || 0;
                 if (duration) {
                   setSharedYt(s => ({ ...s, duration }));
-                  classifyShortFromDuration(sharedYtLoadedIdRef.current, duration);
                 }
               } catch {}
             },
@@ -1901,7 +1986,7 @@ export default function VideoFeedView({ onExit }) {
       clearTimeout(sharedYtPendingLoadRef.current);
       clearInterval(sharedYtRetryRef.current);
     };
-  }, [activeIndex, activeSrc?.kind, activeSrc?.id, pointerPlaybackAllowed, classifyShortFromDuration, startSharedYtAutoplayRetry]);
+  }, [activeIndex, activeSrc?.kind, activeSrc?.id, pointerPlaybackAllowed, startSharedYtAutoplayRetry]);
 
   useEffect(() => {
     const pollId = setInterval(() => {
@@ -1913,11 +1998,10 @@ export default function VideoFeedView({ onExit }) {
         setSharedYt(s => (s.currentTime === currentTime && s.duration === duration)
           ? s
           : { ...s, currentTime, duration });
-        classifyShortFromDuration(sharedYtLoadedIdRef.current, duration);
       } catch {}
     }, 250);
     return () => clearInterval(pollId);
-  }, [classifyShortFromDuration]);
+  }, []);
 
   // Keep the shared player's mute state in sync with the top-bar toggle —
   // file/hls slides each do their own equivalent sync locally.
@@ -2413,6 +2497,8 @@ export default function VideoFeedView({ onExit }) {
               key={`${post.id || 'v'}-${idx}`}
               ref={el => { slideRefs.current[idx] = el; }}
               data-idx={idx}
+              data-post-id={post.id || ''}
+              data-source={post.source || ''}
               // Was 100dvh — an absolute viewport unit computed independently
               // of this slide's own ancestor chain (the root is pinned to the
               // real viewport via position:fixed + inset:0, then height:100%
