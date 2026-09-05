@@ -5,6 +5,12 @@ import Layout from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import client from '../api/client';
+import {
+  PREPARATION_ASSET_VERSION,
+  PREPARATION_TOPICS,
+  PREPARATION_VIDEOS,
+  normalizePreparationWatchedIds,
+} from '../data/preparationVideos';
 
 const TEMPLATES = [
   { key: 'modern',    label: 'Modern',    desc: 'Color header with clear section breaks.', accent: '#2563EB' },
@@ -17,67 +23,6 @@ const TEMPLATES = [
   { key: 'technical', label: 'Technical', desc: 'Structured hierarchy for engineering and data work.', accent: '#334155' },
   { key: 'academic', label: 'Academic', desc: 'A restrained serif layout for research and education.', accent: '#6B1F35' },
   { key: 'impact', label: 'Impact', desc: 'Strong section markers for results-led career stories.', accent: '#166534' },
-];
-
-const PREPARATION_TOPICS = ['All', 'Resume', 'Interview basics', 'Behavioral', 'Technical', 'Video interviews', 'Offers'];
-
-const PREPARATION_VIDEOS = [
-  {
-    id: 'LcohcyoCXn8',
-    topic: 'Resume',
-    title: 'How to create a strong, tailored resume',
-    source: 'Indeed',
-    summary: 'Build a focused resume around the role, relevant experience, credentials, and a clean digital version.',
-    takeaways: ['Tailor the opening', 'Prioritize relevant results', 'Keep the digital copy readable'],
-  },
-  {
-    id: '70mIbOlLyEU',
-    topic: 'Interview basics',
-    title: 'Answering "Tell me about yourself"',
-    source: 'Indeed',
-    summary: 'Shape a concise professional story that connects your background to the role in front of you.',
-    takeaways: ['Lead with the present', 'Choose relevant history', 'Connect your answer to the role'],
-  },
-  {
-    id: '4tv5yV-wpBk',
-    topic: 'Interview basics',
-    title: 'Questions to ask at the end of an interview',
-    source: 'Indeed',
-    summary: 'Use the closing minutes to understand the work, team expectations, and what success looks like.',
-    takeaways: ['Ask about success', 'Explore team priorities', 'Skip questions already answered'],
-  },
-  {
-    id: 'TPilhhzHTnU',
-    topic: 'Behavioral',
-    title: 'Preparing for non-technical interview questions',
-    source: 'Life at Google',
-    summary: 'Prepare clear examples that show how you approach decisions, achievements, and ambiguous problems.',
-    takeaways: ['Use specific examples', 'Explain your reasoning', 'Support outcomes with evidence'],
-  },
-  {
-    id: 'we7ba0slWrc',
-    topic: 'Technical',
-    title: 'Preparing for technical interview questions',
-    source: 'Life at Google',
-    summary: 'Review the interview flow, coding approach, testing, data structures, recursion, and system design.',
-    takeaways: ['Clarify before coding', 'Test your solution', 'Talk through tradeoffs'],
-  },
-  {
-    id: 'xNGrePi32ho',
-    topic: 'Video interviews',
-    title: 'How to prepare for a video interview',
-    source: 'Indeed',
-    summary: 'Set up a reliable environment and communicate clearly when the interview happens on camera.',
-    takeaways: ['Test the setup', 'Control the background', 'Keep notes within sight'],
-  },
-  {
-    id: 'urpxkLZEklc',
-    topic: 'Offers',
-    title: 'How to negotiate your starting salary',
-    source: 'Harvard Business Review',
-    summary: 'Research the market, define your floor, and discuss the whole compensation package with confidence.',
-    takeaways: ['Know the market range', 'Consider total compensation', 'Prepare exact language'],
-  },
 ];
 
 function emptyDraft() {
@@ -106,7 +51,7 @@ function normalizeDraft(draft) {
     preparation: {
       ...base.preparation,
       ...(next.preparation || {}),
-      watchedVideoIds: Array.isArray(next.preparation?.watchedVideoIds) ? next.preparation.watchedVideoIds : [],
+      watchedVideoIds: normalizePreparationWatchedIds(next.preparation?.watchedVideoIds),
     },
     coverLetter: { ...base.coverLetter, ...(next.coverLetter || {}) },
     outreach: { ...base.outreach, ...(next.outreach || {}) },
@@ -403,6 +348,8 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
 
   if (!activeVideo) return null;
 
+  const mediaUrl = (video, extension) => `/media/preparation/${video.slug}.${extension}?v=${PREPARATION_ASSET_VERSION}`;
+
   return (
     <div className="resume-preparation-library">
       <div className="resume-preparation-heading">
@@ -434,21 +381,24 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
       <section className="resume-preparation-featured" id="resume-preparation-player" aria-labelledby="resume-preparation-title">
         <div className="resume-preparation-player">
           {playingVideoId === activeVideo.id ? (
-            <iframe
-              src={`https://www.youtube-nocookie.com/embed/${activeVideo.id}?autoplay=1&playsinline=1&rel=0`}
+            <video
+              key={activeVideo.id}
+              src={mediaUrl(activeVideo, 'mp4')}
+              poster={mediaUrl(activeVideo, 'svg')}
               title={activeVideo.title}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
-            />
+              aria-label={activeVideo.title}
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            >
+              <track kind="captions" src={mediaUrl(activeVideo, 'vtt')} srcLang="en" label="English" />
+              Your browser cannot play this video.
+            </video>
           ) : (
             <button type="button" className="resume-preparation-poster" onClick={() => playVideo(activeVideo)} aria-label={`Play ${activeVideo.title}`}>
               <img
-                src={`https://i.ytimg.com/vi/${activeVideo.id}/maxresdefault.jpg`}
-                onError={event => {
-                  if (!event.currentTarget.src.endsWith('/hqdefault.jpg')) {
-                    event.currentTarget.src = `https://i.ytimg.com/vi/${activeVideo.id}/hqdefault.jpg`;
-                  }
-                }}
+                src={mediaUrl(activeVideo, 'svg')}
                 alt=""
               />
               <span className="resume-preparation-play">Play video</span>
@@ -474,7 +424,6 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
             {playingVideoId === activeVideo.id && (
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPlayingVideoId('')}>Close player</button>
             )}
-            <a className="btn btn-ghost btn-sm" href={`https://www.youtube.com/watch?v=${activeVideo.id}`} target="_blank" rel="noreferrer">Open on YouTube</a>
           </div>
         </div>
       </section>
@@ -483,8 +432,8 @@ function PreparationLibrary({ watchedIds, onToggleWatched, saving }) {
         {filteredVideos.map(video => (
           <article key={video.id} className={`resume-preparation-card${activeVideo.id === video.id ? ' is-active' : ''}`}>
             <button type="button" className="resume-preparation-card-media" onClick={() => playVideo(video)} aria-label={`Play ${video.title}`}>
-              <img src={`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`} alt="" loading="lazy" />
-              <span>Play</span>
+              <img src={mediaUrl(video, 'svg')} alt="" loading="lazy" />
+              <span>{video.duration}</span>
             </button>
             <div className="resume-preparation-card-copy">
               <span>{video.topic} | {video.source}</span>

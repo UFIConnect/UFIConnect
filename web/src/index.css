@@ -3936,15 +3936,17 @@ input, textarea, select { font-family: inherit; }
   overflow: hidden;
   background: #050A14;
 }
-.resume-preparation-player iframe,
+.resume-preparation-player video,
 .resume-preparation-poster,
 .resume-preparation-poster img {
   width: 100%;
   height: 100%;
 }
-.resume-preparation-player iframe {
+.resume-preparation-player video {
   display: block;
   border: 0;
+  object-fit: contain;
+  background: #050A14;
 }
 .resume-preparation-poster {
   position: relative;

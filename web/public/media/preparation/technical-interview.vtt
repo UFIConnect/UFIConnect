@@ -1,0 +1,19 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:04.750
+Think clearly in a technical interview. Make your reasoning visible by clarifying the problem, testing the solution, and discussing tradeoffs.
+
+00:00:04.750 --> 00:00:09.500
+Step 1. Clarify the problem. Confirm inputs, outputs, constraints, and the behavior expected in edge cases.
+
+00:00:09.500 --> 00:00:14.250
+Step 2. State an approach. Describe a workable plan before writing details so the interviewer can follow your reasoning.
+
+00:00:14.250 --> 00:00:19.000
+Step 3. Test while you build. Use a normal case, a boundary case, and a failure case to catch assumptions early.
+
+00:00:19.000 --> 00:00:23.750
+Step 4. Discuss tradeoffs. Compare complexity, maintainability, and performance instead of claiming one perfect answer.
+
+00:00:23.750 --> 00:00:28.500
+When stuck. Recover out loud. Summarize what you know, name the blocker, and choose the next small test.
