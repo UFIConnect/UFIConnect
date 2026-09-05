@@ -396,26 +396,10 @@ async function requestFeedPage(params, viewer) {
   return data;
 }
 
-// Shared-source tabs deliberately exclude account-owned networks such as
-// Instagram. Those appear only in Following after the member connects them.
-// Kept as an explicit, hand-ordered list (most-recognizable platforms first)
-// rather than deriving straight from ALL_FILTER_SOURCES — this is the row
-// users scan first and scroll through on every visit, so display order
-// matters here in a way it doesn't for the secondary Filters panel, which
-// just needs to contain everything.  Every key still must exist in both
-// ALL_FILTER_SOURCES and SOURCE_META so it also works from that panel.
-const SOURCE_TABS = [
-  { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
-  { key: 'twitter' }, { key: 'facebook' },
-  { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
-  { key: 'bluesky' }, { key: 'devto' }, { key: 'stackoverflow' },
-  { key: 'gitlab' }, { key: 'medium' }, { key: 'hashnode' }, { key: 'lobsters' },
-  { key: 'arxiv' }, { key: 'producthunt' }, { key: 'indiehackers' }, { key: 'yc' },
-  { key: 'crunchbase' }, { key: 'techcrunch' }, { key: 'theverge' }, { key: 'arstechnica' },
-  { key: 'wired' }, { key: 'theregister' }, { key: 'venturebeat' }, { key: 'infoq' },
-  { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
-  { key: 'designweb' }, { key: 'mastodon' },
-].map(({ key }) => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' }));
+// Use the shared feed catalog so the source bar and account tools stay in sync.
+const SOURCE_TABS = HOME_FEED_SOURCE_IDS.map(key => ({
+  key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC',
+}));
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
 // this is exactly the content SOURCE_TABS deliberately excludes (native
@@ -433,12 +417,12 @@ const FOLLOWING_SOURCE_TABS = [
     .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
 const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
-const SOURCE_QUICK_ACCESS_COUNT = 6;
+const DEFAULT_SOURCE_FAVORITE_COUNT = 6;
 const DEFAULT_SOURCE_FAVORITES = Object.freeze({
-  feed: SOURCE_TABS.slice(0, SOURCE_QUICK_ACCESS_COUNT).map(tab => tab.key),
+  feed: SOURCE_TABS.slice(0, DEFAULT_SOURCE_FAVORITE_COUNT).map(tab => tab.key),
   following: FOLLOWING_SOURCE_TABS
     .filter(tab => tab.key !== 'all')
-    .slice(0, SOURCE_QUICK_ACCESS_COUNT)
+    .slice(0, DEFAULT_SOURCE_FAVORITE_COUNT)
     .map(tab => tab.key),
 });
 
@@ -3309,7 +3293,7 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   const compactSourceTabs = [
     ...favoriteCompactSourceTabs,
     ...currentSourceTabs.filter(tab => tab.key !== 'all' && !favoriteCompactSourceKeys.has(tab.key)),
-  ].slice(0, SOURCE_QUICK_ACCESS_COUNT);
+  ];
   const aggregateSourceTab = currentSourceTabs.find(tab => tab.key === 'all')
     || { key: 'all', label: 'All sources', icon: '' };
   const favoriteSourceOrder = new Map(sourceFavoriteDraft.map((key, index) => [key, index]));
@@ -3543,6 +3527,17 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                 })}
                 <div className="feed-source-menu-footer">
                   {sourceFavoriteError && <span role="alert">{sourceFavoriteError}</span>}
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={sourceFavoriteSaving || sourceFavoriteDraft.length === 0}
+                    onClick={() => {
+                      setSourceFavoriteDraft([]);
+                      setSourceFavoriteError('');
+                    }}
+                  >
+                    Clear favorites
+                  </button>
                   <button
                     type="button"
                     className="btn btn-primary btn-sm"
