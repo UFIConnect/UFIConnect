@@ -123,6 +123,11 @@ export const CONNECTED_SOCIAL_PLATFORMS = [
   'medium', 'dribbble', 'twitch', 'threads', 'bluesky',
 ];
 
+// Instagram and TikTok expose a member's own posts, not a true timeline of
+// accounts that member follows. Keep those connections in Command Center,
+// but never present them as Following-feed sources.
+export const FOLLOWING_EXCLUDED_SOURCE_IDS = ['instagram', 'tiktok'];
+
 // Shared by the desktop feed rail and the mobile app menu. Keeping this
 // vocabulary here prevents the two controls from quietly drifting apart.
 export const HOME_FEED_SOURCE_IDS = [
@@ -135,4 +140,7 @@ export const HOME_FEED_SOURCE_IDS = [
   'yc', 'crunchbase', 'behance', 'designweb', 'mastodon',
 ];
 
-export const FOLLOWING_FEED_SOURCE_IDS = ['uficonnect', ...CONNECTED_SOCIAL_PLATFORMS];
+export const FOLLOWING_FEED_SOURCE_IDS = [
+  'uficonnect',
+  ...CONNECTED_SOCIAL_PLATFORMS.filter(source => !FOLLOWING_EXCLUDED_SOURCE_IDS.includes(source)),
+];

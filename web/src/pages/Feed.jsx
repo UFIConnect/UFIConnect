@@ -8,9 +8,9 @@ import { markApiOriginFailure, resolveApiBaseUrl } from '../api/apiOrigin';
 import { extractYouTubeId, extractVimeoId, isDirectVideoUrl, deriveBlueskyPlaylistUrl, loadYouTubeIframeApi, InlineAutoplayVideo, userWantsSound, useGlobalMuted, usePointerPlaybackGate, useSoloVideoPlayback, SoundIcon } from '../components/videoMedia';
 import {
   SOURCE_META,
-  CONNECTED_SOCIAL_PLATFORMS,
   HOME_FEED_SOURCE_IDS,
   FOLLOWING_FEED_SOURCE_IDS,
+  FOLLOWING_EXCLUDED_SOURCE_IDS,
 } from '../components/sourceMeta';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
 import HomeFeedTools from '../components/HomeFeedTools';
@@ -355,7 +355,6 @@ async function requestFeedPage(params, viewer) {
 // just needs to contain everything.  Every key still must exist in both
 // ALL_FILTER_SOURCES and SOURCE_META so it also works from that panel.
 const SOURCE_TABS = [
-  { key: 'all' },
   { key: 'reddit' }, { key: 'github' }, { key: 'youtube' }, { key: 'hackernews' },
   { key: 'twitter' }, { key: 'facebook' },
   { key: 'indeed' }, { key: 'remoteok' }, { key: 'remotive' }, { key: 'muse' }, { key: 'usajobs' },
@@ -366,24 +365,24 @@ const SOURCE_TABS = [
   { key: 'wired' }, { key: 'theregister' }, { key: 'venturebeat' }, { key: 'infoq' },
   { key: 'mittr' }, { key: 'phoronix' }, { key: 'smashing' }, { key: 'behance' },
   { key: 'designweb' }, { key: 'mastodon' },
-].map(({ key }) => key === 'all'
-  ? { key: 'all', label: 'Home', icon: 'Home' }
-  : { key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' });
+].map(({ key }) => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' }));
 
 // Following's own quick-filter row — the mirror image of SOURCE_TABS above:
 // this is exactly the content SOURCE_TABS deliberately excludes (native
 // UFIconnect posts from people you follow, plus whichever connected social
 // accounts you've linked), so it gets its own tab vocabulary rather than
 // reusing the aggregate Feed's. Covers every platform Connected Accounts
-// offers (CONNECTED_SOCIAL_PLATFORMS), not just the 4 with a live
-// keyword-search fallback today — this used to be hand-limited to
-// LinkedIn/Twitter/Instagram/Facebook, so a user who'd connected e.g.
-// GitHub or Reddit had no way to even select it here.
+// offers when it exposes a usable following timeline. Instagram and TikTok
+// remain available for own-post tools in Command Center, but cannot appear
+// here because neither connection supplies an accounts-you-follow timeline.
 const FOLLOWING_SOURCE_TABS = [
   { key: 'all', label: 'Following', icon: '' },
   { key: 'uficonnect', label: 'UFIconnect', icon: 'UFI' },
-  ...CONNECTED_SOCIAL_PLATFORMS.map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
+  ...FOLLOWING_FEED_SOURCE_IDS
+    .filter(key => key !== 'uficonnect')
+    .map(key => ({ key, label: SOURCE_META[key]?.label || key, icon: SOURCE_META[key]?.icon || 'SRC' })),
 ];
+const FOLLOWING_EXCLUDED_SOURCES = new Set(FOLLOWING_EXCLUDED_SOURCE_IDS);
 
 const DEFAULT_FILTERS = { sort: 'newest', sources: [], timeRange: 'all', topics: [] };
 const FEED_PAGE_SIZE = 50;
@@ -2329,7 +2328,9 @@ export default function Feed({ forcedMode } = {}) {
       }
       setLockedPlatform(null);
       setFeedError(null);
-      const incoming = data.posts || [];
+      const incoming = (data.posts || []).filter(post => (
+        activeMode !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(post?.source || '').toLowerCase())
+      ));
       if (activeMode === 'countries' && viewModeRef.current === 'countries') {
         setTravelLiveFeeds(Array.isArray(data.liveFeeds) ? data.liveFeeds : []);
       } else if (viewModeRef.current !== 'countries') {
@@ -2803,7 +2804,11 @@ export default function Feed({ forcedMode } = {}) {
       // it and got silently dropped, making the feed look stuck at a
       // fixed, limited amount of content even while the server kept
       // reporting hasMore:true. Confirmed live as exactly that complaint.
-      const incoming = (data.posts || []).filter(p => p?.id && !knownIds.current.has(p.id));
+      const incoming = (data.posts || []).filter(p => (
+        p?.id
+        && !knownIds.current.has(p.id)
+        && (viewModeRef.current !== 'following' || !FOLLOWING_EXCLUDED_SOURCES.has(String(p.source || '').toLowerCase()))
+      ));
       incoming.forEach(p => markKnownId(p.id));
       if (incoming.length > 0) {
         setPosts(prev => sortPostsForView([...prev, ...incoming], activeFilters.sort));
@@ -3007,6 +3012,9 @@ export default function Feed({ forcedMode } = {}) {
       ? profile.roleSettings.disabledSources
       : []);
     if (disabled.size > 0) result = result.filter(p => !disabled.has(p.source));
+    if (viewMode === 'following') {
+      result = result.filter(p => !FOLLOWING_EXCLUDED_SOURCES.has(String(p?.source || '').toLowerCase()));
+    }
 
     // Search
     const q = search.trim().toLowerCase();
@@ -3036,7 +3044,7 @@ export default function Feed({ forcedMode } = {}) {
     }
 
     return sortPostsForView(result, filters.sort);
-  }, [posts, search, filters, activeTabs, profile?.roleSettings?.disabledSources]);
+  }, [posts, search, filters, activeTabs, viewMode, profile?.roleSettings?.disabledSources]);
 
   useEffect(() => {
     const hasNarrowFilter = !!search.trim() || filters.sources.length > 0 || filters.timeRange !== 'all';
@@ -3689,11 +3697,10 @@ export default function Feed({ forcedMode } = {}) {
         <aside className="home-feed-right-tabs" aria-label="Home feed controls">
           <div className="home-feed-view-tabs">
             {[
-              { key: 'feed', label: 'Home' },
               { key: 'ufi', label: 'UFI' },
               { key: 'following', label: 'Following' },
             ].map(({ key, label }) => (
-              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key, { resetHome: key === 'feed' })}>{label}</button>
+              <button key={key} type="button" className={`home-feed-rail-tab${viewMode === key ? ' active' : ''}`} onClick={() => switchViewMode(key)}>{label}</button>
             ))}
             <button type="button" className={`home-feed-rail-tab${viewMode === 'groups' ? ' active' : ''}`} onClick={() => switchViewMode('groups')}>Groups</button>
             {[

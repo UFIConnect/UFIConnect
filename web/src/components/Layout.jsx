@@ -38,7 +38,6 @@ function ShellIcon({ name, size = 20 }) {
 // shortLabel is used only in the mobile bottom-nav so longer destination
 // names stay readable. The desktop sidebar always uses the full label.
 const HOME_FEED_PATH = '/?feed=feed&all=1';
-const HOME_FEED_REFRESH_EVENT = 'ufi:refresh-selected-feed';
 const MOBILE_FEED_OPTIONS = new Set(['ufi', 'feed', 'following', 'groups', 'countries', 'restaurants']);
 
 const NAV = [
@@ -126,8 +125,6 @@ export default function Layout({ children, wide = false }) {
   const [mobileNotifications, setMobileNotifications] = useState([]);
   const [mobileNotificationsLoading, setMobileNotificationsLoading] = useState(false);
   const [mobileNotificationsError, setMobileNotificationsError] = useState('');
-  const desktopHomeClickTimer = useRef(null);
-  const mobileHomeTapTimer = useRef(null);
   const notificationRequestRef = useRef(0);
   const menuSwipeStartRef = useRef(null);
 
@@ -214,11 +211,6 @@ export default function Layout({ children, wide = false }) {
     };
   }, [mobileHeaderPopup, mobileMenuOpen, profile]);
 
-  useEffect(() => () => {
-    if (desktopHomeClickTimer.current) window.clearTimeout(desktopHomeClickTimer.current);
-    if (mobileHomeTapTimer.current) window.clearTimeout(mobileHomeTapTimer.current);
-  }, []);
-
   function closeMobileOverlays() {
     setMobileMenuOpen(false);
     setMobileHeaderPopup(null);
@@ -269,33 +261,14 @@ export default function Layout({ children, wide = false }) {
     navigate('/login');
   }
 
-  function navigateToDesktopHome({ showAll = false } = {}) {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (showAll) {
-      navigate(HOME_FEED_PATH, { replace: location.pathname === '/', state: { refreshHomeAt: Date.now() } });
-      return;
-    }
-    if (location.pathname === '/') {
-      window.dispatchEvent(new Event(HOME_FEED_REFRESH_EVENT));
-      return;
-    }
-    navigate('/');
-  }
-
-  // A desktop Home click returns to the top without replacing the member's
-  // selected feed. A quick second click deliberately opens the complete mix.
-  function handleDesktopHomeClick(event) {
+  function handleAllFeedHomeClick(event) {
     event.preventDefault();
-    if (desktopHomeClickTimer.current) {
-      window.clearTimeout(desktopHomeClickTimer.current);
-      desktopHomeClickTimer.current = null;
-      navigateToDesktopHome({ showAll: true });
-      return;
-    }
-    desktopHomeClickTimer.current = window.setTimeout(() => {
-      desktopHomeClickTimer.current = null;
-      navigateToDesktopHome();
-    }, 250);
+    closeMobileOverlays();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigate(HOME_FEED_PATH, {
+      replace: location.pathname === '/',
+      state: { refreshHomeAt: Date.now() },
+    });
   }
 
   function navigateToMobileFeed(feed) {
@@ -317,40 +290,13 @@ export default function Layout({ children, wide = false }) {
     });
   }
 
-  // A single mobile Home tap restores the member's saved feed; a quick second
-  // tap deliberately resets to the complete Home/All feed.
-  function handleMobileHomeClick(event) {
-    event.preventDefault();
-    if (mobileHomeTapTimer.current) {
-      window.clearTimeout(mobileHomeTapTimer.current);
-      mobileHomeTapTimer.current = null;
-      navigateToMobileFeed('feed');
-      return;
-    }
-    mobileHomeTapTimer.current = window.setTimeout(() => {
-      mobileHomeTapTimer.current = null;
-      if (location.pathname === '/') {
-        setMobileMenuOpen(false);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-        window.dispatchEvent(new Event(HOME_FEED_REFRESH_EVENT));
-        return;
-      }
-      navigateToMobileFeed(selectedMobileFeed);
-    }, 250);
-  }
-
   function selectMobileFeed(feed) {
-    const current = mobileFeedMode || 'feed';
-    const next = current === feed ? 'feed' : feed;
-    saveMobileFeed(next);
-    navigateToMobileFeed(next);
+    saveMobileFeed(feed);
+    navigateToMobileFeed(feed);
   }
 
   const requestedFeed = new URLSearchParams(location.search).get('feed');
   const mobileFeedMode = requestedFeed === 'local' ? 'countries' : (requestedFeed || 'feed');
-  const selectedMobileFeed = MOBILE_FEED_OPTIONS.has(profile?.roleSettings?.mobileSelectedFeed)
-    ? profile.roleSettings.mobileSelectedFeed
-    : 'feed';
   const isHomeFeedRoute = location.pathname === '/';
   const mobileSourceIds = mobileFeedMode === 'following'
     ? FOLLOWING_FEED_SOURCE_IDS
@@ -360,7 +306,7 @@ export default function Layout({ children, wide = false }) {
     <div className="shell">
       {/* ── Desktop sidebar ── */}
       <aside className="sidebar">
-        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleDesktopHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Link to={HOME_FEED_PATH} className="sidebar-logo" onClick={handleAllFeedHomeClick} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-logo-icon">UFI</div>
           <span className="sidebar-logo-text">UFIconnect</span>
         </Link>
@@ -373,7 +319,7 @@ export default function Layout({ children, wide = false }) {
               end={icon === 'home'}
               aria-label={label}
               title={label}
-              onClick={icon === 'home' ? handleDesktopHomeClick : undefined}
+              onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
               className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}
             >
               <span className="nav-icon" style={{ position: 'relative' }}>
@@ -440,10 +386,7 @@ export default function Layout({ children, wide = false }) {
             to={HOME_FEED_PATH}
             className="mobile-app-header-brand"
             aria-label="Home"
-            onClick={event => {
-              closeMobileOverlays();
-              handleMobileHomeClick(event);
-            }}
+            onClick={handleAllFeedHomeClick}
           >
             <span className="mobile-app-header-mark" aria-hidden="true">UFI</span>
           </Link>
@@ -593,10 +536,6 @@ export default function Layout({ children, wide = false }) {
             </button>
           </div>
           <div className="mobile-feed-drawer-content">
-            <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'feed' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'feed'} onClick={() => selectMobileFeed('feed')}>
-              <ShellIcon name="home" size={18} />
-              Home
-            </button>
             <button type="button" className={`mobile-command-menu-item${isHomeFeedRoute && mobileFeedMode === 'ufi' ? ' active' : ''}`} aria-pressed={isHomeFeedRoute && mobileFeedMode === 'ufi'} onClick={() => selectMobileFeed('ufi')}>
               <ShellIcon name="posts" size={18} />
               UFI
@@ -653,7 +592,7 @@ export default function Layout({ children, wide = false }) {
             key={to}
             to={to}
             end={icon === 'home'}
-            onClick={icon === 'home' ? handleMobileHomeClick : undefined}
+            onClick={icon === 'home' ? handleAllFeedHomeClick : undefined}
             className={({ isActive }) => `bottom-nav-item${isActive ? ' active' : ''}`}
           >
             <span className="nav-icon" style={{ position: 'relative' }}>

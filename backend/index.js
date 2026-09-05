@@ -27,7 +27,7 @@ const {
   screenExternalComment,
 } = require('./content-screening');
 const { paginateEqualizedPool: paginateEqualizedPoolCore } = require('./feed-pagination');
-const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost } = require('./following-scope');
+const { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed } = require('./following-scope');
 const { canonicalizePreferenceTopics, matchesPreferenceTopic } = require('./feed-preferences');
 const {
   VIDEO_FEED_MAX_DURATION_SECONDS,
@@ -15964,7 +15964,11 @@ const CONNECTED_SOCIAL_SEARCH_FETCHERS = {
 // and connected-account posts have been merged.
 async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false, surface = null } = {}) {
   const wanted = sourceFilter == null ? null : new Set(Array.isArray(sourceFilter) ? sourceFilter : [sourceFilter]);
-  const wantsSource = (src) => !wanted || wanted.has(src);
+  const isFollowingSurface = surface === 'feed' || surface === 'videos';
+  const wantsSource = (src) => (
+    (!isFollowingSurface || isFollowingSourceAllowed(src))
+    && (!wanted || wanted.has(src))
+  );
 
   const followingIds = new Set(follows.filter(f => f.followerId === userId).map(f => f.followingId));
   const user = await getUser(userId);
@@ -16075,6 +16079,7 @@ async function getFollowingFeedPosts(userId, sourceFilter = null, { bust = false
   }
 
   let merged = interleaveByAuthor([...internalPosts, ...externalPosts]);
+  if (isFollowingSurface) merged = merged.filter(post => isFollowingSourceAllowed(post?.source));
   if (surface === 'videos') merged = merged.filter(isVideoSurfacePost);
   if (surface === 'feed') merged = merged.filter(isRegularFeedSurfacePost);
   return { posts: merged, sourceErrors };

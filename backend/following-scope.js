@@ -1,6 +1,7 @@
 'use strict';
 
 const GENERAL_UFI_GROUP_ID = 'ufi-general';
+const FOLLOWING_EXCLUDED_SOURCES = new Set(['instagram', 'tiktok']);
 
 function isGeneralUfiFollowingPost(post) {
   return Boolean(
@@ -10,4 +11,8 @@ function isGeneralUfiFollowingPost(post) {
   );
 }
 
-module.exports = { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost };
+function isFollowingSourceAllowed(source) {
+  return !FOLLOWING_EXCLUDED_SOURCES.has(String(source || '').trim().toLowerCase());
+}
+
+module.exports = { GENERAL_UFI_GROUP_ID, isGeneralUfiFollowingPost, isFollowingSourceAllowed };
