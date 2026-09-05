@@ -142,7 +142,7 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
     loadRecentFeed();
   }, [posted, loadRecentFeed]);
 
-  useScrollToRefresh(
+  const scrollRefresh = useScrollToRefresh(
     () => loadRecentFeed({ silent: true }),
     { enabled: !feedLoading && !feedLoadingMore }
   );
@@ -276,6 +276,14 @@ export function UfiFeedContent({ embedded = false, initialShop = false }) {
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
+      {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
+        <div className="scroll-refresh-status" role="status" aria-live="polite">
+          {scrollRefresh.refreshing
+            ? <span className="spinner spinner-primary" />
+            : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
+          <span>{scrollRefresh.refreshing ? 'Refreshing UFI' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+        </div>
+      )}
       {!embedded && <h1 className="page-title" style={{ marginBottom: 20 }}>UFI</h1>}
 
       <div className="ufi-feed-toolbar" style={{ maxWidth: embedded ? 'none' : 640 }}>

@@ -2947,13 +2947,18 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
     if (!['feed', 'following', 'groups', 'countries', 'restaurants'].includes(viewModeRef.current)) return undefined;
     const state = loadStateRef.current;
     if (state.loading || state.refreshing || state.loadingMore) return undefined;
+    if (viewModeRef.current === 'groups' && publicGroupsFeed) {
+      window.dispatchEvent(new Event('ufi:refresh-group-directory'));
+    }
     return loadFeed(true, activeTabsRef.current, {
       preserveScroll: true,
       bust: activeTabsRef.current.length === 1,
     });
-  }, [loadFeed]);
+  }, [loadFeed, publicGroupsFeed]);
 
-  useScrollToRefresh(refreshCurrentFeed, { enabled: Boolean(profile?.id) });
+  const scrollRefresh = useScrollToRefresh(refreshCurrentFeed, {
+    enabled: Boolean(profile?.id) && !EMBEDDED_HOME_MODES.has(viewMode),
+  });
 
   useEffect(() => {
     window.addEventListener('ufi:refresh-selected-feed', refreshCurrentFeed);
@@ -3327,6 +3332,14 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
       <div className="home-feed-content">
+      {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
+        <div className="scroll-refresh-status" role="status" aria-live="polite">
+          {scrollRefresh.refreshing
+            ? <span className="spinner spinner-primary" />
+            : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
+          <span>{scrollRefresh.refreshing ? 'Refreshing feed' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+        </div>
+      )}
       {viewMode === 'ufi' ? (
         <UfiFeedContent embedded initialShop={routeFeedParams.get('channel') === 'shop'} />
       ) : (

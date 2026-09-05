@@ -278,7 +278,16 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
   }, [topicFilterOpen]);
 
   // Scrolling back up to the top refreshes this live directory.
-  useScrollToRefresh(() => loadGroups(true), { enabled: !loading && !refreshing });
+  const scrollRefresh = useScrollToRefresh(() => loadGroups(true), {
+    enabled: !embedded && !loading && !refreshing,
+  });
+
+  useEffect(() => {
+    if (!embedded) return undefined;
+    const refreshDirectory = () => loadGroups(true);
+    window.addEventListener('ufi:refresh-group-directory', refreshDirectory);
+    return () => window.removeEventListener('ufi:refresh-group-directory', refreshDirectory);
+  }, [embedded, scope]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleCreateGroup({ name, description, category, isPrivate }) {
     const { data } = await client.post('/groups', { name, description, category, isPrivate });
@@ -308,6 +317,14 @@ export function GroupsContent({ embedded = false, scope = 'all' }) {
 
   return (
     <ContentShell className={embedded ? 'home-embedded-feed' : undefined}>
+      {(scrollRefresh.pulling || scrollRefresh.refreshing) && (
+        <div className="scroll-refresh-status" role="status" aria-live="polite">
+          {scrollRefresh.refreshing
+            ? <span className="spinner spinner-primary" />
+            : <span className="scroll-refresh-progress" style={{ '--scroll-refresh-progress': scrollRefresh.progress }} />}
+          <span>{scrollRefresh.refreshing ? 'Refreshing groups' : scrollRefresh.progress >= 1 ? 'Release to refresh' : 'Pull to refresh'}</span>
+        </div>
+      )}
       <div className="page-header groups-page-header">
         <div className="groups-page-heading">
           <h1 className="page-title">Discover Groups</h1>
