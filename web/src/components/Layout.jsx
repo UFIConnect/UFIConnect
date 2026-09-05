@@ -572,7 +572,7 @@ export default function Layout({ children, wide = false }) {
               </NavLink>
               <NavLink to="/groups" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="groups" size={18} />
-                Join a group
+                Discover Groups
               </NavLink>
               <HomeFeedTools
                 showSources

@@ -3972,7 +3972,7 @@ export default function Feed({ forcedMode } = {}) {
             <Link to="/messages" className="home-feed-rail-tab" style={{ fontWeight: 400 }}>
               Messages
             </Link>
-            <Link to="/groups" className="home-feed-rail-tab">Join a group</Link>
+            <Link to="/groups" className="home-feed-rail-tab">Discover Groups</Link>
             <HomeFeedTools
               showSources
               sourceIds={viewMode === 'following' ? FOLLOWING_FILTER_SOURCES : ALL_FILTER_SOURCES}
