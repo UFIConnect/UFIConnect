@@ -291,7 +291,7 @@ export default function Layout({ children, wide = false }) {
   function selectMobileFeed(feed) {
     saveMobileFeed(feed);
     const next = MOBILE_FEED_OPTIONS.has(feed) ? feed : 'feed';
-    if (isHomeFeedRoute && mobileFeedMode === next) {
+    if (isHomeFeedRoute && mobileFeedMode === next && (next !== 'groups' || mobileGroupScope === 'joined')) {
       setMobileMenuOpen(false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       window.dispatchEvent(new Event('ufi:refresh-selected-feed'));
