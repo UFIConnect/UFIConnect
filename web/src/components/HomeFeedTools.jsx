@@ -50,7 +50,15 @@ function scoreStyle(score) {
   return { color: '#B91C1C', background: '#FEF2F2', border: '#FECACA' };
 }
 
-export default function HomeFeedTools({ showSources = true, sourceIds = [], activePanel, onActivePanelChange }) {
+export default function HomeFeedTools({
+  showSources = true,
+  showAccounts = true,
+  showSkills = true,
+  showAttachments = true,
+  sourceIds = [],
+  activePanel,
+  onActivePanelChange,
+}) {
   const { profile, updateProfileLocally } = useAuth();
   const { showToast } = useToast();
   const [uncontrolledOpenPanel, setUncontrolledOpenPanel] = useState(null);
@@ -321,7 +329,7 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
   }
 
   return (
-    <div className="home-feed-side-tools" aria-label="Home tools">
+    <div className="home-feed-side-tools" aria-label="Feed and account tools">
       {showSources && <ToolPanel
         className="home-feed-source-panel"
         title="Feed sources"
@@ -363,7 +371,7 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
         </div>
       </ToolPanel>}
 
-      <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
+      {showAccounts && <ToolPanel title="Connected accounts" summary={connectedAccountCount ? `${connectedAccountCount} connected` : 'Add your sources'} open={openPanel === 'accounts'} onToggle={() => toggle('accounts')}>
         <div className="home-connected-account-list" aria-label="Connected account controls">
           {accountPlatforms === null && <div className="home-connected-account-loading"><span className="spinner spinner-primary" /></div>}
           {accountError && (
@@ -417,9 +425,9 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
             </form>
           )}
         </div>
-      </ToolPanel>
+      </ToolPanel>}
 
-      <ToolPanel title="Skills" summary={skills.length ? `${skills.length} saved` : 'Add your skills'} open={openPanel === 'skills'} onToggle={() => toggle('skills')}>
+      {showSkills && <ToolPanel title="Skills" summary={skills.length ? `${skills.length} saved` : 'Add your skills'} open={openPanel === 'skills'} onToggle={() => toggle('skills')}>
         {skills.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
           {skills.map(skill => <span key={skill} className="tag tag-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '.76rem' }}>
             {skill}<button type="button" aria-label={`Remove ${skill}`} onClick={() => setSkills(current => current.filter(item => item !== skill))} style={{ border: 0, background: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>x</button>
@@ -430,9 +438,9 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
           <button type="button" className="btn btn-ghost btn-sm" onClick={addSkill}>Add</button>
         </div>
         <button type="button" className="btn btn-primary btn-sm" onClick={saveSkills} disabled={savingSkills} style={{ marginTop: 9 }}>{savingSkills ? 'Saving...' : 'Save skills'}</button>
-      </ToolPanel>
+      </ToolPanel>}
 
-      <ToolPanel title="Files" summary={attachments.length ? `${attachments.length} saved` : 'Resumes and links'} open={openPanel === 'files'} onToggle={() => toggle('files')}>
+      {showAttachments && <ToolPanel title="Attachments" summary={attachments.length ? `${attachments.length} saved` : 'Resumes and links'} open={openPanel === 'files'} onToggle={() => toggle('files')}>
         <label style={{ display: 'flex', alignItems: 'center', padding: '9px 10px', border: '1px dashed var(--border)', borderRadius: 6, cursor: uploading ? 'default' : 'pointer', color: 'var(--muted)', fontSize: '.8rem' }}>
           {uploading ? 'Uploading...' : 'Upload resume'}
           <input type="file" accept=".pdf,.docx,.txt" disabled={uploading} style={{ display: 'none' }} onChange={event => { const file = event.target.files[0]; event.target.value = ''; uploadAttachment(file); }} />
@@ -471,7 +479,7 @@ export default function HomeFeedTools({ showSources = true, sourceIds = [], acti
             <div style={{ display: 'flex', gap: 7 }}><button className="btn btn-primary btn-sm" disabled={savingLinks}>{savingLinks ? 'Saving...' : 'Save links'}</button><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditingLinks(false)}>Cancel</button></div>
           </form>
         )}
-      </ToolPanel>
+      </ToolPanel>}
 
     </div>
   );

@@ -29,6 +29,7 @@ function ShellIcon({ name, size = 20 }) {
     menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
     skills: <><path d="M12 3 14.5 8l5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9L9.5 8 12 3Z" /></>,
     files: <><path d="M6 3h8l4 4v14H6V3Z" /><path d="M14 3v5h5" /><path d="M9 13h6" /><path d="M9 17h6" /></>,
+    saved: <path d="M6 4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18l-6-4-6 4V4Z" />,
     close: <><path d="m6 6 12 12" /><path d="M18 6 6 18" /></>,
     refresh: <><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.4-2.5L20 9" /><path d="m4 15 2.5 2.5A7 7 0 0 0 17.9 15" /></>,
   };
@@ -585,6 +586,16 @@ export default function Layout({ children, wide = false }) {
                 <ShellIcon name="messages" size={18} />
                 Messages
               </NavLink>
+              <div className="mobile-member-shortcuts">
+                <NavLink to="/settings?tab=preferences" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="profile" size={18} />
+                  Roles
+                </NavLink>
+                <NavLink to="/profile?tab=saved" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>
+                  <ShellIcon name="saved" size={18} />
+                  Saved
+                </NavLink>
+              </div>
               <HomeFeedTools
                 showSources
                 sourceIds={mobileSourceIds}
@@ -592,6 +603,10 @@ export default function Layout({ children, wide = false }) {
               <NavLink to="/command-center" className="mobile-command-menu-item mobile-command-menu-item--command" onClick={() => setMobileMenuOpen(false)}>
                 <ShellIcon name="command" size={18} />
                 Command Center
+              </NavLink>
+              <NavLink to="/resume-builder" className="mobile-command-menu-item mobile-command-menu-item--resume" onClick={() => setMobileMenuOpen(false)}>
+                <ShellIcon name="files" size={18} />
+                Resume Builder
               </NavLink>
               <div className="mobile-account-actions">
                 <NavLink to="/settings" className="mobile-command-menu-item" onClick={() => setMobileMenuOpen(false)}>

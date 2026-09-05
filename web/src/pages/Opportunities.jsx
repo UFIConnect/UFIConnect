@@ -4,7 +4,8 @@ import { Helmet } from 'react-helmet-async';
 import { useAuth } from '../contexts/AuthContext';
 import Layout from '../components/Layout';
 import BrandIcon, { hasBrandIcon } from '../components/BrandIcon';
-import { SOURCE_META } from '../components/sourceMeta';
+import HomeFeedTools from '../components/HomeFeedTools';
+import { HOME_FEED_SOURCE_IDS, SOURCE_META } from '../components/sourceMeta';
 import client from '../api/client';
 import { useScrollToRefresh } from '../hooks/useScrollToRefresh';
 import { SaveJobButton } from '../components/SaveButtons';
@@ -581,19 +582,6 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
           <span>Newest first</span>
         </div>
 
-        {!embedded && (
-          <div className="jobs-page-mobile-tools" aria-label="Job tools">
-            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary">
-              <strong>Resume Builder</strong>
-              <span>Build, preview, and export</span>
-            </Link>
-            <Link to="/settings?tab=preferences" className="jobs-page-tool">
-              <strong>Roles</strong>
-              <span>{profile?.preferences?.role || 'Choose your target role'}</span>
-            </Link>
-          </div>
-        )}
-
         {!embedded ? (
           <div className="feed-source-filter-row feed-unified-control-bar jobs-career-filter-row">
             <div ref={careerSourcePickerRef} className="feed-source-picker jobs-career-source-picker">
@@ -964,13 +952,28 @@ export default function Opportunities({ embedded = false, searchQuery = null } =
         </div>
         {!embedded && (
           <aside className="jobs-page-right-tabs" aria-label="Job tools">
-            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary">
+            <div className="jobs-page-tool-pair">
+              <Link to="/settings?tab=preferences" className="jobs-page-tool jobs-page-tool--compact" title={profile?.preferences?.role || 'Choose your target role'}>
+                <strong>Roles</strong>
+              </Link>
+              <Link to="/profile?tab=saved" className="jobs-page-tool jobs-page-tool--compact">
+                <strong>Saved</strong>
+              </Link>
+            </div>
+            <Link to="/?feed=groups&groupScope=public" className="jobs-page-tool jobs-page-tool--compact">
+              <strong>Discover groups</strong>
+            </Link>
+            <Link to="/messages" className="jobs-page-tool jobs-page-tool--compact">
+              <strong>Messages</strong>
+            </Link>
+            <HomeFeedTools
+              showSources
+              showAccounts={false}
+              sourceIds={HOME_FEED_SOURCE_IDS}
+            />
+            <Link to="/resume-builder" className="jobs-page-tool jobs-page-tool--primary jobs-page-resume-builder">
               <strong>Resume Builder</strong>
               <span>Build, preview, and export</span>
-            </Link>
-            <Link to="/settings?tab=preferences" className="jobs-page-tool">
-              <strong>Roles</strong>
-              <span>{profile?.preferences?.role || 'Choose your target role'}</span>
             </Link>
           </aside>
         )}

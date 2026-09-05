@@ -3958,6 +3958,10 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
               activePanel={requestedHomeToolPanel}
               onActivePanelChange={setHomeToolPanel}
             />
+            <div className="home-member-shortcuts">
+              <Link to="/settings?tab=preferences" className="home-feed-rail-tab">Roles</Link>
+              <Link to="/profile?tab=saved" className="home-feed-rail-tab">Saved</Link>
+            </div>
             <Link to="/command-center" className="home-feed-rail-tab home-feed-command-center-link">
               <span>
                 <span className="home-feed-command-center-title">Command Center</span>
@@ -3966,6 +3970,12 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
                     ? 'Tools and automation'
                     : `Tools and automation - Pro $${COMMAND_CENTER_PRO_TIER?.price}/mo`}
                 </span>
+              </span>
+            </Link>
+            <Link to="/resume-builder" className="home-feed-rail-tab home-feed-resume-builder-link">
+              <span>
+                <span className="home-feed-command-center-title">Resume Builder</span>
+                <span className="home-feed-command-center-summary">Build, preview, and export</span>
               </span>
             </Link>
           </div>
