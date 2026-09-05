@@ -3338,11 +3338,11 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
   return (
     <Layout wide={!forcedMode}>
       <Helmet>
-        <title>{viewMode === 'groups' && publicGroupsFeed ? 'Popular Public Groups | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
+        <title>{viewMode === 'groups' && publicGroupsFeed ? 'Public Group Posts | UFIconnect' : forcedMode ? 'You | UFIconnect' : 'UFIconnect | Social Network & Job Discovery'}</title>
         <meta name="description" content="Your personalized UFIconnect social feed brings posts, people, communities, videos, and job discovery into one useful scroll." />
         <meta name="keywords" content="professional news, tech news, career news, news feed, industry news, Reddit news, Hacker News, news updates, professional updates, tech updates, career updates, community news, LinkedIn news, Twitter news, Facebook news, networking news, connect news" />
         {viewMode === 'groups' && publicGroupsFeed
-          ? <link rel="canonical" href="https://uficonnect.org/?feed=groups" />
+          ? <link rel="canonical" href="https://uficonnect.org/?feed=groups&amp;groupScope=public" />
           : !forcedMode && <link rel="canonical" href="https://uficonnect.org/feed" />}
       </Helmet>
       <div className={`home-feed-layout${forcedMode ? ' home-feed-layout--single' : ''}`}>
@@ -3579,8 +3579,8 @@ export default function Feed({ forcedMode, groupScope = 'joined' } = {}) {
             <button type="button" role="tab" aria-selected={!publicGroupsFeed} className={!publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('joined')}>
               Your groups
             </button>
-            <button type="button" role="tab" aria-selected="false" onClick={() => navigate('/groups')}>
-              Discover groups
+            <button type="button" role="tab" aria-selected={publicGroupsFeed} className={publicGroupsFeed ? 'active' : ''} onClick={() => selectGroupScope('public')}>
+              Public posts
             </button>
           </div>
           <Link to="/search?tab=groups&create=1" className="btn btn-primary btn-sm feed-toolbar-control feed-toolbar-primary-action group-create-button">

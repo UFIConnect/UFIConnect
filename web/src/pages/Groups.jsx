@@ -503,7 +503,8 @@ export function GroupDirectoryTab({ group, index, onSelect }) {
         <span>{group.category || 'Community'}</span>
         <span className="group-directory-tab-description">{group.description || 'Open for group details and recent posts.'}</span>
         <small>
-          {group.members?.toLocaleString() || 0} members - {origin.label} - {group.isJoined ? 'Joined' : 'Not joined'}
+          {group.members?.toLocaleString() || 0} members - {origin.label}
+          {!group.isExternal && ` - ${group.isJoined ? 'Joined' : 'Not joined'}`}
         </small>
       </span>
     </button>
@@ -512,6 +513,7 @@ export function GroupDirectoryTab({ group, index, onSelect }) {
 
 export function GroupInformation({ group, index = 0, isJoined, joining, onJoin, onOpen, standalone = false }) {
   if (!group) return null;
+  const canJoin = group.canJoin !== false && !group.isExternal;
   const meta = CATEGORY_META[group.category] || {
     icon: 'GR',
     bg: '#F1F5F9',
@@ -542,7 +544,7 @@ export function GroupInformation({ group, index = 0, isJoined, joining, onJoin, 
       <div className="group-information-badges">
         <span style={{ background: meta.bg, color: meta.text }}>{group.category || 'Community'}</span>
         <span>{group.isPrivate ? 'Private group' : 'Public group'}</span>
-        <span>{isJoined ? 'Joined' : 'Not joined'}</span>
+        <span>{group.isExternal ? 'External group' : isJoined ? 'Joined' : 'Not joined'}</span>
       </div>
 
       <dl className="group-information-facts">
@@ -573,11 +575,13 @@ export function GroupInformation({ group, index = 0, isJoined, joining, onJoin, 
       )}
 
       <div className="group-information-actions">
-        <button type="button" className={`btn ${isJoined ? 'btn-ghost' : 'btn-primary'}`} onClick={onJoin} disabled={joining}>
-          {joining
-            ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} />
-            : isJoined ? 'Leave group' : 'Join group'}
-        </button>
+        {canJoin && (
+          <button type="button" className={`btn ${isJoined ? 'btn-ghost' : 'btn-primary'}`} onClick={onJoin} disabled={joining}>
+            {joining
+              ? <span className={isJoined ? 'spinner spinner-primary' : 'spinner'} />
+              : isJoined ? 'Leave group' : 'Join group'}
+          </button>
+        )}
         {group.isExternal && externalUrl && (
           <a className="btn btn-primary" href={externalUrl} target="_blank" rel="noopener noreferrer">
             Visit on {origin.label}

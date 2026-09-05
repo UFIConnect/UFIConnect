@@ -21431,7 +21431,11 @@ function canSeeGroup(group, viewerId) {
   return Boolean(viewer?.joinedGroups?.includes(group.id));
 }
 function groupForViewer(group, joinedGroupIds = new Set()) {
-  return { ...group, isJoined: joinedGroupIds.has(group.id) };
+  return {
+    ...group,
+    canJoin: !group.isExternal,
+    isJoined: !group.isExternal && joinedGroupIds.has(group.id),
+  };
 }
 function slugifyGroupName(name) {
   return (name || 'group').toLowerCase().trim()
@@ -21641,6 +21645,9 @@ app.post('/groups/:id/join', authenticate, async (req, res) => {
     const user = await getUser(req.user.id);
     const group = groups.find((g) => g.id === req.params.id);
     if (!user || !group) return res.status(404).json({ message: 'Not found.' });
+    if (group.isExternal) {
+      return res.status(400).json({ message: 'External groups must be joined on their source platform.' });
+    }
     if (!user.joinedGroups.includes(group.id)) {
       if (isDBId(user.id) && !db.isConnected()) {
         return res.status(503).json({ message: 'Joining is temporarily unavailable — please try again in a moment.' });
@@ -22003,7 +22010,7 @@ async function handleFeedRequest(req, res) {
     const poolMode = publicGroupsRequested ? 'public-groups' : 'groups';
     const scopedGroupModels = publicGroupsRequested
       ? groups.filter(group => !group.isPrivate)
-      : groups.filter(group => joined.has(group.id));
+      : groups.filter(group => !group.isExternal && joined.has(group.id));
     const nativeGroupIds = scopedGroupModels.filter(group => !group.isExternal).map(group => group.id);
     const externalGroupIds = new Set(scopedGroupModels.filter(group => group.isExternal).map(group => group.id));
     const connectedSources = publicGroupsRequested ? [] : [...new Set(Object.entries(user?.socialTokens || {})

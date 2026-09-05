@@ -101,7 +101,7 @@ export default function GroupDetail() {
   useScrollToRefresh(() => loadGroupPosts({ silent: true }), { enabled: !postsLoading });
 
   async function handleJoin() {
-    if (joining) return;
+    if (joining || group?.isExternal || group?.canJoin === false) return;
     setJoining(true);
     try {
       const { data } = joined
@@ -207,7 +207,7 @@ export default function GroupDetail() {
   return (
     <Layout>
       {/* Back */}
-      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate('/?feed=groups')}>
+      <button className="btn-back" style={{ marginBottom: 16 }} onClick={() => navigate(group.isExternal ? '/groups' : '/?feed=groups')}>
         <span className="btn-back-icon">‹</span> Back to Groups
       </button>
 
@@ -264,7 +264,7 @@ export default function GroupDetail() {
       )}
 
       {/* Post composer — only for joined members */}
-      {joined && (
+      {joined && !group.isExternal && (
         <div className="card" style={{ marginBottom: 16 }}>
           {!composing ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'text' }} onClick={openCompose}>
@@ -353,8 +353,10 @@ export default function GroupDetail() {
           posts={groupPosts}
           loading={postsLoading}
           emptyTitle="No posts yet"
-          emptyDesc={joined ? 'Be the first to post in this group.' : 'Join the group to start the conversation.'}
-          emptyAction={joined ? <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button> : null}
+          emptyDesc={group.isExternal
+            ? 'Posts will appear here when they are available from the source.'
+            : joined ? 'Be the first to post in this group.' : 'Join the group to start the conversation.'}
+          emptyAction={joined && !group.isExternal ? <button className="btn btn-primary btn-sm" onClick={openCompose}>Write a post</button> : null}
           currentUserId={profile?.id}
           onPostDeleted={(id) => setGroupPosts((prev) => prev.filter((p) => p.id !== id))}
           onNearEnd={loadMoreGroupPosts}
@@ -362,7 +364,7 @@ export default function GroupDetail() {
       </div>
 
       {/* Members */}
-      <div className="card">
+      {!group.isExternal && <div className="card">
         <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 16 }}>
           Members ({members.length})
         </h2>
@@ -390,7 +392,7 @@ export default function GroupDetail() {
             ))}
           </div>
         )}
-      </div>
+      </div>}
     </Layout>
   );
 }

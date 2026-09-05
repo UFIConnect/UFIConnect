@@ -140,6 +140,8 @@ export default function Search() {
 
   async function toggleJoin(groupId, e) {
     e.stopPropagation();
+    const group = allGroups.find(candidate => candidate.id === groupId);
+    if (!group || group.isExternal || group.canJoin === false) return;
     setJoining(groupId);
     try {
       const isJoined = joinedGroups.has(groupId);
@@ -478,7 +480,8 @@ export default function Search() {
               <div style={{ maxWidth: 640, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {filteredGroups.map(group => {
                   const catIcon = CATEGORY_ICONS[group.category] || 'GR';
-                  const isJoined = joinedGroups.has(group.id);
+                  const canJoin = group.canJoin !== false && !group.isExternal;
+                  const isJoined = canJoin && joinedGroups.has(group.id);
                   const isJoining = joining === group.id;
                   return (
                     <div
@@ -519,7 +522,7 @@ export default function Search() {
                         </div>
 
                         <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                          {isJoined ? (
+                          {!canJoin ? null : isJoined ? (
                             <span style={{ fontSize: '.72rem', fontWeight: 600, color: '#059669', background: '#ECFDF5', padding: '4px 10px', borderRadius: 6 }}>
                               Joined
                             </span>
