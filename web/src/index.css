@@ -163,6 +163,7 @@ input, textarea, select { font-family: inherit; }
   min-width: 0;
   padding: 28px 32px;
   max-width: 860px;
+  margin-inline: auto;
 }
 
 .main-wide { max-width: 1480px; }
